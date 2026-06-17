@@ -1,0 +1,1223 @@
+# ForgeCLI 详细设计
+
+## 1. 模块结构
+
+代码结构：
+
+```text
+src/
+  forgecli/
+    interfaces/
+      cli/
+        commands/
+      tui/
+      json_api/
+    application/
+      services/
+        conversation_service.py
+        agent_turn_service.py
+        approval_service.py
+        session_service.py
+        resume_service.py
+        config_service.py
+        tool_service.py
+      workflows/
+        agent_workflow.py
+        builtin_workflow.py
+    domain/
+      config/
+      conversation/
+      agent/
+      policy/
+      tool/
+      workspace/
+      memory/
+      skill/
+      artifact/
+    tools/
+      registry.py
+      runtime.py
+      builtin/
+        filesystem_tool.py
+        search_tool.py
+        shell_tool.py
+        git_tool.py
+        test_tool.py
+      mcp/
+        mcp_tool_adapter.py
+    infrastructure/
+      config_sources/
+        file_config_source.py
+        env_config_source.py
+      agent_frameworks/
+        langgraph_adapter.py
+        langchain_adapter.py
+      llm/
+      mcp/
+      shell/
+      git/
+      filesystem/
+      storage/
+      telemetry/
+    shared/
+      errors.py
+      result.py
+      ids.py
+tests/
+```
+
+这是目标结构，不要求 MVP 第一天全部创建。MVP 骨架仅创建当前阶段需要的目录和文件，未来阶段开始时再补齐对应模块，避免空目录和空 adapter 带来维护噪音。AutoGen 仅作为 V2 Multi-Agent 候选，不进入 MVP 骨架。
+
+依赖方向：
+
+```text
+interfaces -> application
+application -> domain
+application -> tools
+tools -> domain
+tools -> infrastructure adapters
+infrastructure adapters -> domain/application ports
+domain -> shared
+```
+
+项目采用 `src/forgecli + tests` 布局。`domain` 不依赖 Typer、Rich、LLM SDK、MCP SDK 或具体文件系统。`tools` 是 Agent 能力层，不是普通基础设施；具体 shell、git、filesystem、MCP client 才属于基础设施适配器。
+
+### 1.1 模块边界说明
+
+配置、工具和 Agent workflow 都是一等模块，不应被简单归入 `infrastructure`。
+
+- `domain/config`：定义配置值对象和校验规则，例如模型、权限、MCP、存储、上下文预算。
+- `application/services/config_service.py`：负责配置加载、合并、查询、更新和迁移。
+- `infrastructure/config_sources`：只负责从文件、环境变量、CLI 参数等来源读取配置。
+- `tools`：负责 Tool Registry、Tool Runtime、内置工具定义和 MCP tool 适配，是 Agent 能力面的一部分。
+- `infrastructure/shell`、`infrastructure/git`、`infrastructure/filesystem`：只是工具实现依赖的底层适配器。
+- `application/workflows`：定义 AgentWorkflow 抽象和内置 workflow。
+- `infrastructure/agent_frameworks`：放第三方框架适配器，例如 LangGraph、LangChain。AutoGen 适配器只在 V2 Multi-Agent 阶段需要时创建。
+
+因此，工具系统不属于普通基础设施。工具对 Agent 来说是业务能力和安全边界，必须有自己的 registry、schema、权限和审计。基础设施只提供工具执行所需的底层能力。
+
+## 2. Agent 开发框架适配
+
+### 2.1 设计立场
+
+ForgeCLI 可以使用 Agent 开发框架，但不能把第三方框架的数据模型作为系统核心模型。核心原因是 ForgeCLI 的生产级能力集中在 CLI 会话、权限审批、本地可恢复存储、工具审计和工作区安全，这些必须由自有领域模型保障。
+
+推荐结构：
+
+```text
+AgentTurnService
+  -> AgentWorkflow
+      -> BuiltinWorkflow
+      -> LangGraphWorkflowAdapter
+      -> FutureAutoGenWorkflowAdapter
+  -> ToolRuntime
+  -> EventStore
+  -> PolicyContext
+```
+
+这里的 `AgentWorkflow` 不是另一个 Agent，而是“单个 turn 或一段内部推理流程如何被编排”的接口。它解决的是框架替换问题：今天可以用自研流程，明天可把复杂流程交给 LangGraph，但 application 层、事件日志、权限审批和工具运行时不需要重写。
+
+### 2.2 AgentWorkflow 接口
+
+`AgentWorkflow` 是框架隔离层。application 层只依赖该接口，不直接依赖 LangGraph、LangChain 或 AutoGen。
+
+输入：
+
+- `WorkflowInput`：用户消息、slash command、审批回复或系统恢复事件。
+- `AgentState`：当前计划、摘要、最近观察、预算、活跃 Sub-Agent。
+- `ContextPackage`：本轮模型上下文。
+- `ModePolicy`：当前模式能力边界。
+- `ToolCatalog`：当前允许暴露给模型的工具清单。
+
+输出：
+
+- `WorkflowResult`
+- `AssistantMessage`
+- `PlanUpdate`
+- `ToolRequest`
+- `ApprovalRequest`
+- `ContextCompactionRequest`
+- `SubAgentTask`
+- `StopReason`
+
+约束：
+
+- Workflow 不直接写文件。
+- Workflow 不直接执行 shell。
+- Workflow 不直接写 `events.jsonl`。
+- Workflow 不直接写长期 memory。
+- Workflow 不绕过 Tool Registry 调用 MCP。
+- Workflow 只返回意图，由 `AgentTurnService` 执行副作用。
+
+### 2.2.1 AgentWorkflow 和 AgentTurnService 的分工
+
+`AgentTurnService` 负责产品级控制流：
+
+- 接收用户输入。
+- 解析 slash command。
+- 加载配置和模式策略。
+- 构建上下文。
+- 调用 `AgentWorkflow`。
+- 执行审批、工具调用、事件写入和状态快照。
+
+`AgentWorkflow` 负责模型级编排：
+
+- 判断本轮应该回答、规划、调用工具还是反思。
+- 组织 prompt、node、分支或循环。
+- 生成结构化意图。
+- 在 auto/debug/review 等复杂模式下决定下一步。
+
+该分工保证第三方框架只影响“怎么思考和编排”，不接管“怎么落盘、怎么审批、怎么执行副作用”。
+
+### 2.3 BuiltinWorkflow
+
+MVP 默认实现，也就是 ForgeCLI 自研的轻量 workflow。
+
+职责：
+
+- 普通 chat turn。
+- plan 模式只读规划。
+- act 模式下的工具请求。
+- 基础 reflection。
+- 简单 Plan-Act 循环。
+
+优势：
+
+- 依赖少。
+- 行为可控。
+- 易于测试。
+- 便于验证 ForgeCLI 自有事件和权限模型。
+
+`BuiltinWorkflow` 的目标不是替代所有框架，而是在 MVP 阶段提供最小、透明、可调试的 Agent 编排能力。等核心闭环稳定后，复杂流程可逐步迁移到 LangGraph adapter。
+
+### 2.4 LangGraphWorkflowAdapter
+
+LangGraph 适合在 Alpha/Beta 阶段引入，用于复杂 workflow：
+
+- plan -> execute -> observe -> reflect。
+- debug 分支。
+- review 分支。
+- auto 模式下的预算循环。
+- Sub-Agent 并行只读探索。
+
+接入要求：
+
+- LangGraph state 必须从 ForgeCLI `AgentState` 映射而来。
+- LangGraph checkpoint 不作为唯一恢复来源；ForgeCLI `events.jsonl` 仍是审计源。
+- LangGraph node 不能直接执行真实工具，只能产出 `ToolRequest`。
+- LangGraph interrupt 需要映射为 ForgeCLI `ApprovalRequest` 或 `UserInputRequired`。
+- LangGraph 版本升级需要兼容性测试。
+
+适合的 node：
+
+- `intent_node`
+- `plan_node`
+- `tool_decision_node`
+- `reflection_node`
+- `compact_node`
+- `sub_agent_dispatch_node`
+
+`LangGraphWorkflowAdapter` 的作用是把 ForgeCLI 的 `AgentState`、`ContextPackage`、`ToolCatalog` 映射到 LangGraph 的 graph state，并把 LangGraph 输出映射回 ForgeCLI 的 `WorkflowResult`。它不是新的存储系统，也不是新的权限系统。
+
+### 2.5 LangChain 使用边界
+
+LangChain 可选择性使用：
+
+- model provider 适配。
+- prompt template。
+- output parser。
+- text splitter。
+- 部分 retriever 组件。
+
+不建议首版使用：
+
+- 高层 Agent Executor。
+- 直接绑定 LangChain tool schema 为 ForgeCLI tool schema。
+- 依赖 LangChain memory 作为 ForgeCLI 记忆系统。
+
+原因：
+
+- ForgeCLI 需要更严格的权限、审计和本地状态恢复。
+- 高层 Agent 抽象容易绕过 mode policy。
+- LangChain memory 与 ForgeCLI 的 `jsonl + state + project memory` 职责重叠。
+
+### 2.6 AutoGen 使用边界
+
+AutoGen 更适合 V2 的完整 Multi-Agent 能力，不进入 MVP。
+
+适合场景：
+
+- 多角色协作开发。
+- 多 Agent 交叉 Review。
+- 前端、后端、测试 Agent 并行。
+- 企业平台后台 Agent。
+
+首版暂不采用的原因：
+
+- ForgeCLI 当前核心是单用户本地对话。
+- Multi-Agent 会显著增加状态、权限、调度和冲突解决复杂度。
+- Sub-Agent 已能覆盖首版大部分隔离探索和审查需求。
+
+`FutureAutoGenWorkflowAdapter` 只是预留命名，表示未来如果引入 AutoGen，必须通过同样的 workflow adapter 接口接入。首版不实现该 adapter，不应让代码依赖 AutoGen 的 agent/session/message 模型。
+
+### 2.7 框架依赖治理
+
+引入任何 Agent 框架前必须满足：
+
+- 有 ADR 记录。
+- 有最小 POC。
+- 有可替换 adapter。
+- 有版本锁定。
+- 有回滚方案。
+- 有关键 E2E。
+- 不改变 ForgeCLI 公共事件 schema。
+
+## 3. 领域模型
+
+### 3.1 Session
+
+`Session` 表示一次持续对话。
+
+核心字段：
+
+- `session_id`
+- `workspace_root`
+- `created_at`
+- `updated_at`
+- `current_mode`
+- `status`: active / paused / completed / failed
+- `state_version`
+- `active_plan_id`
+- `summary`
+
+### 3.2 Message
+
+`Message` 表示会话消息。
+
+字段：
+
+- `message_id`
+- `role`: user / assistant / tool / system / sub_agent
+- `content`
+- `created_at`
+- `metadata`
+
+### 3.3 AgentTurn
+
+`AgentTurn` 表示一次用户输入到 Agent 响应的完整处理过程。
+
+字段：
+
+- `turn_id`
+- `session_id`
+- `input_message_id`
+- `mode`
+- `context_snapshot_id`
+- `tool_invocations`
+- `output_message_id`
+- `status`
+
+### 3.4 Plan
+
+`Plan` 是可选对象，只在复杂任务、plan 模式或 act/auto 需要时产生。
+
+字段：
+
+- `plan_id`
+- `title`
+- `goal`
+- `steps`
+- `assumptions`
+- `risks`
+- `acceptance_criteria`
+- `status`
+
+`PlanStep` 字段：
+
+- `step_id`
+- `description`
+- `status`: pending / in_progress / completed / blocked / skipped
+- `requires_approval`
+- `expected_output`
+- `evidence`
+
+### 3.5 ModePolicy
+
+`ModePolicy` 决定当前 turn 的能力边界。
+
+字段：
+
+- `mode`
+- `allow_file_write`
+- `allow_shell`
+- `allow_network`
+- `allow_auto_continue`
+- `require_plan_before_write`
+- `require_approval_for_risk`
+- `max_steps`
+- `max_tool_calls`
+- `max_runtime_seconds`
+- `context_budget_tokens`
+
+默认策略：
+
+| 模式 | 写文件 | shell | 自动继续 | 写前计划 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| chat | 否 | 受限 | 否 | 是 | 默认对话 |
+| plan | 否 | 只读 | 否 | 是 | 只读规划 |
+| act | 是 | 是 | 否 | 是 | 用户确认后执行 |
+| auto | 是 | 是 | 是 | 是 | 有预算限制 |
+| review | 否 | 只读 | 否 | 否 | 审查优先 |
+| debug | 可选 | 是 | 可选 | 视情况 | 诊断优先 |
+
+### 3.6 ToolSpec
+
+字段：
+
+- `name`
+- `description`
+- `input_schema`
+- `output_schema`
+- `risk_level`: readonly / write / network / destructive / external
+- `timeout_seconds`
+- `supports_parallel`
+- `requires_approval`
+- `provider`: builtin / mcp / skill
+
+### 3.7 ToolInvocation
+
+字段：
+
+- `invocation_id`
+- `tool_name`
+- `input`
+- `started_at`
+- `finished_at`
+- `status`
+- `result`
+- `risk_level`
+- `approval_id`
+
+### 3.8 ApprovalRequest
+
+字段：
+
+- `approval_id`
+- `reason`
+- `risk_level`
+- `requested_action`
+- `created_at`
+- `status`: pending / approved / rejected / expired
+- `approved_by`
+
+### 3.9 MemoryItem
+
+字段：
+
+- `memory_id`
+- `scope`: session / project / user / skill
+- `content`
+- `source_event_id`
+- `confidence`
+- `created_at`
+- `updated_at`
+- `expires_at`
+
+## 4. 本地文件存储
+
+### 4.1 目录结构
+
+```text
+.forge/
+  config.yaml
+  sessions/
+    2026-06-16T10-30-00Z-abcd1234/
+      events.jsonl
+      state.json
+      summary.md
+      artifacts/
+        tool-output/
+        patches/
+        reports/
+      checkpoints/
+        0001.json
+        0002.json
+  memory/
+    project.md
+    user.json
+    skills.jsonl
+  mcp/
+    servers.toml
+```
+
+### 4.2 events.jsonl
+
+每行是一个独立 JSON event。事件必须 append-only，不做原地修改。
+
+事件通用字段：
+
+```json
+{
+  "event_id": "evt_01",
+  "session_id": "ses_01",
+  "type": "user_message",
+  "created_at": "2026-06-16T10:30:00Z",
+  "payload": {}
+}
+```
+
+核心事件类型：
+
+- `session_created`
+- `mode_changed`
+- `user_message`
+- `assistant_message`
+- `plan_created`
+- `plan_updated`
+- `tool_requested`
+- `approval_requested`
+- `approval_resolved`
+- `tool_completed`
+- `context_compacted`
+- `memory_written`
+- `checkpoint_created`
+- `error_occurred`
+- `session_paused`
+- `session_completed`
+
+工具完成事件示例：
+
+```json
+{
+  "event_id": "evt_tool_done_01",
+  "session_id": "ses_01",
+  "type": "tool_completed",
+  "created_at": "2026-06-16T10:31:20Z",
+  "payload": {
+    "invocation_id": "tool_01",
+    "tool_name": "shell.run",
+    "status": "succeeded",
+    "stdout_artifact": "artifacts/tool-output/tool_01.stdout",
+    "stderr_artifact": "artifacts/tool-output/tool_01.stderr",
+    "summary": "pytest passed: 124 passed",
+    "exit_code": 0
+  }
+}
+```
+
+### 4.3 state.json
+
+`state.json` 是快速恢复快照，可重建，不是审计源。
+
+示例：
+
+```json
+{
+  "schema_version": 1,
+  "session_id": "ses_01",
+  "workspace_root": "/repo",
+  "current_mode": "act",
+  "status": "active",
+  "active_plan_id": "plan_01",
+  "summary_path": "summary.md",
+  "last_event_id": "evt_120",
+  "context": {
+    "last_compaction_event_id": "evt_100",
+    "token_budget": 120000
+  },
+  "budgets": {
+    "max_tool_calls": 50,
+    "used_tool_calls": 12
+  }
+}
+```
+
+写入要求：
+
+- `events.jsonl` 先追加成功，再更新 `state.json`。
+- `state.json` 写入使用临时文件 + 原子 rename。
+- 恢复时以 `events.jsonl` 为准，可校验 `state.json.last_event_id`。
+
+## 5. Agent Turn 流程
+
+### 5.1 CLI 入口模型
+
+ForgeCLI 同时支持交互式和非交互式入口。
+
+交互式入口：
+
+- `forge`：在当前目录启动或恢复交互式会话。
+- `forge chat`：显式启动 chat 模式会话，可作为兼容命令保留。
+- 会话启动时绑定当前目录为 `workspace_root`。
+- 若当前目录或父目录存在 `.forge/`，优先使用已有项目状态。
+- 若存在可恢复 session，CLI 应提示用户恢复最近会话或创建新会话。
+
+非交互式入口：
+
+- `forge config ...`：配置生成、查看、修改和校验。
+- `forge models ...`：模型目录查看、刷新和推荐。
+- `forge resume <session_id>`：恢复指定 session。
+- `forge status` / `forge inspect`：诊断和审计。
+
+双入口规则：
+
+- `/config ...` 与 `forge config ...` 复用 `ConfigService`。
+- `/models ...` 与 `forge models ...` 复用 `ModelCatalogService`。
+- `/status` 与 `forge status` 复用 session 查询服务。
+- `/resume` 与 `forge resume ...` 复用恢复服务。
+- 交互式入口负责渲染和事件记录，非交互式入口负责脚本友好输出；核心校验和副作用规则必须一致。
+
+交互式会话内，用户输入分两类：
+
+- 普通自然语言：进入 Agent Turn。
+- 斜杠命令：由 `IntentRouter` 解析为控制意图，不直接交给模型自由解释。
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant CLI as CLI
+    participant APP as AgentTurnService
+    participant POL as Policy
+    participant CTX as ContextManager
+    participant LLM as ModelProvider
+    participant TOOLS as ToolRuntime
+    participant STORE as EventStore
+
+    U->>CLI: 输入自然语言或斜杠命令
+    CLI->>APP: handle_turn
+    APP->>STORE: append user_message
+    APP->>POL: resolve mode policy
+    APP->>CTX: build context
+    APP->>LLM: stream response / tool request
+    LLM-->>APP: answer or tool_call
+    alt tool call
+        APP->>POL: risk check
+        alt approval required
+            APP->>STORE: append approval_requested
+            APP-->>CLI: 请求用户确认
+        else allowed
+            APP->>TOOLS: invoke tool
+            TOOLS-->>APP: tool result
+            APP->>STORE: append tool_completed
+            APP->>LLM: continue with observation
+        end
+    else final answer
+        APP->>STORE: append assistant_message
+        APP->>STORE: update state snapshot
+        APP-->>CLI: 渲染输出
+    end
+```
+
+### 5.2 Intent Router
+
+每次输入先经过 Intent Router，识别：
+
+- 普通对话
+- 斜杠命令
+- 模式切换
+- 审批回复
+- 继续执行
+- 中断/暂停
+- 对当前计划的修改
+
+Intent Router 不直接执行动作，只返回结构化意图。
+
+### 5.3 Slash Commands
+
+首版建议支持：
+
+- `/help`：查看会话内可用命令。
+- `/mode`：查看当前模式。
+- `/chat`：切换到 chat。
+- `/plan`：切换到 plan。
+- `/act`：切换到 act。
+- `/auto`：切换到 auto。
+- `/review`：切换到 review。
+- `/debug`：切换到 debug。
+- `/status`：查看会话、计划、预算。
+- `/config`：查看或修改配置，等价于交互式版本的 `forge config ...`。
+- `/models`：查看、刷新或推荐模型，等价于交互式版本的 `forge models ...`。
+- `/compact`：压缩上下文。
+- `/resume`：恢复历史 session。
+- `/memory`：查看项目和用户记忆。
+- `/tools`：查看工具和权限。
+- `/mcp`：查看 MCP server。
+- `/pause`：暂停当前 session。
+- `/exit`：安全退出当前交互式会话。
+
+斜杠命令处理规则：
+
+- 命令必须写入事件日志，便于审计和恢复。
+- 模式切换类命令写入 `mode_changed` 事件。
+- 配置修改类命令写入配置变更事件。
+- 控制类命令不应被模型当作普通自然语言处理。
+- 未知命令应给出可操作错误，并提示 `/help`。
+
+## 6. 上下文管理
+
+### 6.1 Context Package
+
+每轮发送给模型的上下文由 `ContextPackage` 组成：
+
+- `system_instructions`
+- `mode_policy`
+- `session_summary`
+- `recent_messages`
+- `active_plan`
+- `workspace_snapshot`
+- `relevant_files`
+- `tool_observations`
+- `memory_items`
+- `skill_instructions`
+
+### 6.2 预算分配
+
+默认 token budget 比例：
+
+- 系统和模式策略：10%
+- 会话摘要：15%
+- 最近对话：20%
+- 计划和状态：15%
+- 文件片段和搜索结果：25%
+- 工具结果：10%
+- 记忆和 Skills：5%
+
+### 6.3 压缩策略
+
+触发条件：
+
+- token 使用超过阈值。
+- 工具输出过长。
+- 完成一个计划阶段。
+- 用户手动 `/compact`。
+- session 暂停前。
+
+摘要必须包含：
+
+- 用户目标和当前模式。
+- 已完成的关键动作。
+- 当前计划状态。
+- 已修改或关注的文件。
+- 失败、风险和未完成事项。
+- 用户明确约束。
+- 后续建议。
+
+## 7. 记忆管理
+
+### 7.1 记忆写入原则
+
+允许写入：
+
+- 项目测试命令。
+- 架构事实。
+- 用户明确偏好。
+- 多次验证过的工程约定。
+
+禁止默认写入：
+
+- 凭证、token、cookie、私钥。
+- 一次性猜测。
+- 未验证的模型推断。
+- 敏感业务数据。
+
+### 7.2 项目记忆
+
+`memory/project.md` 示例结构：
+
+```md
+# Project Memory
+
+## Commands
+
+- Test: `pytest`
+- Lint: `ruff check .`
+
+## Architecture
+
+- CLI entrypoint uses Typer.
+
+## Conventions
+
+- Prefer JSONL event logs for session storage.
+```
+
+### 7.3 用户记忆
+
+`memory/user.json` 示例：
+
+```json
+{
+  "language": "zh-CN",
+  "approval_preferences": {
+    "network": "ask",
+    "git_push": "ask"
+  },
+  "output_style": {
+    "prefer_concise_final": true
+  }
+}
+```
+
+## 8. Tool Runtime
+
+### 8.1 工具调用阶段
+
+1. Agent 生成 tool call。
+2. Tool Registry 查找 ToolSpec。
+3. Policy Context 做风险判断。
+4. Approval Service 决定是否询问用户。
+5. Tool Executor 执行。
+6. Result Normalizer 归一化输出。
+7. Artifact Store 保存长输出。
+8. Event Store 记录结果。
+
+### 8.2 工具风险等级
+
+| 等级 | 示例 | 默认策略 |
+| --- | --- | --- |
+| readonly | 读文件、搜索、git status | 允许 |
+| write | 编辑文件、生成文档 | act/auto 允许 |
+| network | 下载依赖、访问 API | 询问 |
+| destructive | 删除文件、reset、清库 | 强制询问 |
+| external | push、发布、发消息 | 强制询问 |
+
+### 8.3 内置工具
+
+首版工具：
+
+- `fs.read_file`
+- `fs.write_patch`
+- `fs.list_files`
+- `search.text`
+- `shell.run`
+- `git.status`
+- `git.diff`
+- `git.show`
+- `test.run`
+- `artifact.write`
+
+文件修改应优先通过 patch 语义执行，便于审计和回滚。
+
+## 9. MCP 详细设计
+
+### 9.1 配置
+
+`.forge/mcp/servers.toml`：
+
+```toml
+[[servers]]
+name = "github"
+transport = "stdio"
+command = "github-mcp-server"
+args = []
+enabled = true
+allowed_tools = ["search_issues", "get_pr"]
+```
+
+### 9.2 接入流程
+
+`McpClientAdapter` 负责：
+
+- 启动/连接 MCP server。
+- 读取 tool/resource/prompt。
+- 将 MCP tool schema 转换为 `ToolSpec`。
+- 为每个 MCP tool 自动加命名空间：`mcp.github.search_issues`。
+- 包装超时、错误、权限和事件日志。
+
+### 9.3 安全要求
+
+- MCP server 默认禁用网络敏感工具。
+- MCP tool 必须经过 Tool Registry，不能被 Agent 直接调用。
+- MCP 配置变更记录事件。
+- 企业模式支持 server allowlist。
+
+## 10. Skills 详细设计
+
+### 10.1 Skill Manifest
+
+```json
+{
+  "name": "fix-ci",
+  "version": "1.0.0",
+  "description": "Diagnose and fix CI failures",
+  "triggers": ["ci failed", "fix checks", "workflow failed"],
+  "instructions": "Read CI logs first, identify failing job, reproduce locally when possible.",
+  "allowed_tools": ["git.diff", "shell.run", "test.run"],
+  "risk_policy": {
+    "network": "ask",
+    "write": "allow_in_act"
+  }
+}
+```
+
+### 10.2 加载顺序
+
+1. 读取内置 Skills。
+2. 读取项目 `.forge/skills/`。
+3. 读取用户全局 Skills。
+4. 根据触发条件选择候选。
+5. 将 Skill 指令注入 Context Package。
+
+Skill 只影响上下文和可用工具建议，不改变全局安全策略。
+
+## 11. Model Catalog 详细设计
+
+`ModelCatalogService` 负责管理可用模型列表和模型能力元数据。它不负责新增 provider adapter；provider adapter 必须由代码实现。
+
+模型目录来源：
+
+- CLI 内置 fallback catalog。
+- 本地缓存 catalog。
+- Forge 远程 model catalog。
+- provider API 查询。
+- 企业策略 allowlist。
+
+命令入口：
+
+- 非交互式：`forge models list`、`forge models refresh`、`forge models recommend --task coding`。
+- 交互式：`/models list`、`/models refresh`、`/models recommend coding`。
+
+设计约束：
+
+- `/models` 与 `forge models ...` 必须复用 `ModelCatalogService`。
+- 远程 catalog 只提供公开模型元数据，不接收 API key，不读取项目内容。
+- CLI 必须支持离线 fallback。
+- 企业策略可以禁用远程 catalog 或配置私有 catalog URL。
+
+## 12. Sub-Agent 详细设计
+
+### 12.1 Sub-Agent Contract
+
+输入：
+
+- `task`
+- `mode_policy`
+- `context_slice`
+- `allowed_tools`
+- `output_schema`
+
+输出：
+
+- `summary`
+- `findings`
+- `evidence`
+- `recommended_actions`
+- `confidence`
+
+Sub-Agent 不直接写文件。需要修改时返回建议，由 Orchestrator 决定。
+
+### 12.2 调度策略
+
+适合并行的任务：
+
+- 多目录代码搜索。
+- 多方案比较。
+- 测试失败和代码 review 同时进行。
+- 大型 diff 分块审查。
+
+不适合并行的任务：
+
+- 同一路径写文件。
+- 依赖顺序明确的迁移。
+- 需要共享临时状态的调试。
+
+## 13. Multi-Agent 演进设计
+
+为未来 Multi-Agent 保留接口：
+
+- `AgentIdentity`
+- `AgentMailbox`
+- `AgentEventBus`
+- `AgentCapability`
+- `AgentLease`
+
+Multi-Agent 需要新增：
+
+- 独立 Agent 生命周期。
+- 任务分配协议。
+- 冲突解决机制。
+- 共享记忆权限。
+- 分布式 tracing。
+
+首版只实现 Sub-Agent，但事件模型应允许 `agent_id` 字段。
+
+## 14. 审批流程
+
+审批触发：
+
+- 高风险 shell 命令。
+- 写文件。
+- 删除文件。
+- 安装依赖。
+- 访问网络。
+- git push / 发布。
+- MCP 外部系统写操作。
+
+审批展示必须包含：
+
+- Agent 想做什么。
+- 具体命令或工具参数。
+- 风险等级。
+- 影响范围。
+- 推荐选择。
+
+审批结果写入事件日志。
+
+## 15. 错误处理
+
+错误分类：
+
+- `PolicyDeniedError`
+- `ApprovalRejectedError`
+- `ToolTimeoutError`
+- `ToolExecutionError`
+- `ModelProviderError`
+- `ContextOverflowError`
+- `McpServerError`
+- `StateRecoveryError`
+
+处理原则：
+
+- 工具错误不应破坏 session。
+- 可重试错误最多自动重试 2 次。
+- 连续失败后进入 reflection。
+- 恢复失败时优先从 events 重建 state。
+- 所有异常写入 `error_occurred` 事件。
+
+## 16. 可观测性
+
+### 16.1 日志
+
+本地日志包含：
+
+- session id
+- turn id
+- mode
+- tool name
+- latency
+- status
+- error type
+
+日志默认不包含敏感输入全文。
+
+### 16.2 Trace
+
+企业模式可接 OpenTelemetry：
+
+- `agent.turn`
+- `llm.call`
+- `tool.invoke`
+- `mcp.call`
+- `context.build`
+- `memory.search`
+
+### 16.3 Inspect
+
+`forge inspect <session_id>` 应展示：
+
+- 当前状态。
+- 当前计划。
+- 最近消息。
+- 工具调用历史。
+- 审批历史。
+- 错误和恢复点。
+- artifacts 路径。
+
+## 17. 配置设计
+
+配置是 ForgeCLI 的一等能力，用于让用户和企业控制模型、模式、权限、MCP、存储、上下文预算、工具开关和 UI 行为。配置文件采用 TOML，敏感凭证不写入配置文件。
+
+### 17.1 配置模块职责
+
+`ConfigService` 负责：
+
+- 加载项目配置、用户全局配置、环境变量和 CLI 参数。
+- 合并配置并生成最终 `EffectiveConfig`。
+- 输出不可变 `EffectiveConfig`，并由 application service 显式注入 session/turn。
+- 校验配置 schema。
+- 提供 `forge config get/set/list/validate/migrate`。
+- 在配置变更时写入 session event。
+- 为 ModePolicy、ToolRuntime、MCP、ModelProvider、ContextManager 提供配置视图。
+
+`ConfigService` 可以作为应用生命周期内单例，但 `EffectiveConfig` 不可变，领域层不得直接读取全局配置、环境变量或配置文件。
+
+配置领域模型建议：
+
+- `ForgeConfig`
+- `ModelConfig`
+- `ModeConfig`
+- `PolicyConfig`
+- `ToolConfig`
+- `McpConfig`
+- `StorageConfig`
+- `ContextConfig`
+- `UiConfig`
+
+### 17.2 配置文件
+
+项目配置：`.forge/config.toml`
+
+```toml
+schema_version = 1
+default_mode = "chat"
+
+[model]
+provider = "openai"
+model = "gpt-5"
+timeout_seconds = 60
+
+[policy]
+network = "ask"
+write = "ask_in_chat_allow_in_act"
+destructive = "ask"
+external = "ask"
+max_auto_steps = 20
+
+[tools.shell]
+enabled = true
+default_timeout_seconds = 120
+
+[tools.git]
+enabled = true
+push_requires_approval = true
+
+[mcp]
+servers_file = ".forge/mcp/servers.toml"
+default_enabled = false
+
+[context]
+max_tokens = 120000
+auto_compact_threshold = 0.8
+
+[storage]
+type = "jsonl"
+sessions_dir = ".forge/sessions"
+artifacts_dir = ".forge/artifacts"
+```
+
+用户全局配置建议放在：
+
+```text
+~/.forge/config.toml
+```
+
+企业托管环境可额外支持只读策略文件：
+
+```text
+/etc/forgecli/policy.toml
+```
+
+### 17.3 配置优先级
+
+配置优先级：
+
+1. 企业只读策略
+2. CLI 参数
+3. 环境变量
+4. 项目 `.forge/config.toml`
+5. 用户全局配置
+6. 默认值
+
+企业只读策略不是普通默认值。它可以设置不可被用户降低的安全下限，例如强制 destructive 操作审批、禁用默认联网、限制 MCP server allowlist。
+
+### 17.4 配置命令
+
+建议命令：
+
+- `forge config list`
+- `forge config get <key>`
+- `forge config init`
+- `forge config set <key> <value>`
+- `forge config unset <key>`
+- `forge config validate`
+- `forge config migrate`
+- `forge config explain <key>`
+
+`set/unset/migrate` 必须写入配置变更事件，便于审计。
+
+交互式会话中提供对应斜杠命令：
+
+- `/config list`
+- `/config get <key>`
+- `/config init`
+- `/config set <key> <value>`
+- `/config unset <key>`
+- `/config validate`
+- `/config explain <key>`
+
+交互式 `/config` 与非交互式 `forge config` 必须复用 `ConfigService`。
+
+### 17.5 可配置范围
+
+首版开放：
+
+- 默认模式：`default_mode`
+- 模型 provider 和 model
+- context token budget
+- auto compact 阈值
+- session 和 artifact 默认目录
+- shell 默认超时
+- 工具开关
+- MCP server 配置路径
+- 高风险操作审批策略
+- 用户输出语言和详细程度
+
+首版不开放：
+
+- 绕过审批。
+- 关闭危险命令拦截。
+- 修改事件日志路径到 workspace 外。
+- 允许 MCP 工具直接跳过 Tool Registry。
+- 将 API key、token、secret 写入项目配置文件。
+
+## 18. 测试策略
+
+### 18.1 单元测试
+
+- ModePolicy 决策。
+- EventStore append/replay。
+- StateStore 原子写入。
+- ContextManager 裁剪和压缩。
+- ToolSpec schema 校验。
+- Memory 写入过滤。
+
+### 18.2 集成测试
+
+- CLI session 创建和恢复。
+- shell/git/test 工具调用。
+- MCP server mock。
+- Skill 加载和触发。
+- 审批流程。
+
+### 18.3 端到端测试
+
+构造 demo repo，验证：
+
+- 用户进入 plan 模式。
+- Agent 搜索代码并输出计划。
+- 用户切换 act。
+- Agent 修改文件。
+- Agent 运行测试。
+- Agent 汇报 diff 和验证结果。
+- 中断后 resume 可继续。
+
+### 18.4 安全测试
+
+- 越权路径写入被拒绝。
+- 危险命令需审批。
+- 敏感信息不进入日志。
+- MCP 未授权工具不可调用。
+
+## 19. 首版验收标准
+
+- `forge` 启动交互式会话。
+- 支持 chat/plan/act 模式切换。
+- 会话落盘为 `events.jsonl` 和 `state.json`。
+- 中断后可 `forge resume`。
+- 可读文件、搜索、运行受控 shell。
+- 写文件前受模式和审批控制。
+- 可生成计划并按计划执行。
+- 可压缩上下文并保留摘要。
+- 至少接入一个 mock MCP server。
+- 至少加载一个本地 Skill。
+- 核心领域逻辑测试覆盖率不低于 80%。
