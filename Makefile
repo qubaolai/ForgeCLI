@@ -1,4 +1,4 @@
-.DEFAULT_GOAL := run
+.DEFAULT_GOAL := help
 # install               poetry install
 # lock                  poetry lock
 # check                 poetry check
