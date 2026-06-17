@@ -1,21 +1,25 @@
-# 2026-06-24：领域模型第一批
+# 2026-06-24：配置命令与 EffectiveConfig
 
 ## 今日目标
 
-实现 `Session`、`Message`、`AgentTurn` 的领域模型。
+实现本地配置的最小闭环，让 `forge config ...` 能创建、查看、校验和修改运行时配置。
 
 ## 开发指导
 
-- 按详细设计定义字段和状态。
-- 不引入文件系统或 CLI 依赖。
-- 校验必填字段、状态枚举和时间字段。
+- 使用 `.forge/config.toml` 作为项目配置路径。
+- 定义 `ConfigService` 和不可变 `EffectiveConfig`。
+- 支持 `forge config init`、`list`、`get`、`set`、`validate`。
+- `[model]` 表示运行时默认模型选择，不保存 API key、token 等敏感凭证。
+- 配置读取和写入逻辑不要放在 CLI 命令函数中。
+- Python 读取 TOML 使用标准库能力；若需要写 TOML，明确引入最小依赖或封装写入器。
 
 ## 最终产物
 
-- Conversation 相关领域模型。
-- 单元测试覆盖模型创建、非法状态、序列化。
+- `ConfigService` 最小实现。
+- `EffectiveConfig` 和配置值对象。
+- `.forge/config.toml` 初始化模板。
+- CLI 配置命令测试和 service 单元测试。
 
 ## 代码验收
 
-我会检查领域模型是否纯净、是否没有依赖 Typer/Rich/LLM SDK、是否具备可序列化能力。
-
+我会检查配置合并边界、敏感凭证保护、CLI 与 service 的职责分离，以及配置文件写入是否可重复、可验证。
