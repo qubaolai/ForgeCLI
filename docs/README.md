@@ -8,6 +8,7 @@ ForgeCLI 的目标是建设一个企业级、生产可用、本地优先的对�
 - [02-detailed-design.md](02-detailed-design.md)：系统详细设计，说明领域模型、事件存储、上下文、记忆、工具、MCP、Skills、Agent Runtime 等实现细节。
 - [03-delivery-plan.md](03-delivery-plan.md)：开发周期、阶段目标、里程碑、验收口径和版本路线。
 - [04-engineering-standards.md](04-engineering-standards.md)：生产级工程流程规范，包括需求、设计、编码、测试、发布、安全、运维和质量门禁。
+- [05-acceptance-standards.md](05-acceptance-standards.md)：代码验收标准，说明结构、语法、逻辑、安全、测试和验收报告格式。
 - [adr/README.md](adr/README.md)：架构决策记录，说明重要决策的背景、备选方案、影响和验收标准。
 - [roadmap/README.md](roadmap/README.md)：按阶段和日期拆分的开发排期、每日目标和代码验收要求。
 
