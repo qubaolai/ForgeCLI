@@ -6,9 +6,9 @@ OptionType 目前只有 config 用，先放这里；若将来别的交互命令�
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum, auto
-from random import choices
 
 
 class OptionType(Enum):
@@ -20,10 +20,10 @@ class OptionType(Enum):
 
 @dataclass(frozen=True)
 class ConfigOption:
-    key: str # 配置项
-    label: str # 配置项说明
+    key: str  # 配置项
+    label: str  # 配置项说明
     type: OptionType
-    choices: tuple[str, ...] = () # CHOICE专用
+    choices: tuple[str, ...] = ()  # CHOICE专用
 
 
 WORKSPACE_DIR = ConfigOption("workspace.dir", "工作区目录", OptionType.PATH)

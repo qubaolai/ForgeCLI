@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from forgecli.interfaces.cli import __version__
 from forgecli.interfaces.cli.app import app
+from forgecli.shared import __version__
 
 # Typer 的测试 runner 会捕获 stdout/stderr，并模拟 stdin 输入。
 runner = CliRunner()

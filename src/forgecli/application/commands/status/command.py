@@ -1,4 +1,4 @@
-"""/help: 列出可用命令, 或查看某个命令的帮助(支持 /help config)。"""
+"""/status 查看当前状态信息。"""
 
 from __future__ import annotations
 
@@ -6,27 +6,26 @@ from forgecli.application.commands.base import CommandHandler
 from forgecli.application.commands.registry import CommandRegistry
 from forgecli.application.ports import Output
 from forgecli.domain.intents import SlashCommand
+from forgecli.shared import __version__
 
 
-class HelpCommand(CommandHandler):
+class StatusCommand(CommandHandler):
+    """06-23 的最小 /status handler。
+
+    当前只证明 slash command 能通过 registry 分派到 handler；真实 session、计划、
+    审批队列等状态会在后续 roadmap 日期接入。
+    """
+
     def __init__(self, registry: CommandRegistry, output: Output) -> None:
         self._registry = registry
         self._output = output
 
     def execute(self, command: SlashCommand) -> None:
-        if command.args:
-            self._show_one(command.args[0].lstrip("/").lower())
-        else:
-            self._show_all()
-
-    def _show_all(self) -> None:
-        self._output.print("可用命令：")
-        for spec in self._registry.all_specs():
-            self._output.print(f"  /{spec.name:<8} {spec.summary}")
+        self._show_one(command.command)
 
     def _show_one(self, name: str) -> None:
         spec = self._registry.get(name)
         if spec is None:
             self._output.print(f"未知命令 /{name}。输入 /help 查看可用命令。")
             return
-        self._output.print(f"/{spec.name} — {spec.summary}")
+        self._output.print(f"当前系统{__version__}运行状态 暂未实现")

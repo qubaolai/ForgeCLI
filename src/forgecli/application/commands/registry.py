@@ -1,13 +1,14 @@
-"""命令注册中心
+"""命令注册中心。
 
-CommandRegistry 是"命令目录": 命令名 -> CommandSpec, 服务两个使用方:
-    - IntentRouter: 只看 spec.kind / mode /action, 决定解析成那种用户意图
-    - REPL 分派器: 取 spec.handler 执行已识别的斜杠命令
+CommandRegistry 是“命令目录”：命令名 -> CommandSpec，服务两个使用方：
+    - IntentRouter：只看 spec.kind / mode / action，决定解析成哪种用户意图。
+    - REPL 分派器：取 spec.handler 执行已识别的斜杠命令。
 
-新增命令 = register一条 spec, IntentRouter 与 REPL都不用修改
+新增命令时注册一条 spec 即可，IntentRouter 与 REPL 分派逻辑不需要随之改动。
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 
 from forgecli.application.commands.base import CommandHandler
@@ -16,12 +17,12 @@ from forgecli.domain.intents import ControlAction, IntentKind, SessionMode
 
 @dataclass(frozen=True)
 class CommandSpec:
-    """一条斜杠命令的注册信息, 描述路由 + 分派所需, 不含命令内部语法"""
+    """一条斜杠命令的注册信息，描述路由与分派所需的最小元数据。"""
 
-    name: str # 规范的命令名(小写)
-    kind: IntentKind # 决定解析成哪种 intent
-    summary: str = "" # 共 /help 命令展示使用
-    mode: SessionMode | None = None # kind == MODE_CHANGE 必填
+    name: str  # 规范的命令名（小写）
+    kind: IntentKind  # 决定解析成哪种 intent
+    summary: str = ""  # 供 /help 命令展示使用
+    mode: SessionMode | None = None  # kind == MODE_CHANGE 必填
     action: ControlAction | None = None  # kind == CONTROL 必填
     handler: CommandHandler | None = None  # kind == SLASH_COMMAND 必填
 
@@ -33,7 +34,7 @@ class CommandSpec:
             raise ValueError(f"控制命令缺少 action: {self.name}")
         if self.kind is IntentKind.SLASH_COMMAND and self.handler is None:
             raise ValueError(f"斜杠命令缺少 handler: {self.name}")
-        
+
 
 class CommandRegistry:
     """命令名 -> CommandSpec 注册表"""

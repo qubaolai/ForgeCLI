@@ -9,8 +9,8 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
-from forgecli.interfaces.cli import __version__
 from forgecli.interfaces.cli.repl import start_repl
+from forgecli.shared import __version__
 
 app = typer.Typer(
     name="forge",

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 class Choice:
     label: str
     preview: Callable[[], str] | None = None
-    submenu: Callable[[], "Menu"] | None = None
+    submenu: Callable[[], Menu] | None = None
     on_cycle: Callable[[int], None] | None = None
     on_text: Callable[[str], None] | None = None
     text_default: Callable[[], str] | None = None

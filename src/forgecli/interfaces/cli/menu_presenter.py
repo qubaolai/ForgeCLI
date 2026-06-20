@@ -9,6 +9,7 @@
 """
 
 from __future__ import annotations
+
 import sys
 
 from rich.console import Console, Group
@@ -42,9 +43,10 @@ class RichMenuPresenter(MenuPresenter):
         editing: tuple[Choice, str] | None = None
         fd = sys.stdin.fileno()
 
-        with raw_mode(fd=fd), Live(
-            console=self._console, auto_refresh=False, screen=False
-        ) as live:
+        with (
+            raw_mode(fd=fd),
+            Live(console=self._console, auto_refresh=False, screen=False) as live,
+        ):
             while stack:
                 menu = stack[-1]
                 rows = self._visible(menu=menu, query=query)
@@ -57,7 +59,7 @@ class RichMenuPresenter(MenuPresenter):
                         index=index,
                         searching=searching,
                         query=query,
-                        editing=editing
+                        editing=editing,
                     ),
                     refresh=True,
                 )
@@ -127,15 +129,13 @@ class RichMenuPresenter(MenuPresenter):
                     elif row.on_cycle:
                         row.on_cycle(+1)
 
-
-
     def _visible(self, menu: Menu, query: str) -> list[Choice]:
         if not query:
             return list(menu.choices)
-        
+
         q = query.lower()
         return [c for c in menu.choices if q in c.label.lower()]
-    
+
     def _redner(
         self,
         menu: Menu,
@@ -143,7 +143,7 @@ class RichMenuPresenter(MenuPresenter):
         index: int,
         searching: bool,
         query: str,
-        editing: tuple[Choice, str] | None
+        editing: tuple[Choice, str] | None,
     ) -> Panel:
         lines: list[Text] = []
         for i, row in enumerate(rows):
@@ -152,7 +152,7 @@ class RichMenuPresenter(MenuPresenter):
             line.append(row.label, style="reverse" if highlight else "")
             preview = row.preview() if row.preview else ""
             if preview:
-                line.append("    ")
+                line.append("\t\t\t\t")
                 if row.on_cycle:
                     line.append(f"◀ {preview} ▶", style="yellow")
                 else:

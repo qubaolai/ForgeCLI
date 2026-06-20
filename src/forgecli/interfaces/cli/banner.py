@@ -8,7 +8,7 @@ from __future__ import annotations
 from rich.console import Console
 from rich.text import Text
 
-from forgecli.interfaces.cli import __version__
+from forgecli.shared import __version__
 
 # ANSI Shadow 字体的 "FORGE"。保持为文本常量，避免在启动阶段引入额外资源。
 _LOGO = r"""

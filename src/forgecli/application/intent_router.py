@@ -7,7 +7,7 @@ IntentRouter 是纯解析器：只依赖领域值对象与 CommandRegistry，不
     1. 空白            -> 拒绝(REPL 已过滤，兜底)。
     2. 不以 "/" 开头    -> UserMessage(自然语言)。
     3. 裸 "/"          -> 等价 /help，强制展示可用命令。
-    4. 合法斜杠语法     -> 查 registry：MODE_CHANGE/CONTROL/SLASH_COMMAND/未注册=Unknown。
+    4. 合法斜杠语法     -> 查 registry：MODE_CHANGE/CONTROL/SLASH_COMMAND/未注册。
     5. "/" 开头但语法非法(/help是做什么用的、/usr/bin/env) -> UserMessage。
 
 判别核心：命令名后必须紧跟空白或行尾——空格是"这是命令调用"的唯一信号。
@@ -59,9 +59,7 @@ class IntentRouter:
         args = tuple(rest.split()) if rest else ()
         return self._classify(raw_text, name, args)
 
-    def _classify(
-        self, raw_text: str, name: str, args: tuple[str, ...]
-    ) -> UserIntent:
+    def _classify(self, raw_text: str, name: str, args: tuple[str, ...]) -> UserIntent:
         spec = self._registry.get(name)
         if spec is None:
             return UnknownCommand(

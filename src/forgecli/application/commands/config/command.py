@@ -8,8 +8,8 @@ from pathlib import Path
 from forgecli.application.commands.base import CommandHandler
 from forgecli.application.commands.config.options import (
     LOG_LEVEL,
-    THEME,
     TELEMETRY,
+    THEME,
     WORKSPACE_DIR,
     ConfigOption,
     OptionType,
@@ -55,13 +55,13 @@ class ConfigCommand(CommandHandler):
                     preview=self._shown(THEME),
                     on_cycle=self._cycle_choice(THEME),
                 ),
-                Choice("高级…", submenu=self._advanced_menu),
+                Choice("日志级别", submenu=self._advanced_menu),
             ),
         )
 
     def _advanced_menu(self) -> Menu:
         return Menu(
-            "高级",
+            "日志级别",
             (
                 Choice(
                     "日志级别",
@@ -77,7 +77,7 @@ class ConfigCommand(CommandHandler):
         return lambda: self._service.get(option.key) or ""
 
     def _shown(self, option: ConfigOption) -> Callable[[], str]:
-        return lambda: self._service.get(option.key) or "(未设置)"
+        return lambda: self._service.get(option.key) or "(默认)"
 
     def _cycle_bool(self, option: ConfigOption) -> Callable[[int], None]:
         def cycle(_delta: int) -> None:
@@ -104,7 +104,9 @@ class ConfigCommand(CommandHandler):
                 return
             if option.type is OptionType.PATH:
                 path = Path(value).expanduser()
-                value = str(path if path.is_absolute() else (Path.cwd() / path).resolve())
+                if not path.is_absolute():
+                    path = (Path.cwd() / path).resolve()
+                value = str(path)
             self._service.set(option.key, value)
 
         return submit
