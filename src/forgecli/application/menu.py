@@ -2,10 +2,11 @@
 
 驱动逻辑在 interfaces 层的 MenuPresenter：导航方式是 UI 细节，application 只描述
 "有哪些项、每项做什么"。各行为字段都可选，Presenter 按是否存在决定按键含义：
-    submenu  -> →/Enter 下钻(多层)
-    on_cycle -> ←/→ 原地切换(开关 / 枚举)
-    on_text  -> →/Enter 行内文本编辑，提交回调
-    preview  -> 右侧当前值(每次渲染重读)
+    submenu   -> →/Enter 下钻(多层)
+    on_cycle  -> ←/→ 原地切换(开关 / 枚举)
+    on_text   -> →/Enter 行内文本编辑，提交回调
+    on_select -> →/Enter 触发一次动作(无值，如"删除""添加")
+    preview   -> 右侧当前值(每次渲染重读)
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ class Choice:
     on_cycle: Callable[[int], None] | None = None
     on_text: Callable[[str], None] | None = None
     text_default: Callable[[], str] | None = None
+    on_select: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)

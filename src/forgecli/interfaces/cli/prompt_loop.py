@@ -23,10 +23,11 @@
     - Enter 选中（填入输入行）；命令已完整时 Enter 直接提交；
     - Esc 关闭菜单。
 
-退出逻辑（与 Claude Code 一致）：
+退出逻辑（仿 Claude Code 的双击 Ctrl-C）：
     - 输入框有内容时按 Ctrl-C → 清空内容（不退出）；
-    - 空行第一次 Ctrl-C → 提示行变为"再按一次 Ctrl-C 退出"；
-    - 空行再次 Ctrl-C → 抛出 QuitSignal 退出；
+    - 空行第一次 Ctrl-C → 提示行变为"再按一次 Ctrl-C 退出"，并起一个 500ms 定时器；
+    - 空行在 500ms 内再次 Ctrl-C → 抛出 QuitSignal 退出；
+    - 超过 500ms 没有第二次 → 定时器复位"待退出"并重绘，提示行还原（第二次需重新计时）；
     - 空行 Ctrl-D → 抛出 EOFError 退出；
     - 一旦开始打字，"待退出"状态立即解除。
 
@@ -35,6 +36,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable, Sequence
 
 from prompt_toolkit.application import Application
@@ -59,6 +61,9 @@ from prompt_toolkit.styles import Style
 
 # 命令菜单最多显示的行数；命令很多时只显示前若干行（当前命令数远小于它）。
 _MENU_MAX_ROWS = 12
+
+# 两次 Ctrl-C 退出的有效间隔（秒）。超过它，第一次按键作废，需重新计时。
+_EXIT_WINDOW = 0.5
 
 # 所有界面元素的配色集中在这里，方便统一改主题。
 # "class:xxx" 在布局里被引用，这里给出每个 class 对应的样式字符串。
@@ -127,6 +132,8 @@ class ForgePrompt:
     def __init__(self, commands: Sequence[tuple[str, str]]) -> None:
         # "待退出"标志：空行第一次 Ctrl-C 后置 True；它决定提示行是否显示退出警示。
         self._exit_armed = False
+        # 待退出复位定时器：第一次 Ctrl-C 起，500ms 内没有第二次就把它复位。
+        self._reset_handle: asyncio.TimerHandle | None = None
 
         # 输入缓冲区：挂上斜杠补全器，并开启"边打字边补全"。
         self._buffer = Buffer(
@@ -134,7 +141,7 @@ class ForgePrompt:
             complete_while_typing=True,
             multiline=False,
         )
-        # 用户一开始打字就解除"待退出"——和 Claude Code 一样，输入会驱散退出提示。
+        # 用户一开始打字就解除"待退出", 输入会驱散退出提示。
         self._buffer.on_text_changed += self._on_text_changed
 
         self._app = self._build_app()
@@ -147,7 +154,7 @@ class ForgePrompt:
         - 空行 Ctrl-D：抛出内置的 EOFError。
         调用方负责捕获这两个异常并据此退出。
         """
-        self._exit_armed = False
+        self._disarm_exit()
         self._buffer.reset()  # 清掉上一轮可能残留的内容
         # app.run() 会一直运行直到某个按键调用了 app.exit(...)，
         # 返回值就是 exit(result=...) 里传的字符串。
@@ -157,7 +164,29 @@ class ForgePrompt:
 
     def _on_text_changed(self, _buffer: Buffer) -> None:
         """输入内容一变化就解除待退出状态（打字驱散退出提示）。"""
+        self._disarm_exit()
+
+    def _arm_exit(self, app: Application[str]) -> None:
+        """进入待退出，并起一个定时器：到点没有第二次 Ctrl-C 就复位。"""
+        self._exit_armed = True
+        if self._reset_handle is not None:
+            self._reset_handle.cancel()
+        self._reset_handle = asyncio.get_running_loop().call_later(
+            _EXIT_WINDOW, lambda: self._reset_exit(app)
+        )
+
+    def _disarm_exit(self) -> None:
+        """解除待退出，并撤掉可能在跑的复位定时器。"""
         self._exit_armed = False
+        if self._reset_handle is not None:
+            self._reset_handle.cancel()
+            self._reset_handle = None
+
+    def _reset_exit(self, app: Application[str]) -> None:
+        """定时器到点：复位待退出并重绘，把"再按一次"提示还原。"""
+        self._exit_armed = False
+        self._reset_handle = None
+        app.invalidate()
 
     def _prompt_prefix(self, line_number: int, wrap_count: int) -> StyleAndTextTuples:
         """输入行左侧的前缀。单行输入，固定显示 "› "。"""
@@ -232,7 +261,6 @@ class ForgePrompt:
         # 用 HSplit（纵向堆叠）拼出"菜单 / 上边框 / 输入行 / 下边框 / 提示行"。
         root = HSplit(
             [
-                menu_pane,
                 _border_row("╭", "╮"),
                 # 中间这行用 VSplit（横向）：左竖线 + 输入区 + 右竖线。
                 VSplit(
@@ -245,6 +273,7 @@ class ForgePrompt:
                 _border_row("╰", "╯"),
                 # 框下提示行：内容由 _bottom_hint 动态返回。
                 Window(FormattedTextControl(self._bottom_hint), height=1),
+                menu_pane,
             ]
         )
 
@@ -306,13 +335,14 @@ class ForgePrompt:
             if buffer.text:
                 # 情况1：有内容 → 清空（这次 Ctrl-C 被"消费"，于是才需要按两次）。
                 buffer.reset()
-                self._exit_armed = False
+                self._disarm_exit()
             elif self._exit_armed:
-                # 情况3：空行 + 已待退出 → 真正退出。
+                # 情况3：空行 + 窗口内的第二次 → 真正退出。
+                self._disarm_exit()
                 event.app.exit(exception=QuitSignal())
             else:
-                # 情况2：空行 + 首次 → 进入待退出，提示行随即变样。
-                self._exit_armed = True
+                # 情况2：空行 + 首次（或上次已超时复位）→ 待退出 + 起 500ms 定时器。
+                self._arm_exit(event.app)
 
         @kb.add("c-d")
         def _eof(event: KeyPressEvent) -> None:

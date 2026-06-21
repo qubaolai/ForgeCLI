@@ -218,3 +218,5 @@ __marimo__/
 .streamlit/secrets.toml
 
 .vscode
+# forge 本地配置（不入库）
+.forge/

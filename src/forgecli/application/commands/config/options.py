@@ -1,36 +1,25 @@
-"""/config 命令的配置项
+"""/config 菜单项（纯 UI 元数据）。
 
-加配置项 = 在这里加一个ConfigOption, 并挂到 command.py 的对应菜单分组
-OptionType 目前只有 config 用，先放这里；若将来别的交互命令也要"按类型取值"，
-再把它上提到交互框架(menu.py / ports.py)。
+这里只描述“菜单上显示什么标签、对应哪个配置键”。配置键的类型、默认值、
+允许取值与校验都属于业务，住在 application/config/keys.py，菜单不复制这些定义。
+新增可配置项：先在 keys.SCHEMA 注册键，再在这里挂一个 MenuOption
+并加进 command.py 的分组。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum, auto
 
-
-class OptionType(Enum):
-    TOGGLE = auto()  # 开关 -> confirm
-    TEXT = auto()  # 文本 -> ask_text
-    PATH = auto()  # 路径 -> ask_text + 校验
-    CHOICE = auto()  # 枚举 -> select
+from forgecli.application.config import keys
 
 
 @dataclass(frozen=True)
-class ConfigOption:
-    key: str  # 配置项
-    label: str  # 配置项说明
-    type: OptionType
-    choices: tuple[str, ...] = ()  # CHOICE专用
+class MenuOption:
+    label: str  # 菜单展示文案
+    key: str  # 对应 keys.SCHEMA 中的配置键名
 
 
-WORKSPACE_DIR = ConfigOption("workspace.dir", "工作区目录", OptionType.PATH)
-TELEMETRY = ConfigOption("telemetry.enabled", "启用使用统计", OptionType.TOGGLE)
-THEME = ConfigOption(
-    "output.theme", "输出主题", OptionType.CHOICE, choices=("dark", "light")
-)
-LOG_LEVEL = ConfigOption(
-    "log.level", "日志级别", OptionType.CHOICE, choices=("debug", "info", "warn")
-)
+WORKSPACE_DIR = MenuOption("工作区目录", keys.WORKSPACE_DIR)
+TELEMETRY = MenuOption("启用使用统计", keys.TELEMETRY_ENABLED)
+THEME = MenuOption("输出主题", keys.OUTPUT_THEME)
+LOG_LEVEL = MenuOption("日志级别", keys.LOG_LEVEL)
