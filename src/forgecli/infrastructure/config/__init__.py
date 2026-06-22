@@ -1,7 +1,10 @@
-"""配置持久化的文件系统实现（.forge/config.toml）。"""
+"""Configuration infrastructure adapters."""
 
-from __future__ import annotations
-
+from forgecli.infrastructure.config.paths import (
+    CONFIG_DIR_ENV,
+    config_dir,
+    config_file,
+)
 from forgecli.infrastructure.config.toml_store import TomlConfigStore
 
-__all__ = ["TomlConfigStore"]
+__all__ = ["CONFIG_DIR_ENV", "config_dir", "config_file", "TomlConfigStore"]

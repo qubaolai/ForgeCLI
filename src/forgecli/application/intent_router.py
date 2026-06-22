@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 
-from forgecli.application.commands.registry import CommandRegistry
+from forgecli.application.slash_commands.registry import CommandRegistry
 from forgecli.domain.intents import (
     ControlSignal,
     IntentKind,

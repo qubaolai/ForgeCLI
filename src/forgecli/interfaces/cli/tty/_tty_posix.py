@@ -1,43 +1,15 @@
-"""从 TTY 读取单个按键并解码为 Key。
-
-仅 POSIX(termios/tty)。
-用 os.read 直接读 fd, 绕过 Python 文本缓冲，保证 select 能正确判断 ESC 后是否有序列。
-"""
+"""POSIX(termios/tty)按键读取适配器。"""
 
 from __future__ import annotations
 
-import enum
 import os
 import select
 import sys
 import termios
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 
-
-class Key(enum.Enum):
-    UP = enum.auto()
-    DOWN = enum.auto()
-    LEFT = enum.auto()
-    RIGHT = enum.auto()
-    ENTER = enum.auto()
-    ESC = enum.auto()
-    BACKSPACE = enum.auto()
-    SLASH = enum.auto()
-    CTRL_C = enum.auto()
-    CHAR = enum.auto()  # 可打印字符，见 .char
-    OTHER = enum.auto()
-
-
-@dataclass(frozen=True)
-class KeyPress:
-    key: Key
-    char: str = ""
-
-
-def stdin_is_tty() -> bool:
-    return sys.stdin.isatty() and sys.stdout.isatty()
+from forgecli.interfaces.cli.tty.keys import Key, KeyPress
 
 
 @contextmanager

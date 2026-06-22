@@ -19,7 +19,7 @@ from forgecli.application.config.errors import (
 )
 from forgecli.application.config.model import EffectiveConfig
 from forgecli.application.config.service import FileConfigService
-from forgecli.infrastructure.config.toml_store import TomlConfigStore
+from forgecli.infrastructure.config import TomlConfigStore
 
 
 def _service(tmp_path: Path) -> tuple[FileConfigService, Path]:

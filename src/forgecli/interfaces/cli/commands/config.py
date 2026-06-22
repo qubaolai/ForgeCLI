@@ -12,22 +12,22 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from forgecli.application.commands.base import CommandHandler
-from forgecli.application.commands.config.llm_menu import LlmMenu
-from forgecli.application.commands.config.options import (
-    LOG_LEVEL,
-    TELEMETRY,
-    THEME,
-    WORKSPACE_DIR,
-    MenuOption,
-)
 from forgecli.application.config import keys
 from forgecli.application.config.errors import ConfigError, ConfigReadError
 from forgecli.application.config.service import ConfigService
 from forgecli.application.llm.config.service import LlmConfigService
 from forgecli.application.menu import Choice, Menu
 from forgecli.application.ports import MenuPresenter, Output
+from forgecli.application.slash_commands import CommandHandler
 from forgecli.domain.intents import SlashCommand
+from forgecli.interfaces.cli.menus.config_options import (
+    LOG_LEVEL,
+    TELEMETRY,
+    THEME,
+    WORKSPACE_DIR,
+    MenuOption,
+)
+from forgecli.interfaces.cli.menus.llm_config import LlmMenu
 
 
 class ConfigCommand(CommandHandler):

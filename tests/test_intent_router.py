@@ -11,9 +11,9 @@ from __future__ import annotations
 import pytest
 from rich.console import Console
 
-from forgecli.application.commands.base import SessionState
-from forgecli.application.commands.registry import CommandRegistry
 from forgecli.application.intent_router import IntentRouter
+from forgecli.application.session import SessionState
+from forgecli.application.slash_commands import CommandRegistry
 from forgecli.domain.intents import (
     ControlAction,
     ControlSignal,
@@ -26,7 +26,7 @@ from forgecli.domain.intents import (
 )
 from forgecli.interfaces.cli import repl as repl_module
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
-from forgecli.interfaces.cli.prompter import RichOutput
+from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.repl import QuitSignal, Repl
 from forgecli.interfaces.cli.wiring import build_registry
 from forgecli.shared import __version__
@@ -168,7 +168,10 @@ def test_repl_process_line_routes_user_message() -> None:
 
     repl._process_line("解释这个项目")
 
-    assert "(还没有实现)你说了: 解释这个项目" in console.export_text()
+    # 同屏回显用户输入(› 前缀)并给出助手那一轮(● 标记)；二者分色显示。
+    rendered = console.export_text()
+    assert "› 解释这个项目" in rendered
+    assert "●" in rendered
     assert state.mode is SessionMode.CHAT
     assert state.should_exit is False
 

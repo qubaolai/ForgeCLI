@@ -11,8 +11,8 @@
       带类型与范围校验。
     - 厂商自定义：extra，任意 JSON object，原样透传，只校验「是个对象」。
 
-这些值对象将来由调用切片（adapter）直接消费来构造请求，
-因此放在 llm 顶层而非 config 子包内。
+这些值对象将来由调用切片（adapter）直接消费来构造请求。
+注意：本模块不是 ModelCatalogService；它只描述用户声明的 LLM 配置。
 """
 
 from __future__ import annotations

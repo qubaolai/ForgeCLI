@@ -1,21 +1,13 @@
-"""基于 prompt_toolkit 的交互式输入，仿照 Claude Code 的输入框样式与退出逻辑。
+"""基于 prompt_toolkit 的交互式输入。
 
 为什么用完整的 Application 而不是 PromptSession.prompt()：
     prompt() 只能渲染一个"前缀 + 输入"的单行，画不出输入框的上下边框，也放不下
-    一个整行宽的命令菜单。要做出 Claude Code 那种界面，必须自己搭 prompt_toolkit
+    一个整行宽的命令菜单。必须自己搭 prompt_toolkit
     的布局(Layout)，所以这里直接用底层的 Application。
 
     代价是：PromptSession 自带的方向键/退格/补全等默认按键，在裸 Application 里
     需要手动挂上——用 load_key_bindings() 一次性加载，再 merge 上我们自己的绑定。
 
-界面结构（从上到下）：
-      /init     初始化项目        ← 斜杠命令菜单（输入 "/" 时出现，全宽两列）
-      /help     查看帮助
-    ╭─────────────────────╮   ← 上边框
-    │ › 用户在这里输入       │   ← 输入行（固定一行高，贴在底部）
-    ╰─────────────────────╯   ← 下边框
-      / 命令  ↵ 发送  Ctrl+C×2 退出   ← 框下提示行
-    输入框始终在底部，上方的终端区域留给对话历史显示（终端原生滚动回看）。
 
 斜杠命令菜单（不同于内置浮动下拉，是自绘的全宽面板）：
     - 输入 "/" 即出现，列出匹配命令，命令名与说明分两列对齐、铺满整行；
@@ -23,7 +15,7 @@
     - Enter 选中（填入输入行）；命令已完整时 Enter 直接提交；
     - Esc 关闭菜单。
 
-退出逻辑（仿 Claude Code 的双击 Ctrl-C）：
+退出逻辑：
     - 输入框有内容时按 Ctrl-C → 清空内容（不退出）；
     - 空行第一次 Ctrl-C → 提示行变为"再按一次 Ctrl-C 退出"，并起一个 500ms 定时器；
     - 空行在 500ms 内再次 Ctrl-C → 抛出 QuitSignal 退出；
@@ -63,7 +55,7 @@ from prompt_toolkit.styles import Style
 _MENU_MAX_ROWS = 12
 
 # 两次 Ctrl-C 退出的有效间隔（秒）。超过它，第一次按键作废，需重新计时。
-_EXIT_WINDOW = 0.5
+_EXIT_WINDOW = 0.8
 
 # 所有界面元素的配色集中在这里，方便统一改主题。
 # "class:xxx" 在布局里被引用，这里给出每个 class 对应的样式字符串。
@@ -73,7 +65,7 @@ _STYLE = Style.from_dict(
         "prompt": "bold ansigreen",  # 输入行前缀 "› "
         "hint": "ansicyan",  # 提示行里的按键，如 "/"、"↵"
         "hint-dim": "ansibrightblack",  # 提示行里的说明文字
-        "hint-alert": "bold ansiyellow",  # "再按一次 Ctrl-C 退出" 警示
+        "hint-alert": "#89a19d",  # "再按一次 Ctrl-C 退出" 警示
         # 斜杠命令菜单（背景透明：不设 bg，终端底色透出来）。
         # 选中项仅靠文字颜色区分：普通行偏暗，选中行用青绿色 + 提亮的说明。
         "menu-name": "#9399b2",  # 普通行：命令名（偏暗）

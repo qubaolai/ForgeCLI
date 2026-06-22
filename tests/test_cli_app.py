@@ -1,7 +1,7 @@
 """CLI 入口的 smoke tests。
 
-这些测试先锁定 MVP 阶段最重要的交互契约：版本可查询、help 可用、占位命令
-可执行、裸 ``forge`` 能进入并安全退出 REPL。
+这些测试锁定当前 MVP 阶段最重要的交互契约：版本可查询、help 可用、
+裸 ``forge`` 能进入并安全退出 REPL。具体能力由交互式 slash command 提供。
 """
 
 from __future__ import annotations
@@ -24,22 +24,17 @@ def test_version_option() -> None:
     assert __version__ in res.stdout
 
 
-def test_help_lists_commands() -> None:
+def test_help_available_without_subcommands() -> None:
     res = runner.invoke(app, ["--help"])
     assert res.exit_code == 0
-    # --help 应列出两个占位子命令，确保后续重构没有误删 CLI surface。
-    assert "chat" in res.stdout
-    assert "status" in res.stdout
+    assert "--version" in res.stdout
+    assert "Forge" in res.stdout
 
 
-def test_chat_placeholder_runs() -> None:
-    result = runner.invoke(app, ["chat"])
-    assert result.exit_code == 0
-
-
-def test_status_placeholder_runs() -> None:
-    result = runner.invoke(app, ["status"])
-    assert result.exit_code == 0
+def test_typer_subcommands_are_not_registered() -> None:
+    for command in ("chat", "status"):
+        result = runner.invoke(app, [command])
+        assert result.exit_code == 2
 
 
 def test_bare_forge_enters_and_exits_repl() -> None:

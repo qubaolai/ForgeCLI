@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forgecli.application.commands.config.command import ConfigCommand
 from forgecli.application.config import keys
 from forgecli.application.config.errors import ConfigReadError
 from forgecli.application.config.ports import ConfigStore
@@ -15,8 +14,9 @@ from forgecli.application.llm.config.service import FileLlmConfigService
 from forgecli.application.menu import Choice, Menu
 from forgecli.application.ports import MenuPresenter, Output
 from forgecli.domain.intents import SlashCommand
-from forgecli.infrastructure.config.toml_store import TomlConfigStore
-from forgecli.infrastructure.llm.config.toml_store import TomlLlmConfigStore
+from forgecli.infrastructure.config import TomlConfigStore
+from forgecli.infrastructure.llm.config import TomlLlmConfigStore
+from forgecli.interfaces.cli.commands.config import ConfigCommand
 
 
 class _CapturingPresenter(MenuPresenter):

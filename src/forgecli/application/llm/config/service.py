@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 
 from forgecli.application.llm import providers as provider_registry
-from forgecli.application.llm.catalog import (
+from forgecli.application.llm.config.model import (
     LlmConfig,
     ModelParams,
     ModelSpec,

@@ -12,7 +12,7 @@ from forgecli.application.llm.errors import (
     ConfigValidationError,
     UnknownProvider,
 )
-from forgecli.infrastructure.llm.config.toml_store import TomlLlmConfigStore
+from forgecli.infrastructure.llm.config import TomlLlmConfigStore
 
 EXAMPLE = """
 [llm.providers.deepseek]

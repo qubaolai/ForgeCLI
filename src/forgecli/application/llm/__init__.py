@@ -7,16 +7,16 @@
 
 from __future__ import annotations
 
-from forgecli.application.llm.catalog import (
-    LlmConfig,
-    ModelParams,
-    ModelSpec,
-    ProviderConfig,
-)
 from forgecli.application.llm.config import (
     FileLlmConfigService,
     LlmConfigService,
     LlmConfigStore,
+)
+from forgecli.application.llm.config.model import (
+    LlmConfig,
+    ModelParams,
+    ModelSpec,
+    ProviderConfig,
 )
 from forgecli.application.llm.errors import (
     ConfigReadError,

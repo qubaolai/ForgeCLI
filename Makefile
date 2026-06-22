@@ -9,10 +9,19 @@
 # ci                    check + lint + format-check + type + test
 # run                   poetry run forge
 # format-check          poetry run ruff format --check .
-.PHONY: help install lock check lint format format-check type test ci run
+# package               poetry build
+# install-cli           build wheel and install forge with pip
+# uninstall-cli         uninstall forgecli with pip
+# verify-cli            verify installed forge command
+.PHONY: help install lock check lint format format-check type test ci run package install-cli uninstall-cli verify-cli
 
 # 变量定义
 POETRY ?= poetry
+PYTHON ?= python3.13
+PACKAGE_NAME ?= forgecli
+VERSION = $(shell $(POETRY) version -s)
+WHEEL = dist/$(PACKAGE_NAME)-$(VERSION)-py3-none-any.whl
+PIP_INSTALL_ARGS ?= --user --force-reinstall
 
 # 帮助
 help:
@@ -26,6 +35,10 @@ help:
 	@echo "make test              - 运行测试"
 	@echo "make ci                - 本地等价 CI: lint + format-check + type + test"
 	@echo "make run               - 运行 CLI 入口"
+	@echo "make package           - 构建 wheel 和 sdist 到 dist/"
+	@echo "make install-cli       - 构建后用 python -m pip 安装 forge 命令"
+	@echo "make uninstall-cli     - 用 python -m pip 卸载 forgecli"
+	@echo "make verify-cli        - 验证当前 shell 可直接运行 forge"
 
 install: 
 	$(POETRY) install
@@ -55,3 +68,15 @@ ci: check lint format-check type test
 
 run: 
 	$(POETRY) run forge
+
+package:
+	$(POETRY) build
+
+install-cli: package
+	$(PYTHON) -m pip install $(PIP_INSTALL_ARGS) $(WHEEL)
+
+uninstall-cli:
+	$(PYTHON) -m pip uninstall -y $(PACKAGE_NAME)
+
+verify-cli:
+	forge --version

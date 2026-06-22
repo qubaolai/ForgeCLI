@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from forgecli.application.llm import providers as provider_registry
-from forgecli.application.llm.catalog import STANDARD_FIELDS
+from forgecli.application.llm.config.model import STANDARD_FIELDS
 from forgecli.application.llm.config.service import LlmConfigService
 from forgecli.application.llm.errors import ConfigError
 from forgecli.application.menu import Choice, Menu

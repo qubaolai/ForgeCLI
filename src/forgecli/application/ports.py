@@ -7,25 +7,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
 
 from forgecli.application.menu import Menu
-
-
-class Prompter(ABC):
-    """交互式输入端口，所有 stdin 交互都经由它。"""
-
-    @abstractmethod
-    def select(self, title: str, items: Sequence[str]) -> str | None:
-        """单选菜单：返回所选项文本，返回 None 表示返回上一层或取消。"""
-
-    @abstractmethod
-    def confirm(self, label: str, *, default: bool) -> bool:
-        """是 / 否开关。"""
-
-    @abstractmethod
-    def ask_text(self, label: str, *, default: str | None = None) -> str | None:
-        """要求输入文本；返回 None 表示取消。"""
 
 
 class Output(ABC):

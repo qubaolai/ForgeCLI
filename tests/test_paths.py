@@ -6,8 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.infrastructure import paths
-from forgecli.infrastructure.paths import CONFIG_DIR_ENV, config_dir, config_file
+from forgecli.infrastructure.config import (
+    CONFIG_DIR_ENV,
+    config_dir,
+    config_file,
+    paths,
+)
 
 
 def test_defaults_to_home_forge(

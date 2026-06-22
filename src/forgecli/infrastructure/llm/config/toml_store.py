@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import cast
 
 import tomlkit
-from tomlkit.items import Table
+from tomlkit.items import InlineTable, Table
 
 from forgecli.application.llm.config.ports import LlmConfigStore
 from forgecli.infrastructure.toml_io import read_document, write_document
@@ -34,8 +34,11 @@ class TomlLlmConfigStore(LlmConfigStore):
         section = doc.get(_SECTION)
         if not isinstance(section, Mapping):
             return {}
-        unwrapped = section.unwrap() if hasattr(section, "unwrap") else dict(section)
-        return dict(unwrapped)
+        unwrap = getattr(section, "unwrap", None)
+        unwrapped = unwrap() if callable(unwrap) else dict(section)
+        if not isinstance(unwrapped, Mapping):
+            return {}
+        return dict(cast(Mapping[str, object], unwrapped))
 
     # ---- 写（round-trip）----
 
@@ -107,7 +110,7 @@ class TomlLlmConfigStore(LlmConfigStore):
         return cast(Table, provider["models"])
 
     @staticmethod
-    def _inline(fields: Mapping[str, object]) -> tomlkit.items.InlineTable:
+    def _inline(fields: Mapping[str, object]) -> InlineTable:
         inline = tomlkit.inline_table()
         for key, value in fields.items():
             inline[key] = value

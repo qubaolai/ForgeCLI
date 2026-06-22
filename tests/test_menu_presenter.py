@@ -17,7 +17,7 @@ from rich.console import Console
 from forgecli.application.menu import Choice, Menu
 from forgecli.interfaces.cli import menu_presenter as mp
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
-from forgecli.interfaces.cli.tty import Key, KeyPress
+from forgecli.interfaces.cli.tty._tty_posix import Key, KeyPress
 
 
 class _FakeLive:
@@ -118,3 +118,29 @@ def test_esc_returns_one_level_then_closes_at_root(
     )
 
     assert len(consumed) == 3
+
+
+def test_enter_does_not_cycle_enum_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    deltas: list[int] = []
+    root = Menu("root", (Choice("主题", on_cycle=deltas.append),))
+
+    # Enter 在开关 / 枚举行上不切换候选值；菜单未关闭，故继续读到 Ctrl-C 才退出。
+    consumed = _drive(root, [KeyPress(Key.ENTER), KeyPress(Key.CTRL_C)], monkeypatch)
+
+    assert len(consumed) == 2
+    assert deltas == []
+
+
+def test_arrows_cycle_enum_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    deltas: list[int] = []
+    root = Menu("root", (Choice("主题", on_cycle=deltas.append),))
+
+    # 切换候选值只走 ←/→：右=下一个(+1)，左=上一个(-1)。
+    consumed = _drive(
+        root,
+        [KeyPress(Key.RIGHT), KeyPress(Key.LEFT), KeyPress(Key.CTRL_C)],
+        monkeypatch,
+    )
+
+    assert len(consumed) == 3
+    assert deltas == [+1, -1]

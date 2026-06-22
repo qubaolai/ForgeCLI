@@ -1,7 +1,7 @@
 """ForgeCLI 的 Typer 命令行入口。
 
-本模块只负责命令注册、全局选项和入口分发。真正的交互式会话逻辑
-放在 ``repl`` 模块，避免 CLI 框架细节渗透到后续应用层服务。
+本模块只负责根入口、全局选项和入口分发。产品入口收敛为裸 ``forge``
+进入交互式会话；具体能力通过 REPL 内的 slash command 提供。
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
-from forgecli.interfaces.cli.repl import start_repl
+from forgecli.interfaces.cli.bootstrap import build_repl
 from forgecli.shared import __version__
 
 app = typer.Typer(
@@ -50,31 +50,11 @@ def _root(
 ) -> None:
     """Forge 命令行根回调。
 
-    ``invoke_without_command=True`` 让裸 ``forge`` 也会执行回调；只有没有
-    子命令被匹配时才启动 REPL，避免 ``forge chat`` 等命令被重复处理。
+    ``invoke_without_command=True`` 让裸 ``forge`` 也会执行回调。MVP 当前
+    不注册 Typer 子命令，避免形成交互式和命令式两套入口。
     """
-    # 仅裸 forge 进入 REPL；带子命令时由 Typer 分派给对应 command。
     if ctx.invoked_subcommand is None:
-        start_repl()
-
-
-@app.command()
-def chat() -> None:
-    """启动一次对话会话。
-
-    当前仍是占位命令，用于先固定 CLI 形状和 smoke test；后续应复用裸
-    ``forge`` 的会话服务，而不是实现另一套对话流程。
-    """
-    console.print("[yellow]chat 命令尚未实现。[/]")
-
-
-@app.command()
-def status() -> None:
-    """查看当前运行状态。
-
-    当前仍是占位命令；真正状态查询会在应用层会话与存储服务落地后接入。
-    """
-    console.print("[yellow]status 命令尚未实现。[/]")
+        build_repl().run()
 
 
 def main() -> None:

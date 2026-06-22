@@ -24,7 +24,7 @@ from rich.text import Text
 
 from forgecli.application.menu import Choice, Menu
 from forgecli.application.ports import MenuPresenter
-from forgecli.interfaces.cli.tty import Key, raw_mode, read_key, stdin_is_tty
+from forgecli.interfaces.cli.tty.tty import Key, raw_mode, read_key, stdin_is_tty
 
 # 配色与 prompt_loop 的「裸斜杠菜单」保持一致：背景透明、选中仅靠文字颜色区分
 # （不反显、不铺底色），边框用灰色与输入框同色。
@@ -154,6 +154,8 @@ class RichMenuPresenter(MenuPresenter):
                     elif row.on_select is not None:
                         row.on_select()
                 elif press.key is Key.ENTER:
+                    # Enter 只表示「确认 / 下钻」：进入子菜单、进入行内编辑、触发动作。
+                    # 开关 / 枚举行的切换只走 ←/→，Enter 在这类行上不切换候选值。
                     if row.submenu:
                         stack.append(row.submenu)
                         index, query = 0, ""
@@ -161,8 +163,6 @@ class RichMenuPresenter(MenuPresenter):
                         editing = (row, row.text_default() if row.text_default else "")
                     elif row.on_select is not None:
                         row.on_select()
-                    elif row.on_cycle:
-                        row.on_cycle(+1)
 
     def _visible(self, menu: Menu, query: str) -> list[Choice]:
         if not query:

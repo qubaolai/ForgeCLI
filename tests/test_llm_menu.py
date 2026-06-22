@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forgecli.application.commands.config.llm_menu import LlmMenu
 from forgecli.application.llm.config.service import FileLlmConfigService
 from forgecli.application.menu import Choice, Menu
 from forgecli.application.ports import Output
-from forgecli.infrastructure.llm.config.toml_store import TomlLlmConfigStore
+from forgecli.infrastructure.llm.config import TomlLlmConfigStore
+from forgecli.interfaces.cli.menus.llm_config import LlmMenu
 
 
 class _RecordingOutput(Output):

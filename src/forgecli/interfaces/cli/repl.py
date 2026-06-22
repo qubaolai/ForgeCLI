@@ -10,12 +10,14 @@ menu_presenter 一致，都用 stdin_is_tty()。
 
 from __future__ import annotations
 
+import time
+
 from rich.console import Console
 from rich.panel import Panel
 
-from forgecli.application.commands.base import SessionState
-from forgecli.application.commands.registry import CommandRegistry
 from forgecli.application.intent_router import IntentRouter
+from forgecli.application.session import SessionState
+from forgecli.application.slash_commands import CommandRegistry
 from forgecli.domain.intents import (
     ControlAction,
     ControlSignal,
@@ -26,11 +28,14 @@ from forgecli.domain.intents import (
     UserMessage,
 )
 from forgecli.interfaces.cli.banner import render_banner
-from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
+from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.prompt_loop import ForgePrompt, QuitSignal
-from forgecli.interfaces.cli.prompter import RichOutput
-from forgecli.interfaces.cli.tty import stdin_is_tty
-from forgecli.interfaces.cli.wiring import build_registry
+from forgecli.interfaces.cli.transcript import (
+    render_assistant_turn,
+    render_user_turn,
+    thinking,
+)
+from forgecli.interfaces.cli.tty.tty import stdin_is_tty
 
 # 文本退出词保留在 REPL 层：它们是交互体验快捷方式，不属于 slash command。
 _EXIT_WORDS = {"exit", "quit", ":q"}
@@ -94,8 +99,14 @@ class Repl:
     def _dispatch(self, intent: UserIntent) -> None:
         match intent:
             case UserMessage():
-                # 06-23 只验证输入解析；真正 Agent turn 会在后续 session service 接入。
-                self._output.print(f"[dim](还没有实现)你说了: {intent.text}[/]")
+                # 同屏显示一轮对话：先回显用户输入(绿)，再给助手输出(青绿)。
+                render_user_turn(self._console, intent.text)
+                # 真正的 LLM 调用接在这里(LlmClient 适配器尚未装配)；先占住助手那一轮。
+                with thinking(self._console, label="runing...."):
+                    # 真正的 LLM 调用接这里;loading 会持续到这个 with 块结束。
+                    time.sleep(2)
+                    reply = "(LLM 接入开发中)已收到你的消息。"
+                render_assistant_turn(self._console, reply)
             case ModeChange():
                 self._state.mode = intent.target_mode
                 self._output.print(
@@ -122,14 +133,3 @@ class Repl:
             self._output.print(f"命令 /{intent.command} 暂未实现。")
             return
         spec.handler.execute(intent)
-
-
-def start_repl() -> None:
-    """CLI 入口：装配 REPL 并运行。app.py 仍只调用本函数，无需改动。"""
-    console = Console()
-    state = SessionState()
-    output = RichOutput(console)
-    presenter = RichMenuPresenter(console)
-    registry = build_registry(state, presenter, output)
-    router = IntentRouter(registry)
-    Repl(console, router, registry, state, output).run()

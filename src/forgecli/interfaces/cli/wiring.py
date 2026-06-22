@@ -5,19 +5,18 @@
 
 from __future__ import annotations
 
-from forgecli.application.commands.base import SessionState
-from forgecli.application.commands.config.command import ConfigCommand
-from forgecli.application.commands.help.command import HelpCommand
-from forgecli.application.commands.registry import CommandRegistry, CommandSpec
-from forgecli.application.commands.status.command import StatusCommand
 from forgecli.application.config.service import FileConfigService
 from forgecli.application.llm.config.service import FileLlmConfigService
+from forgecli.application.session import SessionState
+from forgecli.application.slash_commands import CommandRegistry, CommandSpec
 from forgecli.domain.intents import ControlAction, IntentKind, SessionMode
-from forgecli.infrastructure.config.toml_store import TomlConfigStore
-from forgecli.infrastructure.llm.config.toml_store import TomlLlmConfigStore
-from forgecli.infrastructure.paths import config_file
+from forgecli.infrastructure.config import TomlConfigStore, config_file
+from forgecli.infrastructure.llm.config import TomlLlmConfigStore
+from forgecli.interfaces.cli.commands.config import ConfigCommand
+from forgecli.interfaces.cli.commands.help import HelpCommand
+from forgecli.interfaces.cli.commands.status import StatusCommand
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
-from forgecli.interfaces.cli.prompter import RichOutput
+from forgecli.interfaces.cli.output import RichOutput
 
 
 def build_registry(

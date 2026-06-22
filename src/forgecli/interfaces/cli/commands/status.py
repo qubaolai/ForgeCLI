@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from forgecli.application.commands.base import CommandHandler
-from forgecli.application.commands.registry import CommandRegistry
 from forgecli.application.ports import Output
+from forgecli.application.slash_commands import CommandHandler, CommandRegistry
 from forgecli.domain.intents import SlashCommand
 from forgecli.shared import __version__
 

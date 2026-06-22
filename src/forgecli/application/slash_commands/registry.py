@@ -1,6 +1,6 @@
-"""命令注册中心。
+"""Slash command registry.
 
-CommandRegistry 是“命令目录”：命令名 -> CommandSpec，服务两个使用方：
+CommandRegistry 是会话内斜杠命令目录：命令名 -> CommandSpec，服务两个使用方：
     - IntentRouter：只看 spec.kind / mode / action，决定解析成哪种用户意图。
     - REPL 分派器：取 spec.handler 执行已识别的斜杠命令。
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from forgecli.application.commands.base import CommandHandler
+from forgecli.application.slash_commands.base import CommandHandler
 from forgecli.domain.intents import ControlAction, IntentKind, SessionMode
 
 
