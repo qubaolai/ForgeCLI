@@ -32,12 +32,10 @@ poetry run forge --version
 按功能追加执行：
 
 ```bash
-poetry run forge chat
-poetry run forge status
 printf 'exit\n' | poetry run forge
 ```
 
-后续阶段按能力增加 `forge config ...`、`forge models ...`、`forge resume ...`、工具调用、事件存储和 E2E 场景命令。
+后续阶段按能力增加 `/config`、`/models`、`/status`、`/resume` 的 REPL 集成测试、工具调用、事件存储和 E2E 场景命令。当前 MVP 不验收 `forge chat/status/config/models/resume` 这类 Typer 业务子命令。
 
 ## 4. 代码结构验收
 
@@ -131,4 +129,3 @@ printf 'exit\n' | poetry run forge
 下一步：
 - 可进入的日期计划或必须先修复的事项
 ```
-

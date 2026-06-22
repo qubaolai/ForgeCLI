@@ -1,15 +1,35 @@
-# ForgeCLI MVP 阶段开发计划
+# ForgeCLI MVP 阶段滚动开发计划
 
 ## 1. 周期
 
 - 起始日期：2026-06-17
-- 当前滚动计划结束日期：2026-06-26
-- 当前滚动计划工作日数量：8 天
-- 阶段目标：先交付可本地安装、可测试、具备真实 CLI 入口、配置命令、模型命令和会话存储骨架的 MVP 基线。
+- 当前滚动计划结束日期：2026-07-01
+- 当前滚动计划范围：2026-06-25 至 2026-07-01，共 5 个工作日
+- 阶段目标：基于当前已实现的单入口 CLI shell、slash command router、交互式配置菜单和 LLM 配置切片，收敛为可测试、结构清晰、可持久化的 MVP 基线。
 
-本目录采用滚动排期。已完成的准备期保留，未来只维护最近一周的可执行计划；更远阶段在每周验收后重新细化。
+本目录采用滚动排期。已完成日期保留历史记录；未来一周只描述当前实现可承接的任务，不把远期理想设计直接压到当前阶段。
 
-## 2. MVP 范围
+## 2. 当前实现基线
+
+当前代码已经具备：
+
+- `src/forgecli + tests` 布局。
+- Typer/Rich 单入口 CLI：裸 `forge` 进入 REPL，`--help` 和 `--version` 保留。
+- `IntentRouter` 与 slash command registry。
+- `interfaces/cli` 下的 CLI 命令、菜单和 presenter。
+- `application/config` 下的 `ConfigService`、`EffectiveConfig` 和 TOML store port。
+- `application/llm/config` 下的 LLM 配置值对象、service 和 store port。
+- `infrastructure/config` 与 `infrastructure/llm/config` 下的 TOML 适配器。
+
+当前阶段性取舍：
+
+- 配置文件默认仍走用户级 `~/.forge` 或 `FORGE_CONFIG_DIR`，项目级 `.forge/config.toml` 合并稍后接入。
+- `/config` 已能管理供应商和自定义模型参数，但这不是模型目录服务。
+- 当前 MVP 不再维护 `forge chat/status/models/config/resume` 这类 Typer 业务子命令；业务能力优先通过 REPL 内 slash command 暴露。
+- LLM 调用端口只是占位，不接真实 provider adapter。
+- session 仍是内存态，尚未写入 `events.jsonl` 和 `state.json`。
+
+## 3. MVP 范围
 
 MVP 必须包含：
 
@@ -17,12 +37,13 @@ MVP 必须包含：
 - `events.jsonl` 和 `state.json`。
 - `chat`、`plan`、`act` 三种模式。
 - 配置模块。
-- `AgentWorkflow` 抽象和 `BuiltinWorkflow`。
+- 模型目录与运行时默认模型选择。
+- `AgentWorkflow` 抽象和 `BuiltinWorkflow` stub。
 - 基础工具：文件读取、搜索、shell、git、测试命令。
 - 工具风险分级和审批。
 - session resume。
 - context compact。
-- 基础 inspect/status。
+- 交互式 inspect/status。
 
 MVP 不包含：
 
@@ -33,26 +54,27 @@ MVP 不包含：
 - 企业审计数据库。
 - 云端服务。
 
-## 3. 阶段拆分
+## 4. 当前滚动周拆分
 
-| 阶段 | 日期 | 目标 |
-| --- | --- | --- |
-| M0：开发准备 | 2026-06-17 至 2026-06-19 | 明确实现边界、ADR、工程骨架和本地 CI |
-| M1A：CLI 基线周 | 2026-06-22 至 2026-06-26 | Typer/Rich CLI 壳、交互入口、斜杠命令路由、配置命令、模型命令、会话存储骨架 |
+| 日期 | 目标 |
+| --- | --- |
+| 2026-06-25 | 单入口收敛、结构整理收尾、交互式模型目录与运行时默认模型选择 |
+| 2026-06-26 | 会话事件存储骨架、state 快照和 `/status` 集成 |
+| 2026-06-29 | `AgentTurnService` stub、REPL 与 session/event store 解耦 |
+| 2026-06-30 | 配置作用域收敛：用户配置 + 项目配置合并，继续复用 `/config` |
+| 2026-07-01 | 本周集成验收、`/resume` 最小入口和下阶段工具系统准备 |
 
-## 4. 每日验收格式
+## 5. 每日验收格式
 
-每天结束时，开发者需要提交：
+每天结束时需要提交：
 
 - 今日完成的代码范围。
 - 关键文件列表。
 - 运行过的测试命令和结果。
-- 与设计文档不一致的地方。
-- 遗留风险和明日建议。
+- 与当前实现基线不一致的地方。
+- 保留的阶段性取舍和明日建议。
 
-我按对应日期目录的验收标准检查。
-
-## 5. 日期目录
+## 6. 日期目录
 
 - [2026-06-17](2026-06-17/README.md)
 - [2026-06-18](2026-06-18/README.md)
@@ -62,3 +84,6 @@ MVP 不包含：
 - [2026-06-24](2026-06-24/README.md)
 - [2026-06-25](2026-06-25/README.md)
 - [2026-06-26](2026-06-26/README.md)
+- [2026-06-29](2026-06-29/README.md)
+- [2026-06-30](2026-06-30/README.md)
+- [2026-07-01](2026-07-01/README.md)

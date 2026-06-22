@@ -75,7 +75,7 @@ ForgeCLI 按企业级产品节奏推进，采用“核心闭环先行、能力�
 - `AgentWorkflow` 抽象和 `BuiltinWorkflow`。
 - `EventStore`：append、read、replay。
 - `StateStore`：原子快照写入和恢复。
-- `forge`、`forge resume`、`forge status` 基础命令。
+- 裸 `forge` 交互式入口，以及 `/resume`、`/status` 基础 slash command。
 
 验收标准：
 

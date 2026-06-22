@@ -88,7 +88,7 @@ domain -> shared
 
 - `domain/config`：定义配置值对象和校验规则，例如模型、权限、MCP、存储、上下文预算。
 - `application/services/config_service.py`：负责配置加载、合并、查询、更新和迁移。
-- `infrastructure/config_sources`：只负责从文件、环境变量、CLI 参数等来源读取配置。
+- `infrastructure/config_sources`：只负责从文件、环境变量、交互式命令输入等来源读取配置。
 - `tools`：负责 Tool Registry、Tool Runtime、内置工具定义和 MCP tool 适配，是 Agent 能力面的一部分。
 - `infrastructure/shell`、`infrastructure/git`、`infrastructure/filesystem`：只是工具实现依赖的底层适配器。
 - `application/workflows`：定义 AgentWorkflow 抽象和内置 workflow。
@@ -542,30 +542,30 @@ AutoGen 更适合 V2 的完整 Multi-Agent 能力，不进入 MVP。
 
 ### 5.1 CLI 入口模型
 
-ForgeCLI 同时支持交互式和非交互式入口。
+ForgeCLI 当前 MVP 只保留交互式主入口。
 
 交互式入口：
 
 - `forge`：在当前目录启动或恢复交互式会话。
-- `forge chat`：显式启动 chat 模式会话，可作为兼容命令保留。
 - 会话启动时绑定当前目录为 `workspace_root`。
 - 若当前目录或父目录存在 `.forge/`，优先使用已有项目状态。
 - 若存在可恢复 session，CLI 应提示用户恢复最近会话或创建新会话。
 
-非交互式入口：
+当前不实现 Typer 业务子命令：
 
-- `forge config ...`：配置生成、查看、修改和校验。
-- `forge models ...`：模型目录查看、刷新和推荐。
-- `forge resume <session_id>`：恢复指定 session。
-- `forge status` / `forge inspect`：诊断和审计。
+- 不提供 `forge chat`。
+- 不提供 `forge status`。
+- 不提供 `forge config ...`。
+- 不提供 `forge models ...`。
+- 不提供 `forge resume ...`。
 
-双入口规则：
+单入口规则：
 
-- `/config ...` 与 `forge config ...` 复用 `ConfigService`。
-- `/models ...` 与 `forge models ...` 复用 `ModelCatalogService`。
-- `/status` 与 `forge status` 复用 session 查询服务。
-- `/resume` 与 `forge resume ...` 复用恢复服务。
-- 交互式入口负责渲染和事件记录，非交互式入口负责脚本友好输出；核心校验和副作用规则必须一致。
+- `/config ...` 复用 `ConfigService`。
+- `/models ...` 复用 `ModelCatalogService`。
+- `/status` 复用 session 查询服务。
+- `/resume` 复用恢复服务。
+- Typer 层只负责裸 `forge`、`--help`、`--version` 和进程入口，不承载业务流程。
 
 交互式会话内，用户输入分两类：
 
@@ -635,8 +635,8 @@ Intent Router 不直接执行动作，只返回结构化意图。
 - `/review`：切换到 review。
 - `/debug`：切换到 debug。
 - `/status`：查看会话、计划、预算。
-- `/config`：查看或修改配置，等价于交互式版本的 `forge config ...`。
-- `/models`：查看、刷新或推荐模型，等价于交互式版本的 `forge models ...`。
+- `/config`：查看或修改配置，复用 `ConfigService`。
+- `/models`：查看、刷新或推荐模型，复用 `ModelCatalogService`。
 - `/compact`：压缩上下文。
 - `/resume`：恢复历史 session。
 - `/memory`：查看项目和用户记忆。
@@ -874,12 +874,11 @@ Skill 只影响上下文和可用工具建议，不改变全局安全策略。
 
 命令入口：
 
-- 非交互式：`forge models list`、`forge models refresh`、`forge models recommend --task coding`。
 - 交互式：`/models list`、`/models refresh`、`/models recommend coding`。
 
 设计约束：
 
-- `/models` 与 `forge models ...` 必须复用 `ModelCatalogService`。
+- `/models` 必须复用 `ModelCatalogService`。
 - 远程 catalog 只提供公开模型元数据，不接收 API key，不读取项目内容。
 - CLI 必须支持离线 fallback。
 - 企业策略可以禁用远程 catalog 或配置私有 catalog URL。
@@ -1031,11 +1030,11 @@ Multi-Agent 需要新增：
 
 `ConfigService` 负责：
 
-- 加载项目配置、用户全局配置、环境变量和 CLI 参数。
+- 加载项目配置、用户全局配置、环境变量和交互式命令输入。
 - 合并配置并生成最终 `EffectiveConfig`。
 - 输出不可变 `EffectiveConfig`，并由 application service 显式注入 session/turn。
 - 校验配置 schema。
-- 提供 `forge config get/set/list/validate/migrate`。
+- 提供 `/config` 所需的 get/set/list/validate/migrate 用例。
 - 在配置变更时写入 session event。
 - 为 ModePolicy、ToolRuntime、MCP、ModelProvider、ContextManager 提供配置视图。
 
@@ -1112,7 +1111,7 @@ artifacts_dir = ".forge/artifacts"
 配置优先级：
 
 1. 企业只读策略
-2. CLI 参数
+2. 交互式命令输入产生的临时覆盖
 3. 环境变量
 4. 项目 `.forge/config.toml`
 5. 用户全局配置
@@ -1122,20 +1121,7 @@ artifacts_dir = ".forge/artifacts"
 
 ### 17.4 配置命令
 
-建议命令：
-
-- `forge config list`
-- `forge config get <key>`
-- `forge config init`
-- `forge config set <key> <value>`
-- `forge config unset <key>`
-- `forge config validate`
-- `forge config migrate`
-- `forge config explain <key>`
-
-`set/unset/migrate` 必须写入配置变更事件，便于审计。
-
-交互式会话中提供对应斜杠命令：
+当前 MVP 提供交互式 `/config` 能力：
 
 - `/config list`
 - `/config get <key>`
@@ -1145,7 +1131,7 @@ artifacts_dir = ".forge/artifacts"
 - `/config validate`
 - `/config explain <key>`
 
-交互式 `/config` 与非交互式 `forge config` 必须复用 `ConfigService`。
+`set/unset/migrate` 必须写入配置变更事件，便于审计。交互式 `/config` 必须复用 `ConfigService`，不得在 CLI handler 中复制配置校验和 TOML 写入逻辑。
 
 ### 17.5 可配置范围
 
@@ -1213,7 +1199,7 @@ artifacts_dir = ".forge/artifacts"
 - `forge` 启动交互式会话。
 - 支持 chat/plan/act 模式切换。
 - 会话落盘为 `events.jsonl` 和 `state.json`。
-- 中断后可 `forge resume`。
+- 中断后可通过再次执行 `forge` 或 `/resume` 恢复。
 - 可读文件、搜索、运行受控 shell。
 - 写文件前受模式和审批控制。
 - 可生成计划并按计划执行。

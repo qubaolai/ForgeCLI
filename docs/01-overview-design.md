@@ -115,7 +115,7 @@ Agent 审查当前 diff、PR 评论、CI 日志或测试失败，优先输出风
 
 模式不是独立 Agent，而是 Policy。它影响同一个 Orchestrator 的工具权限、上下文策略、输出结构和是否自动继续。
 
-交互式会话内通过斜杠命令切换模式或执行控制动作，例如 `/plan`、`/act`、`/config`、`/models`、`/status`、`/compact`、`/pause`、`/exit`。`forge config ...`、`forge models ...`、`forge resume ...` 等仍作为非交互命令保留，用于配置、脚本和诊断。交互式和非交互式入口必须复用同一应用服务，避免行为分叉。
+交互式会话内通过斜杠命令切换模式或执行控制动作，例如 `/plan`、`/act`、`/config`、`/models`、`/status`、`/compact`、`/pause`、`/exit`。当前 MVP 只保留裸 `forge` 进入交互式会话；`chat`、`status`、`config`、`models`、`resume` 等能力优先通过 slash command 暴露，避免在 Typer 层形成第二套业务入口。
 
 ## 5. 总体架构
 
