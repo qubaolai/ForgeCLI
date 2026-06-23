@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.llm.config.llm_config_service import FileLlmConfigService
+from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import (
     ConfigReadError,
     ConfigValidationError,
     UnknownProvider,
 )
-from forgecli.infrastructure.llm.config import TomlLlmConfigStore
+from forgecli.infrastructure.llm import TomlLlmConfigStore
 
 EXAMPLE = """
 [llm.providers.deepseek]
@@ -41,14 +41,12 @@ gpt-4o = { context_window = 128000 }
 """
 
 
-def _service(
-    tmp_path: Path, text: str | None = None
-) -> tuple[FileLlmConfigService, Path]:
+def _service(tmp_path: Path, text: str | None = None) -> tuple[LlmConfigService, Path]:
     path = tmp_path / ".forge" / "llm.toml"
     if text is not None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-    return FileLlmConfigService(TomlLlmConfigStore(path)), path
+    return LlmConfigService(TomlLlmConfigStore(path)), path
 
 
 # ---- 读取 / 解析 ----
@@ -130,7 +128,7 @@ def test_add_model_creates_provider_section_with_defaults(tmp_path: Path) -> Non
     )
 
     assert path.exists()
-    reopened = FileLlmConfigService(TomlLlmConfigStore(path))
+    reopened = LlmConfigService(TomlLlmConfigStore(path))
     chat = reopened.config().model("deepseek", "deepseek-chat")
     assert chat is not None
     assert chat.params.max_tokens == 8192

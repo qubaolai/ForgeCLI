@@ -20,10 +20,9 @@ class MenuOption:
     key: str  # 对应 keys.SCHEMA 中的配置键名
 
 
-WORKSPACE_DIR = MenuOption("工作区目录", keys.WORKSPACE_DIR)
+# 工作区目录与日志级别已移交项目级配置（ADR-0008），不再出现在 /config。
 TELEMETRY = MenuOption("启用使用统计", keys.TELEMETRY_ENABLED)
 THEME = MenuOption("输出主题", keys.OUTPUT_THEME)
-LOG_LEVEL = MenuOption("日志级别", keys.LOG_LEVEL)
 
 
 class ConfigMenu:
@@ -43,12 +42,6 @@ class ConfigMenu:
             "配置",
             (
                 Choice(
-                    "工作区目录",
-                    preview=self._shown(WORKSPACE_DIR),
-                    on_text=self._set_text(WORKSPACE_DIR),
-                    text_default=self._raw(WORKSPACE_DIR),
-                ),
-                Choice(
                     "启用使用统计",
                     preview=self._shown(TELEMETRY),
                     on_cycle=self._cycle_bool(TELEMETRY),
@@ -58,29 +51,12 @@ class ConfigMenu:
                     preview=self._shown(THEME),
                     on_cycle=self._cycle_choice(THEME),
                 ),
-                Choice("日志级别", submenu=self._advanced_menu),
                 Choice("供应商配置", submenu=self._llm_menu.providers_menu),
                 Choice("模型配置", submenu=self._llm_menu.models_menu),
             ),
         )
 
-    def _advanced_menu(self) -> Menu:
-        return Menu(
-            "日志级别",
-            (
-                Choice(
-                    "日志级别",
-                    preview=self._shown(LOG_LEVEL),
-                    on_cycle=self._cycle_choice(LOG_LEVEL),
-                ),
-            ),
-        )
-
     # ---- 回调工厂（全部委托 service）----
-
-    def _raw(self, option: MenuOption) -> Callable[[], str]:
-        # 编辑文本框的初值：用户覆盖原值，未覆盖则空串。
-        return lambda: self._service.get(option.key) or ""
 
     def _shown(self, option: MenuOption) -> Callable[[], str]:
         # 菜单右侧展示：当前有效值（含默认回落）。
@@ -103,13 +79,6 @@ class ConfigMenu:
             self._safe_set(option, choices[(idx + delta) % len(choices)])
 
         return cycle
-
-    def _set_text(self, option: MenuOption) -> Callable[[str], None]:
-        def submit(value: str) -> None:
-            if value.strip():
-                self._safe_set(option, value)
-
-        return submit
 
     def _safe_set(self, option: MenuOption, value: str) -> None:
         # 校验失败等业务错误翻成一行提示，菜单继续运行。

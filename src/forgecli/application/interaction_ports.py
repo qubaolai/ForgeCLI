@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Sequence
 
 from forgecli.application.menu import Menu
 
@@ -25,3 +26,23 @@ class MenuPresenter(ABC):
     @abstractmethod
     def present(self, menu: Menu) -> None:
         """展示并驱动菜单，直到用户在根层退出。"""
+
+
+class TrustPrompter(ABC):
+    """首启信任确认端口；展示绝对路径并返回用户是否信任。"""
+
+    @abstractmethod
+    def confirm(self, path: str) -> bool:
+        """询问是否信任 path；是返回 True，否 / 取消返回 False。"""
+
+
+class DirectoryPicker(ABC):
+    """目录输入端口；按需列出子目录供参考，返回用户输入的原始路径。"""
+
+    @abstractmethod
+    def pick(self, list_subdirs: Callable[[str], Sequence[str]]) -> str | None:
+        """返回用户输入的目录路径（未规范化）；取消返回 None。
+
+        list_subdirs(raw) 按需返回某路径（相对当前目录或绝对）下的子目录名，
+        供面板在用户按键时列出参考；传空字符串表示当前目录。
+        """

@@ -10,9 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from forgecli.application.interaction_ports import UserOutput
-from forgecli.application.llm.config.llm_config_service import FileLlmConfigService
+from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.menu import Choice, Menu
-from forgecli.infrastructure.llm.config import TomlLlmConfigStore
+from forgecli.infrastructure.llm import TomlLlmConfigStore
 from forgecli.interfaces.cli.menus.llm_menu import LlmMenu
 
 
@@ -28,8 +28,8 @@ def _find(menu: Menu, label: str) -> Choice:
     return next(c for c in menu.choices if c.label == label)
 
 
-def _menu(tmp_path: Path) -> tuple[LlmMenu, _RecordingOutput, FileLlmConfigService]:
-    service = FileLlmConfigService(TomlLlmConfigStore(tmp_path / ".forge" / "llm.toml"))
+def _menu(tmp_path: Path) -> tuple[LlmMenu, _RecordingOutput, LlmConfigService]:
+    service = LlmConfigService(TomlLlmConfigStore(tmp_path / ".forge" / "llm.toml"))
     output = _RecordingOutput()
     return LlmMenu(service, output), output, service
 

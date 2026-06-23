@@ -13,18 +13,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from pathlib import Path
 
 from forgecli.application.config.errors import (
     ConfigValidationError,
     UnknownConfigKey,
 )
 
-# ---- 键名常量（dotted key，与 .forge/config.toml 的表结构对应）----
-WORKSPACE_DIR = "workspace.dir"
+# ---- 键名常量（dotted key，与 config.toml 的表结构对应）----
+# 工作区与日志级别已移交项目级配置（ADR-0008），不再属于应用配置面。
 TELEMETRY_ENABLED = "telemetry.enabled"
 OUTPUT_THEME = "output.theme"
-LOG_LEVEL = "log.level"
 DEFAULT_MODEL_PROVIDER_KEY = "model.provider"
 DEFAULT_MODEL_NAME_KEY = "model.name"
 
@@ -36,7 +34,6 @@ class ValueKind(Enum):
     """配置取值的业务类型，决定如何归一化与校验。"""
 
     TEXT = auto()
-    PATH = auto()
     BOOL = auto()
     CHOICE = auto()
 
@@ -77,23 +74,13 @@ class ConfigKey:
                 )
             return text
 
-        if self.kind is ValueKind.PATH:
-            path = Path(text).expanduser()
-            if not path.is_absolute():
-                path = (Path.cwd() / path).resolve()
-            return str(path)
-
         return text
 
 
 SCHEMA: tuple[ConfigKey, ...] = (
-    ConfigKey(WORKSPACE_DIR, ValueKind.PATH, default=str(Path.cwd())),
     ConfigKey(TELEMETRY_ENABLED, ValueKind.BOOL, default="false"),
     ConfigKey(
         OUTPUT_THEME, ValueKind.CHOICE, default="dark", choices=("dark", "light")
-    ),
-    ConfigKey(
-        LOG_LEVEL, ValueKind.CHOICE, default="info", choices=("debug", "info", "warn")
     ),
     ConfigKey(DEFAULT_MODEL_PROVIDER_KEY, ValueKind.TEXT, default=""),
     ConfigKey(DEFAULT_MODEL_NAME_KEY, ValueKind.TEXT, default=""),

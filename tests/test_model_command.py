@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forgecli.application.config.config_service import FileConfigService
+from forgecli.application.config.config_service import ConfigService
 from forgecli.application.interaction_ports import MenuPresenter, UserOutput
 from forgecli.application.llm.availability import EnvProviderAvailability
-from forgecli.application.llm.config.llm_config_service import FileLlmConfigService
+from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.menu import Choice, Menu
 from forgecli.domain.intents import SlashCommand
 from forgecli.infrastructure.config import TomlConfigStore
-from forgecli.infrastructure.llm.config import TomlLlmConfigStore
+from forgecli.infrastructure.llm import TomlLlmConfigStore
 from forgecli.interfaces.cli.commands.model_command import ModelsCommand
 from forgecli.interfaces.cli.menus.model_menu import ModelsMenu
 
@@ -38,9 +38,9 @@ def _find(menu: Menu, label: str) -> Choice:
 
 def _services(
     tmp_path: Path,
-) -> tuple[FileConfigService, FileLlmConfigService, _RecordingOutput]:
-    config = FileConfigService(TomlConfigStore(tmp_path / ".forge" / "config.toml"))
-    llm = FileLlmConfigService(TomlLlmConfigStore(tmp_path / ".forge" / "llm.toml"))
+) -> tuple[ConfigService, LlmConfigService, _RecordingOutput]:
+    config = ConfigService(TomlConfigStore(tmp_path / ".forge" / "config.toml"))
+    llm = LlmConfigService(TomlLlmConfigStore(tmp_path / ".forge" / "llm.toml"))
     output = _RecordingOutput()
     return config, llm, output
 

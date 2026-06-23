@@ -31,6 +31,8 @@ def read_key(fd: int) -> KeyPress:
         return KeyPress(Key.ENTER)
     if ch == "\x08":  # Backspace
         return KeyPress(Key.BACKSPACE)
+    if ch == "\t":  # Tab
+        return KeyPress(Key.TAB)
     if ch == "/":
         return KeyPress(Key.SLASH, "/")
     if ch == "\x1b":  # ESC（Windows 方向键走下面的前缀分支，不经 ESC）

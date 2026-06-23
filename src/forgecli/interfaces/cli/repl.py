@@ -27,7 +27,6 @@ from forgecli.domain.intents import (
     UserIntent,
     UserMessage,
 )
-from forgecli.interfaces.cli.banner import render_banner
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.prompt_loop import ForgePrompt, QuitSignal
 from forgecli.interfaces.cli.transcript import (
@@ -57,7 +56,7 @@ class Repl:
         self._output = output
 
     def run(self) -> None:
-        render_banner(console=self._console)
+        # banner 由 bootstrap 在信任解析前渲染；这里只给进入会话的提示。
         self._console.print(
             Panel.fit(
                 "进入 Forge 交互式会话。\n"
@@ -101,7 +100,7 @@ class Repl:
             case UserMessage():
                 # 同屏显示一轮对话：先回显用户输入(绿)，再给助手输出(青绿)。
                 render_user_turn(self._console, intent.text)
-                # 真正的 LLM 调用接在这里(LlmClient 适配器尚未装配)；先占住助手那一轮。
+                # 真正的 LLM 调用接在这里(适配器尚未装配)；先占住助手那一轮。
                 with thinking(self._console, label="runing...."):
                     # 真正的 LLM 调用接这里;loading 会持续到这个 with 块结束。
                     time.sleep(2)

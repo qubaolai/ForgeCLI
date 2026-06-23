@@ -1,21 +1,22 @@
 """/config 交互入口测试：验证菜单只做呈现、所有改动都经 ConfigService 落盘，
 并验证配置读取错误被翻成友好提示而非 traceback。
+
+ADR-0008 后：工作区目录与日志级别已移交项目级配置，/config 不再展示它们。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from forgecli.application.config import config_keys
-from forgecli.application.config.config_service import FileConfigService
+from forgecli.application.config.config_service import ConfigService
 from forgecli.application.config.config_store import ConfigStore
 from forgecli.application.config.errors import ConfigReadError
 from forgecli.application.interaction_ports import MenuPresenter, UserOutput
-from forgecli.application.llm.config.llm_config_service import FileLlmConfigService
+from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.menu import Choice, Menu
 from forgecli.domain.intents import SlashCommand
 from forgecli.infrastructure.config import TomlConfigStore
-from forgecli.infrastructure.llm.config import TomlLlmConfigStore
+from forgecli.infrastructure.llm import TomlLlmConfigStore
 from forgecli.interfaces.cli.commands.config_command import ConfigCommand
 
 
@@ -49,15 +50,15 @@ def _find(menu: Menu, label: str) -> Choice:
     return next(choice for choice in menu.choices if choice.label == label)
 
 
-def _models(tmp_path: Path) -> FileLlmConfigService:
-    return FileLlmConfigService(TomlLlmConfigStore(tmp_path / ".forge" / "llm.toml"))
+def _models(tmp_path: Path) -> LlmConfigService:
+    return LlmConfigService(TomlLlmConfigStore(tmp_path / ".forge" / "llm.toml"))
 
 
 def _command(
     tmp_path: Path,
 ) -> tuple[ConfigCommand, _CapturingPresenter, _RecordingOutput, Path]:
     config_path = tmp_path / ".forge" / "config.toml"
-    service = FileConfigService(TomlConfigStore(config_path))
+    service = ConfigService(TomlConfigStore(config_path))
     presenter = _CapturingPresenter()
     output = _RecordingOutput()
     command = ConfigCommand(service, _models(tmp_path), presenter, output)
@@ -100,34 +101,20 @@ def test_toggle_bool_writes_through_service(tmp_path: Path) -> None:
     assert telemetry.preview() == "true"
 
 
-def test_set_text_path_is_normalized_by_service(tmp_path: Path) -> None:
+def test_root_menu_excludes_workspace_and_log_level(tmp_path: Path) -> None:
     command, presenter, _, _ = _command(tmp_path)
     _execute(command)
-    workspace = _find(presenter.presented, "工作区目录")
 
-    workspace.on_text("sub/work")
-
-    shown = workspace.preview()
-    assert Path(shown).is_absolute()
-    # 编辑初值随之更新为已保存的覆盖值。
-    assert workspace.text_default() == shown
-
-
-def test_empty_text_submit_is_ignored(tmp_path: Path) -> None:
-    command, presenter, _, config_path = _command(tmp_path)
-    _execute(command)
-    workspace = _find(presenter.presented, "工作区目录")
-
-    workspace.on_text("   ")
-
-    assert not config_path.exists()
+    labels = {choice.label for choice in presenter.presented.choices}
+    assert "工作区目录" not in labels
+    assert "日志级别" not in labels
 
 
 def test_read_error_shows_friendly_message_without_menu(tmp_path: Path) -> None:
     presenter = _CapturingPresenter()
     output = _RecordingOutput()
     command = ConfigCommand(
-        FileConfigService(_BrokenStore()), _models(tmp_path), presenter, output
+        ConfigService(_BrokenStore()), _models(tmp_path), presenter, output
     )
 
     _execute(command)
@@ -145,16 +132,3 @@ def test_root_has_provider_and_model_entries(tmp_path: Path) -> None:
     assert {"供应商配置", "模型配置"} <= labels
     assert _find(presenter.presented, "供应商配置").submenu is not None
     assert _find(presenter.presented, "模型配置").submenu is not None
-
-
-def test_log_level_lives_in_submenu(tmp_path: Path) -> None:
-    command, presenter, _, _ = _command(tmp_path)
-    _execute(command)
-
-    advanced = _find(presenter.presented, "日志级别")
-    assert advanced.submenu is not None
-    submenu = advanced.submenu()
-    level = _find(submenu, "日志级别")
-    assert level.preview() == "info"
-    level.on_cycle(1)
-    assert level.preview() in config_keys.require_known(config_keys.LOG_LEVEL).choices

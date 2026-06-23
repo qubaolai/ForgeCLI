@@ -1,6 +1,6 @@
 """跨层共享的轻量基础设施。
 
-仅放无业务方向性的错误、Result、ID 等基础类型，避免形成新的业务杂物层。
+仅放无业务方向性的基础类型（如错误基类），避免形成新的业务杂物层。
 """
 
 from importlib.metadata import PackageNotFoundError, version

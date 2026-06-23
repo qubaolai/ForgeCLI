@@ -5,13 +5,16 @@
 
 from __future__ import annotations
 
-from forgecli.application.config.config_service import FileConfigService
-from forgecli.application.llm.config.llm_config_service import FileLlmConfigService
+from forgecli.application.config.config_service import ConfigService
+from forgecli.application.interaction_ports import DirectoryPicker
+from forgecli.application.llm.config.llm_config_service import LlmConfigService
+from forgecli.application.project import ProjectContext, ProjectService
 from forgecli.application.session import SessionState
 from forgecli.application.slash_commands import CommandRegistry, CommandSpec
 from forgecli.domain.intents import ControlAction, IntentKind, SessionMode
 from forgecli.infrastructure.config import TomlConfigStore, config_file
-from forgecli.infrastructure.llm.config import TomlLlmConfigStore
+from forgecli.infrastructure.llm import TomlLlmConfigStore
+from forgecli.interfaces.cli.commands.add_dir_command import AddDirCommand
 from forgecli.interfaces.cli.commands.config_command import ConfigCommand
 from forgecli.interfaces.cli.commands.help_command import HelpCommand
 from forgecli.interfaces.cli.commands.model_command import ModelsCommand
@@ -21,13 +24,18 @@ from forgecli.interfaces.cli.output import RichOutput
 
 
 def build_registry(
-    state: SessionState, presenter: RichMenuPresenter, output: RichOutput
+    state: SessionState,
+    context: ProjectContext,
+    project_service: ProjectService,
+    presenter: RichMenuPresenter,
+    picker: DirectoryPicker,
+    output: RichOutput,
 ) -> CommandRegistry:
     registry = CommandRegistry()
-    # 配置文件放用户级目录（默认 ~/.forge，可用 FORGE_CONFIG_DIR 覆盖），
-    # 与工作空间无关；不预先创建，首次 /config 修改时才写出。
-    config_service = FileConfigService(TomlConfigStore(config_file("config.toml")))
-    llm_service = FileLlmConfigService(TomlLlmConfigStore(config_file("llm.toml")))
+    # 应用配置文件放用户级目录（默认 ~/.forge，可用 FORGE_CONFIG_DIR 覆盖）；
+    # 不预先创建，首次 /config 修改时才写出。项目配置由 project_service 负责。
+    config_service = ConfigService(TomlConfigStore(config_file("config.toml")))
+    llm_service = LlmConfigService(TomlLlmConfigStore(config_file("llm.toml")))
 
     mode_specs = [
         CommandSpec(
@@ -51,7 +59,7 @@ def build_registry(
             "status",
             IntentKind.SLASH_COMMAND,
             "查看状态",
-            handler=StatusCommand(registry, output),
+            handler=StatusCommand(state, context, output),
         ),
         CommandSpec(
             "help",
@@ -70,6 +78,12 @@ def build_registry(
             IntentKind.SLASH_COMMAND,
             "打开运行时默认模型选择面板",
             handler=ModelsCommand(config_service, llm_service, presenter, output),
+        ),
+        CommandSpec(
+            "add-dir",
+            IntentKind.SLASH_COMMAND,
+            "添加可操作工作区目录",
+            handler=AddDirCommand(context, project_service, picker, output),
         ),
     ]
     registry.register_all([*mode_specs, *control_specs, *slash_specs])

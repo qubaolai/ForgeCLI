@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Mapping
 
 from forgecli.application.llm import providers as provider_registry
@@ -44,36 +43,9 @@ def _as_int(name: str, value: object, default: int) -> int:
     return value
 
 
-class LlmConfigService(ABC):
-    @abstractmethod
-    def config(self) -> LlmConfig: ...
+class LlmConfigService:
+    """读取 / 校验 / 更新 LLM 配置的用例；只有一个实现，故不设抽象基类。"""
 
-    @abstractmethod
-    def providers(self) -> tuple[ProviderConfig, ...]: ...
-
-    @abstractmethod
-    def add_model(
-        self, provider_id: str, model_id: str, params: Mapping[str, object]
-    ) -> None: ...
-
-    @abstractmethod
-    def remove_model(self, provider_id: str, model_id: str) -> None: ...
-
-    @abstractmethod
-    def set_model_field(
-        self, provider_id: str, model_id: str, field: str, raw: str
-    ) -> None: ...
-
-    @abstractmethod
-    def set_model_extra(
-        self, provider_id: str, model_id: str, raw_json: str
-    ) -> None: ...
-
-    @abstractmethod
-    def set_provider_field(self, provider_id: str, field: str, raw: str) -> None: ...
-
-
-class FileLlmConfigService(LlmConfigService):
     def __init__(self, store: LlmConfigStore) -> None:
         self._store = store
 

@@ -17,6 +17,7 @@ class Key(Enum):
     ESC = enum.auto()
     BACKSPACE = enum.auto()
     SLASH = enum.auto()
+    TAB = enum.auto()
     CTRL_C = enum.auto()
     CHAR = enum.auto()  # 可打印字符，见 .char
     OTHER = enum.auto()

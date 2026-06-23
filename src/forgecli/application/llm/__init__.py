@@ -2,13 +2,12 @@
 
 - 共享词汇（顶层）：providers（封闭注册表）、model_ref（默认模型引用）、errors。
 - 配置切片：llm/config（读写 .forge/llm.toml）。
-- 调用切片：llm/client（端口占位，adapter 待 infrastructure/llm/adapters 实现）。
+- 调用切片：待接入（adapter 将在 infrastructure/llm/adapters 实现）。
 """
 
 from __future__ import annotations
 
 from forgecli.application.llm.config import (
-    FileLlmConfigService,
     LlmConfigService,
     LlmConfigStore,
 )
@@ -38,7 +37,6 @@ __all__ = [
     "ModelParams",
     "ModelRef",
     "LlmConfigService",
-    "FileLlmConfigService",
     "LlmConfigStore",
     "ProviderSpec",
     "REGISTRY",

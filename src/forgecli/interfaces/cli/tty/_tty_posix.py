@@ -68,6 +68,8 @@ def read_key(fd: int) -> KeyPress:
         return KeyPress(Key.ENTER)
     if b in (8, 127):
         return KeyPress(Key.BACKSPACE)
+    if b == 9:  # Tab
+        return KeyPress(Key.TAB)
     if b == ord("/"):
         return KeyPress(Key.SLASH, "/")
     if b == 27:  # ESC：单独 ESC，或 CSI 方向键 \x1b[A..D

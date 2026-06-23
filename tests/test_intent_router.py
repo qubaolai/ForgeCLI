@@ -1,4 +1,4 @@
-"""06-23 交互输入与斜杠命令路由的验收测试。
+"""交互输入与斜杠命令路由的验收测试。
 
 测试分三层：
     1. registry 是否注册了 roadmap 要求的命令面。
@@ -8,10 +8,20 @@
 
 from __future__ import annotations
 
+import tempfile
+from collections.abc import Callable, Sequence
+from pathlib import Path
+
 import pytest
 from rich.console import Console
 
 from forgecli.application.intent_router import IntentRouter
+from forgecli.application.interaction_ports import DirectoryPicker
+from forgecli.application.project import (
+    ProjectConfig,
+    ProjectContext,
+    ProjectService,
+)
 from forgecli.application.session import SessionState
 from forgecli.application.slash_commands import CommandRegistry
 from forgecli.domain.intents import (
@@ -24,12 +34,39 @@ from forgecli.domain.intents import (
     UnknownCommand,
     UserMessage,
 )
+from forgecli.infrastructure.project import (
+    TomlProjectConfigStore,
+    TomlProjectIndexStore,
+)
 from forgecli.interfaces.cli import repl as repl_module
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.repl import QuitSignal, Repl
 from forgecli.interfaces.cli.wiring import build_registry
-from forgecli.shared import __version__
+
+
+class _NullPicker(DirectoryPicker):
+    def pick(self, list_subdirs: Callable[[str], Sequence[str]]) -> str | None:
+        return None
+
+
+def _context() -> ProjectContext:
+    return ProjectContext(
+        ProjectConfig(
+            project_id="repo-test",
+            trusted=True,
+            primary_workspace_root="/work",
+            workspace_roots=("/work",),
+        )
+    )
+
+
+def _service() -> ProjectService:
+    root = Path(tempfile.mkdtemp()) / "projects"
+    return ProjectService(
+        TomlProjectIndexStore(root / "index.toml"),
+        TomlProjectConfigStore(root),
+    )
 
 
 def _runtime() -> (
@@ -38,7 +75,9 @@ def _runtime() -> (
     console = Console(record=True)
     state = SessionState()
     output = RichOutput(console)
-    registry = build_registry(state, RichMenuPresenter(console), output)
+    registry = build_registry(
+        state, _context(), _service(), RichMenuPresenter(console), _NullPicker(), output
+    )
     router = IntentRouter(registry)
     return console, state, registry, output, router
 
@@ -60,6 +99,7 @@ def test_registry_contains_all_roadmap_slash_commands() -> None:
         "status",
         "pause",
         "exit",
+        "add-dir",
     }
 
 
@@ -92,6 +132,13 @@ def test_routes_known_slash_commands(command: str) -> None:
     assert intent.kind is IntentKind.SLASH_COMMAND
     assert intent.command == command
     assert intent.args == ()
+
+
+def test_routes_hyphenated_slash_command() -> None:
+    intent = _router().route("/add-dir")
+
+    assert isinstance(intent, SlashCommand)
+    assert intent.command == "add-dir"
 
 
 def test_routes_bare_slash_as_help_command() -> None:
@@ -193,7 +240,9 @@ def test_repl_process_line_dispatches_status_command() -> None:
 
     repl._process_line("/status")
 
-    assert __version__ in console.export_text()
+    text = console.export_text()
+    assert "mode:" in text
+    assert "cwd:" in text
     assert state.should_exit is False
 
 

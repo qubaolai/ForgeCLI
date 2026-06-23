@@ -29,10 +29,8 @@ def _as_bool(value: str) -> bool:
 class EffectiveConfig:
     """合并默认值与用户覆盖后的有效配置快照。"""
 
-    workspace_dir: str
     telemetry_enabled: bool
     output_theme: str
-    log_level: str
     default_model: ModelRef | None  # 未配置时为 None
 
     @classmethod
@@ -44,22 +42,18 @@ class EffectiveConfig:
             return raw if raw is not None else _DEFAULTS[name]
 
         return cls(
-            workspace_dir=value(config_keys.WORKSPACE_DIR),
             telemetry_enabled=_as_bool(value(config_keys.TELEMETRY_ENABLED)),
             output_theme=value(config_keys.OUTPUT_THEME),
-            log_level=value(config_keys.LOG_LEVEL),
             default_model=_read_model(overrides),
         )
 
     def as_dict(self) -> dict[str, str]:
         """键 -> 规范字符串，供菜单展示与序列化对比。"""
         return {
-            config_keys.WORKSPACE_DIR: self.workspace_dir,
             config_keys.TELEMETRY_ENABLED: "true"
             if self.telemetry_enabled
             else "false",
             config_keys.OUTPUT_THEME: self.output_theme,
-            config_keys.LOG_LEVEL: self.log_level,
         }
 
     def display(self, key: str) -> str:

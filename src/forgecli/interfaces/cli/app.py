@@ -9,7 +9,7 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
-from forgecli.interfaces.cli.bootstrap import build_repl
+from forgecli.interfaces.cli.bootstrap import run as run_session
 from forgecli.shared import __version__
 
 app = typer.Typer(
@@ -54,7 +54,7 @@ def _root(
     不注册 Typer 子命令，避免形成交互式和命令式两套入口。
     """
     if ctx.invoked_subcommand is None:
-        build_repl().run()
+        run_session()
 
 
 def main() -> None:

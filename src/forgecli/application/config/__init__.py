@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from forgecli.application.config.config_keys import ConfigKey
-from forgecli.application.config.config_service import ConfigService, FileConfigService
+from forgecli.application.config.config_service import ConfigService
 from forgecli.application.config.config_store import ConfigStore
 from forgecli.application.config.effective_config import EffectiveConfig
 from forgecli.application.config.errors import (
@@ -20,7 +20,6 @@ from forgecli.application.config.errors import (
 __all__ = [
     "ConfigKey",
     "ConfigService",
-    "FileConfigService",
     "ConfigStore",
     "EffectiveConfig",
     "ConfigError",
