@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from forgecli.application.ports import Output
+from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.slash_commands import CommandHandler, CommandRegistry
 from forgecli.domain.intents import SlashCommand
 
 
 class HelpCommand(CommandHandler):
-    def __init__(self, registry: CommandRegistry, output: Output) -> None:
+    def __init__(self, registry: CommandRegistry, output: UserOutput) -> None:
         self._registry = registry
         self._output = output
 

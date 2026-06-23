@@ -17,7 +17,7 @@ from typing import cast
 import tomlkit
 from tomlkit.items import InlineTable, Table
 
-from forgecli.application.llm.config.ports import LlmConfigStore
+from forgecli.application.llm.config.llm_config_store import LlmConfigStore
 from forgecli.infrastructure.toml_io import read_document, write_document
 
 _SECTION = "llm"

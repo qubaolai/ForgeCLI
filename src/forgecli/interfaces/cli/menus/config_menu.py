@@ -1,58 +1,44 @@
-"""/config 交互式命令（多层菜单）。
-
-职责严格收敛在“交互呈现 + 调用 ConfigService”：
-    - 读取展示值：service.effective()
-    - 读取编辑初值：service.get()
-    - 提交修改：service.set()（校验、合并、持久化都在 service 内）
-菜单本身不做配置读取 / 写入 / 合并 / 校验 / 路径归一化等业务。
-配置读取错误（如 TOML 语法错误）在入口被翻成一行友好提示，不打开菜单、不抛 traceback。
-"""
+"""配置命令菜单面板"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
-from forgecli.application.config import keys
-from forgecli.application.config.errors import ConfigError, ConfigReadError
-from forgecli.application.config.service import ConfigService
-from forgecli.application.llm.config.service import LlmConfigService
+from forgecli.application.config import config_keys as keys
+from forgecli.application.config.config_service import ConfigService
+from forgecli.application.interaction_ports import UserOutput
+from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.menu import Choice, Menu
-from forgecli.application.ports import MenuPresenter, Output
-from forgecli.application.slash_commands import CommandHandler
-from forgecli.domain.intents import SlashCommand
-from forgecli.interfaces.cli.menus.config_options import (
-    LOG_LEVEL,
-    TELEMETRY,
-    THEME,
-    WORKSPACE_DIR,
-    MenuOption,
-)
-from forgecli.interfaces.cli.menus.llm_config import LlmMenu
+from forgecli.interfaces.cli.menus.llm_menu import LlmMenu
+from forgecli.shared.errors import ConfigError
 
 
-class ConfigCommand(CommandHandler):
+@dataclass(frozen=True)
+class MenuOption:
+    label: str  # 菜单展示文案
+    key: str  # 对应 keys.SCHEMA 中的配置键名
+
+
+WORKSPACE_DIR = MenuOption("工作区目录", keys.WORKSPACE_DIR)
+TELEMETRY = MenuOption("启用使用统计", keys.TELEMETRY_ENABLED)
+THEME = MenuOption("输出主题", keys.OUTPUT_THEME)
+LOG_LEVEL = MenuOption("日志级别", keys.LOG_LEVEL)
+
+
+class ConfigMenu:
     def __init__(
         self,
-        service: ConfigService,
-        llm: LlmConfigService,
-        presenter: MenuPresenter,
-        output: Output,
+        llm_config_service: LlmConfigService,
+        config_service: ConfigService,
+        output: UserOutput,
     ) -> None:
-        self._service = service
-        self._presenter = presenter
+        self._llm_config_service = llm_config_service
+        self._service = config_service
         self._output = output
-        self._llm_menu = LlmMenu(llm, output)
+        self._llm_menu = LlmMenu(llm_config_service, output)
 
-    def execute(self, command: SlashCommand) -> None:
-        # 入口先触发一次读取：配置文件损坏时给友好提示，而不是进菜单后崩。
-        try:
-            self._service.effective()
-        except ConfigReadError as exc:
-            self._output.print(exc.message)
-            return
-        self._presenter.present(self._root_menu())
-
-    def _root_menu(self) -> Menu:
+    def root_menu(self) -> Menu:
         return Menu(
             "配置",
             (

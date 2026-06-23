@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import select
-import sys
 import termios
 from collections.abc import Iterator
 from contextlib import contextmanager

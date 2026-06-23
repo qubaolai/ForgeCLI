@@ -6,17 +6,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forgecli.application.config import keys
+from forgecli.application.config import config_keys
+from forgecli.application.config.config_service import FileConfigService
+from forgecli.application.config.config_store import ConfigStore
 from forgecli.application.config.errors import ConfigReadError
-from forgecli.application.config.ports import ConfigStore
-from forgecli.application.config.service import FileConfigService
-from forgecli.application.llm.config.service import FileLlmConfigService
+from forgecli.application.interaction_ports import MenuPresenter, UserOutput
+from forgecli.application.llm.config.llm_config_service import FileLlmConfigService
 from forgecli.application.menu import Choice, Menu
-from forgecli.application.ports import MenuPresenter, Output
 from forgecli.domain.intents import SlashCommand
 from forgecli.infrastructure.config import TomlConfigStore
 from forgecli.infrastructure.llm.config import TomlLlmConfigStore
-from forgecli.interfaces.cli.commands.config import ConfigCommand
+from forgecli.interfaces.cli.commands.config_command import ConfigCommand
 
 
 class _CapturingPresenter(MenuPresenter):
@@ -29,7 +29,7 @@ class _CapturingPresenter(MenuPresenter):
         self.presented = menu
 
 
-class _RecordingOutput(Output):
+class _RecordingOutput(UserOutput):
     def __init__(self) -> None:
         self.lines: list[str] = []
 
@@ -157,4 +157,4 @@ def test_log_level_lives_in_submenu(tmp_path: Path) -> None:
     level = _find(submenu, "日志级别")
     assert level.preview() == "info"
     level.on_cycle(1)
-    assert level.preview() in keys.require_known(keys.LOG_LEVEL).choices
+    assert level.preview() in config_keys.require_known(config_keys.LOG_LEVEL).choices

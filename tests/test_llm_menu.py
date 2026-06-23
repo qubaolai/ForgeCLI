@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forgecli.application.llm.config.service import FileLlmConfigService
+from forgecli.application.interaction_ports import UserOutput
+from forgecli.application.llm.config.llm_config_service import FileLlmConfigService
 from forgecli.application.menu import Choice, Menu
-from forgecli.application.ports import Output
 from forgecli.infrastructure.llm.config import TomlLlmConfigStore
-from forgecli.interfaces.cli.menus.llm_config import LlmMenu
+from forgecli.interfaces.cli.menus.llm_menu import LlmMenu
 
 
-class _RecordingOutput(Output):
+class _RecordingOutput(UserOutput):
     def __init__(self) -> None:
         self.lines: list[str] = []
 

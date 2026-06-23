@@ -5,16 +5,17 @@
 
 from __future__ import annotations
 
-from forgecli.application.config.service import FileConfigService
-from forgecli.application.llm.config.service import FileLlmConfigService
+from forgecli.application.config.config_service import FileConfigService
+from forgecli.application.llm.config.llm_config_service import FileLlmConfigService
 from forgecli.application.session import SessionState
 from forgecli.application.slash_commands import CommandRegistry, CommandSpec
 from forgecli.domain.intents import ControlAction, IntentKind, SessionMode
 from forgecli.infrastructure.config import TomlConfigStore, config_file
 from forgecli.infrastructure.llm.config import TomlLlmConfigStore
-from forgecli.interfaces.cli.commands.config import ConfigCommand
-from forgecli.interfaces.cli.commands.help import HelpCommand
-from forgecli.interfaces.cli.commands.status import StatusCommand
+from forgecli.interfaces.cli.commands.config_command import ConfigCommand
+from forgecli.interfaces.cli.commands.help_command import HelpCommand
+from forgecli.interfaces.cli.commands.model_command import ModelsCommand
+from forgecli.interfaces.cli.commands.status_command import StatusCommand
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
 
@@ -63,6 +64,12 @@ def build_registry(
             IntentKind.SLASH_COMMAND,
             "查看 / 修改配置",
             handler=ConfigCommand(config_service, llm_service, presenter, output),
+        ),
+        CommandSpec(
+            "model",
+            IntentKind.SLASH_COMMAND,
+            "打开运行时默认模型选择面板",
+            handler=ModelsCommand(config_service, llm_service, presenter, output),
         ),
     ]
     registry.register_all([*mode_specs, *control_specs, *slash_specs])

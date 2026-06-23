@@ -6,17 +6,19 @@
 
 from __future__ import annotations
 
+from forgecli.application.config.config_keys import ConfigKey
+from forgecli.application.config.config_service import ConfigService, FileConfigService
+from forgecli.application.config.config_store import ConfigStore
+from forgecli.application.config.effective_config import EffectiveConfig
 from forgecli.application.config.errors import (
     ConfigError,
     ConfigReadError,
     ConfigValidationError,
     UnknownConfigKey,
 )
-from forgecli.application.config.model import EffectiveConfig
-from forgecli.application.config.ports import ConfigStore
-from forgecli.application.config.service import ConfigService, FileConfigService
 
 __all__ = [
+    "ConfigKey",
     "ConfigService",
     "FileConfigService",
     "ConfigStore",

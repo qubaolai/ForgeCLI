@@ -22,3 +22,7 @@ __all__ = [
 
 class UnknownProvider(ConfigValidationError):
     """配置 / 写入引用了未实现的供应商（不在封闭 ProviderRegistry 内）。"""
+
+
+class InvalidModelRef(ConfigValidationError):
+    """模型引用非法（provider / name 为空等）。"""

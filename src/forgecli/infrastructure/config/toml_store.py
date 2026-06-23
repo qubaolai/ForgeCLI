@@ -17,7 +17,7 @@ from pathlib import Path
 
 import tomlkit
 
-from forgecli.application.config.ports import ConfigStore
+from forgecli.application.config.config_store import ConfigStore
 from forgecli.infrastructure.toml_io import read_document, write_document
 
 

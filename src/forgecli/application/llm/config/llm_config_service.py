@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 
 from forgecli.application.llm import providers as provider_registry
-from forgecli.application.llm.config.model import (
+from forgecli.application.llm.config.llm_config import (
     LlmConfig,
     ModelParams,
     ModelSpec,
@@ -25,7 +25,7 @@ from forgecli.application.llm.config.model import (
     coerce_field,
     parse_extra,
 )
-from forgecli.application.llm.config.ports import LlmConfigStore
+from forgecli.application.llm.config.llm_config_store import LlmConfigStore
 from forgecli.application.llm.errors import ConfigValidationError
 
 _DEFAULT_TIMEOUT = 60

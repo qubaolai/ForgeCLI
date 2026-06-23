@@ -10,15 +10,16 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.config import keys
+from forgecli.application.config import config_keys
+from forgecli.application.config.config_service import FileConfigService
 from forgecli.application.config.default import default_config
+from forgecli.application.config.effective_config import EffectiveConfig
 from forgecli.application.config.errors import (
     ConfigReadError,
     ConfigValidationError,
     UnknownConfigKey,
 )
-from forgecli.application.config.model import EffectiveConfig
-from forgecli.application.config.service import FileConfigService
+from forgecli.application.llm.model_ref import ModelRef
 from forgecli.infrastructure.config import TomlConfigStore
 
 
@@ -47,7 +48,7 @@ def test_effective_returns_defaults_when_unconfigured(tmp_path: Path) -> None:
 def test_get_returns_none_for_unset_key(tmp_path: Path) -> None:
     service, _ = _service(tmp_path)
 
-    assert service.get(keys.OUTPUT_THEME) is None
+    assert service.get(config_keys.OUTPUT_THEME) is None
 
 
 # ---- 首次修改才落盘 ----
@@ -56,21 +57,36 @@ def test_get_returns_none_for_unset_key(tmp_path: Path) -> None:
 def test_set_creates_config_file_on_first_change(tmp_path: Path) -> None:
     service, config_path = _service(tmp_path)
 
-    service.set(keys.OUTPUT_THEME, "light")
+    service.set(config_keys.OUTPUT_THEME, "light")
 
     assert config_path.exists()
-    assert service.get(keys.OUTPUT_THEME) == "light"
+    assert service.get(config_keys.OUTPUT_THEME) == "light"
     assert service.effective().output_theme == "light"
 
 
 def test_set_persists_across_service_instances(tmp_path: Path) -> None:
     service, config_path = _service(tmp_path)
-    service.set(keys.LOG_LEVEL, "debug")
+    service.set(config_keys.LOG_LEVEL, "debug")
 
     reopened = FileConfigService(TomlConfigStore(config_path))
 
     assert reopened.effective().log_level == "debug"
-    assert reopened.get(keys.LOG_LEVEL) == "debug"
+    assert reopened.get(config_keys.LOG_LEVEL) == "debug"
+
+
+def test_set_default_model_persists_atomic_model_ref(tmp_path: Path) -> None:
+    service, config_path = _service(tmp_path)
+
+    service.set_default_model(ModelRef(provider="deepseek", model="deepseek-chat"))
+
+    reopened = FileConfigService(TomlConfigStore(config_path))
+    assert reopened.effective().default_model == ModelRef(
+        provider="deepseek", model="deepseek-chat"
+    )
+    text = config_path.read_text(encoding="utf-8")
+    assert "[model]" in text
+    assert 'provider = "deepseek"' in text
+    assert 'name = "deepseek-chat"' in text
 
 
 # ---- 封闭可配置面 / 敏感字段 ----
@@ -88,7 +104,7 @@ def test_unknown_key_is_rejected(tmp_path: Path) -> None:
 def test_schema_has_no_credential_fields() -> None:
     # 凭证保护 = 白名单里压根没有凭证字段；这是防止有人往可配置面塞凭证的回归守卫。
     suspicious = ("key", "secret", "token", "password", "credential")
-    for key in keys.SCHEMA:
+    for key in config_keys.SCHEMA:
         assert not any(word in key.name.lower() for word in suspicious)
 
 
@@ -99,7 +115,7 @@ def test_invalid_choice_is_rejected(tmp_path: Path) -> None:
     service, config_path = _service(tmp_path)
 
     with pytest.raises(ConfigValidationError):
-        service.set(keys.OUTPUT_THEME, "rainbow")
+        service.set(config_keys.OUTPUT_THEME, "rainbow")
     # 非法写入不应落盘。
     assert not config_path.exists()
 
@@ -107,18 +123,18 @@ def test_invalid_choice_is_rejected(tmp_path: Path) -> None:
 def test_bool_value_is_normalized(tmp_path: Path) -> None:
     service, _ = _service(tmp_path)
 
-    service.set(keys.TELEMETRY_ENABLED, "YES")
+    service.set(config_keys.TELEMETRY_ENABLED, "YES")
 
-    assert service.get(keys.TELEMETRY_ENABLED) == "true"
+    assert service.get(config_keys.TELEMETRY_ENABLED) == "true"
     assert service.effective().telemetry_enabled is True
 
 
 def test_relative_path_is_resolved_to_absolute(tmp_path: Path) -> None:
     service, _ = _service(tmp_path)
 
-    service.set(keys.WORKSPACE_DIR, "sub/work")
+    service.set(config_keys.WORKSPACE_DIR, "sub/work")
 
-    stored = service.get(keys.WORKSPACE_DIR)
+    stored = service.get(config_keys.WORKSPACE_DIR)
     assert stored is not None
     assert Path(stored).is_absolute()
 
@@ -171,12 +187,12 @@ def test_broken_toml_raises_friendly_read_error(tmp_path: Path) -> None:
 def test_writes_are_deterministic_and_repeatable(tmp_path: Path) -> None:
     service, config_path = _service(tmp_path)
 
-    service.set(keys.OUTPUT_THEME, "light")
-    service.set(keys.LOG_LEVEL, "warn")
+    service.set(config_keys.OUTPUT_THEME, "light")
+    service.set(config_keys.LOG_LEVEL, "warn")
     first = config_path.read_text(encoding="utf-8")
 
     # 用同样的值重写，字节应完全一致（幂等、可 diff）。
-    service.set(keys.OUTPUT_THEME, "light")
+    service.set(config_keys.OUTPUT_THEME, "light")
     second = config_path.read_text(encoding="utf-8")
 
     assert first == second
@@ -188,8 +204,8 @@ def test_writes_are_deterministic_and_repeatable(tmp_path: Path) -> None:
 def test_set_preserves_other_existing_overrides(tmp_path: Path) -> None:
     service, _ = _service(tmp_path)
 
-    service.set(keys.OUTPUT_THEME, "light")
-    service.set(keys.LOG_LEVEL, "debug")
+    service.set(config_keys.OUTPUT_THEME, "light")
+    service.set(config_keys.LOG_LEVEL, "debug")
 
     effective = service.effective()
     assert effective.output_theme == "light"

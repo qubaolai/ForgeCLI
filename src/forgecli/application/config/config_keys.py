@@ -25,6 +25,8 @@ WORKSPACE_DIR = "workspace.dir"
 TELEMETRY_ENABLED = "telemetry.enabled"
 OUTPUT_THEME = "output.theme"
 LOG_LEVEL = "log.level"
+DEFAULT_MODEL_PROVIDER_KEY = "model.provider"
+DEFAULT_MODEL_NAME_KEY = "model.name"
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
@@ -93,6 +95,8 @@ SCHEMA: tuple[ConfigKey, ...] = (
     ConfigKey(
         LOG_LEVEL, ValueKind.CHOICE, default="info", choices=("debug", "info", "warn")
     ),
+    ConfigKey(DEFAULT_MODEL_PROVIDER_KEY, ValueKind.TEXT, default=""),
+    ConfigKey(DEFAULT_MODEL_NAME_KEY, ValueKind.TEXT, default=""),
 )
 
 _BY_NAME: dict[str, ConfigKey] = {key.name: key for key in SCHEMA}

@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from forgecli.application.llm.config.model import ModelSpec, ProviderConfig
+from forgecli.application.llm.config.llm_config import ModelSpec, ProviderConfig
 
 
 @dataclass(frozen=True)

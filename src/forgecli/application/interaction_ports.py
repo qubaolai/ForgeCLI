@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from forgecli.application.menu import Menu
 
 
-class Output(ABC):
+class UserOutput(ABC):
     """输出端口；命令处理器用它回显结果，不直接依赖 Rich Console。"""
 
     @abstractmethod

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.llm.config.service import FileLlmConfigService
+from forgecli.application.llm.config.llm_config_service import FileLlmConfigService
 from forgecli.application.llm.errors import (
     ConfigReadError,
     ConfigValidationError,

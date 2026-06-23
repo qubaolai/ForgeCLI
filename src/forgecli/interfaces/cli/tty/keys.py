@@ -1,10 +1,12 @@
 """平台无关的按键模型与 TTY 判断。"""
 
 from __future__ import annotations
-from dataclasses import dataclass
-from enum import Enum
+
 import enum
 import sys
+from dataclasses import dataclass
+from enum import Enum
+
 
 class Key(Enum):
     UP = enum.auto()
@@ -18,6 +20,7 @@ class Key(Enum):
     CTRL_C = enum.auto()
     CHAR = enum.auto()  # 可打印字符，见 .char
     OTHER = enum.auto()
+
 
 @dataclass(frozen=True)
 class KeyPress:

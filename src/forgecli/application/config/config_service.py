@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from forgecli.application.config import keys
-from forgecli.application.config.model import EffectiveConfig
-from forgecli.application.config.ports import ConfigStore
+from forgecli.application.config import config_keys
+from forgecli.application.config.config_store import ConfigStore
+from forgecli.application.config.effective_config import EffectiveConfig
+from forgecli.application.llm.model_ref import ModelRef
 
 
 class ConfigService(ABC):
@@ -33,6 +34,10 @@ class ConfigService(ABC):
     def set(self, key: str, value: str) -> None:
         """校验并持久化一个配置项。未知键 / 非法值抛 ConfigError 子类。"""
 
+    @abstractmethod
+    def set_default_model(self, ref: ModelRef) -> None:
+        """一次性持久化运行时默认模型引用。"""
+
 
 class FileConfigService(ConfigService):
     """基于 ConfigStore 的默认实现。"""
@@ -44,12 +49,22 @@ class FileConfigService(ConfigService):
         return EffectiveConfig.from_overrides(self._store.load())
 
     def get(self, key: str) -> str | None:
-        keys.require_known(key)
+        config_keys.require_known(key)
         return self._store.load().get(key)
 
     def set(self, key: str, value: str) -> None:
-        config_key = keys.require_known(key)
+        config_key = config_keys.require_known(key)
         canonical = config_key.validate(value)
         overrides = self._store.load()
         overrides[key] = canonical
+        self._store.save(overrides)
+
+    def set_default_model(self, ref: ModelRef) -> None:
+        provider_key = config_keys.require_known(config_keys.DEFAULT_MODEL_PROVIDER_KEY)
+        model_key = config_keys.require_known(config_keys.DEFAULT_MODEL_NAME_KEY)
+        overrides = self._store.load()
+        overrides[config_keys.DEFAULT_MODEL_PROVIDER_KEY] = provider_key.validate(
+            ref.provider
+        )
+        overrides[config_keys.DEFAULT_MODEL_NAME_KEY] = model_key.validate(ref.model)
         self._store.save(overrides)

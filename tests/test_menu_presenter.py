@@ -73,8 +73,8 @@ def test_ctrl_c_closes_from_submenu(monkeypatch: pytest.MonkeyPatch) -> None:
     leaf = Menu("leaf", (Choice("x"),))
     root = Menu("root", (Choice("go", submenu=lambda: leaf),))
 
-    # → 进入子菜单(depth 2)，Ctrl-C 应立刻关闭整个菜单，而非只回上一层。
-    consumed = _drive(root, [KeyPress(Key.RIGHT), KeyPress(Key.CTRL_C)], monkeypatch)
+    # Enter 进入子菜单(depth 2)，Ctrl-C 应立刻关闭整个菜单，而非只回上一层。
+    consumed = _drive(root, [KeyPress(Key.ENTER), KeyPress(Key.CTRL_C)], monkeypatch)
 
     assert len(consumed) == 2  # 只读了这两个键就退出（没继续读 → 没只 pop）
 
@@ -85,10 +85,10 @@ def test_ctrl_c_closes_while_editing_without_saving(
     saved: list[str] = []
     root = Menu("root", (Choice("名称", on_text=saved.append),))
 
-    # → 进入行内编辑，输入一个字符，Ctrl-C 应关闭并丢弃（不调用 on_text）。
+    # Enter 进入行内编辑，输入一个字符，Ctrl-C 应关闭并丢弃（不调用 on_text）。
     consumed = _drive(
         root,
-        [KeyPress(Key.RIGHT), KeyPress(Key.CHAR, "a"), KeyPress(Key.CTRL_C)],
+        [KeyPress(Key.ENTER), KeyPress(Key.CHAR, "a"), KeyPress(Key.CTRL_C)],
         monkeypatch,
     )
 
@@ -110,10 +110,10 @@ def test_esc_returns_one_level_then_closes_at_root(
     leaf = Menu("leaf", (Choice("x"),))
     root = Menu("root", (Choice("go", submenu=lambda: leaf),))
 
-    # → 进子菜单；Esc 回到根（不关闭）；再 Esc 关闭根。三个键都应被消费。
+    # Enter 进子菜单；Esc 回到根（不关闭）；再 Esc 关闭根。三个键都应被消费。
     consumed = _drive(
         root,
-        [KeyPress(Key.RIGHT), KeyPress(Key.ESC), KeyPress(Key.ESC)],
+        [KeyPress(Key.ENTER), KeyPress(Key.ESC), KeyPress(Key.ESC)],
         monkeypatch,
     )
 
@@ -144,3 +144,36 @@ def test_arrows_cycle_enum_row(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert len(consumed) == 3
     assert deltas == [+1, -1]
+
+
+def test_right_arrow_does_not_enter_submenu(monkeypatch: pytest.MonkeyPatch) -> None:
+    leaf = Menu("leaf", (Choice("x"),))
+    root = Menu("root", (Choice("go", submenu=lambda: leaf),))
+
+    consumed = _drive(root, [KeyPress(Key.RIGHT), KeyPress(Key.ESC)], monkeypatch)
+
+    assert len(consumed) == 2
+
+
+def test_right_arrow_does_not_start_text_edit(monkeypatch: pytest.MonkeyPatch) -> None:
+    saved: list[str] = []
+    root = Menu("root", (Choice("名称", on_text=saved.append),))
+
+    consumed = _drive(
+        root,
+        [KeyPress(Key.RIGHT), KeyPress(Key.CHAR, "a"), KeyPress(Key.ESC)],
+        monkeypatch,
+    )
+
+    assert len(consumed) == 3
+    assert saved == []
+
+
+def test_right_arrow_does_not_trigger_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    triggered: list[bool] = []
+    root = Menu("root", (Choice("删除", on_select=lambda: triggered.append(True)),))
+
+    consumed = _drive(root, [KeyPress(Key.RIGHT), KeyPress(Key.ESC)], monkeypatch)
+
+    assert len(consumed) == 2
+    assert triggered == []

@@ -1,6 +1,6 @@
 """LLM 领域：封闭供应商 + 配置驱动的模型，分「配置」与「调用」两个切片。
 
-- 共享词汇（顶层）：providers（封闭注册表）、catalog（值对象）、errors。
+- 共享词汇（顶层）：providers（封闭注册表）、model_ref（默认模型引用）、errors。
 - 配置切片：llm/config（读写 .forge/llm.toml）。
 - 调用切片：llm/client（端口占位，adapter 待 infrastructure/llm/adapters 实现）。
 """
@@ -12,7 +12,7 @@ from forgecli.application.llm.config import (
     LlmConfigService,
     LlmConfigStore,
 )
-from forgecli.application.llm.config.model import (
+from forgecli.application.llm.config.llm_config import (
     LlmConfig,
     ModelParams,
     ModelSpec,
@@ -23,6 +23,7 @@ from forgecli.application.llm.errors import (
     ConfigValidationError,
     UnknownProvider,
 )
+from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.llm.providers import (
     REGISTRY,
     ProviderSpec,
@@ -35,6 +36,7 @@ __all__ = [
     "ProviderConfig",
     "ModelSpec",
     "ModelParams",
+    "ModelRef",
     "LlmConfigService",
     "FileLlmConfigService",
     "LlmConfigStore",

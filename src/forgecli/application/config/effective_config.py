@@ -15,9 +15,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from forgecli.application.config import keys
+from forgecli.application.config import config_keys
+from forgecli.application.llm.model_ref import ModelRef
 
-_DEFAULTS: dict[str, str] = {key.name: key.default for key in keys.SCHEMA}
+_DEFAULTS: dict[str, str] = {key.name: key.default for key in config_keys.SCHEMA}
 
 
 def _as_bool(value: str) -> bool:
@@ -32,6 +33,7 @@ class EffectiveConfig:
     telemetry_enabled: bool
     output_theme: str
     log_level: str
+    default_model: ModelRef | None  # 未配置时为 None
 
     @classmethod
     def from_overrides(cls, overrides: Mapping[str, str]) -> EffectiveConfig:
@@ -42,21 +44,33 @@ class EffectiveConfig:
             return raw if raw is not None else _DEFAULTS[name]
 
         return cls(
-            workspace_dir=value(keys.WORKSPACE_DIR),
-            telemetry_enabled=_as_bool(value(keys.TELEMETRY_ENABLED)),
-            output_theme=value(keys.OUTPUT_THEME),
-            log_level=value(keys.LOG_LEVEL),
+            workspace_dir=value(config_keys.WORKSPACE_DIR),
+            telemetry_enabled=_as_bool(value(config_keys.TELEMETRY_ENABLED)),
+            output_theme=value(config_keys.OUTPUT_THEME),
+            log_level=value(config_keys.LOG_LEVEL),
+            default_model=_read_model(overrides),
         )
 
     def as_dict(self) -> dict[str, str]:
         """键 -> 规范字符串，供菜单展示与序列化对比。"""
         return {
-            keys.WORKSPACE_DIR: self.workspace_dir,
-            keys.TELEMETRY_ENABLED: "true" if self.telemetry_enabled else "false",
-            keys.OUTPUT_THEME: self.output_theme,
-            keys.LOG_LEVEL: self.log_level,
+            config_keys.WORKSPACE_DIR: self.workspace_dir,
+            config_keys.TELEMETRY_ENABLED: "true"
+            if self.telemetry_enabled
+            else "false",
+            config_keys.OUTPUT_THEME: self.output_theme,
+            config_keys.LOG_LEVEL: self.log_level,
         }
 
     def display(self, key: str) -> str:
         """某个键当前的有效取值（字符串），未知键回 "(未知)"。"""
         return self.as_dict().get(key, "(未知)")
+
+
+def _read_model(overrides: Mapping[str, str]) -> ModelRef | None:
+    """从扁平覆盖项读取默认模型；两个 id 任一缺失即视为未配置。"""
+    provider = (overrides.get(config_keys.DEFAULT_MODEL_PROVIDER_KEY) or "").strip()
+    model = (overrides.get(config_keys.DEFAULT_MODEL_NAME_KEY) or "").strip()
+    if not provider or not model:
+        return None
+    return ModelRef(provider=provider, model=model)

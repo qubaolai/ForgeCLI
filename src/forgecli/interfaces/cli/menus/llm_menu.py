@@ -14,12 +14,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.llm import providers as provider_registry
-from forgecli.application.llm.config.model import STANDARD_FIELDS
-from forgecli.application.llm.config.service import LlmConfigService
+from forgecli.application.llm.config.llm_config import STANDARD_FIELDS
+from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import ConfigError
 from forgecli.application.menu import Choice, Menu
-from forgecli.application.ports import Output
 
 # 供应商详情里可编辑的字段（label, key）
 _PROVIDER_FIELDS = (
@@ -32,7 +32,7 @@ _PROVIDER_FIELDS = (
 
 
 class LlmMenu:
-    def __init__(self, service: LlmConfigService, output: Output) -> None:
+    def __init__(self, service: LlmConfigService, output: UserOutput) -> None:
         self._service = service
         self._output = output
 

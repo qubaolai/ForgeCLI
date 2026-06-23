@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from rich.console import Console
 
-from forgecli.application.ports import Output
+from forgecli.application.interaction_ports import UserOutput
 
 
-class RichOutput(Output):
+class RichOutput(UserOutput):
     def __init__(self, console: Console) -> None:
         self._console = console
 

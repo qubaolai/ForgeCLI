@@ -2,8 +2,8 @@
 
 按键约定:
     ↑/↓        移动高亮
-    →/Enter    导航行下钻；文本行进入行内编辑；动作行触发动作
-    ←/→        开关/枚举行原地切换(右=下一个，左=上一个)
+    Enter      导航行下钻；文本行进入行内编辑；动作行触发动作
+    ←/→        仅用于开关/枚举行原地切换(右=下一个，左=上一个)
     /          进入搜索, 输入即过滤本层; Enter 保留过滤, Esc 清除
     Esc 子菜单回上一层；根层关闭命令
     Ctrl-C 任意状态 / 任意层级直接关闭整个菜单
@@ -22,8 +22,8 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.text import Text
 
+from forgecli.application.interaction_ports import MenuPresenter
 from forgecli.application.menu import Choice, Menu
-from forgecli.application.ports import MenuPresenter
 from forgecli.interfaces.cli.tty.tty import Key, raw_mode, read_key, stdin_is_tty
 
 # 配色与 prompt_loop 的「裸斜杠菜单」保持一致：背景透明、选中仅靠文字颜色区分
@@ -40,8 +40,8 @@ _META_CUR = "#cdd6f4"  # 选中行：右侧取值（提亮）
 # 普通态提示行的按键序列（键, 说明）。
 _NAV_HINTS = (
     ("↑↓", "选择"),
-    ("→", "进入/切换"),
-    ("←", "切换"),
+    ("Enter", "进入/编辑"),
+    ("←→", "切换"),
     ("/", "搜索"),
     ("Esc", "返回"),
 )
@@ -144,15 +144,8 @@ class RichMenuPresenter(MenuPresenter):
                     if row.on_cycle:
                         row.on_cycle(-1)
                 elif press.key is Key.RIGHT:
-                    if row.submenu:
-                        stack.append(row.submenu)
-                        index, query = 0, ""
-                    elif row.on_cycle:
+                    if row.on_cycle:
                         row.on_cycle(+1)
-                    elif row.on_text is not None:
-                        editing = (row, row.text_default() if row.text_default else "")
-                    elif row.on_select is not None:
-                        row.on_select()
                 elif press.key is Key.ENTER:
                     # Enter 只表示「确认 / 下钻」：进入子菜单、进入行内编辑、触发动作。
                     # 开关 / 枚举行的切换只走 ←/→，Enter 在这类行上不切换候选值。
