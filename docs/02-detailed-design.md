@@ -1054,7 +1054,12 @@ Multi-Agent 需要新增：
 
 ### 17.2 配置文件
 
-项目配置：`.forge/config.toml`
+MVP 当前配置存储遵循 ADR-0008：应用级配置位于 Forge home 下的
+`config.toml` / `llm.toml`，项目级配置位于
+`projects/<project-id>/forge.toml`，不会在被信任项目根目录自动创建 `.forge/`。
+`[model]` 表示当前项目的运行时默认模型。
+
+项目配置示例：
 
 ```toml
 schema_version = 1

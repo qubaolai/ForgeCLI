@@ -25,8 +25,9 @@
   - 应用配置文件：Forge home 下的 `config.toml`、`llm.toml` 等跨项目配置。
   - 项目索引：Forge home 下的 `projects/index.toml`。
   - 项目配置目录：Forge home 下的 `projects/<project-id>/`。
-- 应用配置继续保存跨项目偏好，例如主题、LLM 供应商和模型配置。
-- 项目配置保存当前项目相关配置，例如日志级别、工作区目录列表、信任标记。
+- 应用配置继续保存跨项目偏好，例如主题、日志级别、LLM 供应商配置和模型声明。
+- 项目配置保存当前项目相关配置，例如运行时默认模型、工作区目录列表、信任标记。
+- 运行时默认模型跟随当前项目，避免在其它目录启动 `forge` 并切换模型时影响正在进行的任务。
 - 27 日开始的 session state、`events.jsonl`、对话内容和 artifacts 必须写入 `projects/<project-id>/` 下，而不是应用配置文件。
 - Forge 不在被信任项目根目录下自动创建 `.forge/`。
 - 更新配置相关命名和注释，避免把 Forge home、应用配置、项目索引和项目配置目录混为一个概念。
@@ -40,7 +41,7 @@
   projects/
     index.toml
     ForgeCLI-a1b2c3d4/
-      project.toml
+      forge.toml
       sessions/
       artifacts/
 ```
@@ -60,7 +61,7 @@
   - 只信任当前目录，不自动信任父级目录。
   - 根据目录名和规范路径 hash 生成 `project-id`。
   - 在 Forge home 下创建 `projects/<project-id>/`。
-  - 写入 `projects/<project-id>/project.toml`，记录已信任、`primary_workspace_root` 和 `workspace_roots`。
+  - 写入 `projects/<project-id>/forge.toml`，记录已信任、`primary_workspace_root` 和 `workspace_roots`。
   - 更新 `projects/index.toml`，记录规范路径到 `project-id` 的映射。
   - `workspace_roots` 初始值只包含 `primary_workspace_root`。
 - 后续在该项目根目录或子目录启动 `forge` 时，应通过索引命中原项目，不再提示。
@@ -147,6 +148,7 @@ cwd:
 - 首次信任不会在项目根目录下创建 `.forge/`。
 - `/config` 移除“工作区目录”选项。
 - 当前项目维护 `workspace_roots` 列表。
+- 运行时默认模型写入当前项目的 `forge.toml`。
 - `/add-dir` 可添加可操作目录。
 - `/status` 的 `cwd:` 展示工作区列表。
 - 对信任选择、拒绝进入、重复启动、子目录启动、不创建项目根 `.forge/`、添加目录、非法目录、`/config` 去除工作区项和 `/status cwd` 有测试覆盖。
@@ -169,7 +171,7 @@ poetry run forge
 
 1. 在未信任目录启动后选择“不信任”，确认进程直接退出且不创建项目记录。
 
-2. 再次启动后选择“信任”，确认在 Forge home 下创建 `projects/<project-id>/project.toml` 并进入 REPL。
+2. 再次启动后选择“信任”，确认在 Forge home 下创建 `projects/<project-id>/forge.toml` 并进入 REPL。
 
 3. 确认当前项目根目录下没有自动创建 `.forge/`。
 

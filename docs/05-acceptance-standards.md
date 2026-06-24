@@ -75,7 +75,7 @@ printf 'exit\n' | poetry run forge
 - 裸 `forge` 的交互入口可安全退出，不在测试中阻塞 stdin。
 - 斜杠命令不得直接交给模型自由解释。
 - 配置命令必须复用 `ConfigService`，不得在 CLI 函数里直接堆业务逻辑。
-- 模型目录由 `ModelCatalogService` 管理，`[model]` 只表示运行时默认模型。
+- 模型目录由 `ModelCatalogService` 管理，`[model]` 只表示运行时默认模型；26 日起运行时默认模型属于项目级 `forge.toml`。
 - session 写入必须区分自然语言、斜杠命令、模式切换和系统事件。
 - 文件写入、shell、网络、删除等副作用必须有权限边界和测试。
 
