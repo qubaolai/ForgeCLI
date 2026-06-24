@@ -10,7 +10,9 @@ from forgecli.application.interaction_ports import DirectoryPicker
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.project import ProjectContext, ProjectService
 from forgecli.application.session import SessionState
+from forgecli.application.session.session_service import SessionService
 from forgecli.application.slash_commands import CommandRegistry, CommandSpec
+from forgecli.application.slash_commands.registry import CommandCategory
 from forgecli.domain.intents import ControlAction, IntentKind, SessionMode
 from forgecli.infrastructure.config import TomlConfigStore, config_dir, config_file
 from forgecli.infrastructure.llm import TomlLlmConfigStore
@@ -24,7 +26,7 @@ from forgecli.interfaces.cli.output import RichOutput
 
 
 def build_registry(
-    state: SessionState,
+    session_service: SessionService,
     context: ProjectContext,
     project_service: ProjectService,
     presenter: RichMenuPresenter,
@@ -43,49 +45,54 @@ def build_registry(
 
     mode_specs = [
         CommandSpec(
-            "chat", IntentKind.MODE_CHANGE, "切换到对话模式", mode=SessionMode.CHAT
+            "chat", IntentKind.MODE_CHANGE, CommandCategory.WRITE, "切换到对话模式", mode=SessionMode.CHAT
         ),
         CommandSpec(
-            "plan", IntentKind.MODE_CHANGE, "切换到计划模式", mode=SessionMode.PLAN
+            "plan", IntentKind.MODE_CHANGE, CommandCategory.WRITE, "切换到计划模式", mode=SessionMode.PLAN
         ),
         CommandSpec(
-            "act", IntentKind.MODE_CHANGE, "切换到执行模式", mode=SessionMode.ACT
+            "act", IntentKind.MODE_CHANGE, CommandCategory.WRITE, "切换到执行模式", mode=SessionMode.ACT
         ),
     ]
     control_specs = [
         CommandSpec(
-            "pause", IntentKind.CONTROL, "暂停当前任务", action=ControlAction.PAUSE
+            "pause", IntentKind.CONTROL, CommandCategory.WRITE, "暂停当前任务", action=ControlAction.PAUSE
         ),
-        CommandSpec("exit", IntentKind.CONTROL, "退出会话", action=ControlAction.EXIT),
+        CommandSpec("exit", IntentKind.CONTROL, CommandCategory.WRITE, "退出会话", action=ControlAction.EXIT),
     ]
     slash_specs = [
         CommandSpec(
             "status",
             IntentKind.SLASH_COMMAND,
+            CommandCategory.READ,
             "查看状态",
-            handler=StatusCommand(state, context, output),
+            handler=StatusCommand(session_service, context, output),
         ),
         CommandSpec(
             "help",
             IntentKind.SLASH_COMMAND,
+            CommandCategory.READ,
             "查看可用命令或某命令帮助",
             handler=HelpCommand(registry, output),
         ),
         CommandSpec(
             "config",
             IntentKind.SLASH_COMMAND,
+            CommandCategory.WRITE,
             "查看 / 修改配置",
             handler=ConfigCommand(config_service, llm_service, presenter, output),
         ),
         CommandSpec(
             "model",
             IntentKind.SLASH_COMMAND,
+            CommandCategory.WRITE,
             "打开运行时默认模型选择面板",
             handler=ModelsCommand(config_service, llm_service, presenter, output),
         ),
         CommandSpec(
             "add-dir",
             IntentKind.SLASH_COMMAND,
+            CommandCategory.WRITE,
             "添加可操作工作区目录",
             handler=AddDirCommand(context, project_service, picker, output),
         ),

@@ -31,22 +31,23 @@ class AddDirCommand(CommandHandler):
         self._picker = picker
         self._output = output
 
-    def execute(self, command: SlashCommand) -> None:
+    def execute(self, command: SlashCommand) -> bool:
         base = Path.cwd()
         raw = self._picker.pick(lambda text: self._subdirs(base, text))
         if raw is None:  # 取消
-            return
+            return False
         try:
             path = self._service.normalize_workspace_dir(raw, base)
         except WorkspaceError as exc:
             self._output.print(exc.message)
-            return
+            return False
         project = self._context.project
         if str(path) in project.workspace_roots:
             self._output.print(f"目录已在工作区列表中：{path}")
-            return
+            return False
         self._context.project = self._service.add_workspace_dir(project, path)
         self._output.print(f"已添加可操作目录：{path}")
+        return True
 
     @staticmethod
     def _subdirs(base: Path, raw: str = "") -> list[str]:

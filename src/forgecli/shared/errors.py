@@ -30,3 +30,10 @@ class ConfigReadError(ConfigError):
 
 class ConfigValidationError(ConfigError):
     """配置取值非法(不在允许范围、空值等)。"""
+
+class SessionStateError(ForgeError):
+    """会话状态读写错误（状态文件损坏 / 会话尚未开始）；message 可直接展示。"""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message

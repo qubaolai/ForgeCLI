@@ -12,11 +12,12 @@ class HelpCommand(CommandHandler):
         self._registry = registry
         self._output = output
 
-    def execute(self, command: SlashCommand) -> None:
+    def execute(self, command: SlashCommand) -> bool:
         if command.args:
             self._show_one(command.args[0].lstrip("/").lower())
         else:
             self._show_all()
+        return False
 
     def _show_all(self) -> None:
         self._output.print("可用命令：")

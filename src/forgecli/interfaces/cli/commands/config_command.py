@@ -28,17 +28,20 @@ class ConfigCommand(CommandHandler):
         output: UserOutput,
     ) -> None:
         self._service = service
+        self._llm = llm
         self._presenter = presenter
         self._output = output
         self._menu = ConfigMenu(
             llm_config_service=llm, config_service=service, output=output
         )
 
-    def execute(self, command: SlashCommand) -> None:
+    def execute(self, command: SlashCommand) -> bool:
         # 入口先触发一次读取：配置文件损坏时给友好提示，而不是进菜单后崩。
         try:
-            self._service.effective()
+            before = (self._service.effective(), self._llm.config())
         except ConfigReadError as exc:
             self._output.print(exc.message)
-            return
+            return False
         self._presenter.present(self._menu.root_menu())
+        # 只有菜单里真的改了某项（config / llm 快照变化）才算写入；只看不改返回 False。
+        return (self._service.effective(), self._llm.config()) != before

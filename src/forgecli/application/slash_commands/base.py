@@ -11,5 +11,5 @@ class CommandHandler(ABC):
     """斜杠命令处理器，接收已经解析完成的 SlashCommand。"""
 
     @abstractmethod
-    def execute(self, command: SlashCommand) -> None:
+    def execute(self, command: SlashCommand) -> bool:
         """执行已解析的斜杠命令。"""

@@ -10,10 +10,14 @@ CommandRegistry 是会话内斜杠命令目录：命令名 -> CommandSpec，服�
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum, auto
 
 from forgecli.application.slash_commands.base import CommandHandler
 from forgecli.domain.intents import ControlAction, IntentKind, SessionMode
 
+class CommandCategory(Enum):
+    READ = auto()
+    WRITE = auto()
 
 @dataclass(frozen=True)
 class CommandSpec:
@@ -21,6 +25,7 @@ class CommandSpec:
 
     name: str  # 规范的命令名（小写）
     kind: IntentKind  # 决定解析成哪种 intent
+    category: CommandCategory # 命令类别 读/写
     summary: str = ""  # 供 /help 命令展示使用
     mode: SessionMode | None = None  # kind == MODE_CHANGE 必填
     action: ControlAction | None = None  # kind == CONTROL 必填

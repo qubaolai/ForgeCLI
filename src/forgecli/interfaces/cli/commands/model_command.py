@@ -26,16 +26,18 @@ class ModelsCommand(CommandHandler):
         self._output = output
         self._menu = ModelsMenu(llm, EnvProviderAvailability(), config, output)
 
-    def execute(self, command: SlashCommand) -> None:
+    def execute(self, command: SlashCommand) -> bool:
         if command.args:
             self._output.print(
                 "当前 /model 不支持参数；请直接输入 /model 打开模型选择面板。"
             )
-            return
+            return False
         try:
-            self._config.effective()  # 触发读取：损坏配置在进菜单前就友好报错
+            before = self._config.effective().default_model
             self._llm.config()
         except ConfigReadError as exc:
             self._output.print(exc.message)
-            return
+            return False
         self._presenter.present(self._menu.root_menu())
+        # 只有真的切换了默认模型才算写入
+        return self._config.effective().default_model == before

@@ -17,6 +17,7 @@ from rich.panel import Panel
 
 from forgecli.application.intent_router import IntentRouter
 from forgecli.application.session import SessionState
+from forgecli.application.session.session_service import SessionService
 from forgecli.application.slash_commands import CommandRegistry
 from forgecli.domain.intents import (
     ControlAction,
@@ -48,12 +49,14 @@ class Repl:
         registry: CommandRegistry,
         state: SessionState,
         output: RichOutput,
+        session: SessionService,
     ) -> None:
         self._console = console
         self._router = router
         self._registry = registry
         self._state = state
         self._output = output
+        self._session = session
 
     def run(self) -> None:
         # banner 由 bootstrap 在信任解析前渲染；这里只给进入会话的提示。
@@ -70,6 +73,8 @@ class Repl:
             self._console.print("[yellow]Forge 交互式会话需要在终端(TTY)中运行。[/]")
             return
 
+        # 进入交互式会话即开启当前 session（惰性落盘：无可记录动作则不写文件）。
+        self._session.start()
         # 输入框只需要命令名和说明，用于 "/" 补全菜单；执行仍由 registry 分派。
         commands = [(spec.name, spec.summary) for spec in self._registry.all_specs()]
         prompt = ForgePrompt(commands)
@@ -100,6 +105,7 @@ class Repl:
             case UserMessage():
                 # 同屏显示一轮对话：先回显用户输入(绿)，再给助手输出(青绿)。
                 render_user_turn(self._console, intent.text)
+                self._session.record_user_message(intent.text)
                 # 真正的 LLM 调用接在这里(适配器尚未装配)；先占住助手那一轮。
                 with thinking(self._console, label="runing...."):
                     # 真正的 LLM 调用接这里;loading 会持续到这个 with 块结束。
@@ -107,7 +113,7 @@ class Repl:
                     reply = "(LLM 接入开发中)已收到你的消息。"
                 render_assistant_turn(self._console, reply)
             case ModeChange():
-                self._state.mode = intent.target_mode
+                self._session.record_mode_change(intent.target_mode)
                 self._output.print(
                     f"已切换到 [bold]{intent.target_mode.value}[/] 模式。"
                 )
@@ -131,4 +137,6 @@ class Repl:
         if spec is None or spec.handler is None:
             self._output.print(f"命令 /{intent.command} 暂未实现。")
             return
+        # if spec.handler.execute(intent):
         spec.handler.execute(intent)
+        self._session.record_slash_command(intent.command, intent.args)

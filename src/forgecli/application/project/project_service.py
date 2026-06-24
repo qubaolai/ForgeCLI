@@ -23,11 +23,7 @@ from forgecli.application.project.project_store import (
     ProjectConfigStore,
     ProjectIndexStore,
 )
-
-
-def _now_iso() -> str:
-    """本地时区、秒级 ISO 时间戳，如 ``2026-06-26T10:00:00+08:00``。"""
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+from forgecli.shared.utils import now_iso
 
 
 def canonical_path(path: Path) -> Path:
@@ -48,7 +44,7 @@ class ProjectService:
         self,
         index_store: ProjectIndexStore,
         config_store: ProjectConfigStore,
-        clock: Callable[[], str] = _now_iso,
+        clock: Callable[[], str] = now_iso,
     ) -> None:
         self._index = index_store
         self._configs = config_store

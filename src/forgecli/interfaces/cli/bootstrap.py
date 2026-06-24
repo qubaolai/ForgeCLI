@@ -18,11 +18,14 @@ from forgecli.application.project import (
     WorkspaceStartup,
 )
 from forgecli.application.session import SessionState
+from forgecli.application.session.session_service import SessionService
 from forgecli.infrastructure.config import config_dir
 from forgecli.infrastructure.project import (
     TomlProjectConfigStore,
     TomlProjectIndexStore,
 )
+from forgecli.infrastructure.session.json_state_store import JsonStateStore
+from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
 from forgecli.interfaces.cli.banner import render_banner
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
@@ -40,6 +43,14 @@ def _project_service() -> ProjectService:
         TomlProjectConfigStore(projects),
     )
 
+def _session_service(context: ProjectContext) -> SessionService:
+    # 会话事件 / 快照落在用户级 Forge home 的项目目录下（ADR-0008），不写入项目目录。
+    sessions = config_dir() / "projects" / context.project.project_id / "sessions"
+    return SessionService(
+        JsonlEventStore(sessions),
+        JsonStateStore(sessions),
+        workspace_root=context.project.primary_workspace_root,
+    )
 
 def run() -> None:
     """裸 forge 的产品入口。"""
@@ -58,11 +69,12 @@ def run() -> None:
 
     context = ProjectContext(result.project)
     state = SessionState()
+    session = _session_service(context)
     output = RichOutput(console=console)
     presenter = RichMenuPresenter(console=console)
     picker = TtyDirectoryPicker(console=console)
     registry = build_registry(
-        state=state,
+        session_service=session,
         context=context,
         project_service=service,
         presenter=presenter,
@@ -76,4 +88,5 @@ def run() -> None:
         registry=registry,
         state=state,
         output=output,
+        session=session,
     ).run()
