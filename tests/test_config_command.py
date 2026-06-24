@@ -1,7 +1,8 @@
 """/config 交互入口测试：验证菜单只做呈现、所有改动都经 ConfigService 落盘，
 并验证配置读取错误被翻成友好提示而非 traceback。
 
-ADR-0008 后：工作区目录与日志级别已移交项目级配置，/config 不再展示它们。
+ADR-0008 后：工作区目录移交工作区命令，不再通过 /config 编辑。
+日志级别保留在 /config 面板。
 """
 
 from __future__ import annotations
@@ -101,13 +102,13 @@ def test_toggle_bool_writes_through_service(tmp_path: Path) -> None:
     assert telemetry.preview() == "true"
 
 
-def test_root_menu_excludes_workspace_and_log_level(tmp_path: Path) -> None:
+def test_root_menu_excludes_workspace_and_includes_log_level(tmp_path: Path) -> None:
     command, presenter, _, _ = _command(tmp_path)
     _execute(command)
 
     labels = {choice.label for choice in presenter.presented.choices}
     assert "工作区目录" not in labels
-    assert "日志级别" not in labels
+    assert "日志级别" in labels
 
 
 def test_read_error_shows_friendly_message_without_menu(tmp_path: Path) -> None:

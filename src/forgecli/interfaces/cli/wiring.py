@@ -12,7 +12,7 @@ from forgecli.application.project import ProjectContext, ProjectService
 from forgecli.application.session import SessionState
 from forgecli.application.slash_commands import CommandRegistry, CommandSpec
 from forgecli.domain.intents import ControlAction, IntentKind, SessionMode
-from forgecli.infrastructure.config import TomlConfigStore, config_file
+from forgecli.infrastructure.config import TomlConfigStore, config_dir, config_file
 from forgecli.infrastructure.llm import TomlLlmConfigStore
 from forgecli.interfaces.cli.commands.add_dir_command import AddDirCommand
 from forgecli.interfaces.cli.commands.config_command import ConfigCommand
@@ -32,9 +32,13 @@ def build_registry(
     output: RichOutput,
 ) -> CommandRegistry:
     registry = CommandRegistry()
-    # 应用配置文件放用户级目录（默认 ~/.forge，可用 FORGE_CONFIG_DIR 覆盖）；
-    # 不预先创建，首次 /config 修改时才写出。项目配置由 project_service 负责。
-    config_service = ConfigService(TomlConfigStore(config_file("config.toml")))
+    # ConfigService 按 level 路由落盘：应用级 config.toml，项目级当前项目的 forge.toml。
+    # 都在用户级 Forge home 下；不预先创建，首次写配置时才落盘。
+    forge_toml = config_dir() / "projects" / context.project.project_id / "forge.toml"
+    config_service = ConfigService(
+        TomlConfigStore(config_file("config.toml")),
+        TomlConfigStore(forge_toml),
+    )
     llm_service = LlmConfigService(TomlLlmConfigStore(config_file("llm.toml")))
 
     mode_specs = [

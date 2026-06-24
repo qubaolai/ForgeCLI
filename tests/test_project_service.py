@@ -1,12 +1,13 @@
 """ProjectService + TOML 存储的验收测试（ADR-0008 / 2026-06-26）。
 
-覆盖 roadmap 验收点：首次信任建 project.toml + 索引、不在仓库建 .forge、
+覆盖 roadmap 验收点：首次信任建 forge.toml + 索引、不在仓库建 .forge、
 拒绝不建文件、已信任再启动/子目录启动复用、路径边界匹配、最长匹配、
 工作区目录归一 / 去重 / 非法报错、索引引号 key round-trip。
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -57,7 +58,7 @@ def test_trust_creates_project_and_index_without_polluting_repo(
 
     project = service.trust(repo)
 
-    project_file = home / "projects" / project.project_id / "project.toml"
+    project_file = home / "projects" / project.project_id / "forge.toml"
     assert project_file.exists()
     assert (home / "projects" / "index.toml").exists()
     # 信任绝不在被信任目录下创建 .forge。
@@ -176,9 +177,32 @@ def test_project_config_round_trips_workspace_roots(tmp_path: Path) -> None:
         trusted=True,
         primary_workspace_root="/a",
         workspace_roots=("/a", "/b"),
-        log_level="debug",
     )
 
     store.save(project)
 
     assert store.load("repo-deadbeef") == project
+
+
+def test_project_config_store_preserves_config_section(tmp_path: Path) -> None:
+    # ProjectConfigStore 只写状态字段；ConfigService 写的 [logging] 等偏好段不被覆盖。
+    store = TomlProjectConfigStore(tmp_path / "projects")
+    project = ProjectConfig(
+        project_id="repo-deadbeef",
+        trusted=True,
+        primary_workspace_root="/a",
+        workspace_roots=("/a",),
+    )
+    store.save(project)
+    forge = tmp_path / "projects" / "repo-deadbeef" / "forge.toml"
+    forge.write_text(
+        forge.read_text(encoding="utf-8") + '\n[logging]\nlevel = "debug"\n',
+        encoding="utf-8",
+    )
+
+    # 再次保存状态（如 /add-dir）不应抹掉 [logging]。
+    store.save(replace(project, workspace_roots=("/a", "/b")))
+
+    text = forge.read_text(encoding="utf-8")
+    assert 'level = "debug"' in text
+    assert "/b" in text

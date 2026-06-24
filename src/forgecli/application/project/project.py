@@ -1,7 +1,7 @@
-"""项目领域的小型值对象与帮助函数（ADR-0008）。
+"""项目领域的小型值对象与帮助函数
 
 集中放置「项目」这一概念里轻量、无副作用的部分，保持紧凑：
-    - ProjectConfig：对应 ``projects/<project-id>/project.toml``。
+    - ProjectConfig：对应 ``projects/<project-id>/forge.toml``。
     - IndexEntry：   对应 ``projects/index.toml`` 里一条 ``[trusted_roots."<path>"]``。
     - ProjectContext：进程内持有“当前项目”，供 /add-dir 更新、/status 读取。
     - WorkspaceError：工作区目录非法的面向用户错误。
@@ -25,14 +25,17 @@ _HASH_LEN = 8
 
 @dataclass(frozen=True)
 class ProjectConfig:
-    """单个项目的配置与状态快照（会话事件 27 日再接入）。"""
+    """单个项目的**状态**快照：信任与工作区目录（会话事件 27 日再接入）。
+
+    项目级*配置偏好*（如 logging.level）不在此——它们由 ConfigService 经统一 SCHEMA
+    读写 forge.toml，与本状态在同一文件、各写各的键（round-trip 互不覆盖）。
+    """
 
     project_id: str
     trusted: bool
     primary_workspace_root: str
     # 始终至少包含 primary_workspace_root，且其为首元素。
     workspace_roots: tuple[str, ...]
-    log_level: str = "info"
 
 
 @dataclass(frozen=True)

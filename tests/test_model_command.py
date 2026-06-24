@@ -39,7 +39,12 @@ def _find(menu: Menu, label: str) -> Choice:
 def _services(
     tmp_path: Path,
 ) -> tuple[ConfigService, LlmConfigService, _RecordingOutput]:
-    config = ConfigService(TomlConfigStore(tmp_path / ".forge" / "config.toml"))
+    config = ConfigService(
+        TomlConfigStore(tmp_path / ".forge" / "config.toml"),
+        TomlConfigStore(
+            tmp_path / ".forge" / "projects" / "repo-deadbeef" / "forge.toml"
+        ),
+    )
     llm = LlmConfigService(TomlLlmConfigStore(tmp_path / ".forge" / "llm.toml"))
     output = _RecordingOutput()
     return config, llm, output

@@ -29,7 +29,7 @@ class ProjectIndexStore(ABC):
 
 
 class ProjectConfigStore(ABC):
-    """``projects/<project-id>/project.toml`` 的读写。"""
+    """``projects/<project-id>/forge.toml`` 的读写。"""
 
     @abstractmethod
     def load(self, project_id: str) -> ProjectConfig | None:

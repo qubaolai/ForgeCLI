@@ -21,7 +21,6 @@ from forgecli.application.config.errors import (
     ConfigValidationError,
     UnknownConfigKey,
 )
-from forgecli.application.llm.model_ref import ModelRef
 from forgecli.infrastructure.config import TomlConfigStore
 
 
@@ -73,21 +72,6 @@ def test_set_persists_across_service_instances(tmp_path: Path) -> None:
 
     assert reopened.effective().telemetry_enabled is True
     assert reopened.get(config_keys.TELEMETRY_ENABLED) == "true"
-
-
-def test_set_default_model_persists_atomic_model_ref(tmp_path: Path) -> None:
-    service, config_path = _service(tmp_path)
-
-    service.set_default_model(ModelRef(provider="deepseek", model="deepseek-chat"))
-
-    reopened = ConfigService(TomlConfigStore(config_path))
-    assert reopened.effective().default_model == ModelRef(
-        provider="deepseek", model="deepseek-chat"
-    )
-    text = config_path.read_text(encoding="utf-8")
-    assert "[model]" in text
-    assert 'provider = "deepseek"' in text
-    assert 'name = "deepseek-chat"' in text
 
 
 # ---- 封闭可配置面 / 敏感字段 ----

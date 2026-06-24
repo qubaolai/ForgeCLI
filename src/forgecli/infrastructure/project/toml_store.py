@@ -2,7 +2,7 @@
 
 两类文件都在用户级 Forge home 下，读写经 infrastructure/toml_io（round-trip + 原子写）：
     - index.toml：trusted_roots 表，规范路径作 key（tomlkit 自动加引号）。
-    - <project-id>/project.toml：单个项目的配置与状态。
+    - <project-id>/forge.toml：单个项目的配置与状态。
 
 行为对齐 application/project/project_store 的两个抽象：load 无文件返回空 / None。
 """
@@ -63,7 +63,7 @@ class TomlProjectIndexStore(ProjectIndexStore):
 
 
 class TomlProjectConfigStore(ProjectConfigStore):
-    """``projects/<project-id>/project.toml`` 的 tomlkit 实现。
+    """``projects/<project-id>/forge.toml`` 的 tomlkit 实现。
 
     构造时只给定 projects 根目录，按 project_id 拼出每个项目文件路径。
     """
@@ -72,7 +72,7 @@ class TomlProjectConfigStore(ProjectConfigStore):
         self._root = projects_dir
 
     def _file(self, project_id: str) -> Path:
-        return self._root / project_id / "project.toml"
+        return self._root / project_id / "forge.toml"
 
     def load(self, project_id: str) -> ProjectConfig | None:
         path = self._file(project_id)
@@ -83,26 +83,20 @@ class TomlProjectConfigStore(ProjectConfigStore):
             return None
         raw_roots = data.get("workspace_roots", [])
         roots = tuple(str(r) for r in raw_roots) if isinstance(raw_roots, list) else ()
-        logging = data.get("logging", {})
-        level = logging.get("level", "info") if isinstance(logging, Mapping) else "info"
         return ProjectConfig(
             project_id=str(data["project_id"]),
             trusted=bool(data.get("trusted", False)),
             primary_workspace_root=str(data.get("primary_workspace_root", "")),
             workspace_roots=roots,
-            log_level=str(level),
         )
 
     def save(self, project: ProjectConfig) -> None:
+        # 只写项目状态字段；forge.toml 里的 [logging] 等配置偏好由 ConfigService 拥有，
+        # read_document 的 round-trip 会原样保留，互不覆盖。
         path = self._file(project.project_id)
         doc = read_document(path)
         doc["project_id"] = project.project_id
         doc["trusted"] = project.trusted
         doc["primary_workspace_root"] = project.primary_workspace_root
         doc["workspace_roots"] = list(project.workspace_roots)
-        logging = doc.get("logging")
-        if not isinstance(logging, tomlkit.items.Table):
-            logging = tomlkit.table()
-            doc["logging"] = logging
-        logging["level"] = project.log_level
         write_document(path, doc)

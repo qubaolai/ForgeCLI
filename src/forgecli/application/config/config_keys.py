@@ -1,12 +1,15 @@
-"""可配置项的封闭定义（schema）。
+"""可配置项的封闭定义（统一 SCHEMA）。
 
-这里是配置面的*唯一权威来源*：键名、类型、默认值、允许取值。
-新增可配置项 = 在 SCHEMA 增加一条 ConfigKey；EffectiveConfig / 默认值 / 校验
-都由 schema 推导，避免在多处重复定义键名与取值范围。
+这里是配置面的*唯一权威登记*：所有**可设置的配置偏好**——无论应用级还是项目级——都在
+SCHEMA 里声明一条 ConfigKey，带 `level` 区分归属。新增配置项 = 加一条；键名、类型、
+默认值、允许取值、属于哪一级都从这里读。落盘按 level 路由（应用级 → config.toml，
+项目级 → forge.toml）由 ConfigService 据 `level` 完成，"写哪个文件"是数据而非代码分叉。
 
-凭证保护就是这份白名单本身：SCHEMA 不收录凭证字段，require_known() 据此拒绝
-任何不在表内的键，凭证（api key 等）也就无法被 /config 写入明文配置文件。
-凭证应走环境变量 / keychain，不属于本文件。
+注意：trust 标记、工作区目录等是**项目状态**而非配置偏好——它们由 ProjectService /
+`/add-dir` 等领域流程管理，不进本 SCHEMA、不经通用 set。
+
+凭证保护就是这份白名单本身：SCHEMA 不收录凭证字段，require_known() 据此拒绝任何不在
+表内的键，凭证（api key 等）也就无法被 /config 写入明文配置文件。
 """
 
 from __future__ import annotations
@@ -19,10 +22,12 @@ from forgecli.application.config.errors import (
     UnknownConfigKey,
 )
 
-# ---- 键名常量（dotted key，与 config.toml 的表结构对应）----
-# 工作区与日志级别已移交项目级配置（ADR-0008），不再属于应用配置面。
+# ---- 键名常量（dotted key 与配置文件表结构对应）----
+# 应用级（config.toml）
 TELEMETRY_ENABLED = "telemetry.enabled"
 OUTPUT_THEME = "output.theme"
+LOGGING_LEVEL = "logging.level"
+# 项目级（forge.toml）
 DEFAULT_MODEL_PROVIDER_KEY = "model.provider"
 DEFAULT_MODEL_NAME_KEY = "model.name"
 
@@ -30,12 +35,19 @@ _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
 
 
+class ConfigLevel(Enum):
+    """配置项归属：应用级（跨项目）或项目级（随项目）。决定落盘到哪个文件。"""
+
+    APP = auto()
+    PROJECT = auto()
+
+
 class ValueKind(Enum):
     """配置取值的业务类型，决定如何归一化与校验。"""
 
-    TEXT = auto()
     BOOL = auto()
     CHOICE = auto()
+    TEXT = auto()
 
 
 @dataclass(frozen=True)
@@ -43,8 +55,9 @@ class ConfigKey:
     """一个配置键的封闭定义。"""
 
     name: str
+    level: ConfigLevel
     kind: ValueKind
-    default: str
+    default: str = ""
     choices: tuple[str, ...] = ()
 
     def validate(self, value: str) -> str:
@@ -74,16 +87,29 @@ class ConfigKey:
                 )
             return text
 
-        return text
+        return text  # TEXT
 
 
 SCHEMA: tuple[ConfigKey, ...] = (
-    ConfigKey(TELEMETRY_ENABLED, ValueKind.BOOL, default="false"),
+    # 应用级 → config.toml
+    ConfigKey(TELEMETRY_ENABLED, ConfigLevel.APP, ValueKind.BOOL, default="false"),
     ConfigKey(
-        OUTPUT_THEME, ValueKind.CHOICE, default="dark", choices=("dark", "light")
+        OUTPUT_THEME,
+        ConfigLevel.APP,
+        ValueKind.CHOICE,
+        default="dark",
+        choices=("dark", "light"),
     ),
-    ConfigKey(DEFAULT_MODEL_PROVIDER_KEY, ValueKind.TEXT, default=""),
-    ConfigKey(DEFAULT_MODEL_NAME_KEY, ValueKind.TEXT, default=""),
+    ConfigKey(
+        LOGGING_LEVEL,
+        ConfigLevel.APP,
+        ValueKind.CHOICE,
+        default="info",
+        choices=("debug", "info", "warn"),
+    ),
+    # 项目级 → forge.toml
+    ConfigKey(DEFAULT_MODEL_PROVIDER_KEY, ConfigLevel.PROJECT, ValueKind.TEXT),
+    ConfigKey(DEFAULT_MODEL_NAME_KEY, ConfigLevel.PROJECT, ValueKind.TEXT),
 )
 
 _BY_NAME: dict[str, ConfigKey] = {key.name: key for key in SCHEMA}
@@ -100,3 +126,8 @@ def require_known(name: str) -> ConfigKey:
     if key is None:
         raise UnknownConfigKey(f"未知配置项: {name}")
     return key
+
+
+def keys_for(level: ConfigLevel) -> tuple[ConfigKey, ...]:
+    """某一级的全部配置键，供按级查询 / 路由 / 菜单使用。"""
+    return tuple(key for key in SCHEMA if key.level is level)

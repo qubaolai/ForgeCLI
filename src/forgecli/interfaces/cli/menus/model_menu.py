@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from forgecli.application.config import config_keys
 from forgecli.application.config.config_service import ConfigService
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.llm import providers as provider_registry
@@ -84,7 +85,11 @@ class ModelsMenu:
         ref = ModelRef(provider=model.provider, model=model.id)
 
         def select() -> None:
-            self._config_service.set_default_model(ref)
+            # 默认模型引用是两个应用级配置项，走统一 set（无专门 setter）。
+            self._config_service.set(
+                config_keys.DEFAULT_MODEL_PROVIDER_KEY, ref.provider
+            )
+            self._config_service.set(config_keys.DEFAULT_MODEL_NAME_KEY, ref.model)
             self._output.print(f"已切换默认模型为 {ref}。")
 
         return select

@@ -72,7 +72,7 @@ class ProjectService:
         return self._configs.load(best.project_id)
 
     def trust(self, cwd: Path) -> ProjectConfig:
-        """信任当前目录：生成 project-id、写 project.toml 与索引一条。"""
+        """信任当前目录：生成 project-id、写 forge.toml 与索引一条。"""
         root = canonical_path(cwd)
         root_str = str(root)
         project = ProjectConfig(

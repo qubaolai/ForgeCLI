@@ -2,7 +2,7 @@
 
 这里解析的是 Forge home（用户级持久化根目录）：应用配置（config.toml / llm.toml）
 与项目存储（projects/）都落在它下面，与当前工作目录无关，应当稳定。工作区目录列表
-属于项目级配置（projects/<id>/project.toml），不在此处。
+属于项目级配置（projects/<id>/forge.toml），不在此处。
 
 解析顺序（「可配置项」即此处的覆盖入口）：
     1. 环境变量 FORGE_CONFIG_DIR —— 显式覆盖（支持 ~ 展开）；
