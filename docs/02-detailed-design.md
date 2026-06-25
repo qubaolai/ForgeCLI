@@ -1095,8 +1095,9 @@ auto_compact_threshold = 0.8
 
 [storage]
 type = "jsonl"
-sessions_dir = ".forge/sessions"
-artifacts_dir = ".forge/artifacts"
+# 相对当前项目的 Forge home 目录：~/.forge/projects/<project-id>/
+sessions_dir = "sessions"
+artifacts_dir = "artifacts"
 ```
 
 用户全局配置建议放在：
@@ -1118,7 +1119,7 @@ artifacts_dir = ".forge/artifacts"
 1. 企业只读策略
 2. 交互式命令输入产生的临时覆盖
 3. 环境变量
-4. 项目 `.forge/config.toml`
+4. 用户级 Forge home 下的项目 `forge.toml`
 5. 用户全局配置
 6. 默认值
 
