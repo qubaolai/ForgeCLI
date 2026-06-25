@@ -11,19 +11,20 @@ from pathlib import Path
 
 from rich.console import Console
 
+from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
 from forgecli.application.intent_router import IntentRouter
 from forgecli.application.project import (
     ProjectContext,
     ProjectService,
     WorkspaceStartup,
 )
-from forgecli.application.session import SessionState
 from forgecli.application.session.session_service import SessionService
 from forgecli.infrastructure.config import config_dir
 from forgecli.infrastructure.project import (
     TomlProjectConfigStore,
     TomlProjectIndexStore,
 )
+from forgecli.infrastructure.project.process_lock import ProcessLock, ProjectLockedError
 from forgecli.infrastructure.session.json_state_store import JsonStateStore
 from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
 from forgecli.interfaces.cli.banner import render_banner
@@ -70,25 +71,41 @@ def run() -> None:
         return
 
     context = ProjectContext(result.project)
-    state = SessionState()
-    session = _session_service(context)
-    output = RichOutput(console=console)
-    presenter = RichMenuPresenter(console=console)
-    picker = TtyDirectoryPicker(console=console)
-    registry = build_registry(
-        session_service=session,
-        context=context,
-        project_service=service,
-        presenter=presenter,
-        picker=picker,
-        output=output,
+
+    # 项目级排他：同一项目同一时刻只允许一个 forge 进程操作。锁文件落在用户级
+    # Forge home 的项目目录下（不写进仓库），用 OS 咨询锁，进程崩溃由 OS 自动释放。
+    lock = ProcessLock(
+        config_dir() / "projects" / context.project.project_id / "forge.lock"
     )
-    router = IntentRouter(registry=registry)
-    Repl(
-        console=console,
-        router=router,
-        registry=registry,
-        state=state,
-        output=output,
-        session=session,
-    ).run()
+    try:
+        lock.acquire()
+    except ProjectLockedError as exc:
+        console.print(f"[yellow]{exc.message}[/]")
+        return
+
+    try:
+        session = _session_service(context)
+        agent_turn = AgentTurnService(session=session)
+        output = RichOutput(console=console)
+        presenter = RichMenuPresenter(console=console)
+        picker = TtyDirectoryPicker(console=console)
+        registry = build_registry(
+            session_service=session,
+            context=context,
+            project_service=service,
+            presenter=presenter,
+            picker=picker,
+            output=output,
+        )
+        router = IntentRouter(registry=registry)
+        Repl(
+            console=console,
+            router=router,
+            registry=registry,
+            output=output,
+            session=session,
+            agent_turn=agent_turn,
+        ).run()
+    finally:
+        # 正常退出 / 异常 / Ctrl-C 都释放（flock 在 kill -9 时也由 OS 释放）。
+        lock.release()

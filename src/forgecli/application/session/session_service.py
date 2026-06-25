@@ -21,6 +21,7 @@ from forgecli.application.session.event_store import EventStore
 from forgecli.application.session.events import EventType, SessionEvent
 from forgecli.application.session.snapshot import SessionSnapshot
 from forgecli.application.session.state_store import StateStore
+from forgecli.domain.conversation import MessageRole, TurnStatus
 from forgecli.domain.intents import SessionMode
 from forgecli.shared.errors import SessionStateError
 from forgecli.shared.utils import now_iso
@@ -76,9 +77,26 @@ class SessionService:
             raise SessionStateError("会话尚未开始。")
         return self._current
 
-    def record_user_message(self, text: str) -> SessionEvent:
+    def record_user_message(self, text: str, *, turn_id: str) -> SessionEvent:
         """记录一条自然语言输入。"""
-        return self._append(EventType.USER_MESSAGE, {"text": text})
+        return self._append(
+            EventType.USER_MESSAGE,
+            {"turn_id": turn_id, "role": MessageRole.USER.value, "text": text},
+        )
+
+    def record_assistant_message(
+        self, text: str, *, turn_id: str, status: TurnStatus
+    ) -> SessionEvent:
+        """记录一条助手输出（与 user_message 同一 turn 成对，带终态）。"""
+        return self._append(
+            EventType.ASSISTANT_MESSAGE,
+            {
+                "turn_id": turn_id,
+                "role": MessageRole.ASSISTANT.value,
+                "status": status.value,
+                "text": text,
+            },
+        )
 
     def record_mode_change(self, mode: SessionMode) -> SessionEvent:
         """记录一次模式切换，并把快照 mode 推进到新模式。"""

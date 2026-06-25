@@ -70,7 +70,7 @@ def test_user_message_creates_session_event_then_updates_state() -> None:
     service, events, states = _service()
     service.start()
 
-    event = service.record_user_message("hello")
+    event = service.record_user_message("hello", turn_id="turn_0001")
 
     assert event.event_id == "evt_0002"
     assert [stored.type for stored in events.events] == [
@@ -78,7 +78,11 @@ def test_user_message_creates_session_event_then_updates_state() -> None:
         EventType.USER_MESSAGE,
     ]
     assert events.events[0].payload == {"workspace_root": "/repo", "mode": "chat"}
-    assert events.events[1].payload == {"text": "hello"}
+    assert events.events[1].payload == {
+        "turn_id": "turn_0001",
+        "role": "user",
+        "text": "hello",
+    }
     assert states.snapshots[-1].last_event_id == "evt_0002"
     assert states.snapshots[-1].mode is SessionMode.CHAT
 

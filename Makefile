@@ -21,7 +21,7 @@ PYTHON ?= python3.13
 PACKAGE_NAME ?= forgecli
 VERSION = $(shell $(POETRY) version -s)
 WHEEL = dist/$(PACKAGE_NAME)-$(VERSION)-py3-none-any.whl
-PIP_INSTALL_ARGS ?= --user --force-reinstall
+PIP_INSTALL_ARGS ?= --user --break-system-packages --force-reinstall
 
 # 帮助
 help:

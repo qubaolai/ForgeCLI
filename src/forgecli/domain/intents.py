@@ -19,12 +19,9 @@ from enum import Enum, auto
 __all__ = [
     "IntentKind",
     "SessionMode",
-    "ControlAction",
     "UserIntent",
     "UserMessage",
     "SlashCommand",
-    "ModeChange",
-    "ControlSignal",
     "UnknownCommand",
 ]
 
@@ -34,8 +31,6 @@ class IntentKind(Enum):
 
     USER_MESSAGE = auto()
     SLASH_COMMAND = auto()
-    MODE_CHANGE = auto()
-    CONTROL = auto()
     UNKNOWN_COMMAND = auto()
 
 
@@ -45,13 +40,6 @@ class SessionMode(Enum):
     CHAT = "chat"
     PLAN = "plan"
     ACT = "act"
-
-
-class ControlAction(Enum):
-    """控制操作"""
-
-    PAUSE = "pause"
-    EXIT = "exit"
 
 
 @dataclass(frozen=True)
@@ -88,10 +76,10 @@ class UserMessage(UserIntent):
 
 @dataclass(frozen=True)
 class SlashCommand(UserIntent):
-    """已识别的查询型斜杠命令，例如 /help、/status。
+    """已识别的斜杠命令，例如 /help、/status、/plan。
 
     command 为去掉前导斜杠的规范名（小写），args 为不可变参数序列。
-    模式切换与会话控制分别由 ModeChange 和 ControlSignal 表达。
+    命令语义由 application 层注册的 handler 执行，领域层只承载解析结果。
     """
 
     command: str
@@ -105,28 +93,6 @@ class SlashCommand(UserIntent):
     @property
     def kind(self) -> IntentKind:
         return IntentKind.SLASH_COMMAND
-
-
-@dataclass(frozen=True)
-class ModeChange(UserIntent):
-    """模式切换：/chat、/plan、/act。目前只更新内存态。"""
-
-    target_mode: SessionMode
-
-    @property
-    def kind(self) -> IntentKind:
-        return IntentKind.MODE_CHANGE
-
-
-@dataclass(frozen=True)
-class ControlSignal(UserIntent):
-    """会话控制：/pause、/exit。"""
-
-    action: ControlAction
-
-    @property
-    def kind(self) -> IntentKind:
-        return IntentKind.CONTROL
 
 
 @dataclass(frozen=True)

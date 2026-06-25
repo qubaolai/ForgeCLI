@@ -17,10 +17,10 @@
 
 退出逻辑：
     - 输入框有内容时按 Ctrl-C → 清空内容（不退出）；
-    - 空行第一次 Ctrl-C → 提示行变为"再按一次 Ctrl-C 退出"，并起一个 500ms 定时器；
-    - 空行在 500ms 内再次 Ctrl-C → 抛出 QuitSignal 退出；
+    - 空行第一次 Ctrl-C → 提示行变为"再按一次 Ctrl-C 退出"，并起一个退出窗口定时器；
+    - 空行在退出窗口内再次 Ctrl-C → 抛出 QuitSignal 退出；
     - 超过 500ms 没有第二次 → 定时器复位"待退出"并重绘，提示行还原（第二次需重新计时）；
-    - 空行 Ctrl-D → 抛出 EOFError 退出；
+    - Ctrl-D 不退出会话：有内容时删除字符，空行时仅取消待退出状态；
     - 一旦开始打字，"待退出"状态立即解除。
 
 只在真终端(TTY)里用本模块；非 TTY 由 repl 直接拒绝。
@@ -143,8 +143,7 @@ class ForgePrompt:
 
         - 正常回车：返回该行文本；
         - 空行连按两次 Ctrl-C：抛出 QuitSignal；
-        - 空行 Ctrl-D：抛出内置的 EOFError。
-        调用方负责捕获这两个异常并据此退出。
+        调用方负责捕获 QuitSignal 并据此退出。
         """
         self._disarm_exit()
         self._buffer.reset()  # 清掉上一轮可能残留的内容
@@ -284,7 +283,7 @@ class ForgePrompt:
         )
 
     def _key_bindings(self) -> KeyBindings:
-        """自定义按键：菜单导航、回车提交、Ctrl-C 三态退出、Ctrl-D 退出。"""
+        """自定义按键：菜单导航、回车提交、Ctrl-C 三态退出、Ctrl-D 删除。"""
         kb = KeyBindings()
 
         # ↑/↓：菜单打开时移动高亮（filter 保证菜单没开时不影响光标移动）。
@@ -333,7 +332,7 @@ class ForgePrompt:
                 self._disarm_exit()
                 event.app.exit(exception=QuitSignal())
             else:
-                # 情况2：空行 + 首次（或上次已超时复位）→ 待退出 + 起 500ms 定时器。
+                # 情况2：空行 + 首次（或上次已超时复位）→ 待退出 + 起退出窗口定时器。
                 self._arm_exit(event.app)
 
         @kb.add("c-d")
@@ -342,7 +341,7 @@ class ForgePrompt:
             if buffer.text:
                 buffer.delete()  # 有内容时 Ctrl-D 删除光标后一个字符（标准行为）
             else:
-                event.app.exit(exception=EOFError)  # 空行 Ctrl-D 退出
+                self._disarm_exit()  # 退出只接受空行 Ctrl-C×2，空行 Ctrl-D 不退出
 
         return kb
 

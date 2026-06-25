@@ -1,6 +1,6 @@
 """可安全退出的交互式会话：读一行 -> IntentRouter 解析 -> 按 intent 分派。
 
-退出方式：/exit、文本 exit/quit/:q、Ctrl-D(EOF)、空行连按两次 Ctrl-C。
+退出方式：空行连按两次 Ctrl-C。
 本模块只做"读取 + 分派 + 记录会话事件"，具体命令逻辑在各 handler，按键交互在适配器。
 
 会话事件（27 日）：进入 REPL 即 start() 当前 session（惰性落盘，无操作不写文件）；
@@ -14,18 +14,14 @@ menu_presenter 一致，都用 stdin_is_tty()。
 
 from __future__ import annotations
 
-import time
-
 from rich.console import Console
 from rich.panel import Panel
 
+from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
 from forgecli.application.intent_router import IntentRouter
-from forgecli.application.session import SessionService, SessionState
+from forgecli.application.session import SessionService
 from forgecli.application.slash_commands import CommandRegistry
 from forgecli.domain.intents import (
-    ControlAction,
-    ControlSignal,
-    ModeChange,
     SlashCommand,
     UnknownCommand,
     UserIntent,
@@ -40,9 +36,6 @@ from forgecli.interfaces.cli.transcript import (
 )
 from forgecli.interfaces.cli.tty.tty import stdin_is_tty
 
-# 文本退出词保留在 REPL 层：它们是交互体验快捷方式，不属于 slash command。
-_EXIT_WORDS = {"exit", "quit", ":q"}
-
 
 class Repl:
     def __init__(
@@ -50,23 +43,23 @@ class Repl:
         console: Console,
         router: IntentRouter,
         registry: CommandRegistry,
-        state: SessionState,
         output: RichOutput,
         session: SessionService,
+        agent_turn: AgentTurnService,
     ) -> None:
         self._console = console
         self._router = router
         self._registry = registry
-        self._state = state
         self._output = output
         self._session = session
+        self._agent_turn = agent_turn
 
     def run(self) -> None:
         # banner 由 bootstrap 在信任解析前渲染；这里只给进入会话的提示。
         self._console.print(
             Panel.fit(
                 "进入 Forge 交互式会话。\n"
-                "输入 [bold]/help[/] 查看命令，[bold]/exit[/] 退出，"
+                "输入 [bold]/help[/] 查看命令，"
                 "空行连按两次 [bold]Ctrl-C[/] 退出。",
                 border_style="cyan",
             )
@@ -81,14 +74,11 @@ class Repl:
         # 输入框只需要命令名和说明，用于 "/" 补全菜单；执行仍由 registry 分派。
         commands = [(spec.name, spec.summary) for spec in self._registry.all_specs()]
         prompt = ForgePrompt(commands)
-        while not self._state.should_exit:
+        while True:
             try:
                 line = prompt.read()
             except QuitSignal:
-                # 空行连按两次 Ctrl-C，视为主动退出。
-                break
-            except EOFError:
-                # 空行 Ctrl-D，视为主动退出，不向终端暴露 traceback。
+                # 主动退出，不向终端暴露 traceback。
                 break
             self._process_line(line)
 
@@ -97,10 +87,6 @@ class Repl:
         text = line.strip()
         if not text:
             return
-        if text.lower() in _EXIT_WORDS:
-            self._console.print("再见。")
-            self._state.should_exit = True
-            return
         self._dispatch(self._router.route(text))
 
     def _dispatch(self, intent: UserIntent) -> None:
@@ -108,33 +94,15 @@ class Repl:
             case UserMessage():
                 # 同屏显示一轮对话：先回显用户输入(绿)，再给助手输出(青绿)。
                 render_user_turn(self._console, intent.text)
-                self._session.record_user_message(intent.text)
-                # 真正的 LLM 调用接在这里(适配器尚未装配)；先占住助手那一轮。
                 with thinking(self._console, label="runing...."):
-                    # 真正的 LLM 调用接这里;loading 会持续到这个 with 块结束。
-                    time.sleep(2)
-                    reply = "(LLM 接入开发中)已收到你的消息。"
-                render_assistant_turn(self._console, reply)
-            case ModeChange():
-                self._state.mode = intent.target_mode
-                self._session.record_mode_change(intent.target_mode)
-                self._output.print(
-                    f"已切换到 [bold]{intent.target_mode.value}[/] 模式。"
-                )
-            case ControlSignal():
-                self._handle_control(intent)
+                    response = self._agent_turn.handle_user_message(intent.text)
+                render_assistant_turn(self._console, response.text)
             case SlashCommand():
                 self._handle_slash(intent)
             case UnknownCommand():
                 self._output.print(intent.error_message)
             case _:
                 self._output.print("无法处理的输入。")
-
-    def _handle_control(self, intent: ControlSignal) -> None:
-        if intent.action is ControlAction.EXIT:
-            self._state.should_exit = True
-        else:  # PAUSE
-            self._output.print("已暂停(stub)。")
 
     def _handle_slash(self, intent: SlashCommand) -> None:
         spec = self._registry.get(intent.command)

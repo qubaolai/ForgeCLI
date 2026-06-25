@@ -19,9 +19,6 @@ import re
 
 from forgecli.application.slash_commands.registry import CommandRegistry
 from forgecli.domain.intents import (
-    ControlSignal,
-    IntentKind,
-    ModeChange,
     SlashCommand,
     UnknownCommand,
     UserIntent,
@@ -67,10 +64,4 @@ class IntentRouter:
                 command=name,
                 error_message=f"未知命令 /{name}。输入 /help 查看可用命令。",
             )
-        if spec.kind is IntentKind.MODE_CHANGE:
-            assert spec.mode is not None  # registry 不变量已保证
-            return ModeChange(raw_text=raw_text, target_mode=spec.mode)
-        if spec.kind is IntentKind.CONTROL:
-            assert spec.action is not None
-            return ControlSignal(raw_text=raw_text, action=spec.action)
         return SlashCommand(raw_text=raw_text, command=name, args=args)
