@@ -22,7 +22,14 @@ from forgecli.application.project import (
     ProjectContext,
     ProjectService,
 )
-from forgecli.application.session import SessionState
+from forgecli.application.session import (
+    EventStore,
+    SessionEvent,
+    SessionService,
+    SessionSnapshot,
+    SessionState,
+    StateStore,
+)
 from forgecli.application.slash_commands import CommandRegistry
 from forgecli.domain.intents import (
     ControlAction,
@@ -50,6 +57,40 @@ class _NullPicker(DirectoryPicker):
         return None
 
 
+class _MemoryEventStore(EventStore):
+    def __init__(self) -> None:
+        self.events: list[SessionEvent] = []
+
+    def append(self, event: SessionEvent) -> None:
+        self.events.append(event)
+
+    def read(self, session_id: str) -> list[SessionEvent]:
+        return [event for event in self.events if event.session_id == session_id]
+
+
+class _MemoryStateStore(StateStore):
+    def __init__(self) -> None:
+        self.snapshots: list[SessionSnapshot] = []
+
+    def write(self, snapshot: SessionSnapshot) -> None:
+        self.snapshots.append(snapshot)
+
+    def read(self, session_id: str) -> SessionSnapshot | None:
+        return self.snapshots[-1] if self.snapshots else None
+
+
+def _session() -> SessionService:
+    service = SessionService(
+        _MemoryEventStore(),
+        _MemoryStateStore(),
+        workspace_root="/work",
+        clock=lambda: "2026-06-27T10:00:00+08:00",
+        id_factory=lambda: "ses_test",
+    )
+    service.start()
+    return service
+
+
 def _context() -> ProjectContext:
     return ProjectContext(
         ProjectConfig(
@@ -70,16 +111,24 @@ def _service() -> ProjectService:
 
 
 def _runtime() -> (
-    tuple[Console, SessionState, CommandRegistry, RichOutput, IntentRouter]
+    tuple[
+        Console, SessionState, CommandRegistry, RichOutput, IntentRouter, SessionService
+    ]
 ):
     console = Console(record=True)
     state = SessionState()
+    session = _session()
     output = RichOutput(console)
     registry = build_registry(
-        state, _context(), _service(), RichMenuPresenter(console), _NullPicker(), output
+        session,
+        _context(),
+        _service(),
+        RichMenuPresenter(console),
+        _NullPicker(),
+        output,
     )
     router = IntentRouter(registry)
-    return console, state, registry, output, router
+    return console, state, registry, output, router, session
 
 
 def _router() -> IntentRouter:
@@ -210,8 +259,8 @@ def test_rejects_empty_input(raw_text: str) -> None:
 
 
 def test_repl_process_line_routes_user_message() -> None:
-    console, state, registry, output, router = _runtime()
-    repl = Repl(console, router, registry, state, output)
+    console, state, registry, output, router, session = _runtime()
+    repl = Repl(console, router, registry, state, output, session)
 
     repl._process_line("解释这个项目")
 
@@ -224,8 +273,8 @@ def test_repl_process_line_routes_user_message() -> None:
 
 
 def test_repl_process_line_switches_mode_in_memory_only() -> None:
-    console, state, registry, output, router = _runtime()
-    repl = Repl(console, router, registry, state, output)
+    console, state, registry, output, router, session = _runtime()
+    repl = Repl(console, router, registry, state, output, session)
 
     repl._process_line("/plan")
 
@@ -235,8 +284,8 @@ def test_repl_process_line_switches_mode_in_memory_only() -> None:
 
 
 def test_repl_process_line_dispatches_status_command() -> None:
-    console, state, registry, output, router = _runtime()
-    repl = Repl(console, router, registry, state, output)
+    console, state, registry, output, router, session = _runtime()
+    repl = Repl(console, router, registry, state, output, session)
 
     repl._process_line("/status")
 
@@ -248,8 +297,8 @@ def test_repl_process_line_dispatches_status_command() -> None:
 
 @pytest.mark.parametrize("line", ["/exit", "exit", "quit", ":q"])
 def test_repl_process_line_exits_without_blocking(line: str) -> None:
-    console, state, registry, output, router = _runtime()
-    repl = Repl(console, router, registry, state, output)
+    console, state, registry, output, router, session = _runtime()
+    repl = Repl(console, router, registry, state, output, session)
 
     repl._process_line(line)
 
@@ -257,8 +306,8 @@ def test_repl_process_line_exits_without_blocking(line: str) -> None:
 
 
 def test_repl_process_line_reports_unknown_command_with_help_hint() -> None:
-    console, state, registry, output, router = _runtime()
-    repl = Repl(console, router, registry, state, output)
+    console, state, registry, output, router, session = _runtime()
+    repl = Repl(console, router, registry, state, output, session)
 
     repl._process_line("/does-not-exist")
 
@@ -278,11 +327,11 @@ def test_repl_run_exits_on_eof(monkeypatch: pytest.MonkeyPatch) -> None:
         def read(self) -> str:
             raise EOFError
 
-    console, state, registry, output, router = _runtime()
+    console, state, registry, output, router, session = _runtime()
     monkeypatch.setattr(repl_module, "stdin_is_tty", lambda: True)
     monkeypatch.setattr(repl_module, "ForgePrompt", EofPrompt)
 
-    Repl(console, router, registry, state, output).run()
+    Repl(console, router, registry, state, output, session).run()
 
     assert state.should_exit is False
 
@@ -297,10 +346,10 @@ def test_repl_run_exits_on_quit_signal(monkeypatch: pytest.MonkeyPatch) -> None:
         def read(self) -> str:
             raise QuitSignal
 
-    console, state, registry, output, router = _runtime()
+    console, state, registry, output, router, session = _runtime()
     monkeypatch.setattr(repl_module, "stdin_is_tty", lambda: True)
     monkeypatch.setattr(repl_module, "ForgePrompt", QuitPrompt)
 
-    Repl(console, router, registry, state, output).run()
+    Repl(console, router, registry, state, output, session).run()
 
     assert state.should_exit is False

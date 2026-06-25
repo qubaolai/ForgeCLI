@@ -12,4 +12,4 @@ class CommandHandler(ABC):
 
     @abstractmethod
     def execute(self, command: SlashCommand) -> bool:
-        """执行已解析的斜杠命令。"""
+        """执行已解析的斜杠命令, 返回配置是否发生变更。"""

@@ -9,7 +9,6 @@ from forgecli.application.config.config_service import ConfigService
 from forgecli.application.interaction_ports import DirectoryPicker
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.project import ProjectContext, ProjectService
-from forgecli.application.session import SessionState
 from forgecli.application.session.session_service import SessionService
 from forgecli.application.slash_commands import CommandRegistry, CommandSpec
 from forgecli.application.slash_commands.registry import CommandCategory
@@ -45,20 +44,42 @@ def build_registry(
 
     mode_specs = [
         CommandSpec(
-            "chat", IntentKind.MODE_CHANGE, CommandCategory.WRITE, "切换到对话模式", mode=SessionMode.CHAT
+            "chat",
+            IntentKind.MODE_CHANGE,
+            CommandCategory.WRITE,
+            "切换到对话模式",
+            mode=SessionMode.CHAT,
         ),
         CommandSpec(
-            "plan", IntentKind.MODE_CHANGE, CommandCategory.WRITE, "切换到计划模式", mode=SessionMode.PLAN
+            "plan",
+            IntentKind.MODE_CHANGE,
+            CommandCategory.WRITE,
+            "切换到计划模式",
+            mode=SessionMode.PLAN,
         ),
         CommandSpec(
-            "act", IntentKind.MODE_CHANGE, CommandCategory.WRITE, "切换到执行模式", mode=SessionMode.ACT
+            "act",
+            IntentKind.MODE_CHANGE,
+            CommandCategory.WRITE,
+            "切换到执行模式",
+            mode=SessionMode.ACT,
         ),
     ]
     control_specs = [
         CommandSpec(
-            "pause", IntentKind.CONTROL, CommandCategory.WRITE, "暂停当前任务", action=ControlAction.PAUSE
+            "pause",
+            IntentKind.CONTROL,
+            CommandCategory.WRITE,
+            "暂停当前任务",
+            action=ControlAction.PAUSE,
         ),
-        CommandSpec("exit", IntentKind.CONTROL, CommandCategory.WRITE, "退出会话", action=ControlAction.EXIT),
+        CommandSpec(
+            "exit",
+            IntentKind.CONTROL,
+            CommandCategory.WRITE,
+            "退出会话",
+            action=ControlAction.EXIT,
+        ),
     ]
     slash_specs = [
         CommandSpec(

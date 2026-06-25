@@ -39,7 +39,6 @@ class SessionSnapshot:
     def from_dict(cls, data: Mapping[str, object]) -> SessionSnapshot:
         """从 state.json 还原快照（供 read / 测试）。"""
         last = data.get("last_event_id")
-        raw_version = data.get("schema_version", 1)
         return cls(
             session_id=str(data.get("session_id", "")),
             workspace_root=str(data.get("workspace_root", "")),

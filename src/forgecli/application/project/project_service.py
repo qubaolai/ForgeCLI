@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
 
 from forgecli.application.interaction_ports import TrustPrompter

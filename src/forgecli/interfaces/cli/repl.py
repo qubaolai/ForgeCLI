@@ -1,7 +1,11 @@
 """可安全退出的交互式会话：读一行 -> IntentRouter 解析 -> 按 intent 分派。
 
 退出方式：/exit、文本 exit/quit/:q、Ctrl-D(EOF)、空行连按两次 Ctrl-C。
-本模块只做"读取 + 分派"，具体命令逻辑在各 handler，按键交互在适配器。
+本模块只做"读取 + 分派 + 记录会话事件"，具体命令逻辑在各 handler，按键交互在适配器。
+
+会话事件（27 日）：进入 REPL 即 start() 当前 session（惰性落盘，无操作不写文件）；
+自然语言写 user_message、模式切换写 mode_changed；斜杠命令事件类型先保留，
+本日暂不落盘记录。
 
 交互式会话需要真终端(TTY)。非终端(管道 / CI / 测试)下 prompt_toolkit 的全屏输入
 无法工作，此时直接拒绝并退出，而不是降级成一个变差的读取器——判断标准与
@@ -16,8 +20,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from forgecli.application.intent_router import IntentRouter
-from forgecli.application.session import SessionState
-from forgecli.application.session.session_service import SessionService
+from forgecli.application.session import SessionService, SessionState
 from forgecli.application.slash_commands import CommandRegistry
 from forgecli.domain.intents import (
     ControlAction,
@@ -113,6 +116,7 @@ class Repl:
                     reply = "(LLM 接入开发中)已收到你的消息。"
                 render_assistant_turn(self._console, reply)
             case ModeChange():
+                self._state.mode = intent.target_mode
                 self._session.record_mode_change(intent.target_mode)
                 self._output.print(
                     f"已切换到 [bold]{intent.target_mode.value}[/] 模式。"
@@ -137,6 +141,7 @@ class Repl:
         if spec is None or spec.handler is None:
             self._output.print(f"命令 /{intent.command} 暂未实现。")
             return
+        # 27 日暂不记录 slash_command 事件；后续由 handler 返回值决定是否落盘。
         # if spec.handler.execute(intent):
         spec.handler.execute(intent)
-        self._session.record_slash_command(intent.command, intent.args)
+        # self._session.record_slash_command(intent.command, intent.args)

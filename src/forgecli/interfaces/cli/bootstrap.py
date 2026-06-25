@@ -43,6 +43,7 @@ def _project_service() -> ProjectService:
         TomlProjectConfigStore(projects),
     )
 
+
 def _session_service(context: ProjectContext) -> SessionService:
     # 会话事件 / 快照落在用户级 Forge home 的项目目录下（ADR-0008），不写入项目目录。
     sessions = config_dir() / "projects" / context.project.project_id / "sessions"
@@ -51,6 +52,7 @@ def _session_service(context: ProjectContext) -> SessionService:
         JsonStateStore(sessions),
         workspace_root=context.project.primary_workspace_root,
     )
+
 
 def run() -> None:
     """裸 forge 的产品入口。"""

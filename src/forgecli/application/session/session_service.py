@@ -11,12 +11,12 @@ SessionService 只依赖两个存储抽象与领域值对象，不碰 Rich/Typer
 """
 
 from __future__ import annotations
+
+import secrets
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime
-import secrets
-from typing import Callable, Mapping
 
-from forgecli.application.session import snapshot
 from forgecli.application.session.event_store import EventStore
 from forgecli.application.session.events import EventType, SessionEvent
 from forgecli.application.session.snapshot import SessionSnapshot
@@ -24,6 +24,7 @@ from forgecli.application.session.state_store import StateStore
 from forgecli.domain.intents import SessionMode
 from forgecli.shared.errors import SessionStateError
 from forgecli.shared.utils import now_iso
+
 
 def _new_session_id() -> str:
     """可按时间排序、文件系统安全的 session id，如 ``20260627T103000-ab12cd34``。
@@ -38,13 +39,13 @@ class SessionService:
     """当前 workspace 的 active session：创建会话身份并记录事件 / 快照。"""
 
     def __init__(
-            self,
-            event_store: EventStore,
-            state_store: StateStore,
-            workspace_root: str,
-            *,
-            clock: Callable[[], str] = now_iso,
-            id_factory: Callable[[], str] = _new_session_id,
+        self,
+        event_store: EventStore,
+        state_store: StateStore,
+        workspace_root: str,
+        *,
+        clock: Callable[[], str] = now_iso,
+        id_factory: Callable[[], str] = _new_session_id,
     ) -> None:
         self._events = event_store
         self._states = state_store
@@ -55,7 +56,6 @@ class SessionService:
         self._seq = 0
         self._persisted = False
 
-    
     def start(self) -> SessionSnapshot:
         """仅在内存建立会话身份（不落盘）。重复调用会开启一个新会话。"""
         snapshot = SessionSnapshot(
@@ -69,21 +69,21 @@ class SessionService:
         self._seq = 0
         self._persisted = False
         return snapshot
-    
+
     def current(self) -> SessionSnapshot:
         """当前会话快照（可能尚未落盘）；未 start() 抛 SessionStateError。"""
         if self._current is None:
             raise SessionStateError("会话尚未开始。")
         return self._current
-    
+
     def record_user_message(self, text: str) -> SessionEvent:
         """记录一条自然语言输入。"""
         return self._append(EventType.USER_MESSAGE, {"text": text})
-    
+
     def record_mode_change(self, mode: SessionMode) -> SessionEvent:
         """记录一次模式切换，并把快照 mode 推进到新模式。"""
         return self._append(EventType.MODE_CHANGED, {"mode": mode.value}, mode=mode)
-    
+
     def record_slash_command(
         self, name: str, args: tuple[str, ...] = ()
     ) -> SessionEvent:
@@ -91,14 +91,13 @@ class SessionService:
         return self._append(
             EventType.SLASH_COMMAND, {"command": name, "args": list(args)}
         )
-    
 
     def _append(
-            self,
-            event_type: EventType,
-            payload: Mapping[str, object],
-            *,
-            mode: SessionMode | None = None,
+        self,
+        event_type: EventType,
+        payload: Mapping[str, object],
+        *,
+        mode: SessionMode | None = None,
     ) -> SessionEvent:
         if self._current is None:
             raise SessionStateError("会话尚未开始。")
@@ -119,9 +118,9 @@ class SessionService:
         )
 
     def _emit(
-            self,
-            event_type: EventType,
-            payload: Mapping[str, object],
+        self,
+        event_type: EventType,
+        payload: Mapping[str, object],
     ) -> SessionEvent:
         snapshot = self.current()
         self._seq += 1

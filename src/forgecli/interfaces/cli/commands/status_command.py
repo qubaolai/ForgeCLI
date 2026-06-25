@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.project import ProjectContext
-from forgecli.application.session import SessionState
 from forgecli.application.session.session_service import SessionService
 from forgecli.application.slash_commands import CommandHandler
 from forgecli.domain.intents import SlashCommand
