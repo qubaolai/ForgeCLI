@@ -24,6 +24,8 @@ class Choice:
     on_text: Callable[[str], None] | None = None
     text_default: Callable[[], str] | None = None
     on_select: Callable[[], None] | None = None
+    payload: Callable[[], str] | None = None
+    close_on_select: bool = False
 
 
 @dataclass(frozen=True)

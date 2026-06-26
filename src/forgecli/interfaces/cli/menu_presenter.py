@@ -67,6 +67,7 @@ class RichMenuPresenter(MenuPresenter):
         index = 0
         query = ""
         searching = False
+        previewing = False
         editing: tuple[Choice, str] | None = None
         fd = sys.stdin.fileno()
 
@@ -87,6 +88,7 @@ class RichMenuPresenter(MenuPresenter):
                         searching=searching,
                         query=query,
                         editing=editing,
+                        previewing=previewing,
                     ),
                     refresh=True,
                 )
@@ -132,6 +134,10 @@ class RichMenuPresenter(MenuPresenter):
                 if press.key is Key.SLASH:
                     searching, query = True, ""
                     continue
+                # 空格切换「摘要预览」：当前行有 summary 时在列表下方展开/收起其摘要。
+                if press.key is Key.CHAR and press.char == " ":
+                    previewing = not previewing
+                    continue
                 if not rows:
                     continue
 
@@ -156,6 +162,9 @@ class RichMenuPresenter(MenuPresenter):
                         editing = (row, row.text_default() if row.text_default else "")
                     elif row.on_select is not None:
                         row.on_select()
+                        # 选择即关闭语义（如 /resume 选中会话后退出菜单去恢复）。
+                        if row.close_on_select:
+                            break
 
     def _visible(self, menu: Menu, query: str) -> list[Choice]:
         if not query:
@@ -172,6 +181,7 @@ class RichMenuPresenter(MenuPresenter):
         searching: bool,
         query: str,
         editing: tuple[Choice, str] | None,
+        previewing: bool = False,
     ) -> Panel:
         # 标签列定宽对齐（按显示宽度，兼容中日韩全角），右侧接取值。
         label_width = max((cell_len(row.label) for row in rows), default=0) + 2
@@ -206,8 +216,18 @@ class RichMenuPresenter(MenuPresenter):
             body = Group(*lines, Text(""), tail)
             hint = self._hint(("输入", "过滤"), ("Enter", "确定"), ("Esc", "清除"))
         else:
-            body = Group(*lines)
-            hint = self._hint(*_NAV_HINTS)
+            current_row = rows[index] if rows else None
+            previewable = any(row.payload for row in rows)
+            renderables: list[Text] = list(lines)
+            if previewing and current_row is not None and current_row.payload:
+                renderables.append(Text(""))
+                renderables.extend(self._preview_lines(current_row.payload()))
+            body = Group(*renderables)
+            hints = list(_NAV_HINTS)
+            if previewable:
+                # 在「Enter」之后插入空格预览提示，仅当本层有可预览行时出现。
+                hints.insert(2, ("Space", "预览"))
+            hint = self._hint(*hints)
         return Panel(
             body,
             title=menu.title,
@@ -216,6 +236,14 @@ class RichMenuPresenter(MenuPresenter):
             subtitle_align="left",
             border_style=_FRAME,
         )
+
+    @staticmethod
+    def _preview_lines(summary: str) -> list[Text]:
+        """把当前行的多行摘要渲染成列表下方的缩进预览块（青绿标题 + 灰正文）。"""
+        lines = [Text("  摘要预览", style=_NAME_CUR)]
+        for raw in summary.split("\n"):
+            lines.append(Text(f"    {raw}", style=_META_CUR))
+        return lines
 
     @staticmethod
     def _hint(*segments: tuple[str, str]) -> Text:

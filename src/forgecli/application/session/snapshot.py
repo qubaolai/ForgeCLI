@@ -23,6 +23,7 @@ class SessionSnapshot:
     last_event_id: str | None
     updated_at: str
     status: str = "active"
+    title: str = ""
 
     def to_dict(self) -> dict[str, object]:
         """序列化为可 JSON 落盘的纯字典（mode 落字符串值，键名对齐 §4.3）。"""
@@ -33,6 +34,7 @@ class SessionSnapshot:
             "status": self.status,
             "last_event_id": self.last_event_id,
             "updated_at": self.updated_at,
+            "title": self.title,
         }
 
     @classmethod
@@ -46,4 +48,5 @@ class SessionSnapshot:
             last_event_id=None if last is None else str(last),
             updated_at=str(data.get("updated_at", "")),
             status=str(data.get("status", "active")),
+            title=str(data.get("title", "")),
         )

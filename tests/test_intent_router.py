@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
+from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
 from forgecli.application.intent_router import IntentRouter
 from forgecli.application.interaction_ports import DirectoryPicker
 from forgecli.application.project import (
@@ -104,13 +105,15 @@ def _service() -> ProjectService:
 def _registry() -> CommandRegistry:
     console = Console(record=True)
     output = RichOutput(console)
+    session = _session()
     return build_registry(
-        _session(),
+        session,
         _context(),
         _service(),
         RichMenuPresenter(console),
         _NullPicker(),
         output,
+        AgentTurnService(session),
     )
 
 
@@ -130,6 +133,7 @@ def test_registry_contains_current_roadmap_slash_commands() -> None:
         "config",
         "model",
         "add-dir",
+        "resume",
     }
     assert "exit" not in registered_names
     assert "pause" not in registered_names
@@ -157,7 +161,7 @@ def test_routes_natural_language_as_user_message(
 
 @pytest.mark.parametrize(
     "command",
-    ["help", "chat", "plan", "act", "status", "config", "model", "add-dir"],
+    ["help", "chat", "plan", "act", "status", "config", "model", "add-dir", "resume"],
 )
 def test_routes_registered_slash_commands_as_slash_command(command: str) -> None:
     intent = _router().route(f"/{command}")

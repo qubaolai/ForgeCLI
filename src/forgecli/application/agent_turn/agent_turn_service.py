@@ -12,9 +12,10 @@ turn 的终态写在 assistant_message 上(COMPLETED; reply 抛错则隔离为 F
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 from forgecli.application.agent_turn.turn import AssistantResponse
+from forgecli.application.session.events import EventType, SessionEvent
 from forgecli.application.session.session_service import SessionService
 from forgecli.domain.conversation import TurnStatus
 from forgecli.domain.intents import SessionMode
@@ -37,6 +38,13 @@ class AgentTurnService:
         self._session = session
         self._reply = reply
         self._turns = 0
+
+    def resume(self, history: Iterable[SessionEvent]) -> None:
+        """续写一段历史会话：把 turn 计数接到历史已有的 user_message 数上，
+
+        使下一轮 turn_id 接着往后排（与 SessionService.resume 配套使用）。
+        """
+        self._turns = sum(1 for e in history if e.type == EventType.USER_MESSAGE)
 
     def handle_user_message(self, text: str) -> AssistantResponse:
         self._turns += 1

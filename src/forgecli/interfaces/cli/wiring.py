@@ -5,20 +5,26 @@
 
 from __future__ import annotations
 
+from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
 from forgecli.application.config.config_service import ConfigService
 from forgecli.application.interaction_ports import DirectoryPicker
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.project import ProjectContext, ProjectService
+from forgecli.application.session.resume_service import ResumeService
 from forgecli.application.session.session_service import SessionService
 from forgecli.application.slash_commands import CommandRegistry, CommandSpec
 from forgecli.domain.intents import SessionMode
 from forgecli.infrastructure.config import TomlConfigStore, config_dir, config_file
 from forgecli.infrastructure.llm import TomlLlmConfigStore
+from forgecli.infrastructure.session.fs_session_catalog import FsSessionCatalog
+from forgecli.infrastructure.session.json_state_store import JsonStateStore
+from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
 from forgecli.interfaces.cli.commands.add_dir_command import AddDirCommand
 from forgecli.interfaces.cli.commands.config_command import ConfigCommand
 from forgecli.interfaces.cli.commands.help_command import HelpCommand
 from forgecli.interfaces.cli.commands.mode_command import ModeCommand
 from forgecli.interfaces.cli.commands.model_command import ModelsCommand
+from forgecli.interfaces.cli.commands.resume_command import ResumeCommand
 from forgecli.interfaces.cli.commands.status_command import StatusCommand
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
@@ -31,16 +37,26 @@ def build_registry(
     presenter: RichMenuPresenter,
     picker: DirectoryPicker,
     output: RichOutput,
+    agent_turn: AgentTurnService,
 ) -> CommandRegistry:
     registry = CommandRegistry()
     # ConfigService 按 level 路由落盘：应用级 config.toml，项目级当前项目的 forge.toml。
     # 都在用户级 Forge home 下；不预先创建，首次写配置时才落盘。
+    project_home = config_dir() / "projects" / context.project.project_id
     forge_toml = config_dir() / "projects" / context.project.project_id / "forge.toml"
     config_service = ConfigService(
         TomlConfigStore(config_file("config.toml")),
         TomlConfigStore(forge_toml),
     )
     llm_service = LlmConfigService(TomlLlmConfigStore(config_file("llm.toml")))
+
+    # resume 复用 application service：枚举 / 搜索 / 读取本项目 sessions/ 下的历史会话。
+    sessions_dir = project_home / "sessions"
+    resume_service = ResumeService(
+        FsSessionCatalog(sessions_dir),
+        JsonStateStore(sessions_dir),
+        JsonlEventStore(sessions_dir),
+    )
 
     mode_specs = [
         CommandSpec(
@@ -84,6 +100,18 @@ def build_registry(
             "add-dir",
             "添加可操作工作区目录",
             handler=AddDirCommand(context, project_service, picker, output),
+        ),
+        CommandSpec(
+            "resume",
+            "查看 / 恢复历史会话",
+            handler=ResumeCommand(
+                resume_service,
+                session_service,
+                agent_turn,
+                context,
+                presenter,
+                output,
+            ),
         ),
     ]
     registry.register_all([*mode_specs, *slash_specs])

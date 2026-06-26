@@ -96,6 +96,7 @@ def run() -> None:
             presenter=presenter,
             picker=picker,
             output=output,
+            agent_turn=agent_turn,
         )
         router = IntentRouter(registry=registry)
         Repl(

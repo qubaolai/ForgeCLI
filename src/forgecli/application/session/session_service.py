@@ -13,7 +13,7 @@ SessionService 只依赖两个存储抽象与领域值对象，不碰 Rich/Typer
 from __future__ import annotations
 
 import secrets
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 
@@ -25,6 +25,26 @@ from forgecli.domain.conversation import MessageRole, TurnStatus
 from forgecli.domain.intents import SessionMode
 from forgecli.shared.errors import SessionStateError
 from forgecli.shared.utils import now_iso
+
+_TITLE_MAX_LEN = 8
+
+
+def _title_from(text: str) -> str:
+    """从首条输入派生会话摘要名称：取前 ``_TITLE_MAX_LEN`` 字符，超长缀 ``…``。"""
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= _TITLE_MAX_LEN:
+        return cleaned
+    return cleaned[:_TITLE_MAX_LEN] + "…"
+
+
+def _last_seq(events: Sequence[SessionEvent]) -> int:
+    """从已有事件推断已用到的最大序号（``evt_0006`` -> 6）；无事件或异常返回 0。"""
+    if not events:
+        return 0
+    try:
+        return int(events[-1].event_id.rsplit("_", 1)[-1])
+    except (ValueError, IndexError):
+        return 0
 
 
 def _new_session_id() -> str:
@@ -69,6 +89,21 @@ class SessionService:
         self._current = snapshot
         self._seq = 0
         self._persisted = False
+        return snapshot
+
+    def resume(
+        self, snapshot: SessionSnapshot, events: Sequence[SessionEvent]
+    ) -> SessionSnapshot:
+        """把活动会话重指向到一段已落盘的历史会话（续写）。
+
+        快照与事件由调用方（ResumeService）一次读出传入。文件已存在，故标记
+        ``_persisted=True``：不再补写 session_created，也不再触发 title 设置；
+        ``_seq`` 接续历史最后一条事件，后续 record_* 从 ``evt_(_seq+1)`` 追加进同一
+        events.jsonl。
+        """
+        self._current = snapshot
+        self._seq = _last_seq(events)
+        self._persisted = True
         return snapshot
 
     def current(self) -> SessionSnapshot:
@@ -119,6 +154,14 @@ class SessionService:
     ) -> SessionEvent:
         if self._current is None:
             raise SessionStateError("会话尚未开始。")
+        if (
+            not self._persisted
+            and event_type == EventType.USER_MESSAGE
+            and not self._current.title
+        ):
+            title = _title_from(str(payload.get("text", "")))
+            if title:
+                self._current = replace(self._current, title=title)
         self._ensure_persisted()
         if mode is not None:
             self._current = replace(self._current, mode=mode)
