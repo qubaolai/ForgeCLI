@@ -117,6 +117,10 @@ AgentTurnService
 
 这里的 `AgentWorkflow` 不是另一个 Agent，而是“单个 turn 或一段内部推理流程如何被编排”的接口。它解决的是框架替换问题：今天可以用自研流程，明天可把复杂流程交给 LangGraph，但 application 层、事件日志、权限审批和工具运行时不需要重写。
 
+Agent 主循环以受控 ReAct 为基石：模型只生成回答、计划、工具请求或继续观察的意图，
+副作用由 `AgentTurnService` 按 mode policy、approval 和 Tool Runtime 执行。完整主架构见
+`docs/adr/2026-07-01-0010-采用受控ReAct作为Agent主循环架构.md`。
+
 ### 2.2 AgentWorkflow 接口
 
 `AgentWorkflow` 是框架隔离层。application 层只依赖该接口，不直接依赖 LangGraph、LangChain 或 AutoGen。
@@ -863,6 +867,10 @@ Skill 只影响上下文和可用工具建议，不改变全局安全策略。
 ## 11. Model Catalog 详细设计
 
 `ModelCatalogService` 负责管理可用模型列表和模型能力元数据。它不负责新增 provider adapter；provider adapter 必须由代码实现。
+
+运行时 LLM 调用不由 `ModelCatalogService` 直接执行。所有供应商请求必须经过统一
+`LlmGateway`，由 gateway 做 provider 路由、凭证解析、usage/cost 计量、错误归一化和
+审计记录。完整调用架构见 `docs/adr/2026-07-01-0011-采用统一LLM调用网关支持多供应商.md`。
 
 模型目录来源：
 

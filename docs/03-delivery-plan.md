@@ -94,24 +94,30 @@ ForgeCLI 按企业级产品节奏推进，采用“核心闭环先行、能力�
 目标：
 
 - 建立 conversation-first 的 Agent Turn。
+- 落地受控 ReAct 主循环。
+- 建立统一 LLM 调用控制面。
 - 实现 chat/plan/act 模式。
 - 实现 Context Package。
 - 接入第一个 LLM Provider。
 
 主要工作：
 
+- `Agent ReAct` 主架构设计与 `BuiltinReactWorkflow` 最小实现。
+- 多供应商 LLM 调用架构设计：`LlmGateway`、`ModelProvider`、usage/cost/token 计量。
 - `AgentTurnService`。
 - `AgentWorkflow` 接入 `AgentTurnService`。
 - `IntentRouter`。
 - `ModePolicyResolver`。
 - `ContextManager`。
-- `ModelProvider` 抽象和一个实际 provider。
+- `ModelProvider` 抽象、fake provider 和一个实际 provider。
 - LangGraph adapter 技术验证，不作为默认唯一执行路径。
 - slash commands：`/help`、`/chat`、`/plan`、`/act`、`/config`、`/models`、`/status`、`/pause`、`/exit`。
 
 验收标准：
 
 - CLI 可持续多轮对话。
+- 普通 chat turn 通过统一 LLM gateway 完成，不再直接使用 stub reply。
+- 每次模型调用有 provider、model、request_id、usage 或 estimated usage。
 - plan 模式只读，不允许写文件。
 - act 模式可在审批后执行写操作。
 - 模式切换写入事件日志。
