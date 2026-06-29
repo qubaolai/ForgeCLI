@@ -13,6 +13,7 @@ ForgeCLI 的目标是建设一个企业级、生产可用、本地优先的对�
 - [ADR-0011：采用统一 LLM 调用网关支持多供应商](adr/2026-07-01-0011-采用统一LLM调用网关支持多供应商.md)：定义统一 gateway、provider adapter、usage/cost/token 计量和错误归一化。
 - [adr/README.md](adr/README.md)：架构决策记录，说明重要决策的背景、备选方案、影响和验收标准。
 - [roadmap/README.md](roadmap/README.md)：按阶段和日期拆分的开发排期、每日目标和代码验收要求。
+- [roadmap/backlog.md](roadmap/backlog.md)：MVP 之后的后续迭代 backlog，汇总各文档中「MVP 暂不实现 / 接口预留」的能力及其目标阶段。
 
 ## 核心结论
 

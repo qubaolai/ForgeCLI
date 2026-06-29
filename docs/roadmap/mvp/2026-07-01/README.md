@@ -1,66 +1,51 @@
-# 2026-07-01：周集成验收、交互式 Resume 与工具系统准备
+# 2026-07-01：模型目录、ModelSelection 与用途档位
 
 ## 今日目标
 
-把本周新增的单入口 CLI、配置、模型目录、session store 和 AgentTurn stub 做一次集成收敛，并补上最小 `/resume` 交互式入口，为下一阶段 Agent ReAct 主循环与统一 LLM 调用架构准备稳定边界。
+把当前模型、显式模型和用途档位三类选择落成可测试的解析规则，并让模型目录成为单个模型能力的唯一事实来源。
 
 ## 开发指导
 
-- 梳理本周模块边界：
-  - `interfaces/cli`
-  - `application/slash_commands`
-  - `application/session`
-  - `application/models`
-  - `application/config`
-  - `application/llm/config`
-  - `application/agent_turn` 或 `application/conversation`
-  - `infrastructure/config`
-  - `infrastructure/llm/config`
-  - `infrastructure/session` 或 `infrastructure/storage`
-  
-- 新增 `/resume` slash command stub：
-  - 无参数时提示最近 active session。
-  
-  - `/resume <session_id>` 可读取 state 并展示摘要。
-  
-  - 支持分页恢复历史记录, 按事件渲染, 需要考虑不同类型事件的渲染方式可能不同
-  
-    比如普通对话事件 llm流式响应事件 工具调用事件 sub agent相关事件, 本次只考虑先实现对话事件的渲染即可, 但需要为后续扩展新实践增加支持
-  
-- resume 能力复用 application service，不在 Typer 层新增 `forge resume`。
-
-- 补一份本周集成测试，覆盖：
-  - `/config` 配置修改路径
-  - `/model`
-  - 裸 `forge` 启动 session
-  - user turn 写入事件
-  - `/status` 读取 state
-  - `/resume` 读取 state 摘要
-  
-- 更新 roadmap 中的遗留风险和下一周建议：下一开发切片优先做 Agent ReAct 与 LLM Provider 架构落地，工具系统与审批进入后一阶段 backlog。
+- 定义或收敛 `ModelCatalogService` 的运行时只读视图：
+  - 内置目录为基线。
+  - 用户配置的 provider/model 元数据按 provider + model 合并覆盖。
+  - 能力、上下文窗口、价格、deprecation 和 allowlist 都从 catalog 读取。
+- 定义 `ModelSelectionResolver`：
+  - `current_model` 读取当前项目或 session 主 Agent 模型。
+  - `explicit_model` 校验 provider/model 存在，默认不 fallback。
+  - `tier` 解析用途档位，交给 router 选择候选模型。
+- 定义用途 origin 到默认选择的映射：
+  - `chat`、`act`、`final_summary` 默认 `current_model`。
+  - `title`、`summary`、`compact` 默认 `tier: fast`。
+  - `plan`、`review` 默认 `tier: smart`。
+  - `structured_classification` 默认 `tier: fast`。
+- 明确当前模型不属于档位；档位是系统用途模型池。
+- 更新配置模型，使 `[model]` 和 `[model_tiers]` 的语义与 ADR-0011 对齐。
 
 ## 非目标
 
-- 不实现工具执行。
-- 不实现审批。
-- 不实现 context compact。
-- 不实现真实 LLM。
-- 不新增 Typer 业务子命令。
+- 不实现候选排序和 fallback 执行。
+- 不实现 `/config` 完整交互菜单。
+- 不接真实 provider。
 
 ## 最终产物
 
-- 本周集成测试。
-- `/resume` 最小交互式入口。
-- Agent ReAct 主架构设计。
-- 多供应商 LLM 调用主架构设计。
-- 后续工具系统和审批 backlog。
+- 模型目录运行时视图。
+- `ModelSelectionResolver`。
+- origin 到 selection 的默认映射。
+- 配置结构与 ADR-0011 的最小对齐。
+- 单元测试覆盖 current、explicit、tier 三类选择。
+
+## 验收重点
+
+- `ProviderCapabilities` 不重复声明单模型能力。
+- `current_model` 不做模型 fallback。
+- `explicit_model` 没有显式允许时不跨 provider/model fallback。
+- tier 选择不直接读取 TOML，必须通过 catalog 和 tier config 的 application API。
 
 ## 验收命令
 
 ```bash
 make ci
-poetry run forge --help
-printf '/status\n/resume\nexit\n' | poetry run forge
+poetry run pytest tests
 ```
-
-如果 TTY 限制导致管道无法完整驱动 REPL，应以 REPL、session service 和 resume service 的集成测试作为主验收。
