@@ -1,0 +1,42 @@
+"""统一 LLM 调用网关端口 LlmGateway（ADR-0011 §3.1）。
+
+LlmGateway 是所有模型调用的唯一入口。AgentLoop 只依赖本端口，不依赖具体 provider
+adapter，也不 import 任何供应商 SDK。具体实现在后续切片。
+
+职责：解析 current_model / tier / explicit_model、
+校验模型可用性与策略、注入默认超参、路由 provider/model、请求前估算 token 与预算、
+调用 provider adapter、归一化 usage / finish reason / 错误，返回 usage 草稿交
+AgentTurnService 落盘。
+
+边界：gateway 不直接写 events.jsonl / state.json / usage 文件 / 日志原文（§2 / §8）。
+
+stream(...) -> Iterator[ModelStreamChunk]：延后到 streaming 切片（§9）。今日只冻
+complete / complete_structured 两个契约；stream 的 chunk DTO 不提前创建。
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+from forgecli.application.llm.gateway.request import (
+    ModelRequest,
+    StructuredModelRequest,
+)
+from forgecli.application.llm.gateway.response import (
+    ModelResponse,
+    StructuredModelResponse,
+)
+
+
+class LlmGateway(ABC):
+    """所有模型调用的统一入口端口。"""
+
+    @abstractmethod
+    def complete(self, request: ModelRequest) -> ModelResponse:
+        """非流式补全：返回归一化的 ModelResponse（含 usage 草稿）。"""
+
+    @abstractmethod
+    def complete_structured(
+        self, request: StructuredModelRequest
+    ) -> StructuredModelResponse:
+        """结构化输出：按 schema 校验，失败归一化为 ModelResponseParseError。"""
