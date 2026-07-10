@@ -50,7 +50,7 @@
 - `application` 不 import 任何具体供应商 SDK。
 - provider adapter 不接触 session store、state store、event store。
 - 明文凭证字段不得出现在 DTO、测试 fixture 或异常字符串中。
-- `current_model`、`tier`、`explicit_model` 的字段组合必须有清晰校验规则。
+- `current_model` 与 `explicit_model` 的字段组合必须有清晰校验规则。
 - `ModelRequest` 不带 `stream` 标志；流式与否由 `complete` / `stream` 决定。
 - origin 枚举与 §3.4 映射表覆盖一致，新增用途必须先扩枚举。
 

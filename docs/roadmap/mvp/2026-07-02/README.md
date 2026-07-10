@@ -1,48 +1,38 @@
-# 2026-07-02：ModelRouter 与候选选择
+# 2026-07-02：ModelSelectionResolver、用途覆盖与能力校验
 
 ## 今日目标
 
-实现 `ModelTierConfig`、`ModelTierCandidate` 和 `ModelRouter`，让 gateway 可以按档位候选、模型能力、凭证可用性和 priority 选择具体 provider/model。
+实现 07-01 冻结的 `ModelSelectionResolver`，把当前模型和按 `origin` 的显式模型覆盖解析为具体 provider/model，并在调用前完成 catalog 能力校验。
 
 ## 开发指导
 
-- 定义内置档位：
-  - `fast`：低延迟、低成本，适合标题、摘要、compact 和轻量分类。
-  - `smart`：高能力或推理模型，适合规划、review、复杂分析。
-  - `default`：兜底档位，必须至少有一个候选。
-- 实现候选过滤：
-  - provider 未注册则过滤或返回明确配置错误。
-  - 模型不存在则过滤。
-  - 模型能力不足则过滤，例如 context window、structured output、thinking。
-  - provider/model 被 allowlist 禁用则过滤。
-- 实现 selection 策略的 MVP 版本：
-  - `first_available` 按 priority 选择。
-  - 其他策略可以先保留枚举并返回未实现错误。
-- 实现 fallback 语义：
-  - `current_model` 不切换模型。
-  - `explicit_model` 默认不 fallback。
-  - `tier` 可在同档候选中按 priority 尝试。
-  - 档位升档只保留接口，不在今日默认启用。
-- `ModelRouteResult` 必须包含 provider、model、tier、selection_reason 和 fallback_chain。
+- 默认所有 origin 使用 `[model].provider` / `[model].model` 当前模型。
+- 支持可选的 `[model_overrides.<origin>]` provider/model 覆盖；未配置覆盖时不得生成第二套默认模型。
+- 校验 provider 已注册、模型存在、allowlist 允许、context window 和请求所需 structured output、tool calling、thinking 能力满足要求。
+- 能力不足、模型不可用或配置缺失时返回明确归一化错误；不得自动切换 provider/model。
+- 将 resolver 接入 `DefaultLlmGateway`，使 `complete` 不再只接受显式 selection。
+- 保留 `ModelRef` 作为 provider/model 的统一值对象，不新建平行引用类型。
+- 为后续 TokenEstimator 预留 `required_capabilities` 和 `min_context_window`，但不在今日实现 token 估算。
 
 ## 非目标
 
-- 不实现真实 provider retry。
-- 不实现 provider health 熔断。
-- 不实现 lowest cost、lowest latency 或 balanced 策略。
+- 不实现真实 provider、CredentialResolver、credential retry 或 provider health。
+- 不实现 streaming、tool calling 执行、结构化输出解析和缓存。
+- 不实现 `/config` 菜单交互，只完成 resolver 可消费的配置模型。
 
 ## 最终产物
 
-- `ModelTierConfig` 和 `ModelTierCandidate`。
-- `ModelRouter`。
-- `ModelRouteRequest` / `ModelRouteResult`。
-- 单元测试覆盖 priority、能力过滤、无可用候选和 fallback_chain。
+- `ModelSelectionResolver` 运行时实现。
+- 当前模型和用途覆盖的读取与校验。
+- gateway 的 current/explicit 两类选择路径。
+- 单元测试覆盖默认解析、用途覆盖、未知 provider、未知模型、allowlist 拒绝和能力不足。
 
 ## 验收重点
 
-- 路由只读 catalog，不直接解析 TOML。
-- fallback 是有界序列，不能在错误处临时无限重算。
-- thinking 参数必须在模型能力不支持时被拒绝或按明确策略处理，不能静默忽略。
+- 未配置用途覆盖时，所有 origin 都解析到当前模型。
+- 当前模型或显式覆盖模型失败时直接返回错误，不改选其他模型。
+- resolver 只读 catalog，不直接解析 TOML 或读取 provider 私有配置。
+- `ModelSelectionResolver` 不负责凭证选择、usage 计量和重试。
 
 ## 验收命令
 

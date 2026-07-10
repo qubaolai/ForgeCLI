@@ -29,7 +29,7 @@
 
 ## 非目标
 
-- 不做 tier 路由。
+- 不做当前模型或用途模型覆盖的解析。
 - 不做 credential 解析（仅保留 availability 轻量判断）。
 - 不做真实 provider HTTP 请求。
 - 不写 session event 或 usage 文件。
