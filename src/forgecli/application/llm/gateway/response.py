@@ -1,10 +1,10 @@
-"""统一返回结构 ModelResponse / ModelUsage / StructuredModelResponse（§3.6–§3.8）。
+"""统一返回结构 ModelResponse / ModelUsage / StructuredModelResponse
 
 usage 必须归一化：供应商没返回 usage 时由 gateway 估算并标记 estimated=true，
 后续成本统计要区分真实用量与估算用量。
 
 raw_metadata 只保存安全摘要（供应商 request id、region、cache hit），不存完整原始响应；
-cached=true 表示来自 gateway 响应缓存（§14），其真实 usage 记为 0。
+cached=true 表示来自 gateway 响应缓存，其真实 usage 记为 0。
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from forgecli.application.llm.gateway.messages import ToolCall
 
 
 class FinishReason(Enum):
-    """归一化结束原因。user_cancelled 用于取消 / Ctrl-C（§9）。"""
+    """归一化结束原因。user_cancelled 用于取消 / Ctrl-C。"""
 
     STOP = "stop"
     LENGTH = "length"
@@ -30,7 +30,7 @@ class FinishReason(Enum):
 
 @dataclass(frozen=True)
 class ModelUsage:
-    """统一 token 用量；所有 provider 必须归一化到这里（§3.8）。"""
+    """统一 token 用量；所有 provider 必须归一化到这里。"""
 
     input_tokens: int
     output_tokens: int
@@ -53,7 +53,7 @@ class ModelUsage:
 
 @dataclass(frozen=True)
 class ModelResponse:
-    """非流式 / 流式收尾的统一返回（§3.6）。"""
+    """非流式 / 流式收尾的统一返回。"""
 
     request_id: str
     provider: str
@@ -79,7 +79,7 @@ class ModelResponse:
 
 @dataclass(frozen=True)
 class StructuredModelResponse:
-    """结构化输出的统一返回（§3.7）。
+    """结构化输出的统一返回。
 
     data 为通过 schema 校验后的结构化数据；校验失败时 data 为 None，
     validation_errors 记录归一化后的校验错误（上层据此归一化为 parse error）。

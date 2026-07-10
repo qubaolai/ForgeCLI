@@ -7,7 +7,7 @@
 ## 开发指导
 
 - 既有切片并轨（先做，避免后续重复抽象）：
-  - 既有 `providers.py` 的 `REGISTRY` 是「id -> `ProviderSpec`」的配置校验注册表，且只含 `deepseek` / `mimo`、无 adapter 绑定。把它扩成（或由新 `ProviderRegistry` 包裹）带 adapter 绑定的统一注册表，并补 `openai_compatible`、`local` 两个 provider id。
+  - 既有 `providers.py` 的 `REGISTRY` 是「id -> `ProviderSpec`」的配置校验注册表，且只含 `deepseek` / `mimo`、无 adapter 绑定。把它扩成（或由新 `ProviderRegistry` 包裹）带 adapter 绑定的统一注册表，并补 `openai`、`local` 两个 provider id。
   - 既有 `availability.py` 的 `EnvProviderAvailability` 与将来的 `CredentialResolver`（07-03）划清职责：availability 只作「provider 是否声明了 key 名」的轻量判断，凭证解析统一走 `CredentialResolver`，不另立第二套凭证概念。
   - 既有 `model_ref.py` 的 `ModelRef`（provider+model）作为 `ExplicitModelSelection` 的内部表示复用，不再新建平行的 provider+model 值对象。
 - 实现 `ProviderRegistry`：
@@ -36,7 +36,7 @@
 
 ## 最终产物
 
-- 并轨后的统一 `ProviderRegistry`（含 adapter 绑定，覆盖 deepseek / mimo / openai_compatible / local）。
+- 并轨后的统一 `ProviderRegistry`（含 adapter 绑定，覆盖 deepseek / mimo / openai / local）。
 - `FakeModelProvider`。
 - `LlmGateway.complete` happy path。
 - gateway 单元测试和 fake provider 单元测试。

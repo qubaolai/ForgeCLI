@@ -6,7 +6,7 @@ ModelProvider 只描述「把统一请求映射到某供应商 API」的协议�
     - 抛出的错误必须被 gateway 转成统一 ModelGatewayError。
 
 输入用 ProviderRequest 而非 ModelRequest：gateway 已解析 selection / 路由 / 预算 /
-取消等*治理*字段，只把发请求所需的协议内容交给 adapter，从结构上保证 adapter 不触碰
+取消等治理字段，只把发请求所需的协议内容交给 adapter，从结构上保证 adapter 不触碰
 gateway 治理状态。capabilities() 只描述 adapter/provider 级能力（协议特性、streaming /
 tool schema 变体）；单模型能力（context window 等）以 ModelCatalogService 为准（§4）。
 
@@ -28,7 +28,7 @@ from forgecli.application.llm.gateway.response import FinishReason, ModelUsage
 
 @dataclass(frozen=True)
 class ProviderCapabilities:
-    """adapter / provider 级能力（不是单模型能力的事实来源，§3.2 / §4）。"""
+    """adapter / provider 级能力（不是单模型能力的事实来源，ADR-0011 §3.2 / §4）。"""
 
     supports_streaming: bool = False
     supports_tools: bool = False

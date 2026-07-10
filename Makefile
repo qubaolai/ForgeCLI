@@ -52,6 +52,9 @@ check:
 lint: 
 	$(POETRY) run ruff check .
 
+lint-fix:
+	$(POETRY) run ruff check . --fix
+
 format: 
 	$(POETRY) run ruff format .
 

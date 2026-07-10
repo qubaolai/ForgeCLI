@@ -44,6 +44,14 @@ REGISTRY: dict[str, ProviderSpec] = {
         default_api_base="",  # 留空：必须在配置 / adapter 里明确给出
         api_key_env="MIMO_API_KEY",
     ),
+    # 通用OpenAI兼容端点 base_url 不需由配置或 adapter 明确给出
+    "openai": ProviderSpec(
+        id="openai", label="OpenAI", default_api_base="", api_key_env="OPENAI_API_KEY"
+    ),
+    # 本地推理端点 默认免凭证, api_base 由配置给出
+    "local": ProviderSpec(
+        id="local", label="Local", default_api_base="", api_key_env=""
+    ),
 }
 
 

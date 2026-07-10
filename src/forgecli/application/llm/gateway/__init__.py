@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from forgecli.application.llm.gateway.default_gateway import DefaultLlmGateway
 from forgecli.application.llm.gateway.errors import (
     ModelAuthError,
     ModelBadRequestError,
@@ -43,6 +44,7 @@ from forgecli.application.llm.gateway.provider import (
     ProviderRequest,
     ProviderResponse,
 )
+from forgecli.application.llm.gateway.provider_registry import ProviderRegistry
 from forgecli.application.llm.gateway.request import (
     BudgetSnapshot,
     CancelToken,
@@ -70,6 +72,9 @@ __all__ = [
     "ProviderCapabilities",
     "ProviderRequest",
     "ProviderResponse",
+    # 网关实现 / 注册表
+    "DefaultLlmGateway",
+    "ProviderRegistry",
     # 请求 DTO
     "ModelRequest",
     "StructuredModelRequest",

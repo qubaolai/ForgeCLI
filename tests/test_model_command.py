@@ -61,7 +61,7 @@ def test_model_menu_keeps_provider_rows_and_uses_configured_models(
     root = menu.root_menu()
 
     labels = [choice.label for choice in root.choices]
-    assert labels == ["当前模型", "DeepSeek", "MiMo"]
+    assert labels == ["当前模型", "DeepSeek", "Local", "MiMo", "OpenAI"]
     provider_menu = _find(root, "DeepSeek").submenu()
     assert [choice.label for choice in provider_menu.choices] == ["deepseek-chat"]
     assert _find(root, "MiMo").submenu is None

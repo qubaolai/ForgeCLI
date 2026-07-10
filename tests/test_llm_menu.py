@@ -40,7 +40,7 @@ def _menu(tmp_path: Path) -> tuple[LlmMenu, _RecordingOutput, LlmConfigService]:
 def test_providers_menu_lists_closed_set(tmp_path: Path) -> None:
     menu, _, _ = _menu(tmp_path)
     labels = {c.label for c in menu.providers_menu().choices}
-    assert labels == {"DeepSeek", "MiMo"}
+    assert labels == {"DeepSeek", "Local", "MiMo", "OpenAI"}
 
 
 def test_edit_provider_api_base_persists(tmp_path: Path) -> None:
