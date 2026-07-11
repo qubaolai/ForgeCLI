@@ -4,11 +4,11 @@
 
     - 通用超参（temperature/top_p/max_output_tokens/stop/response_format）由网关校验。
     - thinking 是 ForgeCLI 的统一抽象，由 provider adapter 翻译成各供应商字段；
-      enabled=auto 表示由 gateway 按 origin/tier 默认策略决定，不交给 LLM。
+      enabled=auto 表示由 gateway 按 origin 默认策略决定，不交给 LLM。
     - provider_options 按 provider 命名空间隔离（如 provider_options["deepseek"]），
       只能由对应 provider adapter 读取，不参与参数合并。
 
-注意：本类是调用切片的请求超参，与 application/llm/config 里同名的
+注意：本类是*调用切片*的请求超参，与 application/llm/config 里同名的
 ModelParams（配置切片：模型元数据 + 计费 + 标准超参）是两个不同对象，分属不同命名空间，
 不在 application/llm 顶层 __init__ 同时 re-export，避免命名冲突。
 """
@@ -22,7 +22,7 @@ from types import MappingProxyType
 
 
 class ThinkingMode(Enum):
-    """是否开启思考。auto 表示由 gateway 按 origin/tier 默认策略决定（ADR §3.5）。"""
+    """是否开启思考。auto 表示由 gateway 按 origin 默认策略决定（ADR §3.5）。"""
 
     ON = "on"
     OFF = "off"

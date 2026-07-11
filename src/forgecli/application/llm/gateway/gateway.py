@@ -1,9 +1,9 @@
 """统一 LLM 调用网关端口 LlmGateway（ADR-0011 §3.1）。
 
-LlmGateway 是所有模型调用的唯一入口。AgentLoop 只依赖本端口，不依赖具体 provider
-adapter，也不 import 任何供应商 SDK。具体实现在后续切片。
+LlmGateway 是所有模型调用的*唯一*入口。AgentLoop 只依赖本端口，不依赖具体 provider
+adapter，也不 import 任何供应商 SDK（§19 验收）。具体实现住在后续切片。
 
-职责：解析 current_model / tier / explicit_model、
+职责（§3.1，今日仅冻结端口形状，不实现）：解析 current_model / explicit_model、
 校验模型可用性与策略、注入默认超参、路由 provider/model、请求前估算 token 与预算、
 调用 provider adapter、归一化 usage / finish reason / 错误，返回 usage 草稿交
 AgentTurnService 落盘。

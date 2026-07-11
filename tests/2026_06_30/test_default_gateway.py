@@ -17,9 +17,9 @@ from forgecli.application.llm.gateway import (
     ModelUsage,
     ProviderRegistry,
     TextBlock,
-    TierModelSelection,
 )
 from forgecli.application.llm.gateway.origin import RequestOrigin
+from forgecli.application.llm.gateway.selection import CurrentModelSelection
 from forgecli.domain.conversation import MessageRole
 from forgecli.infrastructure.llm.adapters.fake_provider import FakeModelProvider
 
@@ -127,7 +127,7 @@ def test_complete_rejects_non_explicit_selection_in_mvp() -> None:
         session_id=request.session_id,
         turn_id=request.turn_id,
         origin=request.origin,
-        model_selection=TierModelSelection("fast"),
+        model_selection=CurrentModelSelection(),
         messages=request.messages,
         params=request.params,
     )

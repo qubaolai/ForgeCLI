@@ -1,12 +1,12 @@
 """统一 LLM 网关的 MVP 实现 DefaultLlmGateway（ADR-0011 §3.1 / §17）。
 
-当前只落地 complete 的最小 happy path：仅支持 explicit selection，
+今日只落地 complete 的最小 happy path：仅支持 explicit selection，
 按已解析 provider/model 路由到 adapter，归一化返回 ModelResponse。
-tier / current_model 路由、credential 解析、streaming、tool calling
-执行、结构化输出校验均为后续切片。
+current_model 路由（07-02 由 ModelSelectionResolver 接线）、credential 解析、
+streaming、tool calling 执行、结构化输出校验均为后续切片。
 
 边界：网关不直接写 events / state / usage 文件；usage 只作为草稿随 ModelResponse 返回，
-由 AgentTurnService 落盘。
+由 AgentTurnService 落盘（07-07）。
 """
 
 from __future__ import annotations
@@ -52,7 +52,8 @@ class DefaultLlmGateway(LlmGateway):
         # 注入计时器：让 latency_ms 在测试中可钉死
         # （沿用 SessionService 注入 clock 的模式）。
         self._timer = timer
-        # 为后续路由预留的 catalog 校验入口（07-01 注入）；今日默认 no-op。
+        # 为后续路由预留的 catalog 校验入口（07-02 经 ModelSelectionResolver 接线）；
+        # 今日默认 no-op。
         self._validate_model = validate_model
 
     def complete(self, request: ModelRequest) -> ModelResponse:
@@ -65,13 +66,14 @@ class DefaultLlmGateway(LlmGateway):
             system_prompt=request.system_prompt,
             tools=request.tools,
         )
+
         start = self._timer()
         try:
             provider_response = provider.complete(provider_request)
         except ModelGatewayError:
             # adapter 已归一化的网关错误：原样上抛（保留其安全上下文）。
             raise
-        except Exception as exc:  # 兜底：任何非网关异常都归一化为网关错误。
+        except Exception as exc:  # 契约兜底：任何非网关异常都归一化为网关错误。
             raise ModelProviderInternalError(
                 f"provider {ref.provider!r} 调用失败: {exc}",
                 provider=ref.provider,
@@ -81,7 +83,7 @@ class DefaultLlmGateway(LlmGateway):
         latency_ms = (self._timer() - start) * 1000.0
 
         usage = provider_response.usage or self._estimate_usage(
-            request=request, response=provider_response
+            request, provider_response
         )
         return ModelResponse(
             request_id=request.request_id,
@@ -102,19 +104,22 @@ class DefaultLlmGateway(LlmGateway):
             "complete_structured 在 07-07 结构化输出切片接线；MVP 仅实现 complete。"
         )
 
+    # ---- 内部 ----
+
     def _resolve_selection(self, selection: ModelSelection) -> ModelRef:
         """把选择解析成已解析模型 ModelRef（复用既有值对象，不另建平行结构）。
 
-        MVP 仅支持 explicit selection；current_model / tier 路由在 07-01 / 07-02 接线。
+        MVP 仅支持 explicit selection；current_model 路由在 07-02 由
+        ModelSelectionResolver 接线。
         """
         if isinstance(selection, ExplicitModelSelection):
             ref = ModelRef(provider=selection.provider, model=selection.model)
             if self._validate_model is not None:
-                self._validate_model(ref)  # 预留 catalog 校验入口，今日默认 no-op
+                self._validate_model(ref)  # 预留 catalog 校验入口，默认 no-op
             return ref
         raise ModelBadRequestError(
-            f"MVP 仅支持 explicit selection；{selection.kind.value} 路由在 "
-            "07-01 / 07-02 接线。"
+            f"MVP 仅支持 explicit selection；{selection.kind.value} 路由在 07-02 "
+            "由 ModelSelectionResolver 接线。"
         )
 
     def _estimate_usage(

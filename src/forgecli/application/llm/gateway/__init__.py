@@ -9,6 +9,10 @@
 
 from __future__ import annotations
 
+from forgecli.application.llm.gateway.catalog import (
+    ModelCatalogEntry,
+    ModelCatalogService,
+)
 from forgecli.application.llm.gateway.default_gateway import DefaultLlmGateway
 from forgecli.application.llm.gateway.errors import (
     ModelAuthError,
@@ -62,7 +66,10 @@ from forgecli.application.llm.gateway.selection import (
     ExplicitModelSelection,
     ModelSelection,
     SelectionKind,
-    TierModelSelection,
+)
+from forgecli.application.llm.gateway.selection_resolver import (
+    ModelSelectionResolver,
+    ResolvedModel,
 )
 
 __all__ = [
@@ -85,8 +92,12 @@ __all__ = [
     "ModelSelection",
     "SelectionKind",
     "CurrentModelSelection",
-    "TierModelSelection",
     "ExplicitModelSelection",
+    # 模型目录 / 选择解析
+    "ModelCatalogEntry",
+    "ModelCatalogService",
+    "ModelSelectionResolver",
+    "ResolvedModel",
     # 超参
     "ModelParams",
     "ThinkingConfig",
