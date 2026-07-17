@@ -2,14 +2,14 @@
 
 冻结日一次冻全 ModelRequest 字段位（含本阶段 no-op 的 budget_snapshot / cancel_token），
 避免后续预算、取消、流式接入时再改动「已冻结」DTO。ADR §3.3 的字段顺序如下（dataclass
-要求有默认值的字段在后，故源码顺序与 ADR 列举顺序不同，但字段集合与之一致）：
+要求有默认值的字段在后，故源码顺序与 ADR 列举顺序不同，但*字段集合*与之一致）：
 
     request_id, session_id, turn_id, loop_step_id?, origin, model_selection,
     required_capabilities[], min_context_window?, messages[], system_prompt?,
     tools[], params, timeout_seconds?, budget_snapshot?, cancel_token?, metadata
 
 关键边界：
-    - ModelRequest 不带 stream 标志；是否流式由调用 complete / stream 决定（§3.3）。
+    - ModelRequest *不带* stream 标志；是否流式由调用 complete / stream 决定（§3.3）。
     - metadata 只放安全摘要（mode、command 等），不得含 secret——构造期即校验。
     - budget_snapshot 由 AgentTurnService 注入，BudgetGuard 只读裁决（MVP no-op）。
     - cancel_token 承载取消信号，运行时接线在 07-07，今日只冻字段位。
@@ -44,6 +44,18 @@ def _assert_metadata_safe(metadata: Mapping[str, str]) -> None:
         lowered = key.lower()
         if any(part in lowered for part in _SECRETISH_KEY_PARTS):
             raise ValueError(f"metadata 只能放安全摘要，不得含凭证类字段: {key!r}")
+
+
+@dataclass(frozen=True)
+class CacheHint:
+    """请求侧 prompt 缓存标注（§14）：标注可缓存前缀（system prompt / 稳定工具定义）。
+
+    provider adapter 把它翻译成各供应商缓存机制（显式 breakpoint 或自动前缀缓存）；
+    不支持 prompt 缓存的 provider 静默忽略，不报错。
+    """
+
+    cache_system_prompt: bool = False
+    cache_tools: bool = False
 
 
 @dataclass(frozen=True)
@@ -92,6 +104,7 @@ class ModelRequest:
     timeout_seconds: float | None = None
     budget_snapshot: BudgetSnapshot | None = None
     cancel_token: CancelToken | None = None
+    cache_hint: CacheHint | None = None
     metadata: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:

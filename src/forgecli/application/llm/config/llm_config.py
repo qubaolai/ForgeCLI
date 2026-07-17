@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from forgecli.application.llm.errors import ConfigValidationError
+from forgecli.application.llm.gateway.origin import RequestOrigin
 
 # 标准化字段名（出现在模型行内表里、且我们认识的键）。其余键归入 extra。
 _KNOWN_FIELDS = {
@@ -30,6 +31,8 @@ _KNOWN_FIELDS = {
     "max_tokens",
     "cost_per_1k_input",
     "cost_per_1k_output",
+    "cost_per_1k_cached_input",
+    "cost_per_1k_reasoning",
     "temperature",
     "top_p",
     "extra",
@@ -72,6 +75,7 @@ class StandardField:
 
 
 # 可在交互式菜单里逐项编辑的标准字段（顺序即菜单顺序）。extra 走单独的 JSON 编辑。
+# cached / reasoning 单价为 ADR-0012 §7 新增；/config 模型编辑菜单随本表自动获得两行。
 STANDARD_FIELDS: tuple[StandardField, ...] = (
     StandardField("context_window", "上下文窗口", int),
     StandardField("max_tokens", "最大输出 tokens", int),
@@ -79,6 +83,8 @@ STANDARD_FIELDS: tuple[StandardField, ...] = (
     StandardField("top_p", "top_p", float),
     StandardField("cost_per_1k_input", "输入价格/1k", float),
     StandardField("cost_per_1k_output", "输出价格/1k", float),
+    StandardField("cost_per_1k_cached_input", "缓存输入价格/1k", float),
+    StandardField("cost_per_1k_reasoning", "思考输出价格/1k", float),
 )
 
 _FIELD_KIND: dict[str, type] = {f.name: f.kind for f in STANDARD_FIELDS}
@@ -120,6 +126,8 @@ class ModelParams:
     max_tokens: int | None = None
     cost_per_1k_input: float = 0.0
     cost_per_1k_output: float = 0.0
+    cost_per_1k_cached_input: float = 0.0
+    cost_per_1k_reasoning: float = 0.0
     temperature: float | None = None
     top_p: float | None = None
     extra: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
@@ -139,6 +147,10 @@ class ModelParams:
             out["cost_per_1k_input"] = self.cost_per_1k_input
         if self.cost_per_1k_output:
             out["cost_per_1k_output"] = self.cost_per_1k_output
+        if self.cost_per_1k_cached_input:
+            out["cost_per_1k_cached_input"] = self.cost_per_1k_cached_input
+        if self.cost_per_1k_reasoning:
+            out["cost_per_1k_reasoning"] = self.cost_per_1k_reasoning
         if self.extra:
             out["extra"] = dict(self.extra)
         return out
@@ -174,6 +186,12 @@ class ModelParams:
             cost_per_1k_output=_as_nonneg_float(
                 "cost_per_1k_output", raw.get("cost_per_1k_output", 0.0)
             ),
+            cost_per_1k_cached_input=_as_nonneg_float(
+                "cost_per_1k_cached_input", raw.get("cost_per_1k_cached_input", 0.0)
+            ),
+            cost_per_1k_reasoning=_as_nonneg_float(
+                "cost_per_1k_reasoning", raw.get("cost_per_1k_reasoning", 0.0)
+            ),
             temperature=None
             if temp is None
             else _as_ranged_float("temperature", temp, 0.0, 2.0),
@@ -198,9 +216,55 @@ class ProviderConfig:
     timeout: int
     max_retries: int
     models: tuple[ModelSpec, ...]
+    # 可选 key pool（ADR-0011 §7 / §16）：多个 credential reference（环境变量名，
+    # 如 "DEEPSEEK_API_KEY"）。缺省时由 settings 层从 api_key_env 派生单条引用。
+    # 只支持 TOML 手写，不进 /config 菜单编辑；明文 key 永不入配置。
+    credential_refs: tuple[str, ...] = ()
 
     def model(self, model_id: str) -> ModelSpec | None:
         return next((m for m in self.models if m.id == model_id), None)
+
+
+# ---- 网关运行时配置段（ADR-0012）----
+# 以下值对象对应 llm.toml 的 [llm.cache] / [llm.circuit_breaker] / [llm.retry]，
+# 由 LlmConfigService 解析、wiring 消费装配。所有能力默认关闭或回落现行为；
+# 网关自身不解析 TOML（ADR-0011 §4 边界不变）。已移除的配置段：[llm.rate_limit]
+# （客户端主动限流，见 governance.py）、[llm.credentials]（凭证只支持环境变量，
+# 无 dotenv 开关，见 infrastructure/llm/credentials.py）。
+
+
+# 响应缓存 origins 白名单的默认值（ADR-0012 §3 配置示例）。
+_DEFAULT_CACHE_ORIGINS = (
+    RequestOrigin.TITLE,
+    RequestOrigin.SUMMARY,
+    RequestOrigin.STRUCTURED_CLASSIFICATION,
+)
+
+
+@dataclass(frozen=True)
+class CacheSettings:
+    """[llm.cache]（ADR-0012 §3）：响应缓存开关与参数。默认关闭。"""
+
+    enabled: bool = False
+    ttl_seconds: float | None = 600.0
+    max_entries: int = 256
+    origins: tuple[RequestOrigin, ...] = _DEFAULT_CACHE_ORIGINS
+
+
+@dataclass(frozen=True)
+class CircuitBreakerSettings:
+    """[llm.circuit_breaker]（ADR-0012 §8）：健康熔断。默认关闭。"""
+
+    enabled: bool = False
+    failure_threshold: int = 5
+    cooldown_seconds: float = 30.0
+
+
+@dataclass(frozen=True)
+class RetrySettings:
+    """[llm.retry]（ADR-0012 §2）：429 短等重试阈值（秒）。"""
+
+    wait_threshold_seconds: float = 5.0
 
 
 @dataclass(frozen=True)

@@ -33,6 +33,22 @@ class TextBlock(ContentBlock):
 
     text: str
 
+@dataclass(frozen=True)
+class ToolResultBlock(ContentBlock):
+    """工具结果内容块（§10 工具结果回填）。
+
+    统一的 tool result message（role=TOOL + 本块）表达工具结果；
+    provider adapter 负责翻译成各供应商表示（如 OpenAI role=tool 消息）。
+    tool_call_id 与触发它的 ToolCall 关联。
+    """
+
+    tool_call_id: str
+    content: str
+    is_error: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.tool_call_id.strip():
+            raise ValueError("ToolResultBlock.tool_call_id 不能为空")
 
 @dataclass(frozen=True)
 class ChatMessage:
@@ -40,6 +56,7 @@ class ChatMessage:
 
     role: MessageRole
     content: tuple[ContentBlock, ...]
+    tool_calls: tuple[ToolCall, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.content:

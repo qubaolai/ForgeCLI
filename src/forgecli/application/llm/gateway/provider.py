@@ -6,29 +6,32 @@ ModelProvider 只描述「把统一请求映射到某供应商 API」的协议�
     - 抛出的错误必须被 gateway 转成统一 ModelGatewayError。
 
 输入用 ProviderRequest 而非 ModelRequest：gateway 已解析 selection / 路由 / 预算 /
-取消等治理字段，只把发请求所需的协议内容交给 adapter，从结构上保证 adapter 不触碰
+取消等*治理*字段，只把发请求所需的协议内容交给 adapter，从结构上保证 adapter 不触碰
 gateway 治理状态。capabilities() 只描述 adapter/provider 级能力（协议特性、streaming /
 tool schema 变体）；单模型能力（context window 等）以 ModelCatalogService 为准（§4）。
 
-stream(...) 延后到 streaming 切片（§9）：届时新增 ProviderStreamChunk 并补到本接口，
-今日不预建其 DTO（不提前创建空的远期模块）。
+stream(...) 返回统一 ProviderStreamChunk（§9）；未覆写视为不支持 streaming，
+gateway 先查 capabilities().supports_streaming 再路由流式调用。
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
+from forgecli.application.llm.gateway.credentials import Credential
 from forgecli.application.llm.gateway.messages import ChatMessage, ToolCall, ToolSpec
 from forgecli.application.llm.gateway.params import ModelParams
+from forgecli.application.llm.gateway.request import CancelToken
 from forgecli.application.llm.gateway.response import FinishReason, ModelUsage
+from forgecli.application.llm.gateway.streaming import ProviderStreamChunk
 
 
 @dataclass(frozen=True)
 class ProviderCapabilities:
-    """adapter / provider 级能力（不是单模型能力的事实来源，ADR-0011 §3.2 / §4）。"""
+    """adapter / provider 级能力（不是单模型能力的事实来源，§3.2 / §4）。"""
 
     supports_streaming: bool = False
     supports_tools: bool = False
@@ -40,8 +43,22 @@ class ProviderCapabilities:
 class ProviderRequest:
     """gateway 解析 selection / 路由后交给 adapter 的协议映射输入。
 
-    只含发请求所需内容；不含 selection / budget_snapshot / cancel_token 等治理字段。
+    只含发请求所需内容；不含 selection / budget_snapshot 等*决策*字段。
     model 为*已解析*的具体模型 id。
+
+    §7 / §8 要求下发到 adapter 的三个执行要素（07-03 起补入）：
+        - credential：由 gateway 经 CredentialPool 租借后注入；adapter 不读环境变量、
+          不枚举或切换 key。keyless provider（如 local）为 None。
+        - cancel_token：取消信号传播到 adapter，由 adapter 中止在途 HTTP 请求，
+          不靠等待自然超时。
+        - timeout_seconds：gateway 按「请求级 > provider 默认」合并后的超时。
+
+    结构化输出（§3.7 native 通道）：response_schema / schema_name / strict_schema
+    由 complete_structured 注入；普通 complete 调用为 None。
+
+    model_max_output_tokens（ADR-0012 §4）：所选模型在目录中的 max_output_tokens，
+    由 gateway 从 catalog 条目填入（目录缺失为 None）；budget 型 thinking 方言
+    的 effort -> budget_tokens 映射按它截断。adapter 只读，不回写目录。
     """
 
     model: str
@@ -49,10 +66,19 @@ class ProviderRequest:
     params: ModelParams
     system_prompt: str | None = None
     tools: tuple[ToolSpec, ...] = ()
+    timeout_seconds: float | None = None
+    cancel_token: CancelToken | None = None
+    credential: Credential | None = None
+    response_schema: Mapping[str, object] | None = None
+    schema_name: str | None = None
+    strict_schema: bool = True
+    model_max_output_tokens: int | None = None
 
     def __post_init__(self) -> None:
         if not self.model.strip():
             raise ValueError("ProviderRequest.model 不能为空")
+        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
+            raise ValueError("ProviderRequest.timeout_seconds 必须为正数")
 
 
 @dataclass(frozen=True)
@@ -88,5 +114,12 @@ class ModelProvider(ABC):
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         """把协议映射输入发往供应商并返回归一化结果。"""
 
-    # stream(request: ProviderRequest) -> Iterator[ProviderStreamChunk]:
-    #     延后到 streaming 切片（ADR §9），今日不冻结其 chunk DTO。
+    def stream(self, request: ProviderRequest) -> Iterator[ProviderStreamChunk]:
+        """流式调用：把供应商私有 SSE/event 转成统一 ProviderStreamChunk（§9）。
+
+        以具体方法加入端口（06-29 冻结契约只含 complete），未覆写视为不支持
+        streaming；gateway 会先查 capabilities().supports_streaming 再调用。
+        取消经 request.cancel_token 传播：adapter 收到取消须中止底层连接并停止
+        产出 chunk，不等待自然超时。
+        """
+        raise NotImplementedError("该 ModelProvider 实现不支持 stream")

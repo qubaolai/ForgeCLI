@@ -22,7 +22,6 @@
 
 | 能力 | MVP 取舍 | 来源 | 目标版本 |
 | --- | --- | --- | --- |
-| `RateLimiter` 客户端限流与并发控制 | MVP 直通，不限流 | ADR-0011 §13、§17 | Beta+ |
 | `ProviderHealthRegistry` 熔断与半开探测 | MVP 无熔断，逐请求试探 | ADR-0011 §12.1、§17 | Beta+ |
 | `BudgetGuard` 实裁决 + `BudgetPolicy` + `BudgetTracker` | `budget_snapshot` 已冻结，guard no-op、不扣减 | ADR-0011 §11.3、§17 | Beta+ |
 | 可观测性聚合与 trace span | MVP 不聚合 provider/model 指标 | ADR-0011 §15、§17 | Beta+ |
@@ -30,6 +29,10 @@
 | 企业 allowlist 编辑与插件式 provider 注册 | provider 注册表代码级封闭 | ADR-0011 §6 | 企业版 |
 | Embeddings / rerank 等非对话模型 | 非目标；后续须新增 gateway 方法走同一控制面 | ADR-0011 §1 | 待定 |
 | 多模态 image / file 内容块 | message schema 已预留扩展点，MVP 只用 text 块 | ADR-0011 §1、§3.3 | 待定 |
+
+`RateLimiter` 客户端限流与并发控制原登记于此（Beta+）：2026-07-16 复核后判定
+ForgeCLI 定位为个人单用户 CLI，本地限流阈值相对 provider 真实 429 响应没有
+信息优势，已从路线图移除、不再规划实现（见 ADR-0011 §13、ADR-0012 决策 9）。
 
 ---
 

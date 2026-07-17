@@ -6,18 +6,33 @@ OpenAI 规范），所以供应商集合由代码决定，用户无法在配置�
 
 这是 LLM 领域里配置切片与调用切片*共享*的身份/能力核心：
     - 配置切片：用它校验配置文件里的供应商段是否合法。
-    - 调用切片（将来）：用 provider id 作为分发键，路由到对应 adapter。
-（adapter 绑定等真正做调用适配时再挂到 ProviderSpec 上，现在不预设。）
+    - 调用切片：用 provider id 作为分发键，经 ProviderRegistry 路由到对应 adapter。
+（adapter 实例需运行时配置，其绑定放在运行时 ProviderRegistry（组合根 / 测试构造），
+不挂到本静态 ProviderSpec 上，避免退化为可变全局单例。）
 
 凭证不入文件：api_key_env 只是「该供应商默认从哪个环境变量取 key」的提示，
-真正的 key 始终从环境变量 / keychain 读取。
+真正的 key 始终从环境变量读取（CredentialResolver 把凭证引用当环境变量名解析）。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 from forgecli.application.llm.errors import UnknownProvider
+
+
+class ThinkingDialect(Enum):
+    """provider 的 thinking 方言（ADR-0012 §4，代码内注册）。
+
+    effort 型发 ``reasoning_effort``；budget 型由 adapter 把 effort 映射为
+    budget_tokens（固定档位表，受模型 max_output_tokens 截断）；none 表示该
+    provider 无 thinking 表达，adapter 不发送任何 thinking 字段。
+    """
+
+    EFFORT = "effort"
+    BUDGET = "budget"
+    NONE = "none"
 
 
 @dataclass(frozen=True)
@@ -28,6 +43,8 @@ class ProviderSpec:
     label: str  # 默认展示名（配置可覆盖 name）
     default_api_base: str  # 配置未给 api_base 时的回落
     api_key_env: str  # 默认凭证环境变量名
+    # thinking 方言声明（ADR-0012 §4）：wiring 据此实例化 adapter。
+    thinking_dialect: ThinkingDialect = ThinkingDialect.EFFORT
 
 
 REGISTRY: dict[str, ProviderSpec] = {
@@ -44,13 +61,19 @@ REGISTRY: dict[str, ProviderSpec] = {
         default_api_base="",  # 留空：必须在配置 / adapter 里明确给出
         api_key_env="MIMO_API_KEY",
     ),
-    # 通用OpenAI兼容端点 base_url 不需由配置或 adapter 明确给出
+    # OpenAI 官方 / 兼容端点：base_url 由配置或 adapter 给出。
     "openai": ProviderSpec(
-        id="openai", label="OpenAI", default_api_base="", api_key_env="OPENAI_API_KEY"
+        id="openai",
+        label="OpenAI",
+        default_api_base="",
+        api_key_env="OPENAI_API_KEY",
     ),
-    # 本地推理端点 默认免凭证, api_base 由配置给出
+    # 本地推理端点（Ollama / vLLM 等）：默认免凭证，api_base 由配置给出。
     "local": ProviderSpec(
-        id="local", label="Local", default_api_base="", api_key_env=""
+        id="local",
+        label="Local",
+        default_api_base="",
+        api_key_env="",  # 免 key；availability 对免凭证 provider 的细化见 07-03
     ),
 }
 

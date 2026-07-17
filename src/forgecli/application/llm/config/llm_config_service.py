@@ -6,6 +6,11 @@
     - add_model():     校验供应商（封闭）与参数后 round-trip 写入。
     - remove_model():  删除一个模型。
     - set_model_field / set_model_extra / set_provider_field：逐项编辑（读-改-写）。
+    - cache_settings / circuit_breaker_settings / retry_settings：ADR-0012 新增
+      运行时配置段的现读解析，缺省时返回默认值（全部默认关闭 / 回落现行为），
+      wiring 据此装配治理件。已移除：rate_limit_settings（客户端主动限流，见
+      gateway/governance.py）、credential_settings（凭证只支持环境变量，无
+      dotenv 开关，见 infrastructure/llm/credentials.py）。
 
 读取时遇到未知供应商段：忽略（没有 adapter 可驱动），不报错。
 写入时显式引用未知供应商：抛 UnknownProvider（封闭集合不可新增）。
@@ -17,15 +22,19 @@ from collections.abc import Mapping
 
 from forgecli.application.llm import providers as provider_registry
 from forgecli.application.llm.config.llm_config import (
+    CacheSettings,
+    CircuitBreakerSettings,
     LlmConfig,
     ModelParams,
     ModelSpec,
     ProviderConfig,
+    RetrySettings,
     coerce_field,
     parse_extra,
 )
 from forgecli.application.llm.config.llm_config_store import LlmConfigStore
 from forgecli.application.llm.errors import ConfigValidationError
+from forgecli.application.llm.gateway.origin import RequestOrigin
 
 _DEFAULT_TIMEOUT = 60
 _DEFAULT_MAX_RETRIES = 2
@@ -41,6 +50,73 @@ def _as_int(name: str, value: object, default: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ConfigValidationError(f"{name} 必须是整数，收到: {value!r}")
     return value
+
+
+def _as_bool(name: str, value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ConfigValidationError(f"{name} 必须是布尔值，收到: {value!r}")
+    return value
+
+
+def _as_positive_int_value(name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigValidationError(f"{name} 必须是整数，收到: {value!r}")
+    if value <= 0:
+        raise ConfigValidationError(f"{name} 必须为正整数，收到: {value!r}")
+    return value
+
+
+def _as_positive_number(name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ConfigValidationError(f"{name} 必须是数字，收到: {value!r}")
+    number = float(value)
+    if number <= 0:
+        raise ConfigValidationError(f"{name} 必须为正数，收到: {value!r}")
+    return number
+
+
+def _as_nonneg_number(name: str, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ConfigValidationError(f"{name} 必须是数字，收到: {value!r}")
+    number = float(value)
+    if number < 0:
+        raise ConfigValidationError(f"{name} 不能为负，收到: {value!r}")
+    return number
+
+
+def _as_origins(
+    value: object, defaults: tuple[RequestOrigin, ...]
+) -> tuple[RequestOrigin, ...]:
+    """解析 origins 白名单；未知 origin 字符串直接报错（封闭枚举）。"""
+    if value is None:
+        return defaults
+    if not isinstance(value, list | tuple) or not all(
+        isinstance(item, str) for item in value
+    ):
+        raise ConfigValidationError(f"origins 必须是字符串数组，收到: {value!r}")
+    origins: list[RequestOrigin] = []
+    for item in value:
+        try:
+            origins.append(RequestOrigin(item))
+        except ValueError:
+            allowed = " / ".join(origin.value for origin in RequestOrigin)
+            raise ConfigValidationError(
+                f"未知 origin: {item!r}；可选值 [{allowed}]"
+            ) from None
+    return tuple(origins)
+
+
+def _as_credential_refs(value: object) -> tuple[str, ...]:
+    """解析可选的 credential_refs 数组（ADR-0011 §16）；缺省返回空元组。"""
+    if value is None:
+        return ()
+    if not isinstance(value, list | tuple) or not all(
+        isinstance(item, str) and item.strip() for item in value
+    ):
+        raise ConfigValidationError(
+            f"credential_refs 必须是非空字符串数组，收到: {value!r}"
+        )
+    return tuple(item.strip() for item in value)
 
 
 class LlmConfigService:
@@ -134,6 +210,56 @@ class LlmConfigService:
             provider_id, field, value, provider_defaults=self._defaults(provider_id)
         )
 
+    # ---- 网关运行时配置段（ADR-0012）----
+
+    def cache_settings(self) -> CacheSettings:
+        """[llm.cache]（ADR-0012 §3）；缺省返回默认（关闭）。"""
+        section = self._section("cache")
+        defaults = CacheSettings()
+        ttl_raw = section.get("ttl_seconds", defaults.ttl_seconds)
+        ttl = None if ttl_raw is None else _as_positive_number("ttl_seconds", ttl_raw)
+        return CacheSettings(
+            enabled=_as_bool("enabled", section.get("enabled", defaults.enabled)),
+            ttl_seconds=ttl,
+            max_entries=_as_positive_int_value(
+                "max_entries", section.get("max_entries", defaults.max_entries)
+            ),
+            origins=_as_origins(section.get("origins"), defaults.origins),
+        )
+
+    def circuit_breaker_settings(self) -> CircuitBreakerSettings:
+        """[llm.circuit_breaker]（ADR-0012 §8）；缺省返回默认（关闭）。"""
+        section = self._section("circuit_breaker")
+        defaults = CircuitBreakerSettings()
+        return CircuitBreakerSettings(
+            enabled=_as_bool("enabled", section.get("enabled", defaults.enabled)),
+            failure_threshold=_as_positive_int_value(
+                "failure_threshold",
+                section.get("failure_threshold", defaults.failure_threshold),
+            ),
+            cooldown_seconds=_as_positive_number(
+                "cooldown_seconds",
+                section.get("cooldown_seconds", defaults.cooldown_seconds),
+            ),
+        )
+
+    def retry_settings(self) -> RetrySettings:
+        """[llm.retry]（ADR-0012 §2）；缺省阈值 5.0 秒。"""
+        section = self._section("retry")
+        defaults = RetrySettings()
+        return RetrySettings(
+            wait_threshold_seconds=_as_nonneg_number(
+                "wait_threshold_seconds",
+                section.get("wait_threshold_seconds", defaults.wait_threshold_seconds),
+            ),
+        )
+
+    def _section(self, name: str) -> Mapping[str, object]:
+        section = self._store.load().get(name, {})
+        if not isinstance(section, Mapping):
+            raise ConfigValidationError(f"[llm.{name}] 必须是一个配置段")
+        return section
+
     # ---- 解析 ----
 
     def _defaults(self, provider_id: str) -> dict[str, object]:
@@ -178,4 +304,5 @@ class LlmConfigService:
                 "max_retries", body.get("max_retries"), _DEFAULT_MAX_RETRIES
             ),
             models=tuple(models),
+            credential_refs=_as_credential_refs(body.get("credential_refs")),
         )

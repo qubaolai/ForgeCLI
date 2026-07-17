@@ -1,27 +1,64 @@
-"""统一 LLM 网关的 MVP 实现 DefaultLlmGateway（ADR-0011 §3.1 / §17）。
+"""统一 LLM 网关实现 DefaultLlmGateway（ADR-0011 §3.1 / §8 / §17，ADR-0012）。
 
-今日只落地 complete 的最小 happy path：仅支持 explicit selection，
-按已解析 provider/model 路由到 adapter，归一化返回 ModelResponse。
-current_model 路由（07-02 由 ModelSelectionResolver 接线）、credential 解析、
-streaming、tool calling 执行、结构化输出校验均为后续切片。
+complete / stream / complete_structured 共用同一条治理管线，按 §8 顺序执行：
 
-边界：网关不直接写 events / state / usage 文件；usage 只作为草稿随 ModelResponse 返回，
-由 AgentTurnService 落盘（07-07）。
+    取消预检 -> 选择解析（resolver + catalog 校验）-> thinking/参数合并（§3.5 / §5）
+    -> 响应缓存查（§14）-> 健康熔断检（§12.1）
+    -> token 估算 + 上下文窗口预检（§11.4）-> 预算裁决（§11.3）
+    -> 凭证租借 + 有界重试环（§7 / §12）-> provider 调用 -> 归一化。
+
+不含客户端主动限流（曾属 §13）：单用户单 key 的个人 CLI 场景下，本地按配置猜测
+的限流阈值没有信息优势，交互 origin 上的快速失败只会拒绝掉 provider 本可能接受
+的请求；429 由已有的短等重试环（§2）与凭证冷却处理，见 governance.py 模块说明。
+
+重试规则（§12 / ADR-0012 §2）：流式与非流式共用同一凭证级重试环——auth / 429
+依次尝试同 provider 的其他 credential；timeout / 连接失败按同凭证有限重试；
+429 带 retry_after 且 <= wait_threshold_seconds 时经注入 sleeper 本地等待后
+**同一凭证**重试（wait_retries）。stream 仅在**首个 provider chunk 产出之前**
+允许重试，首包之后的错误一律按中断收尾（§9），不重试、不重放。总次数受
+provider max_retries 约束；任何重试**不**切换 provider/model。重试摘要写入
+raw_metadata（credential_retries / transport_retries / wait_retries）。
+
+可观测性（ADR-0012 §9）：complete 返回、stream 收尾 chunk、错误抛出三个位置
+统一经 GatewayObserver 上报安全摘要样本；默认装配进程内聚合，无 IO。
+
+边界：网关不直接写 events / state / usage 文件；usage 随 ModelResponse 返回，
+由 AgentTurnService 经 UsageMeter 转草稿后落盘（§11.1）。resolver 为必备协作件
+（ADR-0012 §10：06-30 的无 resolver 兼容路径与 validate_model 参数已清理）。
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
+import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from weakref import ref
 
+from pytest import param
+
+from forgecli.application.llm.gateway.cache import LlmCacheController, NoopLlmCacheController
+from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
+from forgecli.application.llm.gateway.credentials import Credential, CredentialPool
 from forgecli.application.llm.gateway.errors import (
+    ModelAuthError,
     ModelBadRequestError,
+    ModelCancelledError,
+    ModelContextOverflowError,
     ModelGatewayError,
     ModelProviderInternalError,
+    ModelRateLimitError,
+    ModelTimeoutError,
+    ModelUnavailableError,
 )
 from forgecli.application.llm.gateway.gateway import LlmGateway
-from forgecli.application.llm.gateway.provider import ProviderRequest, ProviderResponse
+from forgecli.application.llm.gateway.governance import BudgetGuard, NoopBudgetGuard, NoopProviderHealthRegistry, ProviderHealthRegistry
+from forgecli.application.llm.gateway.observability import GatewayCallSample, GatewayObserver, InProcessGatewayMetrics
+from forgecli.application.llm.gateway.origin import RequestOrigin
+from forgecli.application.llm.gateway.params import ModelParams, ThinkingConfig, ThinkingMode
+from forgecli.application.llm.gateway.provider import ModelProvider, ProviderRequest, ProviderResponse
 from forgecli.application.llm.gateway.provider_registry import ProviderRegistry
+from forgecli.application.llm.gateway.provider_settings import ProviderRuntimeSettings, ProviderSettingsSource
 from forgecli.application.llm.gateway.request import (
     ModelRequest,
     StructuredModelRequest,
@@ -31,12 +68,38 @@ from forgecli.application.llm.gateway.response import (
     ModelUsage,
     StructuredModelResponse,
 )
-from forgecli.application.llm.gateway.selection import (
-    ExplicitModelSelection,
-    ModelSelection,
-)
+
+from forgecli.application.llm.gateway.selection_resolver import ModelSelectionResolver
+from forgecli.application.llm.gateway.token_estimator import ApproximateTokenEstimator, TokenEstimator
+from forgecli.application.llm.gateway.tokenizer_registry import TokenizerRegistry
 from forgecli.application.llm.model_ref import ModelRef
 
+# thinking.enabled=auto 时按 origin 的默认策略（§3.5）：计划 / review / debug 默认开。
+_THINKING_AUTO_ON_ORIGINS = frozenset(
+    {RequestOrigin.PLAN, RequestOrigin.REVIEW, RequestOrigin.DEBUG}
+)
+# settings_source 未注入时的 provider 默认（与配置切片默认一致）。
+_FALLBACK_TIMEOUT_SECONDS = 60.0
+_FALLBACK_MAX_RETRIES = 2
+
+
+@dataclass
+class _RetryCounts:
+    """一次调用内的重试计数（ADR-0012 §2）；进入 raw_metadata 与观测样本。"""
+
+    credential: int = 0
+    transport: int = 0
+    wait: int = 0
+
+    def summary(self) -> dict[str, str]:
+        out: dict[str, str] = {}
+        if self.credential:
+            out["credential_retries"] = str(self.credential)
+        if self.transport:
+            out["transport_retries"] = str(self.transport)
+        if self.wait:
+            out["wait_retries"] = str(self.wait)
+        return out
 
 class DefaultLlmGateway(LlmGateway):
     """网关 MVP 实现：解析 explicit selection、路由 adapter、归一化响应。"""
@@ -44,48 +107,391 @@ class DefaultLlmGateway(LlmGateway):
     def __init__(
         self,
         registry: ProviderRegistry,
+        resolver: ModelSelectionResolver,
         *,
         timer: Callable[[], float] = time.monotonic,
-        validate_model: Callable[[ModelRef], None] | None = None,
+        sleeper: Callable[[float], None] = time.sleep,
+        token_estimator: TokenEstimator | None = None,
+        tokenizer_registry: TokenizerRegistry | None = None,
+        settings_source: ProviderSettingsSource | None = None,
+        credential_pool: CredentialPool | None = None,
+        thinking_defaults: Callable[[], ThinkingConfig | None] | None = None,
+        health_registry: ProviderHealthRegistry | None = None,
+        budget_guard: BudgetGuard | None = None,
+        cache: LlmCacheController | None = None,
+        observer: GatewayObserver| None = None,
+        structured_retry_limit: int = 1,
     ) -> None:
         self._registry = registry
+        # 必备协作件（ADR-0012 §10）：current/explicit 都由 resolver 解析并经
+        # catalog 校验，无 resolver 兼容路径已清理。
+        self._resolver = resolver
         # 注入计时器：让 latency_ms 在测试中可钉死
         # （沿用 SessionService 注入 clock 的模式）。
         self._timer = timer
-        # 为后续路由预留的 catalog 校验入口（07-02 经 ModelSelectionResolver 接线）；
-        # 今日默认 no-op。
-        self._validate_model = validate_model
+        # 注入 sleeper（ADR-0012 §2）：429 短等重试经它完成。
+        self._sleeper = sleeper
+        self._estimator = token_estimator or ApproximateTokenEstimator()
+        # 精确分词器接入点（ADR-0012 §6）：按已解析 ref 选估算器，无映射回落近似。
+        self._tokenizers = tokenizer_registry
+        self._settings_source = settings_source
+        self._credential_pool = credential_pool
+        self._thinking_defaults = thinking_defaults
+        self._health = health_registry or NoopProviderHealthRegistry()
+        self._budget_guard = budget_guard or NoopBudgetGuard()
+        self._cache = cache or NoopLlmCacheController()
+        # 默认装配进程内聚合（ADR-0012 §9）：纯内存无副作用，不设开关。
+        self._observer = observer or InProcessGatewayMetrics()
+        self._structured_retry_limit = structured_retry_limit
 
     def complete(self, request: ModelRequest) -> ModelResponse:
-        ref = self._resolve_selection(request.model_selection)
-        provider = self._registry.get(ref.provider)
-        provider_request = ProviderRequest(
-            model=ref.model,
-            messages=request.messages,
-            params=request.params,
-            system_prompt=request.system_prompt,
-            tools=request.tools,
-        )
+        ref, entry = self._resolve_selection(request)
+        params = self._merge_params(request, ref, entry)
+        return self._complete_resolved(request, ref, entry, params, use_cache=True)
 
-        start = self._timer()
-        try:
-            provider_response = provider.complete(provider_request)
-        except ModelGatewayError:
-            # adapter 已归一化的网关错误：原样上抛（保留其安全上下文）。
-            raise
-        except Exception as exc:  # 契约兜底：任何非网关异常都归一化为网关错误。
-            raise ModelProviderInternalError(
-                f"provider {ref.provider!r} 调用失败: {exc}",
+    def complete_structured(
+        self, request: StructuredModelRequest
+    ) -> StructuredModelResponse:
+        base = request.model_request
+        ref, entry = self._resolve_selection(base)
+        param = self._merge_params(base, ref, entry)
+        # if entry.supports_structured_output:
+        #     response, data, errors = self._structured_native(
+        #         base, ref, entry, params, request
+        #     )
+        # else:
+        #     # 受控解析降级（§3.7）：schema 指令注入 prompt，有上限重试，不换模型。
+        #     response, data, errors = self._structured_degraded(
+        #         base, ref, entry, params, request
+        #     )
+        raise
+
+    # ---- 内部 ----
+
+    def _resolve_selection(self, request: ModelRequest) -> tuple[ModelRef, ModelCatalogEntry]:
+        """把选择解析成 (ModelRef, 目录条目)；resolver 为必备协作件（ADR-0012 §10）。"""
+        resolved = self._resolver.resolve(
+            request.model_selection,
+            origin=request.origin,
+            required_capabilities=request.required_capabilities,
+            min_context_window=request.min_context_window
+        )
+        return resolved.ref, resolved.entry
+    
+    def _merge_params(
+        self, request: ModelRequest, ref: ModelRef, entry: ModelCatalogEntry
+    ) -> ModelParams:
+        """参数合并（§5）：请求级 > 配置的 thinking 默认；并做 thinking 能力校验。"""
+        params = request.params
+        thinking = params.thinking
+        if thinking is None and self._thinking_defaults is not None:
+            thinking = self._thinking_defaults()
+        if thinking is None:
+            return params
+        supports_thinking = entry.supports_thinking
+        enabled = thinking.enabled
+        if enabled is ThinkingMode.ON and not supports_thinking:
+            # 显式要求 thinking 而模型不支持：请求前报能力错误，不得静默忽略（§3.5）。
+            raise ModelBadRequestError(
+                f"模型 {ref} 不支持 thinking，无法按当前 thinking 配置调用",
                 provider=ref.provider,
                 model=ref.model,
                 request_id=request.request_id,
-            ) from exc
+            )
+        if enabled is ThinkingMode.AUTO:
+            # auto 由 gateway 按 origin 默认策略决定 (§3.5), 不交给 LLM;
+            # 策略本身参考模型能力位: 模型不支持 thinking 时 auto 解析为 off
+            wants_thinkings = request.origin in _THINKING_AUTO_ON_ORIGINS
+            enabled = (
+                ThinkingMode.ON
+                if wants_thinkings and supports_thinking
+                else ThinkingMode.OFF
+            )
+        resolved = ThinkingConfig(
+            enabled=enabled,
+            effort=thinking.effort,
+            budget_tokens=thinking.budget_tokens,
+        )
+        return replace(params, thinking=resolved)
+    
+    def _pre_call_checks(
+        self,
+        request: ModelRequest,
+        ref: ModelRef,
+        entry: ModelCatalogEntry,
+        params: ModelParams
+    ) -> int:
+        """健康 / token 估算 / 窗口预检 / 预算裁决；返回估算输入 token。"""
+        self._health.check(ref)
+        estimated_input = self._estimator_for(ref).estimate_input(
+            messages=request.messages,
+            system_prompt=request.system_prompt,
+            tools=request.tools,
+        )
+        expected_output = params.max_output_tokens or entry.max_output_tokens or 0
+        if estimated_input + expected_output > entry.context_window:
+            raise ModelContextOverflowError(
+                f"估算输入 {estimated_input} + 预期输出 {expected_output} "
+                f"超出模型 {ref} 上下文窗口 {entry.context_window}",
+                provider=ref.provider,
+                model=ref.model,
+                request_id=request.request_id,
+            )
+        self._budget_guard.check(
+            request.budget_snapshot, estimated_input_tokens=estimated_input
+        )
+        return estimated_input
+    
+    def _settings(self, provider_id: str) -> ProviderRuntimeSettings:
+        """一家 provide 返回运行时配置参数"""
+        if self._settings_source is None:
+            return ProviderRuntimeSettings(
+                provider_id=provider_id,
+                timeout_seconds=_FALLBACK_TIMEOUT_SECONDS,
+                max_retries=_FALLBACK_MAX_RETRIES,
+                credential_refs=(),
+            )
+        return self._settings_source.settings_for(provider_id)
+    
+    def _get_credential(
+        self, 
+        request: 
+        ModelRequest, 
+        ref: ModelRef, 
+        settings: ProviderRuntimeSettings,
+    ) -> Credential | None:
+        """获取本次调用凭证；keyless（无 refs）或未接凭证池时为 None。
+
+        未配置凭证时在此抛 ModelAuthError——**不发起任何网络请求**（§7 / §19）。
+        凭证不被独占：并发调用可拿到同一凭证，网关不做凭证维度并发限制。
+        """
+        if self._credential_pool is None or not settings.credential_refs:
+            return None
+        try:
+            return self._credential_pool.get_credential(
+                ref.provider, settings.credential_refs
+            )
+        except ModelGatewayError as exc:
+            raise self._with_context(exc, ref, request) from exc
+
+    # ---- 可观测性（ADR-0012 §9）----
+    def _observe_response(
+        self,
+        request: ModelRequest,
+        ref: ModelRef,
+        response: ModelResponse,
+        counts: _RetryCounts | None,
+        *,
+        cache_hit: bool = False,
+    ) -> None:
+        self._observer.on_call(
+            GatewayCallSample(
+                provider=ref.provider,
+                model=ref.model,
+                origin=request.origin,
+                finish_reason=response.finish_reason,
+                latency_ms=response.latency_ms,
+                credential_retries=counts.credential if counts else 0,
+                transport_retries=counts.transport if counts else 0,
+                wait_retries=counts.wait if counts else 0,
+                cache_hit=cache_hit,
+                estimated=response.usage.estimated,
+            )
+        )
+
+    def _observe_error(
+        self,
+        request: ModelRequest,
+        ref: ModelRef,
+        exc: ModelGatewayError,
+        counts: _RetryCounts,
+        start: float,
+    ) -> None:
+        self._observer.on_call(
+            GatewayCallSample(
+                provider=ref.provider,
+                model=ref.model,
+                origin=request.origin,
+                finish_reason=None,
+                latency_ms=(self._timer() - start) * 1000.0,
+                credential_retries=counts.credential,
+                transport_retries=counts.transport,
+                wait_retries=counts.wait,
+                error_type=type(exc).__name__,
+            )
+        )
+
+    def _provider_request(
+        self,
+        request: ModelRequest,
+        ref: ModelRef,
+        entry: ModelCatalogEntry,
+        params: ModelParams,
+        settings: ProviderRuntimeSettings,
+        credential: Credential | None,
+        *,
+        response_schema: Mapping[str, object] | None = None,
+        schema_name: str | None = None,
+        strict_schema: bool = True,
+    ) -> ProviderRequest:
+        # 超时合并（§5）：请求级 > provider 默认。
+        timeout = (
+            request.timeout_seconds
+            if request.timeout_seconds is not None
+            else settings.timeout_seconds
+        )
+        return ProviderRequest(
+            model=ref.model,
+            messages=request.messages,
+            params=params,
+            system_prompt=request.system_prompt,
+            tools=request.tools,
+            timeout_seconds=timeout,
+            cancel_token=request.cancel_token,
+            credential=credential,
+            response_schema=response_schema,
+            schema_name=schema_name,
+            strict_schema=strict_schema,
+            model_max_output_tokens=entry.max_output_tokens,
+        )
+
+    def _invoke_with_retries(
+        self,
+        provider: ModelProvider,
+        request: ModelRequest,
+        ref: ModelRef,
+        entry: ModelCatalogEntry,
+        params: ModelParams,
+        settings: ProviderRuntimeSettings,
+        counts: _RetryCounts,
+        *,
+        response_schema: Mapping[str, object] | None,
+        schema_name: str | None,
+        strict_schema: bool,
+    ) -> ProviderResponse:
+        """凭证租借 + 有界重试环（§7 / §12 / ADR-0012 §2）。绝不切换 provider/model。"""
+        last_error: ModelGatewayError | None = None
+        for _attempt in range(settings.max_retries + 1):
+            self._raise_if_cancelled(request, ref)
+            try:
+                credential = self._get_credential(request, ref, settings)
+            except ModelAuthError:
+                if last_error is not None:
+                    # 凭证池耗尽（全部冷却 / 失败）：上抛最后一次 provider 错误。
+                    raise last_error from None
+                raise
+
+            provider_request = self._provider_request(
+                request,
+                ref,
+                entry,
+                params,
+                settings,
+                credential,
+                response_schema=response_schema,
+                schema_name=schema_name,
+                strict_schema=strict_schema,
+            )
+            try:
+                response = provider.complete(provider_request)
+            except ModelCancelledError:
+                raise
+            except ModelRateLimitError as exc:
+                last_error = self._with_context(exc, ref, request)
+                if self._should_wait_retry(exc, settings):
+                    # 429 短等重试（ADR-0012 §2）：本地等待后同一凭证重试；
+                    # 等待经注入 sleeper，计入 latency，不计 provider 计费。
+                    counts.wait += 1
+                    assert exc.retry_after is not None
+                    self._sleeper(exc.retry_after)
+                    continue
+                if credential is None:
+                    raise last_error from exc  # keyless：无凭证可换
+                self._mark_failed(credential, type(exc).__name__, exc.retry_after)
+                counts.credential += 1
+                continue
+            except ModelAuthError as exc:
+                # 凭证级重试：同 provider/model 换下一个 credential（§12）。
+                last_error = self._with_context(exc, ref, request)
+                if credential is None:
+                    raise last_error from exc
+                self._mark_failed(credential, type(exc).__name__, None)
+                counts.credential += 1
+                continue
+            except (ModelTimeoutError, ModelUnavailableError) as exc:
+                # 连接 / 超时：同凭证有限重试（§12 处理表）。
+                self._health.record_failure(ref)
+                last_error = self._with_context(exc, ref, request)
+                counts.transport += 1
+                continue
+            except ModelGatewayError:
+                raise
+            except Exception as exc:  # 契约兜底：任何非网关异常归一化为网关错误。
+                self._health.record_failure(ref)
+                raise ModelProviderInternalError(
+                    f"provider {ref.provider!r} 调用失败: {exc}",
+                    provider=ref.provider,
+                    model=ref.model,
+                    request_id=request.request_id,
+                ) from exc
+            else:
+                self._mark_succeeded(credential)
+                return response
+        assert last_error is not None
+        raise last_error
+            
+
+    # ---- 非流式主路径 ----
+
+    def _complete_resolved(
+        self,
+        request: ModelRequest,
+        ref: ModelRef,
+        entry: ModelCatalogEntry,
+        params: ModelParams,
+        *,
+        use_cache: bool,
+        cache_digest: str | None = None,
+        response_schema: Mapping[str, object] | None = None,
+        schema_name: str | None = None,
+        strict_schema: bool = True,
+    ) -> ModelResponse:
+        self._raise_if_cancelled(request, ref)
+        if use_cache:
+            cached = self._cache.lookup(request, ref, schema_digest=cache_digest)
+            if cached is not None:
+                self._observe_response(request, ref, cached, None, cache_hit=True)
+                return cached
+        counts = _RetryCounts()
+        start = self._timer()
+        try:
+            estimated_input = self._pre_call_checks(request, ref, entry, params)
+            settings = self._settings(ref.provider)
+            provider = self._registry.get(ref.provider)
+            provider_response = self._invoke_with_retries(
+                provider,
+                request,
+                ref,
+                entry,
+                params,
+                settings,
+                counts,
+                response_schema=response_schema,
+                schema_name=schema_name,
+                strict_schema=strict_schema,
+            )
+        except ModelGatewayError as exc:
+            self._observe_error(request, ref, exc, counts, start)
+            raise
         latency_ms = (self._timer() - start) * 1000.0
 
         usage = provider_response.usage or self._estimate_usage(
-            request, provider_response
+            ref, estimated_input, provider_response.content
         )
-        return ModelResponse(
+
+        raw_metadata: dict[str, str] = dict(provider_response.raw_metadata)
+        raw_metadata.update(counts.summary())
+        response = ModelResponse(
             request_id=request.request_id,
             provider=ref.provider,
             model=ref.model,
@@ -94,45 +500,164 @@ class DefaultLlmGateway(LlmGateway):
             usage=usage,
             latency_ms=latency_ms,
             tool_calls=provider_response.tool_calls,
-            raw_metadata=provider_response.raw_metadata,
+            raw_metadata=raw_metadata
+        )
+        self._health.record_success(ref)
+        if use_cache:
+            self._cache.store(request, ref, response, schema_digest=cache_digest)
+        self._observe_response(request, ref, response, counts)
+        return response
+    
+    # ---- 小工具 ----
+
+    @staticmethod
+    def _should_wait_retry(
+        exc: ModelRateLimitError, settings: ProviderRuntimeSettings
+    ) -> bool:
+        """429 短等判定（ADR-0012 §2）：retry_after 存在且不超过配置阈值。"""
+        return (
+            exc.retry_after is not None
+            and exc.retry_after <= settings.wait_threshold_seconds
         )
 
-    def complete_structured(
-        self, request: StructuredModelRequest
-    ) -> StructuredModelResponse:
-        raise NotImplementedError(
-            "complete_structured 在 07-07 结构化输出切片接线；MVP 仅实现 complete。"
-        )
-
-    # ---- 内部 ----
-
-    def _resolve_selection(self, selection: ModelSelection) -> ModelRef:
-        """把选择解析成已解析模型 ModelRef（复用既有值对象，不另建平行结构）。
-
-        MVP 仅支持 explicit selection；current_model 路由在 07-02 由
-        ModelSelectionResolver 接线。
-        """
-        if isinstance(selection, ExplicitModelSelection):
-            ref = ModelRef(provider=selection.provider, model=selection.model)
-            if self._validate_model is not None:
-                self._validate_model(ref)  # 预留 catalog 校验入口，默认 no-op
-            return ref
-        raise ModelBadRequestError(
-            f"MVP 仅支持 explicit selection；{selection.kind.value} 路由在 07-02 "
-            "由 ModelSelectionResolver 接线。"
-        )
+    def _estimator_for(self, ref: ModelRef) -> TokenEstimator:
+        """按已解析 ref 取估算器（ADR-0012 §6）；未注入 registry 用默认估算器。"""
+        if self._tokenizers is None:
+            return self._estimator
+        return self._tokenizers.estimator_for(ref)
 
     def _estimate_usage(
-        self, request: ModelRequest, response: ProviderResponse
+        self, ref: ModelRef, estimated_input: int, content: str
     ) -> ModelUsage:
-        """供应商未返回 usage 时的占位估算（标记 estimated=True）。
-
-        07-06 的 TokenEstimator 落地后替换本方法；今日仅保证 response 带
-        estimated usage，隔离成独立缝以免届时改动归一化主路径。
-        """
+        """供应商未返回 usage 时按 TokenEstimator 估算并标记 estimated（§3.8）。"""
+        output = self._estimator_for(ref).estimate_text(content)
         return ModelUsage(
-            input_tokens=0,
-            output_tokens=0,
-            total_tokens=0,
+            input_tokens=estimated_input,
+            output_tokens=output,
+            total_tokens=estimated_input + output,
             estimated=True,
         )
+
+    def _cancelled(self, request: ModelRequest) -> bool:
+        token = request.cancel_token
+        return token is not None and token.cancelled
+
+    def _raise_if_cancelled(self, request: ModelRequest, ref: ModelRef | None) -> None:
+        if self._cancelled(request):
+            raise ModelCancelledError(
+                "调用已被取消，未发起 provider 请求",
+                provider=ref.provider if ref is not None else None,
+                model=ref.model if ref is not None else None,
+                request_id=request.request_id,
+            )
+        
+    # ---- 结构化输出 ----
+
+    # def _structured_native(
+    #     self,
+    #     base: ModelRequest,
+    #     ref: ModelRef,
+    #     entry: ModelCatalogEntry,
+    #     params: ModelParams,
+    #     request: StructuredModelRequest,
+    # ) -> tuple[ModelResponse, object | None, list[str]]:
+    #     """native 通道（§3.7）：schema 摘要并入响应缓存指纹（ADR-0012 §3）。"""
+    #     digest = structured_schema_digest(request.schema_name, request.schema)
+    #     cached = self._cache.lookup(base, ref, schema_digest=digest)
+    #     if cached is not None:
+    #         data, errors = self._parse_structured(cached.content, request)
+    #         if not errors:
+    #             self._observe_response(base, ref, cached, None, cache_hit=True)
+    #             return cached, data, errors
+    #     response = self._complete_resolved(
+    #         base,
+    #         ref,
+    #         entry,
+    #         params,
+    #         use_cache=False,
+    #         response_schema=request.schema,
+    #         schema_name=request.schema_name,
+    #         strict_schema=request.strict,
+    #     )
+    #     data, errors = self._parse_structured(response.content, request)
+    #     if not errors:
+    #         # 只缓存通过 schema 校验的响应，避免缓存放大一次坏输出。
+    #         self._cache.store(base, ref, response, schema_digest=digest)
+    #     return response, data, errors
+
+    # def _structured_degraded(
+    #     self,
+    #     base: ModelRequest,
+    #     ref: ModelRef,
+    #     entry: ModelCatalogEntry,
+    #     params: ModelParams,
+    #     request: StructuredModelRequest,
+    # ) -> tuple[ModelResponse, object | None, list[str]]:
+    #     prompted = self._with_schema_instruction(base, request)
+    #     cached = self._cache.lookup(prompted, ref)
+    #     if cached is not None:
+    #         cached_data, cached_errors = self._parse_structured(cached.content, request)
+    #         if not cached_errors:
+    #             self._observe_response(prompted, ref, cached, None, cache_hit=True)
+    #             return cached, cached_data, cached_errors
+    #     response: ModelResponse | None = None
+    #     data: object | None = None
+    #     errors: list[str] = []
+    #     for _attempt in range(self._structured_retry_limit + 1):
+    #         response = self._complete_resolved(
+    #             prompted, ref, entry, params, use_cache=False
+    #         )
+    #         data, errors = self._parse_structured(response.content, request)
+    #         if not errors:
+    #             self._cache.store(prompted, ref, response)
+    #             break
+    #     assert response is not None
+    #     return response, data, errors
+    
+    # def _with_schema_instruction(
+    #     self, base: ModelRequest, request: StructuredModelRequest
+    # ) -> ModelRequest:
+    #     schema_text = json.dumps(
+    #         dict(request.schema), ensure_ascii=False, sort_keys=True
+    #     )
+    #     instruction = (
+    #         f"你必须只输出一个符合 JSON Schema {request.schema_name!r} 的 JSON 对象，"
+    #         f"不得输出任何其他文本或代码块外说明。Schema: {schema_text}"
+    #     )
+    #     system_prompt = (
+    #         f"{base.system_prompt}\n\n{instruction}"
+    #         if base.system_prompt
+    #         else instruction
+    #     )
+    #     return replace(base, system_prompt=system_prompt)
+
+    # def _parse_structured(
+    #     self, content: str, request: StructuredModelRequest
+    # ) -> tuple[object | None, list[str]]:
+    #     try:
+    #         data: object = json.loads(_strip_code_fence(content))
+    #     except json.JSONDecodeError as exc:
+    #         return None, [f"输出不是合法 JSON: {exc}"]
+    #     return data, validate_json_schema(data, request.schema)
+        
+    def _with_context(
+        self, exc: ModelGatewayError, ref: ModelRef, request: ModelRequest
+    ) -> ModelGatewayError:
+        """补全错误的安全上下文（provider/model/request_id），不改错误类型。"""
+        if exc.provider is None:
+            exc.provider = ref.provider
+        if exc.model is None:
+            exc.model = ref.model
+        if exc.request_id is None:
+            exc.request_id = request.request_id
+        return exc
+    
+    def _mark_failed(
+        self, credential: Credential, error_type: str, retry_after: float | None
+    ) -> None:
+        if self._credential_pool is not None:
+            self._credential_pool.mark_failed(credential.ref, error_type, retry_after)
+
+    def _mark_succeeded(self, credential: Credential | None) -> None:
+        if credential is not None and self._credential_pool is not None:
+            self._credential_pool.mark_succeeded(credential.ref)
