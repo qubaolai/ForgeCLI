@@ -16,8 +16,11 @@ from forgecli.application.config import config_keys as keys
 from forgecli.application.config.config_service import ConfigService
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
+from forgecli.application.llm.overrides_service import ModelOverridesService
 from forgecli.application.menu import Choice, Menu
+from forgecli.interfaces.cli.menus.gateway_config_menu import GatewayConfigMenu
 from forgecli.interfaces.cli.menus.llm_menu import LlmMenu
+from forgecli.interfaces.cli.menus.overrides_menu import OverridesMenu
 from forgecli.shared.errors import ConfigError
 
 
@@ -38,35 +41,43 @@ class ConfigMenu:
         llm_config_service: LlmConfigService,
         config_service: ConfigService,
         output: UserOutput,
+        overrides_service: ModelOverridesService | None = None,
     ) -> None:
         self._llm_config_service = llm_config_service
         self._service = config_service
         self._output = output
         self._llm_menu = LlmMenu(llm_config_service, output)
+        self._gateway_menu = GatewayConfigMenu(llm_config_service, output)
+        self._overrides_menu = (
+            OverridesMenu(overrides_service, llm_config_service, output)
+            if overrides_service is not None
+            else None
+        )
 
     def root_menu(self) -> Menu:
-        return Menu(
-            "配置",
-            (
-                Choice(
-                    "启用使用统计",
-                    preview=self._shown(TELEMETRY),
-                    on_cycle=self._cycle_bool(TELEMETRY),
-                ),
-                Choice(
-                    "输出主题",
-                    preview=self._shown(THEME),
-                    on_cycle=self._cycle_choice(THEME),
-                ),
-                Choice(
-                    "日志级别",
-                    preview=self._shown(LOG_LEVEL),
-                    on_cycle=self._cycle_choice(LOG_LEVEL),
-                ),
-                Choice("供应商配置", submenu=self._llm_menu.providers_menu),
-                Choice("模型配置", submenu=self._llm_menu.models_menu),
+        rows: list[Choice] = [
+            Choice(
+                "启用使用统计",
+                preview=self._shown(TELEMETRY),
+                on_cycle=self._cycle_bool(TELEMETRY),
             ),
-        )
+            Choice(
+                "输出主题",
+                preview=self._shown(THEME),
+                on_cycle=self._cycle_choice(THEME),
+            ),
+            Choice(
+                "日志级别",
+                preview=self._shown(LOG_LEVEL),
+                on_cycle=self._cycle_choice(LOG_LEVEL),
+            ),
+            Choice("供应商配置", submenu=self._llm_menu.providers_menu),
+            Choice("模型配置", submenu=self._llm_menu.models_menu),
+            Choice("网关运行时配置", submenu=self._gateway_menu.root_menu),
+        ]
+        if self._overrides_menu is not None:
+            rows.append(Choice("用途模型覆盖", submenu=self._overrides_menu.root_menu))
+        return Menu("配置", tuple(rows))
 
     # ---- 泛型回调（按 kind，统一委托 ConfigService，按 level 路由落盘）----
 

@@ -40,7 +40,7 @@ def _menu(tmp_path: Path) -> tuple[LlmMenu, _RecordingOutput, LlmConfigService]:
 def test_providers_menu_lists_closed_set(tmp_path: Path) -> None:
     menu, _, _ = _menu(tmp_path)
     labels = {c.label for c in menu.providers_menu().choices}
-    assert labels == {"DeepSeek", "Local", "MiMo", "OpenAI"}
+    assert labels == {"DeepSeek", "MiMo", "OpenAI", "Local"}
 
 
 def test_edit_provider_api_base_persists(tmp_path: Path) -> None:
@@ -92,6 +92,25 @@ def test_edit_standard_field(tmp_path: Path) -> None:
     params = service.config().model("deepseek", "deepseek-chat").params
     assert params.context_window == 65536
     assert params.temperature == 0.7
+
+
+def test_edit_model_thinking_choices(tmp_path: Path) -> None:
+    menu, _, service = _menu(tmp_path)
+    service.add_model("deepseek", "deepseek-reasoner", {})
+    detail = _find(
+        _find(menu.models_menu(), "DeepSeek").submenu(), "deepseek-reasoner"
+    ).submenu()
+
+    mode = _find(detail, "思考模式")
+    effort = _find(detail, "思考强度")
+    assert mode.preview() == "auto"
+    assert effort.preview() == "none"
+    mode.on_cycle(1)
+    effort.on_cycle(2)
+
+    params = service.config().model("deepseek", "deepseek-reasoner").params
+    assert params.thinking_mode.value == "on"
+    assert params.thinking_effort.value == "medium"
 
 
 def test_edit_standard_field_out_of_range_is_reported(tmp_path: Path) -> None:

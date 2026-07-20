@@ -24,6 +24,7 @@ from types import MappingProxyType
 
 from forgecli.application.llm.errors import ConfigValidationError
 from forgecli.application.llm.gateway.origin import RequestOrigin
+from forgecli.application.llm.gateway.params import ThinkingEffort, ThinkingMode
 
 # 标准化字段名（出现在模型行内表里、且我们认识的键）。其余键归入 extra。
 _KNOWN_FIELDS = {
@@ -35,6 +36,8 @@ _KNOWN_FIELDS = {
     "cost_per_1k_reasoning",
     "temperature",
     "top_p",
+    "thinking_mode",
+    "thinking_effort",
     "extra",
 }
 
@@ -65,13 +68,38 @@ def _as_ranged_float(name: str, value: object, lo: float, hi: float) -> float:
     return number
 
 
+def _as_thinking_mode(value: object) -> ThinkingMode:
+    if not isinstance(value, str):
+        raise ConfigValidationError(f"thinking_mode 必须是字符串，收到: {value!r}")
+    try:
+        return ThinkingMode(value)
+    except ValueError:
+        allowed = " / ".join(item.value for item in ThinkingMode)
+        raise ConfigValidationError(
+            f"thinking_mode 只能是 [{allowed}]，收到: {value!r}"
+        ) from None
+
+
+def _as_thinking_effort(value: object) -> ThinkingEffort:
+    if not isinstance(value, str):
+        raise ConfigValidationError(f"thinking_effort 必须是字符串，收到: {value!r}")
+    try:
+        return ThinkingEffort(value)
+    except ValueError:
+        allowed = " / ".join(item.value for item in ThinkingEffort)
+        raise ConfigValidationError(
+            f"thinking_effort 只能是 [{allowed}]，收到: {value!r}"
+        ) from None
+
+
 @dataclass(frozen=True)
 class StandardField:
     """一个标准化模型字段的 UI / 解析元数据。"""
 
     name: str
     label: str
-    kind: type  # int | float
+    kind: type  # int | float | str
+    choices: tuple[str, ...] = ()
 
 
 # 可在交互式菜单里逐项编辑的标准字段（顺序即菜单顺序）。extra 走单独的 JSON 编辑。
@@ -81,6 +109,13 @@ STANDARD_FIELDS: tuple[StandardField, ...] = (
     StandardField("max_tokens", "最大输出 tokens", int),
     StandardField("temperature", "温度", float),
     StandardField("top_p", "top_p", float),
+    StandardField("thinking_mode", "思考模式", str, ("auto", "on", "off")),
+    StandardField(
+        "thinking_effort",
+        "思考强度",
+        str,
+        ("none", "low", "medium", "high"),
+    ),
     StandardField("cost_per_1k_input", "输入价格/1k", float),
     StandardField("cost_per_1k_output", "输出价格/1k", float),
     StandardField("cost_per_1k_cached_input", "缓存输入价格/1k", float),
@@ -90,7 +125,7 @@ STANDARD_FIELDS: tuple[StandardField, ...] = (
 _FIELD_KIND: dict[str, type] = {f.name: f.kind for f in STANDARD_FIELDS}
 
 
-def coerce_field(name: str, raw: str) -> int | float:
+def coerce_field(name: str, raw: str) -> int | float | str:
     """把菜单文本输入转成字段的原生类型；不能解析时抛 ConfigValidationError。
 
     只做类型转换，范围校验仍由 ModelParams.parse 统一负责。
@@ -99,6 +134,12 @@ def coerce_field(name: str, raw: str) -> int | float:
     if kind is None:
         raise ConfigValidationError(f"未知模型字段: {name}")
     text = raw.strip()
+    field = next(item for item in STANDARD_FIELDS if item.name == name)
+    if kind is str:
+        if text not in field.choices:
+            allowed = " / ".join(field.choices)
+            raise ConfigValidationError(f"{name} 只能是 [{allowed}]，收到: {raw!r}")
+        return text
     try:
         return int(text) if kind is int else float(text)
     except ValueError:
@@ -130,6 +171,8 @@ class ModelParams:
     cost_per_1k_reasoning: float = 0.0
     temperature: float | None = None
     top_p: float | None = None
+    thinking_mode: ThinkingMode | None = None
+    thinking_effort: ThinkingEffort | None = None
     extra: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
 
     def to_fields(self) -> dict[str, object]:
@@ -143,6 +186,10 @@ class ModelParams:
             out["temperature"] = self.temperature
         if self.top_p is not None:
             out["top_p"] = self.top_p
+        if self.thinking_mode is not None:
+            out["thinking_mode"] = self.thinking_mode.value
+        if self.thinking_effort is not None:
+            out["thinking_effort"] = self.thinking_effort.value
         if self.cost_per_1k_input:
             out["cost_per_1k_input"] = self.cost_per_1k_input
         if self.cost_per_1k_output:
@@ -166,6 +213,8 @@ class ModelParams:
         mt = raw.get("max_tokens")
         temp = raw.get("temperature")
         top_p = raw.get("top_p")
+        thinking_mode = raw.get("thinking_mode")
+        thinking_effort = raw.get("thinking_effort")
         extra = raw.get("extra", {})
 
         if not isinstance(extra, Mapping):
@@ -196,6 +245,12 @@ class ModelParams:
             if temp is None
             else _as_ranged_float("temperature", temp, 0.0, 2.0),
             top_p=None if top_p is None else _as_ranged_float("top_p", top_p, 0.0, 1.0),
+            thinking_mode=None
+            if thinking_mode is None
+            else _as_thinking_mode(thinking_mode),
+            thinking_effort=None
+            if thinking_effort is None
+            else _as_thinking_effort(thinking_effort),
             extra=MappingProxyType(dict(merged_extra)),
         )
 

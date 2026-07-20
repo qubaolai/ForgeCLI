@@ -3,7 +3,8 @@
 约定：
     - load() 返回 [llm] 段落的原始嵌套 dict（plain python），无文件返回 {}。
     - load() 解析失败抛 ConfigReadError（已翻成用户可理解的错误）。
-    - upsert_model() / remove_model() / upsert_provider_field() 做 round-trip 写入：
+    - upsert_model() / remove_model() / upsert_provider_field() /
+      upsert_runtime_field() 做 round-trip 写入：
       保留文件里其余内容与注释。
     - store 不做供应商白名单 / 参数校验——那是 application 的封闭职责。
 """
@@ -44,3 +45,7 @@ class LlmConfigStore(ABC):
         provider_defaults: Mapping[str, object],
     ) -> None:
         """设置供应商顶层字段(name/api_base 等)；段不存在则用默认建立（round-trip）。"""
+
+    @abstractmethod
+    def upsert_runtime_field(self, section: str, field: str, value: object) -> None:
+        """设置 [llm.<section>] 的一个应用级运行时字段。"""

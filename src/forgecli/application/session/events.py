@@ -1,7 +1,7 @@
 """会话事件值对象：追加式审计日志 events.jsonl 的一行。
 
 设计约束（与 domain/intents 一致）：frozen、无副作用；只承载数据与纯转换。
-时间内容 detailed-design §4.2 核心事件。
+今日只用到 detailed-design §4.2 核心事件的子集（创建 / 模式切换 / 消息 / 斜杠命令）。
 """
 
 from __future__ import annotations
@@ -19,6 +19,9 @@ class EventType(Enum):
     USER_MESSAGE = "user_message"
     ASSISTANT_MESSAGE = "assistant_message"
     SLASH_COMMAND = "slash_command"
+    # 一次模型调用的 usage 计量摘要（ADR-0011 §11.1）：由 AgentTurnService 写入，
+    # payload 为 UsageRecordDraft.to_payload() 的安全摘要，不含凭证 / 原文。
+    USAGE_RECORDED = "usage_recorded"
 
 
 @dataclass(frozen=True)

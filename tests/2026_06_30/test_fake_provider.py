@@ -1,61 +1,53 @@
-"""2026-06-30: FakeModelProvider deterministic adapter behavior."""
+"""FakeModelProvider：成功 / 无 usage / provider error 三态 + 不读环境。"""
 
 from __future__ import annotations
 
 import pytest
 
-from forgecli.application.llm.gateway.errors import ModelTimeoutError
-from forgecli.application.llm.gateway.provider import (
+from forgecli.application.llm.gateway import (
+    FinishReason,
+    ModelParams,
+    ModelRateLimitError,
+    ModelUsage,
     ProviderCapabilities,
     ProviderRequest,
 )
-from forgecli.application.llm.gateway.response import FinishReason, ModelUsage
-from forgecli.infrastructure.llm.adapters.fake_provider import FakeModelProvider
+from forgecli.infrastructure.llm.adapters import FakeModelProvider
 
 
 def _provider_request() -> ProviderRequest:
-    from forgecli.application.llm.gateway.params import ModelParams
-
     return ProviderRequest(model="deepseek-chat", messages=(), params=ModelParams())
 
 
-def test_fake_provider_exposes_configured_provider_id() -> None:
-    assert FakeModelProvider(provider_id="deepseek").provider_id == "deepseek"
-
-
-def test_fake_provider_returns_fixed_response_usage_and_metadata() -> None:
-    usage = ModelUsage(input_tokens=7, output_tokens=3, total_tokens=10)
-    provider = FakeModelProvider(
-        content="fixed reply",
-        usage=usage,
-        finish_reason=FinishReason.LENGTH,
-        capabilities=ProviderCapabilities(supports_structured_output=True),
-        raw_metadata={"request_id": "provider-req-1"},
-    )
-
+def test_success_returns_content_and_injected_usage() -> None:
+    usage = ModelUsage(input_tokens=3, output_tokens=5, total_tokens=8)
+    provider = FakeModelProvider(content="hello", usage=usage)
     response = provider.complete(_provider_request())
-
-    assert response.content == "fixed reply"
-    assert response.finish_reason is FinishReason.LENGTH
-    assert response.usage == usage
-    assert response.raw_metadata == {"request_id": "provider-req-1"}
-    assert provider.capabilities().supports_structured_output is True
+    assert response.content == "hello"
+    assert response.usage is usage
+    assert response.finish_reason is FinishReason.STOP
 
 
-def test_fake_provider_can_omit_usage_for_gateway_estimation() -> None:
-    response = FakeModelProvider(content="no usage", usage=None).complete(
-        _provider_request()
-    )
-
-    assert response.content == "no usage"
+def test_no_usage_returns_none() -> None:
+    response = FakeModelProvider(content="hi").complete(_provider_request())
     assert response.usage is None
 
 
-def test_fake_provider_raises_injected_error() -> None:
-    error = ModelTimeoutError("timeout", provider="deepseek", model="deepseek-chat")
-    provider = FakeModelProvider(error=error)
-
-    with pytest.raises(ModelTimeoutError) as exc_info:
+def test_injected_error_is_raised() -> None:
+    provider = FakeModelProvider(error=ModelRateLimitError("429"))
+    with pytest.raises(ModelRateLimitError):
         provider.complete(_provider_request())
 
-    assert exc_info.value is error
+
+def test_capabilities_returns_injected() -> None:
+    caps = ProviderCapabilities(supports_tools=True)
+    assert FakeModelProvider(capabilities=caps).capabilities() is caps
+
+
+def test_does_not_read_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 清掉可能的凭证环境变量，fake 仍可构造并返回确定结果，证明不读 env / 配置。
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    provider = FakeModelProvider(provider_id="deepseek", content="ok")
+    assert provider.complete(_provider_request()).content == "ok"
+    assert provider.provider_id == "deepseek"

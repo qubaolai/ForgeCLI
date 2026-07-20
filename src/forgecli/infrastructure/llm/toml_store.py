@@ -79,6 +79,14 @@ class TomlLlmConfigStore(LlmConfigStore):
         provider[field] = value
         write_document(self._path, doc)
 
+    def upsert_runtime_field(self, section: str, field: str, value: object) -> None:
+        """写入应用级 [llm.<section>] 配置，保留其他段与注释。"""
+        doc = read_document(self._path)
+        llm = doc.setdefault(_SECTION, tomlkit.table())
+        runtime = llm.setdefault(section, tomlkit.table())
+        runtime[field] = value
+        write_document(self._path, doc)
+
     # ---- 内部 ----
 
     def _ensure_provider(

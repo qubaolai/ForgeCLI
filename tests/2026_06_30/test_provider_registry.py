@@ -1,73 +1,49 @@
-"""2026-06-30: ProviderRegistry adapter binding behavior."""
+"""ProviderRegistry：代码侧 adapter 绑定 + 封闭集准入（2026-06-30）。"""
 
 from __future__ import annotations
 
 import pytest
 
 from forgecli.application.llm.errors import UnknownProvider
-from forgecli.application.llm.gateway.errors import ModelUnavailableError
-from forgecli.application.llm.gateway.provider import (
-    ModelProvider,
-    ProviderCapabilities,
-    ProviderRequest,
-    ProviderResponse,
-)
-from forgecli.application.llm.gateway.provider_registry import ProviderRegistry
-from forgecli.application.llm.gateway.response import FinishReason
-from forgecli.application.llm.providers import REGISTRY
+from forgecli.application.llm.gateway import ModelUnavailableError, ProviderRegistry
+from forgecli.infrastructure.llm.adapters import FakeModelProvider
 
 
-class _StaticProvider(ModelProvider):
-    def __init__(self, provider_id: str) -> None:
-        self._provider_id = provider_id
-
-    @property
-    def provider_id(self) -> str:
-        return self._provider_id
-
-    def capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities()
-
-    def complete(self, request: ProviderRequest) -> ProviderResponse:
-        return ProviderResponse(content=request.model, finish_reason=FinishReason.STOP)
-
-
-def test_static_provider_registry_contains_current_closed_provider_ids() -> None:
-    assert {"deepseek", "mimo", "openai", "local"}.issubset(REGISTRY)
-
-
-def test_provider_registry_registers_and_returns_known_adapter() -> None:
-    provider = _StaticProvider("deepseek")
+def test_register_and_get_returns_adapter() -> None:
     registry = ProviderRegistry()
-
-    registry.register(provider)
-
-    assert registry.get("deepseek") is provider
-
-
-def test_provider_registry_rejects_duplicate_adapter() -> None:
-    registry = ProviderRegistry()
-    registry.register(_StaticProvider("deepseek"))
-
-    with pytest.raises(ValueError, match="重复注册"):
-        registry.register(_StaticProvider("deepseek"))
+    adapter = FakeModelProvider(provider_id="deepseek")
+    registry.register(adapter)
+    assert registry.get("deepseek") is adapter
 
 
-def test_provider_registry_rejects_unknown_provider_on_register() -> None:
-    registry = ProviderRegistry()
-
+def test_get_unknown_provider_raises_unknown_provider() -> None:
     with pytest.raises(UnknownProvider):
-        registry.register(_StaticProvider("custom"))
+        ProviderRegistry().get("does_not_exist")
 
 
-def test_provider_registry_distinguishes_missing_adapter_from_unknown_provider() -> (
-    None
-):
-    registry = ProviderRegistry()
-
-    with pytest.raises(ModelUnavailableError) as missing:
-        registry.get("deepseek")
-    assert missing.value.provider == "deepseek"
-
+def test_register_unknown_provider_id_raises_unknown_provider() -> None:
+    # 代码注册也必须落在封闭集内：配置 / 外部无法注入任意 provider 类名。
     with pytest.raises(UnknownProvider):
-        registry.get("custom")
+        ProviderRegistry().register(FakeModelProvider(provider_id="totally_unknown"))
+
+
+def test_duplicate_registration_raises_value_error() -> None:
+    registry = ProviderRegistry()
+    registry.register(FakeModelProvider(provider_id="deepseek"))
+    with pytest.raises(ValueError):
+        registry.register(FakeModelProvider(provider_id="deepseek"))
+
+
+def test_known_but_unregistered_raises_model_unavailable() -> None:
+    # deepseek 属封闭集，但未绑定 adapter：与「未知 provider」区分开。
+    with pytest.raises(ModelUnavailableError):
+        ProviderRegistry().get("deepseek")
+
+
+def test_consolidated_provider_ids_are_registrable() -> None:
+    # 并轨新增的 openai / local 已进封闭集，可注册可路由。
+    registry = ProviderRegistry()
+    for pid in ("openai", "local"):
+        adapter = FakeModelProvider(provider_id=pid)
+        registry.register(adapter)
+        assert registry.get(pid) is adapter

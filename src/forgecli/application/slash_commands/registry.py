@@ -1,8 +1,9 @@
 """Slash command registry.
 
 CommandRegistry 是会话内斜杠命令目录：命令名 -> CommandSpec，服务两个使用方：
-    - IntentRouter：只判断命令是否注册，注册命令统一解析为 SlashCommand。
-    - REPL 分派器：取 spec.handler 执行已识别的斜杠命令。
+    - IntentRouter：命令名是否已注册，决定解析成 SlashCommand 还是 UnknownCommand。
+    - REPL 分派器：取 spec.handler 执行；是否记录会话事件由 handler 的返回值
+      （是否真正发生持久化写入）决定，而非命令的静态分类。
 
 新增命令时注册一条 spec 即可，IntentRouter 与 REPL 分派逻辑不需要随之改动。
 """
@@ -20,7 +21,7 @@ class CommandSpec:
 
     name: str  # 规范的命令名（小写）
     summary: str = ""  # 供 /help 命令展示使用
-    handler: CommandHandler | None = None  # kind == SLASH_COMMAND 必填
+    handler: CommandHandler | None = None  # 执行该命令的处理器（必填）
 
     def __post_init__(self) -> None:
         # 构造即有效：每条命令都必须能被执行。

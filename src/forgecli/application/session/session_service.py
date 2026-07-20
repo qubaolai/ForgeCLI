@@ -24,7 +24,21 @@ from forgecli.application.session.state_store import StateStore
 from forgecli.domain.conversation import MessageRole, TurnStatus
 from forgecli.domain.intents import SessionMode
 from forgecli.shared.errors import SessionStateError
-from forgecli.shared.utils import now_iso
+
+
+def _now_iso() -> str:
+    """本地时区、秒级 ISO 时间戳，如 ``2026-06-27T10:30:00+08:00``。"""
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _new_session_id() -> str:
+    """可按时间排序、文件系统安全的 session id，如 ``20260627T103000-ab12cd34``。
+
+    用 ``T`` 分隔且不含 ``:``，兼容 Windows 文件名；尾部随机 hash 避免同秒冲突。
+    """
+    stamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S")
+    return f"{stamp}-{secrets.token_hex(4)}"
+
 
 _TITLE_MAX_LEN = 8
 
@@ -47,15 +61,6 @@ def _last_seq(events: Sequence[SessionEvent]) -> int:
         return 0
 
 
-def _new_session_id() -> str:
-    """可按时间排序、文件系统安全的 session id，如 ``20260627T103000-ab12cd34``。
-
-    用 ``T`` 分隔且不含 ``:``，兼容 Windows 文件名；尾部随机 hash 避免同秒冲突。
-    """
-    stamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S")
-    return f"{stamp}-{secrets.token_hex(4)}"
-
-
 class SessionService:
     """当前 workspace 的 active session：创建会话身份并记录事件 / 快照。"""
 
@@ -65,7 +70,7 @@ class SessionService:
         state_store: StateStore,
         workspace_root: str,
         *,
-        clock: Callable[[], str] = now_iso,
+        clock: Callable[[], str] = _now_iso,
         id_factory: Callable[[], str] = _new_session_id,
     ) -> None:
         self._events = event_store
@@ -91,6 +96,12 @@ class SessionService:
         self._persisted = False
         return snapshot
 
+    def current(self) -> SessionSnapshot:
+        """当前会话快照（可能尚未落盘）；未 start() 抛 SessionStateError。"""
+        if self._current is None:
+            raise SessionStateError("会话尚未开始。")
+        return self._current
+
     def resume(
         self, snapshot: SessionSnapshot, events: Sequence[SessionEvent]
     ) -> SessionSnapshot:
@@ -106,14 +117,8 @@ class SessionService:
         self._persisted = True
         return snapshot
 
-    def current(self) -> SessionSnapshot:
-        """当前会话快照（可能尚未落盘）；未 start() 抛 SessionStateError。"""
-        if self._current is None:
-            raise SessionStateError("会话尚未开始。")
-        return self._current
-
     def record_user_message(self, text: str, *, turn_id: str) -> SessionEvent:
-        """记录一条自然语言输入。"""
+        """记录一条自然语言输入（属于某个 turn）。"""
         return self._append(
             EventType.USER_MESSAGE,
             {"turn_id": turn_id, "role": MessageRole.USER.value, "text": text},
@@ -132,6 +137,16 @@ class SessionService:
                 "text": text,
             },
         )
+
+    def record_usage(
+        self, payload: Mapping[str, object], *, turn_id: str
+    ) -> SessionEvent:
+        """记录一次模型调用的 usage 计量摘要（ADR-0011 §11.1）。
+
+        payload 为 UsageRecordDraft.to_payload() 产出的安全摘要；gateway 不落盘，
+        写入边界在 AgentTurnService -> 本方法。
+        """
+        return self._append(EventType.USAGE_RECORDED, {"turn_id": turn_id, **payload})
 
     def record_mode_change(self, mode: SessionMode) -> SessionEvent:
         """记录一次模式切换，并把快照 mode 推进到新模式。"""
@@ -154,6 +169,7 @@ class SessionService:
     ) -> SessionEvent:
         if self._current is None:
             raise SessionStateError("会话尚未开始。")
+        # 会话摘要名称只在首次落盘前、由首条自然语言输入派生一次（之后不改）。
         if (
             not self._persisted
             and event_type == EventType.USER_MESSAGE
@@ -179,9 +195,7 @@ class SessionService:
         )
 
     def _emit(
-        self,
-        event_type: EventType,
-        payload: Mapping[str, object],
+        self, event_type: EventType, payload: Mapping[str, object]
     ) -> SessionEvent:
         snapshot = self.current()
         self._seq += 1
@@ -195,7 +209,7 @@ class SessionService:
             payload=payload,
         )
         # 先追加事件，再更新快照——快照的 last_event_id 始终指向已落盘的事件。
-        self._events.append(event=event)
+        self._events.append(event)
         self._current = replace(snapshot, last_event_id=event_id, updated_at=created_at)
         self._states.write(self._current)
         return event

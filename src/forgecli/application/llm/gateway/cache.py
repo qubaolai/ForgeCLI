@@ -5,7 +5,7 @@
 Prompt 缓存（降低重复前缀成本）：
     请求侧用 `CacheHint` 标注可缓存前缀（system prompt / 稳定工具定义），provider
     adapter 翻译成各供应商机制；OpenAI-compatible 自动前缀缓存下「静默忽略 +
-    归一化命中信息」即为其正确处理（ADR-0012 §4），不报错。命中信息由 adapter
+    归一化命中信息」即为其正确翻译（ADR-0012 §4），不报错。命中信息由 adapter
     归一化到 ModelUsage.cached_input_tokens 与 raw_metadata["cache_hit"]。
 
 响应缓存（可选，默认关闭）：
@@ -17,22 +17,34 @@ Prompt 缓存（降低重复前缀成本）：
 """
 
 from __future__ import annotations
-from abc import ABC, abstractmethod
-from collections import OrderedDict
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass, replace
+
 import hashlib
 import json
 import time
+from abc import ABC, abstractmethod
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, replace
 
-from forgecli.application.llm.gateway.messages import ChatMessage, TextBlock, ToolResultBlock
+from forgecli.application.llm.gateway.messages import (
+    ChatMessage,
+    TextBlock,
+    ToolResultBlock,
+)
 from forgecli.application.llm.gateway.origin import RequestOrigin
+from forgecli.application.llm.gateway.params import ThinkingConfig
 from forgecli.application.llm.gateway.request import ModelRequest
 from forgecli.application.llm.gateway.response import ModelResponse, ModelUsage
 from forgecli.application.llm.model_ref import ModelRef
 
 # 响应缓存永远不适用的 origin（§14：主 Agent 对话不走响应缓存）。
 _NEVER_CACHED_ORIGINS = frozenset({RequestOrigin.CHAT, RequestOrigin.ACT})
+
+
+def structured_schema_digest(schema_name: str, schema: Mapping[str, object]) -> str:
+    """native 结构化输出的 schema 摘要（ADR-0012 §3）：并入响应缓存指纹。"""
+    canonical = _canonical(dict(schema))
+    return f"{schema_name}:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
 class LlmCacheController(ABC):
@@ -44,6 +56,7 @@ class LlmCacheController(ABC):
         request: ModelRequest,
         ref: ModelRef,
         *,
+        thinking: ThinkingConfig | None = None,
         schema_digest: str | None = None,
     ) -> ModelResponse | None:
         """响应缓存查询；未命中或不适用返回 None。"""
@@ -55,6 +68,7 @@ class LlmCacheController(ABC):
         ref: ModelRef,
         response: ModelResponse,
         *,
+        thinking: ThinkingConfig | None = None,
         schema_digest: str | None = None,
     ) -> None:
         """写入响应缓存；不适用时应为 no-op。"""
@@ -64,7 +78,12 @@ class NoopLlmCacheController(LlmCacheController):
     """默认实现：响应缓存关闭（prompt 缓存标注仍随请求透传给 adapter）。"""
 
     def lookup(
-        self, request: ModelRequest, ref: ModelRef, *, schema_digest: str | None = None
+        self,
+        request: ModelRequest,
+        ref: ModelRef,
+        *,
+        thinking: ThinkingConfig | None = None,
+        schema_digest: str | None = None,
     ) -> ModelResponse | None:
         return None
 
@@ -74,14 +93,17 @@ class NoopLlmCacheController(LlmCacheController):
         ref: ModelRef,
         response: ModelResponse,
         *,
+        thinking: ThinkingConfig | None = None,
         schema_digest: str | None = None,
     ) -> None:
         return None
+
 
 @dataclass
 class _CacheSlot:
     stored_at: float
     response: ModelResponse
+
 
 class InMemoryResponseCache(LlmCacheController):
     """进程内响应缓存：origin 白名单 + TTL + LRU 容量上限（§14 / ADR-0012 §3）。
@@ -110,24 +132,24 @@ class InMemoryResponseCache(LlmCacheController):
         self._clock = clock
         self._entries: OrderedDict[str, _CacheSlot] = OrderedDict()
 
-    
     def lookup(
-        self, 
-        request: ModelRequest, 
-        ref: ModelRef, 
-        *, 
-        schema_digest: str | None = None
+        self,
+        request: ModelRequest,
+        ref: ModelRef,
+        *,
+        thinking: ThinkingConfig | None = None,
+        schema_digest: str | None = None,
     ) -> ModelResponse | None:
         if request.origin not in self._allowed:
             return None
-        key = _fingerprint(request, ref, schema_digest)
+        key = _fingerprint(request, ref, thinking, schema_digest)
         slot = self._entries.get(key)
         if slot is None:
             return None
         if self._expired(slot):
             del self._entries[key]
             return None
-        self._entries.move_to_end(key) # 命中刷新 LRU 顺位
+        self._entries.move_to_end(key)  # 命中刷新 LRU 顺位
         metadata = dict(slot.response.raw_metadata)
         metadata["cache_hit"] = "true"
         return replace(
@@ -138,35 +160,35 @@ class InMemoryResponseCache(LlmCacheController):
             latency_ms=0.0,
             raw_metadata=metadata,
         )
-    
+
     def store(
         self,
         request: ModelRequest,
         ref: ModelRef,
         response: ModelResponse,
         *,
+        thinking: ThinkingConfig | None = None,
         schema_digest: str | None = None,
     ) -> None:
         if request.origin not in self._allowed or response.cached:
             return
-        key = _fingerprint(request, ref, schema_digest)
+        key = _fingerprint(request, ref, thinking, schema_digest)
         self._entries[key] = _CacheSlot(stored_at=self._clock(), response=response)
         self._entries.move_to_end(key)
         while len(self._entries) > self._max_entries:
             self._entries.popitem(last=False)  # 淘汰最久未命中项
 
-    
     def _expired(self, slot: _CacheSlot) -> bool:
         if self._ttl is None:
             return False
         return self._clock() - slot.stored_at > self._ttl
-        
 
 
-    
-    # ---- 内部 ----
 def _fingerprint(
-    request: ModelRequest, ref: ModelRef, schema_digest: str | None = None
+    request: ModelRequest,
+    ref: ModelRef,
+    thinking: ThinkingConfig | None = None,
+    schema_digest: str | None = None,
 ) -> str:
     """归一化请求指纹（§14）：排除 request_id / session / turn / 时间戳 / metadata。
 
@@ -180,6 +202,7 @@ def _fingerprint(
         "system_prompt": request.system_prompt,
         "messages": [_message_key(message) for message in request.messages],
         "params": _params_key(request),
+        "thinking": _thinking_key(thinking),
         "tools": [
             {"name": tool.name, "parameters": _canonical(dict(tool.parameters))}
             for tool in request.tools
@@ -188,6 +211,7 @@ def _fingerprint(
     if schema_digest is not None:
         payload["schema_digest"] = schema_digest
     return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()
+
 
 def _message_key(message: ChatMessage) -> dict[str, object]:
     blocks: list[object] = []
@@ -213,25 +237,28 @@ def _message_key(message: ChatMessage) -> dict[str, object]:
         ],
     }
 
+
 def _params_key(request: ModelRequest) -> dict[str, object]:
     params = request.params
-    thinking = params.thinking
     return {
         "temperature": params.temperature,
         "top_p": params.top_p,
         "max_output_tokens": params.max_output_tokens,
         "stop": list(params.stop),
         "response_format": params.response_format,
-        "thinking": None
-        if thinking is None
-        else {
-            "enabled": thinking.enabled.value,
-            "effort": thinking.effort.value,
-            "budget_tokens": thinking.budget_tokens,
-        },
         "provider_options": _canonical(
             {ns: dict(opts) for ns, opts in params.provider_options.items()}
         ),
+    }
+
+
+def _thinking_key(thinking: ThinkingConfig | None) -> dict[str, object] | None:
+    if thinking is None:
+        return None
+    return {
+        "enabled": thinking.enabled.value,
+        "effort": thinking.effort.value,
+        "budget_tokens": thinking.budget_tokens,
     }
 
 

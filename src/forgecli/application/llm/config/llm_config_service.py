@@ -58,6 +58,15 @@ def _as_bool(name: str, value: object) -> bool:
     return value
 
 
+def _as_bool_text(name: str, value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigValidationError(f"{name} 必须是 true/false，收到: {value!r}")
+
+
 def _as_positive_int_value(name: str, value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ConfigValidationError(f"{name} 必须是整数，收到: {value!r}")
@@ -148,11 +157,14 @@ class LlmConfigService:
         if not model_id.strip():
             raise ConfigValidationError("模型 id 不能为空")
         # 用同一套校验，保证菜单写入与手改文件得到一致约束。
-        ModelParams.parse(params)
+        configured = dict(params)
+        configured.setdefault("thinking_mode", "auto")
+        configured.setdefault("thinking_effort", "none")
+        parsed = ModelParams.parse(configured)
         self._store.upsert_model(
             provider_id,
             model_id,
-            params,
+            parsed.to_fields(),
             provider_defaults=self._defaults(provider_id),
         )
 
@@ -253,6 +265,62 @@ class LlmConfigService:
                 section.get("wait_threshold_seconds", defaults.wait_threshold_seconds),
             ),
         )
+
+    def runtime_settings_snapshot(
+        self,
+    ) -> tuple[CacheSettings, CircuitBreakerSettings, RetrySettings]:
+        """网关应用级运行时配置快照，用于 /config 变更检测。"""
+        return (
+            self.cache_settings(),
+            self.circuit_breaker_settings(),
+            self.retry_settings(),
+        )
+
+    def set_runtime_field(self, section: str, field: str, raw: str) -> None:
+        """校验并写入应用级 [llm.cache/circuit_breaker/retry] 字段。
+
+        这是 /config 的唯一写入用例；CLI 只提交文本，不解析 TOML。
+        """
+        key = (section, field)
+        value: object
+        if key in {("cache", "enabled"), ("circuit_breaker", "enabled")}:
+            value = _as_bool_text(f"{section}.{field}", raw)
+        elif key in {
+            ("cache", "max_entries"),
+            ("circuit_breaker", "failure_threshold"),
+        }:
+            try:
+                parsed = int(raw.strip())
+            except ValueError:
+                raise ConfigValidationError(
+                    f"{section}.{field} 必须是整数，收到: {raw!r}"
+                ) from None
+            value = _as_positive_int_value(f"{section}.{field}", parsed)
+        elif key in {
+            ("cache", "ttl_seconds"),
+            ("circuit_breaker", "cooldown_seconds"),
+        }:
+            try:
+                parsed_number = float(raw.strip())
+            except ValueError:
+                raise ConfigValidationError(
+                    f"{section}.{field} 必须是数字，收到: {raw!r}"
+                ) from None
+            value = _as_positive_number(f"{section}.{field}", parsed_number)
+        elif key == ("retry", "wait_threshold_seconds"):
+            try:
+                parsed_number = float(raw.strip())
+            except ValueError:
+                raise ConfigValidationError(
+                    f"{section}.{field} 必须是数字，收到: {raw!r}"
+                ) from None
+            value = _as_nonneg_number(f"{section}.{field}", parsed_number)
+        elif key == ("cache", "origins"):
+            names = [item.strip() for item in raw.split(",") if item.strip()]
+            value = [origin.value for origin in _as_origins(names, ())]
+        else:
+            raise ConfigValidationError(f"未知网关运行时配置项: {section}.{field}")
+        self._store.upsert_runtime_field(section, field, value)
 
     def _section(self, name: str) -> Mapping[str, object]:
         section = self._store.load().get(name, {})

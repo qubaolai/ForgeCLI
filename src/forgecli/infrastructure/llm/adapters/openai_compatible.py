@@ -282,7 +282,7 @@ class OpenAICompatibleProvider(ModelProvider):
         - none 型：该 provider 无 thinking 表达，不发送任何字段。
         enabled=off / 未配置时不发送任何 thinking 字段。
         """
-        thinking = request.params.thinking
+        thinking = request.thinking
         if thinking is None or thinking.enabled.value != "on":
             return {}
         if self._thinking_dialect is ThinkingDialect.NONE:

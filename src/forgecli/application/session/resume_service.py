@@ -39,14 +39,13 @@ class ResumeService:
     ) -> list[SessionSnapshot]:
         """枚举可恢复会话，按 updated_at 倒序（最近在前），最多 limit 条。
 
-        给定 query 时按子串过滤(匹配 title 或 session_id，大小写不敏感)。
+        给定 query 时按子串过滤（匹配 title 或 session_id，大小写不敏感）。
         """
         snapshots: list[SessionSnapshot] = []
         for session_id in self._catalog.list_session_ids():
             snapshot = self._states.read(session_id)
-            if snapshot and _matches(snapshot, query):
+            if snapshot is not None and _matches(snapshot, query):
                 snapshots.append(snapshot)
-
         snapshots.sort(key=lambda s: s.updated_at, reverse=True)
         return snapshots[:limit]
 

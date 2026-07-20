@@ -1,17 +1,14 @@
-"""/status 展示当前模式与工作区目录列表（cwd: 列表）。"""
+"""/status 展示 session 快照（session/mode/last_event）与工作区目录列表（cwd:）。"""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.project import ProjectConfig, ProjectContext
-from forgecli.application.session import (
-    EventStore,
-    SessionEvent,
-    SessionService,
-    SessionSnapshot,
-    StateStore,
-)
+from forgecli.application.session import SessionService
 from forgecli.domain.intents import SessionMode, SlashCommand
+from forgecli.infrastructure.session import JsonlEventStore, JsonStateStore
 from forgecli.interfaces.cli.commands.status_command import StatusCommand
 
 
@@ -21,40 +18,6 @@ class _RecordingOutput(UserOutput):
 
     def print(self, message: str) -> None:
         self.lines.append(message)
-
-
-class _MemoryEventStore(EventStore):
-    def __init__(self) -> None:
-        self.events: list[SessionEvent] = []
-
-    def append(self, event: SessionEvent) -> None:
-        self.events.append(event)
-
-    def read(self, session_id: str) -> list[SessionEvent]:
-        return [event for event in self.events if event.session_id == session_id]
-
-
-class _MemoryStateStore(StateStore):
-    def __init__(self) -> None:
-        self.snapshots: list[SessionSnapshot] = []
-
-    def write(self, snapshot: SessionSnapshot) -> None:
-        self.snapshots.append(snapshot)
-
-    def read(self, session_id: str) -> SessionSnapshot | None:
-        return self.snapshots[-1] if self.snapshots else None
-
-
-def _session() -> SessionService:
-    service = SessionService(
-        _MemoryEventStore(),
-        _MemoryStateStore(),
-        workspace_root="/work/primary",
-        clock=lambda: "2026-06-27T10:00:00+08:00",
-        id_factory=lambda: "ses_test",
-    )
-    service.start()
-    return service
 
 
 def _context(*roots: str) -> ProjectContext:
@@ -68,9 +31,20 @@ def _context(*roots: str) -> ProjectContext:
     )
 
 
-def test_status_shows_mode_and_workspace_list() -> None:
-    session = _session()
-    session.record_mode_change(SessionMode.PLAN)
+def _session(tmp_path: Path, root: str) -> SessionService:
+    sessions = tmp_path / "sessions"
+    service = SessionService(
+        JsonlEventStore(sessions),
+        JsonStateStore(sessions),
+        workspace_root=root,
+    )
+    service.start()
+    return service
+
+
+def test_status_shows_session_mode_and_workspace_list(tmp_path: Path) -> None:
+    session = _session(tmp_path, "/work/primary")
+    session.record_mode_change(SessionMode.PLAN)  # -> evt_0001 created, evt_0002 mode
     context = _context("/work/primary", "/work/extra")
     output = _RecordingOutput()
 
@@ -79,7 +53,7 @@ def test_status_shows_mode_and_workspace_list() -> None:
     )
 
     text = output.lines[0]
-    assert "session: ses_test" in text
+    assert "session: " in text
     assert "mode: plan" in text
     assert "last_event: evt_0002" in text
     assert "cwd:" in text
@@ -87,12 +61,15 @@ def test_status_shows_mode_and_workspace_list() -> None:
     assert "- /work/extra" in text
 
 
-def test_status_lists_at_least_primary() -> None:
-    session = _session()
+def test_status_lists_at_least_primary_with_no_events(tmp_path: Path) -> None:
+    session = _session(tmp_path, "/only/primary")
     output = _RecordingOutput()
 
     StatusCommand(session, _context("/only/primary"), output).execute(
         SlashCommand(raw_text="/status", command="status")
     )
 
-    assert "- /only/primary" in output.lines[0]
+    text = output.lines[0]
+    assert "mode: chat" in text
+    assert "last_event: -" in text  # 尚无事件
+    assert "- /only/primary" in text

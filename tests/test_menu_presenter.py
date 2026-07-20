@@ -45,7 +45,10 @@ class _FakeStdin:
 
 
 def _drive(
-    menu: Menu, keys: list[KeyPress], monkeypatch: pytest.MonkeyPatch
+    menu: Menu,
+    keys: list[KeyPress],
+    monkeypatch: pytest.MonkeyPatch,
+    live_cls: type = _FakeLive,
 ) -> list[KeyPress]:
     """喂入按键脚本驱动菜单，返回实际被消费的按键序列。"""
     pending = iter(keys)
@@ -63,10 +66,34 @@ def _drive(
     monkeypatch.setattr(mp, "raw_mode", _noop_raw)
     monkeypatch.setattr(mp, "read_key", fake_read_key)
     monkeypatch.setattr(mp.sys, "stdin", _FakeStdin())
-    monkeypatch.setattr(rich.live, "Live", _FakeLive)
+    monkeypatch.setattr(rich.live, "Live", live_cls)
 
     RichMenuPresenter(Console()).present(menu)
     return consumed
+
+
+class _RecordingLive:
+    """记录每帧 renderable，供断言渲染内容（如空格预览是否展开）。"""
+
+    frames: list[object] = []
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        type(self).frames = []
+
+    def __enter__(self) -> _RecordingLive:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def update(self, renderable: object, **kwargs: object) -> None:
+        type(self).frames.append(renderable)
+
+
+def _frame_text(renderable: object) -> str:
+    cap = Console(record=True, width=100)
+    cap.print(renderable)
+    return cap.export_text()
 
 
 def test_ctrl_c_closes_from_submenu(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,3 +204,55 @@ def test_right_arrow_does_not_trigger_action(monkeypatch: pytest.MonkeyPatch) ->
 
     assert len(consumed) == 2
     assert triggered == []
+
+
+def test_enter_on_close_on_select_triggers_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    picked: list[str] = []
+    root = Menu(
+        "root",
+        (Choice("会话", on_select=lambda: picked.append("x"), close_on_select=True),),
+    )
+
+    # Enter 触发动作并直接关闭整个菜单：只消费这一个键，不再继续读。
+    consumed = _drive(root, [KeyPress(Key.ENTER)], monkeypatch)
+
+    assert len(consumed) == 1
+    assert picked == ["x"]
+
+
+def test_enter_on_select_without_close_stays_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    picked: list[str] = []
+    root = Menu("root", (Choice("动作", on_select=lambda: picked.append("x")),))
+
+    # 默认 close_on_select=False：触发后停留，需 Ctrl-C 才退出。
+    consumed = _drive(root, [KeyPress(Key.ENTER), KeyPress(Key.CTRL_C)], monkeypatch)
+
+    assert len(consumed) == 2
+    assert picked == ["x"]
+
+
+def test_space_toggles_summary_preview(monkeypatch: pytest.MonkeyPatch) -> None:
+    root = Menu(
+        "root",
+        (Choice("会话A", payload=lambda: "session: sid-A\nmode: plan"),),
+    )
+
+    consumed = _drive(
+        root,
+        [KeyPress(Key.CHAR, " "), KeyPress(Key.CTRL_C)],
+        monkeypatch,
+        live_cls=_RecordingLive,
+    )
+
+    assert len(consumed) == 2  # 空格被消费（切换预览），Ctrl-C 关闭
+    frames = _RecordingLive.frames
+    # 首帧（空格前）不含预览；末帧（空格后）展开摘要。
+    assert "摘要预览" not in _frame_text(frames[0])
+    last = _frame_text(frames[-1])
+    assert "摘要预览" in last
+    assert "session: sid-A" in last
+    assert "mode: plan" in last

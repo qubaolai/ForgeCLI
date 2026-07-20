@@ -33,6 +33,7 @@ class TextBlock(ContentBlock):
 
     text: str
 
+
 @dataclass(frozen=True)
 class ToolResultBlock(ContentBlock):
     """工具结果内容块（§10 工具结果回填）。
@@ -49,6 +50,7 @@ class ToolResultBlock(ContentBlock):
     def __post_init__(self) -> None:
         if not self.tool_call_id.strip():
             raise ValueError("ToolResultBlock.tool_call_id 不能为空")
+
 
 @dataclass(frozen=True)
 class ChatMessage:

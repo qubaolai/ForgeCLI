@@ -1,13 +1,13 @@
 """会话内输入解析：把一行原始输入路由为某个 UserIntent。
 
 IntentRouter 是纯解析器：只依赖领域值对象与 CommandRegistry，不碰 Rich/Typer/LLM/
-文件系统；无副作用、不执行命令；斜杠命令绝不交给模型自由解释。
+文件系统；无副作用、不执行命令；斜杠命令绝不交给模型自由解释(docs/05 §6)。
 
 优先级：
     1. 空白            -> 拒绝(REPL 已过滤，兜底)。
     2. 不以 "/" 开头    -> UserMessage(自然语言)。
     3. 裸 "/"          -> 等价 /help，强制展示可用命令。
-    4. 合法斜杠语法     -> 查 registry：MODE_CHANGE/CONTROL/SLASH_COMMAND/未注册。
+    4. 合法斜杠语法     -> 注册了即 SlashCommand，否则 UnknownCommand。
     5. "/" 开头但语法非法(/help是做什么用的、/usr/bin/env) -> UserMessage。
 
 判别核心：命令名后必须紧跟空白或行尾——空格是"这是命令调用"的唯一信号。
@@ -57,8 +57,9 @@ class IntentRouter:
         return self._classify(raw_text, name, args)
 
     def _classify(self, raw_text: str, name: str, args: tuple[str, ...]) -> UserIntent:
-        spec = self._registry.get(name)
-        if spec is None:
+        # 命令是否存在是唯一判别：注册了就是 SlashCommand，具体行为交给 handler；
+        # 模式切换 / 退出已不再是单独意图，无需在此分类。
+        if self._registry.get(name) is None:
             return UnknownCommand(
                 raw_text=raw_text,
                 command=name,

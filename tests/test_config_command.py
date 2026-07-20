@@ -7,6 +7,7 @@ ADR-0008 后：工作区目录移交工作区命令，不再通过 /config 编�
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from forgecli.application.config.config_service import ConfigService
@@ -29,6 +30,16 @@ class _CapturingPresenter(MenuPresenter):
 
     def present(self, menu: Menu) -> None:
         self.presented = menu
+
+
+class _DrivingPresenter(MenuPresenter):
+    """present() 时回放一次用户交互（触发某个 Choice 回调），用于驱动真实写入。"""
+
+    def __init__(self, drive: Callable[[Menu], None]) -> None:
+        self._drive = drive
+
+    def present(self, menu: Menu) -> None:
+        self._drive(menu)
 
 
 class _RecordingOutput(UserOutput):
@@ -130,6 +141,51 @@ def test_root_has_provider_and_model_entries(tmp_path: Path) -> None:
     _execute(command)
 
     labels = {c.label for c in presenter.presented.choices}
-    assert {"供应商配置", "模型配置"} <= labels
+    assert {"供应商配置", "模型配置", "网关运行时配置"} <= labels
     assert _find(presenter.presented, "供应商配置").submenu is not None
     assert _find(presenter.presented, "模型配置").submenu is not None
+
+
+def test_execute_returns_true_when_gateway_runtime_setting_changes(
+    tmp_path: Path,
+) -> None:
+    service = ConfigService(TomlConfigStore(tmp_path / ".forge" / "config.toml"))
+
+    def drive(menu: Menu) -> None:
+        gateway = _find(menu, "网关运行时配置")
+        assert gateway.submenu is not None
+        cache = _find(gateway.submenu(), "响应缓存")
+        assert cache.submenu is not None
+        enabled = _find(cache.submenu(), "启用响应缓存")
+        assert enabled.on_cycle is not None
+        enabled.on_cycle(1)
+
+    command = ConfigCommand(
+        service,
+        _models(tmp_path),
+        _DrivingPresenter(drive),
+        _RecordingOutput(),
+    )
+
+    wrote = command.execute(SlashCommand(raw_text="/config", command="config"))
+
+    assert wrote is True
+
+
+def test_execute_returns_false_when_nothing_changes(tmp_path: Path) -> None:
+    # _CapturingPresenter 只展示不触发任何回调 -> 没有写入。
+    command, _, _, _ = _command(tmp_path)
+
+    wrote = command.execute(SlashCommand(raw_text="/config", command="config"))
+
+    assert wrote is False
+
+
+def test_execute_returns_true_when_a_setting_changes(tmp_path: Path) -> None:
+    service = ConfigService(TomlConfigStore(tmp_path / ".forge" / "config.toml"))
+    presenter = _DrivingPresenter(lambda menu: _find(menu, "输出主题").on_cycle(1))
+    command = ConfigCommand(service, _models(tmp_path), presenter, _RecordingOutput())
+
+    wrote = command.execute(SlashCommand(raw_text="/config", command="config"))
+
+    assert wrote is True

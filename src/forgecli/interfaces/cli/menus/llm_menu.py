@@ -16,7 +16,7 @@ from collections.abc import Callable
 
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.llm import providers as provider_registry
-from forgecli.application.llm.config.llm_config import STANDARD_FIELDS
+from forgecli.application.llm.config.llm_config import STANDARD_FIELDS, StandardField
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import ConfigError
 from forgecli.application.menu import Choice, Menu
@@ -106,12 +106,7 @@ class LlmMenu:
             if model is None:
                 return Menu(model_id, (Choice("（模型不存在 / 已删除），Esc 返回"),))
             rows = [
-                Choice(
-                    field.label,
-                    preview=self._field_preview(provider_id, model_id, field.name),
-                    on_text=self._set_model_field(provider_id, model_id, field.name),
-                    text_default=self._field_preview(provider_id, model_id, field.name),
-                )
+                self._model_field_choice(provider_id, model_id, field)
                 for field in STANDARD_FIELDS
             ]
             rows.append(
@@ -175,6 +170,24 @@ class LlmMenu:
             )
 
         return submit
+
+    def _cycle_model_field(
+        self,
+        provider_id: str,
+        model_id: str,
+        field: StandardField,
+    ) -> Callable[[int], None]:
+        def cycle(delta: int) -> None:
+            current = self._field_preview(provider_id, model_id, field.name)()
+            index = field.choices.index(current) if current in field.choices else 0
+            value = field.choices[(index + delta) % len(field.choices)]
+            self._safe(
+                lambda: self._service.set_model_field(
+                    provider_id, model_id, field.name, value
+                )
+            )
+
+        return cycle
 
     def _set_model_extra(
         self, provider_id: str, model_id: str
@@ -241,7 +254,12 @@ class LlmMenu:
             if model is None:
                 return ""
             p = model.params
-            return f"ctx={p.context_window or '-'} max={p.max_tokens or '-'}"
+            mode = p.thinking_mode.value if p.thinking_mode else "auto"
+            effort = p.thinking_effort.value if p.thinking_effort else "none"
+            return (
+                f"ctx={p.context_window or '-'} max={p.max_tokens or '-'} "
+                f"thinking={mode}/{effort}"
+            )
 
         return preview
 
@@ -253,9 +271,36 @@ class LlmMenu:
             if model is None:
                 return ""
             value = getattr(model.params, field, None)
+            if value is None and field == "thinking_mode":
+                return "auto"
+            if value is None and field == "thinking_effort":
+                return "none"
+            enum_value = getattr(value, "value", None)
+            if isinstance(enum_value, str):
+                return enum_value
             return "" if value is None else str(value)
 
         return preview
+
+    def _model_field_choice(
+        self,
+        provider_id: str,
+        model_id: str,
+        field: StandardField,
+    ) -> Choice:
+        preview = self._field_preview(provider_id, model_id, field.name)
+        if field.choices:
+            return Choice(
+                field.label,
+                preview=preview,
+                on_cycle=self._cycle_model_field(provider_id, model_id, field),
+            )
+        return Choice(
+            field.label,
+            preview=preview,
+            on_text=self._set_model_field(provider_id, model_id, field.name),
+            text_default=preview,
+        )
 
     def _extra_preview(self, provider_id: str, model_id: str) -> Callable[[], str]:
         def preview() -> str:

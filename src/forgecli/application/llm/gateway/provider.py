@@ -23,7 +23,7 @@ from types import MappingProxyType
 
 from forgecli.application.llm.gateway.credentials import Credential
 from forgecli.application.llm.gateway.messages import ChatMessage, ToolCall, ToolSpec
-from forgecli.application.llm.gateway.params import ModelParams
+from forgecli.application.llm.gateway.params import ModelParams, ThinkingConfig
 from forgecli.application.llm.gateway.request import CancelToken
 from forgecli.application.llm.gateway.response import FinishReason, ModelUsage
 from forgecli.application.llm.gateway.streaming import ProviderStreamChunk
@@ -64,6 +64,8 @@ class ProviderRequest:
     model: str
     messages: tuple[ChatMessage, ...]
     params: ModelParams
+    # gateway 根据最终解析出的具体模型配置生成；ModelRequest 不可显式指定。
+    thinking: ThinkingConfig | None = None
     system_prompt: str | None = None
     tools: tuple[ToolSpec, ...] = ()
     timeout_seconds: float | None = None

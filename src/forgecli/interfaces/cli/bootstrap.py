@@ -11,23 +11,28 @@ from pathlib import Path
 
 from rich.console import Console
 
-from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
+from forgecli.application.agent_turn import AgentTurnService
+from forgecli.application.config.config_service import ConfigService
 from forgecli.application.intent_router import IntentRouter
+from forgecli.application.llm.catalog_builder import build_catalog
+from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.project import (
     ProjectContext,
     ProjectService,
     WorkspaceStartup,
 )
-from forgecli.application.session.session_service import SessionService
-from forgecli.infrastructure.config import config_dir
+from forgecli.application.session import SessionService
+from forgecli.infrastructure.config import TomlConfigStore, config_dir, config_file
+from forgecli.infrastructure.llm import TomlLlmConfigStore
 from forgecli.infrastructure.project import (
+    ProcessLock,
+    ProjectLockedError,
     TomlProjectConfigStore,
     TomlProjectIndexStore,
 )
-from forgecli.infrastructure.project.process_lock import ProcessLock, ProjectLockedError
-from forgecli.infrastructure.session.json_state_store import JsonStateStore
-from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
+from forgecli.infrastructure.session import JsonlEventStore, JsonStateStore
 from forgecli.interfaces.cli.banner import render_banner
+from forgecli.interfaces.cli.llm_wiring import build_llm_runtime
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.repl import Repl
@@ -52,6 +57,24 @@ def _session_service(context: ProjectContext) -> SessionService:
         JsonlEventStore(sessions),
         JsonStateStore(sessions),
         workspace_root=context.project.primary_workspace_root,
+    )
+
+
+def _prompt_runtime_status(
+    config_service: ConfigService, llm_service: LlmConfigService
+) -> str:
+    """输入框下方右侧的现读状态：项目当前模型 + 该模型的 thinking。"""
+    effective = config_service.effective()
+    ref = effective.default_model
+    if ref is None:
+        return "模型 未设置 · thinking -/-"
+    catalog = build_catalog(llm_service.config())
+    if not catalog.has_model(ref):
+        return f"模型 {ref} · thinking 未配置"
+    entry = catalog.get(ref)
+    return (
+        f"模型 {ref} · thinking "
+        f"{entry.thinking_mode.value}/{entry.thinking_effort.value}"
     )
 
 
@@ -85,7 +108,17 @@ def run() -> None:
 
     try:
         session = _session_service(context)
-        agent_turn = AgentTurnService(session=session)
+        # LLM 网关运行时（ADR-0011）：与 build_registry 共享同一批配置 service，
+        # chat turn 经 GatewayReplier 走统一网关，usage 由 AgentTurnService 落盘。
+        project_home = config_dir() / "projects" / context.project.project_id
+        forge_toml = project_home / "forge.toml"
+        config_service = ConfigService(
+            TomlConfigStore(config_file("config.toml")),
+            TomlConfigStore(forge_toml),
+        )
+        llm_service = LlmConfigService(TomlLlmConfigStore(config_file("llm.toml")))
+        llm_runtime = build_llm_runtime(config_service, llm_service, forge_toml)
+        agent_turn = AgentTurnService(session, replier=llm_runtime.replier)
         output = RichOutput(console=console)
         presenter = RichMenuPresenter(console=console)
         picker = TtyDirectoryPicker(console=console)
@@ -97,6 +130,9 @@ def run() -> None:
             picker=picker,
             output=output,
             agent_turn=agent_turn,
+            config_service=config_service,
+            llm_service=llm_service,
+            overrides_service=llm_runtime.overrides_service,
         )
         router = IntentRouter(registry=registry)
         Repl(
@@ -106,6 +142,7 @@ def run() -> None:
             output=output,
             session=session,
             agent_turn=agent_turn,
+            prompt_status=lambda: _prompt_runtime_status(config_service, llm_service),
         ).run()
     finally:
         # 正常退出 / 异常 / Ctrl-C 都释放（flock 在 kill -9 时也由 OS 释放）。

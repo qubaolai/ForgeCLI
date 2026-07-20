@@ -29,7 +29,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
@@ -45,6 +45,7 @@ from prompt_toolkit.layout.containers import (
     HSplit,
     VSplit,
     Window,
+    WindowAlign,
 )
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
@@ -66,6 +67,8 @@ _STYLE = Style.from_dict(
         "hint": "ansicyan",  # 提示行里的按键，如 "/"、"↵"
         "hint-dim": "ansibrightblack",  # 提示行里的说明文字
         "hint-alert": "#89a19d",  # "再按一次 Ctrl-C 退出" 警示
+        "runtime-status": "ansibrightblack",  # 输入框下方右侧的模型 / thinking
+        "runtime-status-error": "ansiyellow",
         # 斜杠命令菜单（背景透明：不设 bg，终端底色透出来）。
         # 选中项仅靠文字颜色区分：普通行偏暗，选中行用青绿色 + 提亮的说明。
         "menu-name": "#9399b2",  # 普通行：命令名（偏暗）
@@ -121,11 +124,18 @@ class _SlashCompleter(Completer):
 class ForgePrompt:
     """可重复调用的输入提示器：每次 read() 弹出一个带边框的输入框并返回一行输入。"""
 
-    def __init__(self, commands: Sequence[tuple[str, str]]) -> None:
+    def __init__(
+        self,
+        commands: Sequence[tuple[str, str]],
+        *,
+        status_provider: Callable[[], str] | None = None,
+    ) -> None:
         # "待退出"标志：空行第一次 Ctrl-C 后置 True；它决定提示行是否显示退出警示。
         self._exit_armed = False
         # 待退出复位定时器：第一次 Ctrl-C 起，500ms 内没有第二次就把它复位。
         self._reset_handle: asyncio.TimerHandle | None = None
+        # 每次渲染现读：/model 或 /config 改动后下一帧立即反映。
+        self._status_provider = status_provider
 
         # 输入缓冲区：挂上斜杠补全器，并开启"边打字边补全"。
         self._buffer = Buffer(
@@ -198,6 +208,18 @@ class ForgePrompt:
             ("class:hint-dim", " 退出"),
         ]
 
+    def _bottom_status(self) -> StyleAndTextTuples:
+        """右侧持续状态：当前模型与该模型的 thinking 配置。"""
+        if self._status_provider is None:
+            return []
+        try:
+            status = self._status_provider().strip()
+        except Exception:
+            return [("class:runtime-status-error", "配置状态不可用  ")]
+        if not status:
+            return []
+        return [("class:runtime-status", f"{status}  ")]
+
     def _render_menu(self) -> StyleAndTextTuples:
         """自绘斜杠命令菜单：每行 = 命令名(定宽) + 说明；选中项仅靠文字颜色区分。
 
@@ -262,8 +284,21 @@ class ForgePrompt:
                     ]
                 ),
                 _border_row("╰", "╯"),
-                # 框下提示行：内容由 _bottom_hint 动态返回。
-                Window(FormattedTextControl(self._bottom_hint), height=1),
+                # 框下同一行：左侧快捷键提示，右侧现读模型 / thinking。
+                VSplit(
+                    [
+                        Window(
+                            FormattedTextControl(self._bottom_hint),
+                            height=1,
+                            dont_extend_width=True,
+                        ),
+                        Window(
+                            FormattedTextControl(self._bottom_status),
+                            height=1,
+                            align=WindowAlign.RIGHT,
+                        ),
+                    ]
+                ),
                 menu_pane,
             ]
         )

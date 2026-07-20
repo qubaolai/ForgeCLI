@@ -1,10 +1,10 @@
 """统一超参 ModelParams 与 ThinkingConfig（ADR-0011 §3.5）。
 
-参数分三类：通用超参、thinking 配置、provider 私有选项。
+参数分两类：通用超参和 provider 私有选项。
 
     - 通用超参（temperature/top_p/max_output_tokens/stop/response_format）由网关校验。
-    - thinking 是 ForgeCLI 的统一抽象，由 provider adapter 翻译成各供应商字段；
-      enabled=auto 表示由 gateway 按 origin 默认策略决定，不交给 LLM。
+    - thinking mode/effort 属于具体模型配置，不允许调用方在 ModelRequest 中覆盖；
+      gateway 解析模型后生成 ThinkingConfig，再交给 provider adapter 翻译。
     - provider_options 按 provider 命名空间隔离（如 provider_options["deepseek"]），
       只能由对应 provider adapter 读取，不参与参数合并。
 
@@ -53,14 +53,13 @@ class ThinkingConfig:
 
 @dataclass(frozen=True)
 class ModelParams:
-    """一次调用的通用超参 + thinking + provider 私有选项。"""
+    """一次调用的通用超参 + provider 私有选项（不含 thinking）。"""
 
     temperature: float | None = None
     top_p: float | None = None
     max_output_tokens: int | None = None
     stop: tuple[str, ...] = ()
     response_format: str | None = None
-    thinking: ThinkingConfig | None = None
     # provider_options: { provider_id -> { 任意私有键 } }，按命名空间整体透传。
     provider_options: Mapping[str, Mapping[str, object]] = field(
         default_factory=lambda: MappingProxyType({})

@@ -14,6 +14,8 @@ menu_presenter 一致，都用 stdin_is_tty()。
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from rich.console import Console
 from rich.panel import Panel
 
@@ -46,6 +48,8 @@ class Repl:
         output: RichOutput,
         session: SessionService,
         agent_turn: AgentTurnService,
+        *,
+        prompt_status: Callable[[], str] | None = None,
     ) -> None:
         self._console = console
         self._router = router
@@ -53,6 +57,7 @@ class Repl:
         self._output = output
         self._session = session
         self._agent_turn = agent_turn
+        self._prompt_status = prompt_status
 
     def run(self) -> None:
         # banner 由 bootstrap 在信任解析前渲染；这里只给进入会话的提示。
@@ -73,7 +78,11 @@ class Repl:
         self._session.start()
         # 输入框只需要命令名和说明，用于 "/" 补全菜单；执行仍由 registry 分派。
         commands = [(spec.name, spec.summary) for spec in self._registry.all_specs()]
-        prompt = ForgePrompt(commands)
+        prompt = (
+            ForgePrompt(commands)
+            if self._prompt_status is None
+            else ForgePrompt(commands, status_provider=self._prompt_status)
+        )
         while True:
             try:
                 line = prompt.read()

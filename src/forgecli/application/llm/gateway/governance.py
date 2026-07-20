@@ -16,13 +16,17 @@
 """
 
 from __future__ import annotations
+
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-import time
 
-from forgecli.application.llm.gateway.errors import ModelBudgetExceededError, ModelUnavailableError
+from forgecli.application.llm.gateway.errors import (
+    ModelBudgetExceededError,
+    ModelUnavailableError,
+)
 from forgecli.application.llm.gateway.request import BudgetSnapshot
 from forgecli.application.llm.model_ref import ModelRef
 
@@ -54,7 +58,7 @@ class NoopProviderHealthRegistry(ProviderHealthRegistry):
 
     def record_failure(self, ref: ModelRef) -> None:
         return None
-    
+
 
 class _CircuitState(Enum):
     CLOSED = "closed"
@@ -76,11 +80,11 @@ class SlidingWindowHealthRegistry(ProviderHealthRegistry):
     """
 
     def __init__(
-      self,
-      *,
-      failure_threshold: int = 5,
-      cooldown_seconds: float = 30.0,
-      clock: Callable[[], float] = time.monotonic,       
+        self,
+        *,
+        failure_threshold: int = 5,
+        cooldown_seconds: float = 30.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if failure_threshold <= 0:
             raise ValueError("failure_threshold 必须为正整数")
@@ -104,7 +108,7 @@ class SlidingWindowHealthRegistry(ProviderHealthRegistry):
                     provider=ref.provider,
                     model=ref.model,
                 )
-            circuit.state = _CircuitState.HALF_OPEN # 冷却到期: 放行本次 改为半开
+            circuit.state = _CircuitState.HALF_OPEN  # 冷却到期: 放行本次 改为半开
             return
         # HALF_OPEN：探测请求已在途，其余调用继续拒绝。
         raise ModelUnavailableError(
@@ -112,7 +116,7 @@ class SlidingWindowHealthRegistry(ProviderHealthRegistry):
             provider=ref.provider,
             model=ref.model,
         )
-    
+
     def record_success(self, ref: ModelRef) -> None:
         circuit = self._circuit(ref)
         circuit.state = _CircuitState.CLOSED
@@ -129,10 +133,8 @@ class SlidingWindowHealthRegistry(ProviderHealthRegistry):
             circuit.state = _CircuitState.OPEN
             circuit.opened_at = self._clock()
 
-
     def _circuit(self, ref: ModelRef) -> _Circuit:
         return self._circuits.setdefault((ref.provider, ref.model), _Circuit())
-    
 
 
 class BudgetGuard(ABC):
@@ -158,7 +160,7 @@ class NoopBudgetGuard(BudgetGuard):
         estimated_input_tokens: int,
     ) -> None:
         return None
-    
+
 
 class SnapshotBudgetGuard(BudgetGuard):
     """快照比对预算裁决（ADR-0012 §8）：estimated_input + 已用量 > 上限时拒发。

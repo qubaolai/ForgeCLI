@@ -23,6 +23,7 @@ from collections.abc import Mapping
 from forgecli.application.llm.config.llm_config import LlmConfig, ModelSpec
 from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
 from forgecli.application.llm.gateway.in_memory_catalog import InMemoryModelCatalog
+from forgecli.application.llm.gateway.params import ThinkingEffort, ThinkingMode
 
 # 用户未声明 context_window 且基线缺失时的保守默认（避免目录条目无法构造）。
 _DEFAULT_CONTEXT_WINDOW = 32768
@@ -95,6 +96,10 @@ def _merge_entry(
         supports_structured_output=flag("supports_structured_output", False),
         supports_tool_calling=flag("supports_tool_calling", False),
         supports_thinking=flag("supports_thinking", False),
+        thinking_mode=params.thinking_mode
+        or (baseline.thinking_mode if baseline else ThinkingMode.AUTO),
+        thinking_effort=params.thinking_effort
+        or (baseline.thinking_effort if baseline else ThinkingEffort.NONE),
         allowlisted=flag("allowlisted", True),
         deprecated=flag("deprecated", False),
         input_price_per_1k=price(

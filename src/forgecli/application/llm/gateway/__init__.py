@@ -14,7 +14,7 @@ from forgecli.application.llm.gateway.cache import (
     InMemoryResponseCache,
     LlmCacheController,
     NoopLlmCacheController,
-    # structured_schema_digest,
+    structured_schema_digest,
 )
 from forgecli.application.llm.gateway.catalog import (
     ModelCatalogEntry,
@@ -108,12 +108,12 @@ from forgecli.application.llm.gateway.selection_resolver import (
     ModelSelectionResolver,
     ResolvedModel,
 )
-# from forgecli.application.llm.gateway.streaming import (
-#     ModelStreamChunk,
-#     ProviderStreamChunk,
-#     StreamAccumulator,
-#     ToolCallDelta,
-# )
+from forgecli.application.llm.gateway.streaming import (
+    ModelStreamChunk,
+    ProviderStreamChunk,
+    StreamAccumulator,
+    ToolCallDelta,
+)
 from forgecli.application.llm.gateway.token_estimator import (
     ApproximateTokenEstimator,
     TokenEstimator,
@@ -173,10 +173,10 @@ __all__ = [
     "ToolSpec",
     "ToolCall",
     # 流式（§9）
-    # "ModelStreamChunk",
-    # "ProviderStreamChunk",
-    # "StreamAccumulator",
-    # "ToolCallDelta",
+    "ModelStreamChunk",
+    "ProviderStreamChunk",
+    "StreamAccumulator",
+    "ToolCallDelta",
     # 返回 DTO
     "ModelResponse",
     "ModelUsage",

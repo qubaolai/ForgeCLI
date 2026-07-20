@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
+from forgecli.application.config import config_keys
 from forgecli.application.config.config_service import ConfigService
 from forgecli.application.interaction_ports import MenuPresenter, UserOutput
 from forgecli.application.llm.availability import EnvProviderAvailability
@@ -22,6 +24,16 @@ class _CapturingPresenter(MenuPresenter):
 
     def present(self, menu: Menu) -> None:
         self.presented = menu
+
+
+class _DrivingPresenter(MenuPresenter):
+    """present() 时回放一次选择动作（写默认模型），用于驱动真实写入。"""
+
+    def __init__(self, drive: Callable[[], None]) -> None:
+        self._drive = drive
+
+    def present(self, menu: Menu) -> None:
+        self._drive()
 
 
 class _RecordingOutput(UserOutput):
@@ -61,6 +73,7 @@ def test_model_menu_keeps_provider_rows_and_uses_configured_models(
     root = menu.root_menu()
 
     labels = [choice.label for choice in root.choices]
+    # 封闭集并轨后新增 local / openai，行按 provider id 排序。
     assert labels == ["当前模型", "DeepSeek", "Local", "MiMo", "OpenAI"]
     provider_menu = _find(root, "DeepSeek").submenu()
     assert [choice.label for choice in provider_menu.choices] == ["deepseek-chat"]
@@ -97,3 +110,27 @@ def test_model_command_rejects_args_instead_of_presenting_menu(tmp_path: Path) -
     assert output.lines == [
         "当前 /model 不支持参数；请直接输入 /model 打开模型选择面板。"
     ]
+
+
+def test_model_execute_returns_false_when_nothing_changes(tmp_path: Path) -> None:
+    # _CapturingPresenter 只展示不选择 -> 默认模型不变 -> 没有写入。
+    config, llm, output = _services(tmp_path)
+    command = ModelsCommand(config, llm, _CapturingPresenter(), output)
+
+    wrote = command.execute(SlashCommand(raw_text="/model", command="model"))
+
+    assert wrote is False
+
+
+def test_model_execute_returns_true_when_default_model_changes(tmp_path: Path) -> None:
+    config, llm, output = _services(tmp_path)
+
+    def drive() -> None:
+        config.set(config_keys.DEFAULT_MODEL_PROVIDER_KEY, "deepseek")
+        config.set(config_keys.DEFAULT_MODEL_NAME_KEY, "deepseek-chat")
+
+    command = ModelsCommand(config, llm, _DrivingPresenter(drive), output)
+
+    wrote = command.execute(SlashCommand(raw_text="/model", command="model"))
+
+    assert wrote is True

@@ -33,10 +33,11 @@ api_base = "https://api.mimo.example/v1"
 [llm.providers.mimo.models]
 mimo-7b = { context_window = 32768, max_tokens = 4096, top_p = 0.9 }
 
-[llm.providers.openai]
-name = "OpenAI"
-[llm.providers.openai.models]
-gpt-4o = { context_window = 128000 }
+# 未知供应商：没有 adapter，应被忽略而不报错
+[llm.providers.anthropic]
+name = "Anthropic"
+[llm.providers.anthropic.models]
+claude-sonnet-4 = { context_window = 200000 }
 """
 
 
@@ -62,7 +63,7 @@ def test_parses_known_providers_and_models(tmp_path: Path) -> None:
     service, _ = _service(tmp_path, EXAMPLE)
     config = service.config()
 
-    assert {p.id for p in config.providers} == {"deepseek", "mimo", "openai"}
+    assert {p.id for p in config.providers} == {"deepseek", "mimo"}
     deepseek = config.provider("deepseek")
     assert deepseek is not None
     assert deepseek.timeout == 90
@@ -74,10 +75,6 @@ def test_parses_known_providers_and_models(tmp_path: Path) -> None:
     assert chat.params.context_window == 65536
     assert chat.params.temperature == 0.7
 
-    openai_model = config.model("openai", "gpt-4o")
-    assert openai_model is not None
-    assert openai_model.params.context_window == 128000
-
 
 def test_vendor_extra_is_passed_through(tmp_path: Path) -> None:
     service, _ = _service(tmp_path, EXAMPLE)
@@ -87,15 +84,10 @@ def test_vendor_extra_is_passed_through(tmp_path: Path) -> None:
 
 
 def test_unknown_provider_section_is_ignored(tmp_path: Path) -> None:
-    text = """
-[llm.providers.custom]
-name = "Custom"
-[llm.providers.custom.models]
-custom-model = { context_window = 8192 }
-"""
-    service, _ = _service(tmp_path, text)
+    service, _ = _service(tmp_path, EXAMPLE)
     config = service.config()
-    assert config.provider("custom") is None
+    # anthropic 没有 adapter -> 被忽略，不进入有效配置，也不报错
+    assert config.provider("anthropic") is None
 
 
 # ---- 封闭供应商 ----
@@ -104,7 +96,7 @@ custom-model = { context_window = 8192 }
 def test_add_model_to_unknown_provider_is_rejected(tmp_path: Path) -> None:
     service, _ = _service(tmp_path)
     with pytest.raises(UnknownProvider):
-        service.add_model("custom", "custom-model", {"context_window": 128000})
+        service.add_model("anthropic", "claude-sonnet-4", {"context_window": 200000})
 
 
 # ---- 参数校验 ----
