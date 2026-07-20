@@ -870,7 +870,11 @@ Skill 只影响上下文和可用工具建议，不改变全局安全策略。
 
 运行时 LLM 调用不由 `ModelCatalogService` 直接执行。所有供应商请求必须经过统一
 `LlmGateway`，由 gateway 做 provider 路由、凭证解析、usage/cost 计量、错误归一化和
-审计记录。完整调用架构见 `docs/adr/2026-07-01-0011-采用统一LLM调用网关支持多供应商.md`。
+审计记录。ADR-0012 在该管线中补齐 complete / stream 共用重试、429 短等等待、
+TTL/LRU 响应缓存、thinking 方言、精确分词器接入、价格口径、熔断、预算守卫和进程内
+观测。完整调用架构见
+`docs/adr/2026-07-01-0011-采用统一LLM调用网关支持多供应商.md` 与
+`docs/adr/2026-07-12-0012-完善统一LLM网关运行时自身能力.md`。
 
 模型目录来源：
 
@@ -1065,47 +1069,57 @@ Multi-Agent 需要新增：
 MVP 当前配置存储遵循 ADR-0008：应用级配置位于 Forge home 下的
 `config.toml` / `llm.toml`，项目级配置位于
 `projects/<project-id>/forge.toml`，不会在被信任项目根目录自动创建 `.forge/`。
-`[model]` 表示当前项目的运行时默认模型。
+归属规则如下：
 
-项目配置示例：
+- `config.toml`：跨项目共享的通用应用偏好，包括 telemetry、输出和日志。
+- `llm.toml`：跨项目共享的 provider/model 目录；每个具体模型保存自己的
+  `thinking_mode` / `thinking_effort`。同一文件还保存 ADR-0012 的
+  `[llm.cache]`、`[llm.circuit_breaker]`、`[llm.retry]` 网关运行时策略。
+- `forge.toml`：当前项目模型与用途模型覆盖。项目文件不得保存 thinking、缓存、
+  熔断或重试策略。
+
+应用级 `llm.toml` 示例：
 
 ```toml
-schema_version = 1
-default_mode = "chat"
+[llm.providers.deepseek]
+name = "DeepSeek"
+api_base = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+timeout = 60
+max_retries = 2
+
+[llm.providers.deepseek.models.deepseek-chat]
+context_window = 65536
+max_tokens = 8192
+thinking_mode = "off"
+thinking_effort = "none"
+
+[llm.cache]
+enabled = false
+ttl_seconds = 600
+max_entries = 256
+origins = ["title", "summary", "structured_classification"]
+
+[llm.circuit_breaker]
+enabled = false
+failure_threshold = 5
+cooldown_seconds = 30
+
+[llm.retry]
+wait_threshold_seconds = 5
+```
+
+项目级 `forge.toml` 示例：
+
+```toml
 
 [model]
 provider = "openai"
-model = "gpt-5"
-timeout_seconds = 60
+name = "gpt-5"
 
-[policy]
-network = "ask"
-write = "ask_in_chat_allow_in_act"
-destructive = "ask"
-external = "ask"
-max_auto_steps = 20
-
-[tools.shell]
-enabled = true
-default_timeout_seconds = 120
-
-[tools.git]
-enabled = true
-push_requires_approval = true
-
-[mcp]
-servers_file = ".forge/mcp/servers.toml"
-default_enabled = false
-
-[context]
-max_tokens = 120000
-auto_compact_threshold = 0.8
-
-[storage]
-type = "jsonl"
-# 相对当前项目的 Forge home 目录：~/.forge/projects/<project-id>/
-sessions_dir = "sessions"
-artifacts_dir = "artifacts"
+[model_overrides.title]
+provider = "openai"
+model = "gpt-5-mini"
 ```
 
 用户全局配置建议放在：
@@ -1137,27 +1151,35 @@ artifacts_dir = "artifacts"
 
 当前 MVP 提供交互式 `/config` 能力：
 
-- `/config list`
-- `/config get <key>`
-- `/config init`
-- `/config set <key> <value>`
-- `/config unset <key>`
-- `/config validate`
-- `/config explain <key>`
+- 通用应用配置：telemetry、输出主题、日志级别。
+- LLM 配置：供应商字段、模型参数；thinking mode / effort 位于具体模型编辑页。
+- 项目配置：当前模型、按用途的显式模型覆盖。
+- 网关运行时配置：响应缓存（enabled / TTL / 容量 / origins）、熔断器
+  （enabled / 失败阈值 / 冷却时间）、重试策略（429 短等阈值）。
 
-`set/unset/migrate` 必须写入配置变更事件，便于审计。交互式 `/config` 必须复用 `ConfigService`，不得在 CLI handler 中复制配置校验和 TOML 写入逻辑。
+交互式 `/config` 必须复用 `ConfigService`、`LlmConfigService` 与
+`ModelOverridesService`，不得在 CLI handler 或菜单中复制配置校验和 TOML 写入逻辑。
+通用配置按 schema 的 `ConfigLevel` 路由，网关运行时字段由 `LlmConfigService` 封闭校验。
+
+交互式输入框下方右侧持续显示：
+
+```text
+模型 <provider:model> · thinking <mode>/<effort>
+```
+
+当前模型来自项目级 `forge.toml`，thinking 来自该模型在应用级 `llm.toml` 中的目录条目。
+状态提供器每次渲染现读当前模型和模型目录，因此 `/model` 或 `/config` 修改后不需要重启
+CLI。`ModelRequest` 不包含 thinking；gateway 必须在模型解析后从 `ModelCatalogEntry`
+读取 mode/effort，并通过内部 `ProviderRequest` 下发 adapter。
 
 ### 17.5 可配置范围
 
 首版开放：
 
-- 默认模式：`default_mode`
-- 模型 provider 和 model
-- context token budget
-- auto compact 阈值
-- session 和 artifact 默认目录
-- shell 默认超时
-- 工具开关
+- telemetry、输出主题和日志级别。
+- 项目级模型 provider / name 与用途模型覆盖。
+- 应用级 provider/model 参数（包含模型级 thinking mode / effort）与 cache /
+  circuit breaker / retry 网关策略。
 - MCP server 配置路径
 - 高风险操作审批策略
 - 用户输出语言和详细程度

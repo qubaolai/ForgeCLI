@@ -48,7 +48,7 @@
 - `AgentTurnService` 通过 gateway 获取 assistant message，并由 `AgentTurnService` 写入模型调用摘要和 usage 事件。
 - `cancel_token` 从 `AgentTurnService` 到 gateway / provider 的取消接线（非流式协作式取消 + adapter 在途中止）。
 - 同一 provider/model 内有界的凭证级 retry 最小运行时路径（默认测试用 fake transport）。
-- `/config` 编辑当前模型、用途模型覆盖和 thinking 默认值。
+- `/config` 编辑当前模型、用途模型覆盖和具体模型的 thinking mode / effort。
 - OpenAI provider adapter 的最小实现或清晰接口落点，默认测试不打网络。
 - OpenAI provider adapter、streaming chunk 归一化、tool calling schema 转换和 tool result 回填。
 - `LlmCacheController` 的 prompt 标注与可选响应缓存。
@@ -112,3 +112,14 @@
 - [2026-07-08](2026-07-08/README.md)
 - [2026-07-09](2026-07-09/README.md)
 - [2026-07-10](2026-07-10/README.md)
+
+## 7. 2026-07-20 ADR-0012 配置与 CLI 收口
+
+在 07-10 历史滚动计划完成后，按 ADR-0012 增补以下验收口径：
+
+- thinking mode / effort 跟随具体模型，保存到应用级 `llm.toml` 的模型条目；
+  `ModelRequest` 不提供显式覆盖。当前模型与用途覆盖继续保存到项目级 `forge.toml`。
+- cache / circuit breaker / retry 统一为应用级网关配置，保存到 `llm.toml`，并在
+  `/config` 提供查看与编辑入口。
+- 输入框下方右侧持续显示当前项目模型与该模型的 thinking，修改或切换模型后重新渲染即刷新。
+- ADR-0011、ADR-0012、详细设计、实现与离线测试使用同一配置归属和字段口径。

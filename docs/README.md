@@ -11,6 +11,7 @@ ForgeCLI 的目标是建设一个企业级、生产可用、本地优先的对�
 - [05-acceptance-standards.md](05-acceptance-standards.md)：代码验收标准，说明结构、语法、逻辑、安全、测试和验收报告格式。
 - [ADR-0010：采用受控 ReAct 作为 Agent 主循环架构](adr/2026-07-01-0010-采用受控ReAct作为Agent主循环架构.md)：定义受控 reason/act/observe 循环、workflow 边界、事件和恢复策略。
 - [ADR-0011：采用统一 LLM 调用网关支持多供应商](adr/2026-07-01-0011-采用统一LLM调用网关支持多供应商.md)：定义统一 gateway、provider adapter、usage/cost/token 计量和错误归一化。
+- [ADR-0012：完善统一 LLM 网关运行时自身能力](adr/2026-07-12-0012-完善统一LLM网关运行时自身能力.md)：补齐重试、缓存、thinking 方言、分词器、成本、熔断、预算与观测，并冻结模型级 thinking 与应用级网关配置归属。
 - [adr/README.md](adr/README.md)：架构决策记录，说明重要决策的背景、备选方案、影响和验收标准。
 - [roadmap/README.md](roadmap/README.md)：按阶段和日期拆分的开发排期、每日目标和代码验收要求。
 - [roadmap/backlog.md](roadmap/backlog.md)：MVP 之后的后续迭代 backlog，汇总各文档中「MVP 暂不实现 / 接口预留」的能力及其目标阶段。
@@ -21,7 +22,7 @@ ForgeCLI 的目标是建设一个企业级、生产可用、本地优先的对�
 - 长任务能力通过 session resume、event log、state snapshot、context compaction 实现。
 - Agent 自治程度由 mode policy 控制，默认从保守的 chat/plan 开始，按需进入 act/auto。
 - Agent 主循环采用受控 ReAct：模型只产出意图，副作用由 ForgeCLI 控制面执行。
-- 所有 LLM 调用必须经过统一 `LlmGateway`，为 token 计量、成本控制、限流和审计预留稳定入口。
+- 所有 LLM 调用必须经过统一 `LlmGateway`，统一执行 token/成本计量、缓存、重试、熔断、预算与审计摘要。
 - 本地存储首选 `jsonl + state.json + artifacts`，数据库作为企业版或服务端化增强。
 - 架构采用轻量 DDD：领域模型稳定，基础设施可替换。
 - Agent 框架采用“自有控制面 + 可替换 workflow adapter”：MVP 用自研轻量 Runtime，V1 优先评估 LangGraph，LangChain 只选择性使用底层组件，AutoGen 留给 V2 Multi-Agent。
