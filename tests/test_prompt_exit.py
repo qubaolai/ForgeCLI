@@ -70,7 +70,7 @@ def test_second_arm_resets_the_timer() -> None:
 
 
 def test_runtime_status_is_read_again_for_each_render() -> None:
-    state = {"value": "模型 openai:gpt-5 · thinking auto/medium"}
+    state = {"value": "模型 openai:gpt-5 · thinking on/medium"}
     prompt = ForgePrompt(_COMMANDS, status_provider=lambda: state["value"])
 
     assert (

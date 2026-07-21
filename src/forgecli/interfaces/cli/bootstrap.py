@@ -17,6 +17,7 @@ from forgecli.application.intent_router import IntentRouter
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.thinking import ThinkingMode
+from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.application.project import (
     ProjectContext,
     ProjectService,
@@ -62,7 +63,9 @@ def _session_service(context: ProjectContext) -> SessionService:
 
 
 def _prompt_runtime_status(
-    config_service: ConfigService, llm_service: LlmConfigService
+    config_service: ConfigService,
+    llm_service: LlmConfigService,
+    thinking_state: ThinkingRuntimeState | None = None,
 ) -> str:
     """输入框下方右侧的现读状态：项目当前模型 + 该模型的 thinking。"""
     effective = config_service.effective()
@@ -73,6 +76,8 @@ def _prompt_runtime_status(
     if not catalog.has_model(ref):
         return f"模型 {ref} · thinking 未配置"
     entry = catalog.get(ref)
+    if thinking_state is not None:
+        entry = thinking_state.apply(ref, entry)
     if entry.thinking_mode is ThinkingMode.OFF:
         return f"模型 {ref} · thinking off"
     effort = entry.effective_thinking_effort
@@ -119,7 +124,10 @@ def run() -> None:
             TomlConfigStore(forge_toml),
         )
         llm_service = LlmConfigService(TomlLlmConfigStore(config_file("llm.toml")))
-        llm_runtime = build_llm_runtime(config_service, llm_service, forge_toml)
+        thinking_state = ThinkingRuntimeState()
+        llm_runtime = build_llm_runtime(
+            config_service, llm_service, forge_toml, thinking_state
+        )
         agent_turn = AgentTurnService(session, replier=llm_runtime.replier)
         output = RichOutput(console=console)
         presenter = RichMenuPresenter(console=console)
@@ -135,6 +143,7 @@ def run() -> None:
             config_service=config_service,
             llm_service=llm_service,
             overrides_service=llm_runtime.overrides_service,
+            thinking_state=thinking_state,
         )
         router = IntentRouter(registry=registry)
         Repl(
@@ -144,7 +153,9 @@ def run() -> None:
             output=output,
             session=session,
             agent_turn=agent_turn,
-            prompt_status=lambda: _prompt_runtime_status(config_service, llm_service),
+            prompt_status=lambda: _prompt_runtime_status(
+                config_service, llm_service, thinking_state
+            ),
         ).run()
     finally:
         # 正常退出 / 异常 / Ctrl-C 都释放（flock 在 kill -9 时也由 OS 释放）。

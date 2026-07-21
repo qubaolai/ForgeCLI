@@ -14,11 +14,10 @@ _EFFORT_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 
 class ThinkingMode(Enum):
-    """模型思考开关；auto 由 gateway 根据 origin 解析。"""
+    """模型思考开关。"""
 
     ON = "on"
     OFF = "off"
-    # AUTO = "auto"
 
 
 @dataclass(frozen=True, order=True)

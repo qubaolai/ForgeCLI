@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from forgecli.application.config.config_service import ConfigService
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
+from forgecli.application.llm.gateway.catalog import ModelCatalogService
 from forgecli.application.llm.gateway.default_selection_resolver import (
     DefaultModelSelectionResolver,
 )
@@ -23,6 +24,10 @@ from forgecli.application.llm.gateway.selection_resolver import (
     ResolvedModel,
 )
 from forgecli.application.llm.model_ref import ModelRef
+from forgecli.application.llm.thinking_runtime import (
+    ThinkingOverlayCatalog,
+    ThinkingRuntimeState,
+)
 
 
 class ConfigBackedSelectionResolver(ModelSelectionResolver):
@@ -34,10 +39,12 @@ class ConfigBackedSelectionResolver(ModelSelectionResolver):
         config_service: ConfigService,
         llm_config_service: LlmConfigService,
         overrides_loader: Callable[[], Mapping[RequestOrigin, ModelRef]],
+        thinking_state: ThinkingRuntimeState | None = None,
     ) -> None:
         self._config = config_service
         self._llm = llm_config_service
         self._load_overrides = overrides_loader
+        self._thinking_state = thinking_state
 
     def resolve(
         self,
@@ -47,8 +54,11 @@ class ConfigBackedSelectionResolver(ModelSelectionResolver):
         required_capabilities: tuple[str, ...] = (),
         min_context_window: int | None = None,
     ) -> ResolvedModel:
+        catalog: ModelCatalogService = build_catalog(self._llm.config())
+        if self._thinking_state is not None:
+            catalog = ThinkingOverlayCatalog(catalog, self._thinking_state)
         delegate = DefaultModelSelectionResolver(
-            build_catalog(self._llm.config()),
+            catalog,
             current_model=self._config.effective().default_model,
             overrides=self._load_overrides(),
         )

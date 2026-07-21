@@ -50,7 +50,7 @@ class _CancelMidCallProvider(FakeModelProvider):
 def _gateway(
     provider: FakeModelProvider,
     *,
-    thinking_mode: ThinkingMode = ThinkingMode.AUTO,
+    thinking_mode: ThinkingMode = ThinkingMode.ON,
     thinking_effort: ThinkingEffortName | None = None,
 ) -> DefaultLlmGateway:
     registry = ProviderRegistry()
@@ -138,18 +138,8 @@ def test_model_thinking_config_is_applied() -> None:
     assert provider.last_request is not None
     thinking = provider.last_request.thinking
     assert thinking is not None
-    assert thinking.enabled is True  # plan：auto -> 开（§3.5）
+    assert thinking.enabled is True
     assert thinking.effort == effort
-
-
-def test_auto_thinking_off_for_chat_origin() -> None:
-    provider = FakeModelProvider(content="ok")
-    gw = _gateway(provider, thinking_mode=ThinkingMode.AUTO)
-    gw.complete(_request(origin=RequestOrigin.CHAT))
-    assert provider.last_request is not None
-    thinking = provider.last_request.thinking
-    assert thinking is not None
-    assert thinking.enabled is False
 
 
 def test_model_thinking_off_cannot_be_overridden_by_request() -> None:

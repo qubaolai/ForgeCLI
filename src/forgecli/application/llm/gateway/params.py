@@ -26,7 +26,7 @@ from forgecli.application.llm.thinking import ThinkingEffortName
 class ThinkingConfig:
     """Gateway 解析完成后交给 provider adapter 的 thinking 参数。
 
-    模型配置中的 auto 已由 gateway 解析，因此运行时只需要布尔开关。
+    模型配置中的 mode 已由 gateway 解析，因此运行时只需要布尔开关。
     effort 是当前模型的有效强度，不使用跨供应商固定枚举。
     """
 

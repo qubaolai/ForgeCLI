@@ -103,7 +103,7 @@ def test_model_detail_edits_thinking_capabilities_and_settings(tmp_path: Path) -
         {
             "thinking_efforts": ["high", "max"],
             "thinking_default_effort": "high",
-            "thinking_mode": "auto",
+            "thinking_mode": "on",
         },
     )
     detail = _find(
@@ -118,7 +118,7 @@ def test_model_detail_edits_thinking_capabilities_and_settings(tmp_path: Path) -
     assert "Thinking 当前强度" not in {choice.label for choice in detail.choices}
     assert efforts.preview() == "high / max"
     assert default.preview() == "high"
-    assert mode.preview() == "auto"
+    assert mode.preview() == "on"
 
     efforts.on_text("low, high, max")
     default.on_text("max")
@@ -131,7 +131,7 @@ def test_model_detail_edits_thinking_capabilities_and_settings(tmp_path: Path) -
         "max",
     )
     assert params.thinking_default_effort.value == "max"
-    assert params.thinking_mode.value == "on"
+    assert params.thinking_mode.value == "off"
     assert params.thinking_effort is None
 
 
@@ -170,16 +170,16 @@ def test_model_detail_rebuild_reads_thinking_change_immediately(tmp_path: Path) 
         {
             "thinking_efforts": ["high", "max"],
             "thinking_default_effort": "high",
-            "thinking_mode": "auto",
+            "thinking_mode": "on",
         },
     )
     detail_builder = _find(
         _find(menu.models_menu(), "DeepSeek").submenu(), "deepseek-reasoner"
     ).submenu
 
-    assert _find(detail_builder(), "Thinking 模式").preview() == "auto"
+    assert _find(detail_builder(), "Thinking 模式").preview() == "on"
 
-    # 模拟 /thinking 对同一 service 的写入；复用既有菜单构建器也必须读取最新文件。
+    # 模拟 /config 对同一 service 的写入；复用既有菜单构建器也必须读取最新文件。
     service.update_model_thinking("deepseek", "deepseek-reasoner", mode=ThinkingMode.ON)
 
     assert _find(detail_builder(), "Thinking 模式").preview() == "on"

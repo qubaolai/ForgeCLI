@@ -69,7 +69,6 @@ from forgecli.application.llm.gateway.observability import (
     GatewayObserver,
     InProcessGatewayMetrics,
 )
-from forgecli.application.llm.gateway.origin import RequestOrigin
 from forgecli.application.llm.gateway.params import (
     ModelParams,
     ThinkingConfig,
@@ -107,11 +106,6 @@ from forgecli.application.llm.gateway.token_estimator import (
 from forgecli.application.llm.gateway.tokenizer_registry import TokenizerRegistry
 from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.llm.thinking import ThinkingMode
-
-# thinking.enabled=auto 时按 origin 的默认策略（§3.5）：计划 / review / debug 默认开。
-_THINKING_AUTO_ON_ORIGINS = frozenset(
-    {RequestOrigin.PLAN, RequestOrigin.REVIEW, RequestOrigin.DEBUG}
-)
 
 # settings_source 未注入时的 provider 默认（与配置切片默认一致）。
 _FALLBACK_TIMEOUT_SECONDS = 60.0
@@ -803,7 +797,7 @@ class DefaultLlmGateway(LlmGateway):
         ref: ModelRef,
         entry: ModelCatalogEntry,
     ) -> ThinkingConfig:
-        """读取模型配置、解析 auto，并生成 provider 运行时参数。"""
+        """读取模型配置并生成 provider 运行时参数。"""
         mode = entry.thinking_mode
         enabled = mode is ThinkingMode.ON
         return ThinkingConfig(

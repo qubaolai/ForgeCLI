@@ -64,6 +64,7 @@ _PROTOCOL_CAPABILITIES = ProviderCapabilities(
     supports_structured_output=True,
 )
 
+
 def _default_client_factory() -> httpx.Client:
     return httpx.Client()
 

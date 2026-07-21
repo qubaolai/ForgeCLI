@@ -33,7 +33,8 @@ from forgecli.application.llm.metering import CostEstimator, UsageMeter
 from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.llm.overrides_service import ModelOverridesService
 from forgecli.application.llm.runtime_resolver import ConfigBackedSelectionResolver
-from forgecli.application.llm.thinking import ThinkingEffortName
+from forgecli.application.llm.thinking import ThinkingEffortName, ThinkingMode
+from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.application.session import EventType, SessionService
 from forgecli.domain.conversation import MessageRole
 from forgecli.infrastructure.config.toml_store import TomlConfigStore
@@ -70,6 +71,7 @@ class _Env:
         self.overrides = ModelOverridesService(
             TomlModelOverridesStore(forge_toml), self.llm
         )
+        self.thinking_state = ThinkingRuntimeState()
         registry = ProviderRegistry()
         registry.register(provider)
         self.gateway = DefaultLlmGateway(
@@ -78,6 +80,7 @@ class _Env:
                 config_service=self.config,
                 llm_config_service=self.llm,
                 overrides_loader=self.overrides.overrides,
+                thinking_state=self.thinking_state,
             ),
         )
         self.provider = provider
@@ -120,6 +123,24 @@ def test_switching_current_model_switches_thinking_config(tmp_path: Path) -> Non
     assert env.provider.last_request.thinking is not None
     assert env.provider.last_request.thinking.enabled is True
     assert env.provider.last_request.thinking.effort == ThinkingEffortName("high")
+
+
+def test_runtime_thinking_override_reaches_gateway_without_writing_llm_config(
+    tmp_path: Path,
+) -> None:
+    env = _Env(tmp_path, FakeModelProvider(content="ok"))
+    env.set_current("deepseek-chat")
+    before = (tmp_path / "llm.toml").read_text(encoding="utf-8")
+    ref = ModelRef("deepseek", "deepseek-chat")
+    entry = build_catalog(env.llm.config()).get(ref)
+
+    assert env.thinking_state.update(ref, entry, mode=ThinkingMode.ON) is True
+    env.gateway.complete(_request())
+
+    assert (tmp_path / "llm.toml").read_text(encoding="utf-8") == before
+    assert env.provider.last_request is not None
+    assert env.provider.last_request.thinking is not None
+    assert env.provider.last_request.thinking.enabled is True
 
 
 def test_origin_override_routes_only_that_origin(tmp_path: Path) -> None:

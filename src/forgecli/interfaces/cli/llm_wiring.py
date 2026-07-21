@@ -47,6 +47,7 @@ from forgecli.application.llm.metering import CostEstimator, UsageMeter
 from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.llm.overrides_service import ModelOverridesService
 from forgecli.application.llm.runtime_resolver import ConfigBackedSelectionResolver
+from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.infrastructure.llm.adapters import OpenAICompatibleProvider
 from forgecli.infrastructure.llm.credentials import (
     EnvCredentialResolver,
@@ -65,14 +66,18 @@ class LlmRuntime:
     overrides_service: ModelOverridesService
     # 进程内观测聚合（ADR-0012 §9）：/status 经 snapshot() 消费（展示接入后续切片）。
     gateway_metrics: InProcessGatewayMetrics
+    thinking_state: ThinkingRuntimeState
 
 
 def build_llm_runtime(
     config_service: ConfigService,
     llm_config_service: LlmConfigService,
     forge_toml: Path,
+    thinking_state: ThinkingRuntimeState | None = None,
 ) -> LlmRuntime:
     """装配统一 LLM 网关及其协作件"""
+    if thinking_state is None:
+        thinking_state = ThinkingRuntimeState()
     overrides_service = ModelOverridesService(
         TomlModelOverridesStore(forge_toml), llm_config_service
     )
@@ -80,6 +85,7 @@ def build_llm_runtime(
         config_service=config_service,
         llm_config_service=llm_config_service,
         overrides_loader=overrides_service.overrides,
+        thinking_state=thinking_state,
     )
     registry = _build_provider_registry(llm_config_service)
 
@@ -107,6 +113,7 @@ def build_llm_runtime(
         replier=replier,
         overrides_service=overrides_service,
         gateway_metrics=metrics,
+        thinking_state=thinking_state,
     )
 
 

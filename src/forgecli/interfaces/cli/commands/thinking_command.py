@@ -10,27 +10,30 @@ from forgecli.application.llm.errors import ConfigError, ConfigValidationError
 from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
 from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.llm.thinking import ThinkingEffortName, ThinkingMode
+from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.application.slash_commands import CommandHandler
 from forgecli.domain.intents import SlashCommand
 
 _USAGE = (
-    "设置思考模式: /thinking on|off|auto \n"
-    "设置思考强度: /thinking effort <等级> | /thinking on|auto <等级>"
+    "设置思考模式: /thinking on|off \n"
+    "设置思考强度: /thinking effort <等级> | /thinking on <等级>"
 )
 
 
 class ThinkingCommand(CommandHandler):
-    """只修改应用级 llm.toml 中当前具体模型的 thinking 设置。"""
+    """只修改当前 Forge 进程内当前模型的 thinking 设置。"""
 
     def __init__(
         self,
         config: ConfigService,
         llm: LlmConfigService,
         output: UserOutput,
+        thinking_state: ThinkingRuntimeState,
     ) -> None:
         self._config = config
         self._llm = llm
         self._output = output
+        self._thinking_state = thinking_state
 
     def execute(self, command: SlashCommand) -> bool:
         try:
@@ -40,12 +43,16 @@ class ThinkingCommand(CommandHandler):
                 return False
 
             mode, effort = self._parse_args(command.args)
-            changed = self._llm.update_model_thinking(
-                ref.provider,
-                ref.model,
-                mode=mode,
-                effort=effort,
-            )
+            entry = self._base_entry(ref)
+            try:
+                changed = self._thinking_state.update(
+                    ref,
+                    entry,
+                    mode=mode,
+                    effort=effort,
+                )
+            except ValueError as exc:
+                raise ConfigValidationError(str(exc)) from exc
             self._output.print(self._describe(ref, changed=changed))
             return changed
         except ConfigError as exc:
@@ -87,12 +94,16 @@ class ThinkingCommand(CommandHandler):
             raise ConfigValidationError(str(exc)) from exc
 
     def _describe(self, ref: ModelRef, *, changed: bool) -> str:
+        entry = self._base_entry(ref)
+        entry = self._thinking_state.apply(ref, entry)
+        prefix = "已更新" if changed else "当前设置"
+        return f"{prefix}：模型 {ref} · {self._thinking_text(entry)}"
+
+    def _base_entry(self, ref: ModelRef) -> ModelCatalogEntry:
         catalog = build_catalog(self._llm.config())
         if not catalog.has_model(ref):
             raise ConfigValidationError(f"模型不存在: {ref}")
-        entry = catalog.get(ref)
-        prefix = "已更新" if changed else "当前设置"
-        return f"{prefix}：模型 {ref} · {self._thinking_text(entry)}"
+        return catalog.get(ref)
 
     @staticmethod
     def _thinking_text(entry: ModelCatalogEntry) -> str:

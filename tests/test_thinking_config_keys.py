@@ -13,6 +13,7 @@ from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import ConfigValidationError
 from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.llm.thinking import ThinkingEffortName, ThinkingMode
+from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.infrastructure.config.toml_store import TomlConfigStore
 from forgecli.infrastructure.llm import TomlLlmConfigStore
 from forgecli.interfaces.cli.bootstrap import _prompt_runtime_status
@@ -110,7 +111,7 @@ def test_prompt_status_combines_project_model_and_its_thinking(tmp_path: Path) -
         "deepseek",
         "deepseek-reasoner",
         {
-            "thinking_mode": "auto",
+            "thinking_mode": "on",
             "thinking_effort": "medium",
             "thinking_efforts": ["low", "medium", "high"],
             "thinking_default_effort": "medium",
@@ -118,7 +119,7 @@ def test_prompt_status_combines_project_model_and_its_thinking(tmp_path: Path) -
     )
 
     assert _prompt_runtime_status(config, llm) == (
-        "模型 deepseek:deepseek-reasoner · thinking auto/medium"
+        "模型 deepseek:deepseek-reasoner · thinking on/medium"
     )
 
     llm.add_model(
@@ -130,4 +131,26 @@ def test_prompt_status_combines_project_model_and_its_thinking(tmp_path: Path) -
     assert (
         _prompt_runtime_status(config, llm)
         == "模型 deepseek:deepseek-chat · thinking off"
+    )
+
+
+def test_prompt_status_reads_process_thinking_override(tmp_path: Path) -> None:
+    config = _config_service(tmp_path)
+    llm = _llm_service(tmp_path)
+    config.set(config_keys.DEFAULT_MODEL_PROVIDER_KEY, "deepseek")
+    config.set(config_keys.DEFAULT_MODEL_NAME_KEY, "deepseek-chat")
+    llm.add_model(
+        "deepseek",
+        "deepseek-chat",
+        {"thinking_mode": "off", "thinking_efforts": ["high"]},
+    )
+    ref = ModelRef("deepseek", "deepseek-chat")
+    state = ThinkingRuntimeState()
+    entry = build_catalog(llm.config()).get(ref)
+    assert state.update(
+        ref, entry, mode=ThinkingMode.ON, effort=ThinkingEffortName("high")
+    )
+
+    assert _prompt_runtime_status(config, llm, state) == (
+        "模型 deepseek:deepseek-chat · thinking on/high"
     )

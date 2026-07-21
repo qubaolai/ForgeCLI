@@ -11,6 +11,7 @@ from forgecli.application.config.config_service import ConfigService
 from forgecli.application.interaction_ports import DirectoryPicker
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.overrides_service import ModelOverridesService
+from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.application.project import ProjectContext, ProjectService
 from forgecli.application.session import ResumeService, SessionService
 from forgecli.application.slash_commands import CommandRegistry, CommandSpec
@@ -47,6 +48,7 @@ def build_registry(
     config_service: ConfigService | None = None,
     llm_service: LlmConfigService | None = None,
     overrides_service: ModelOverridesService | None = None,
+    thinking_state: ThinkingRuntimeState | None = None,
 ) -> CommandRegistry:
     registry = CommandRegistry()
     # ConfigService 按 level 路由落盘：应用级 config.toml，项目级当前项目的 forge.toml。
@@ -65,6 +67,8 @@ def build_registry(
         overrides_service = ModelOverridesService(
             TomlModelOverridesStore(forge_toml), llm_service
         )
+    if thinking_state is None:
+        thinking_state = ThinkingRuntimeState()
 
     # resume 复用 application service：枚举 / 搜索 / 读取本项目 sessions/ 下的历史会话。
     sessions_dir = project_home / "sessions"
@@ -122,7 +126,9 @@ def build_registry(
         CommandSpec(
             "thinking",
             "查看 / 修改当前模型的思考开关与强度",
-            handler=ThinkingCommand(config_service, llm_service, output),
+            handler=ThinkingCommand(
+                config_service, llm_service, output, thinking_state
+            ),
         ),
         CommandSpec(
             "add-dir",
