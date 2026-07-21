@@ -9,16 +9,17 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 
+from forgecli.application.llm.gateway.errors import ModelBadRequestError
 from forgecli.application.llm.gateway.messages import ChatMessage, TextBlock
 from forgecli.application.llm.gateway.params import (
     ModelParams,
     ThinkingConfig,
-    ThinkingEffort,
-    ThinkingMode,
 )
 from forgecli.application.llm.gateway.provider import ProviderRequest
 from forgecli.application.llm.providers import ThinkingDialect
+from forgecli.application.llm.thinking import ThinkingEffortName
 from forgecli.domain.conversation import MessageRole
 from forgecli.infrastructure.llm.adapters import OpenAICompatibleProvider
 
@@ -73,8 +74,9 @@ def _payload(
 def test_effort_dialect_sends_reasoning_effort() -> None:
     payload = _payload(
         ThinkingDialect.EFFORT,
-        ThinkingConfig(enabled=ThinkingMode.ON, effort=ThinkingEffort.MEDIUM),
+        ThinkingConfig(enabled=True, effort=ThinkingEffortName("medium")),
     )
+    assert payload["thinking"] == {"type": "enabled"}
     assert payload["reasoning_effort"] == "medium"
     assert "thinking_budget" not in payload
 
@@ -82,8 +84,9 @@ def test_effort_dialect_sends_reasoning_effort() -> None:
 def test_budget_dialect_maps_effort_to_budget_tokens() -> None:
     payload = _payload(
         ThinkingDialect.BUDGET,
-        ThinkingConfig(enabled=ThinkingMode.ON, effort=ThinkingEffort.MEDIUM),
+        ThinkingConfig(enabled=True, effort=ThinkingEffortName("medium")),
     )
+    assert payload["thinking"] == {"type": "enabled"}
     assert payload["thinking_budget"] == 4096  # 档位表 medium -> 4096
     assert "reasoning_effort" not in payload
 
@@ -91,59 +94,54 @@ def test_budget_dialect_maps_effort_to_budget_tokens() -> None:
 def test_budget_mapping_truncated_by_model_max_output_tokens() -> None:
     payload = _payload(
         ThinkingDialect.BUDGET,
-        ThinkingConfig(enabled=ThinkingMode.ON, effort=ThinkingEffort.HIGH),
+        ThinkingConfig(enabled=True, effort=ThinkingEffortName("high")),
         model_max_output_tokens=2048,
     )
+    assert payload["thinking"] == {"type": "enabled"}
     assert payload["thinking_budget"] == 2048  # high=16384 受 max_output 截断
 
 
 def test_budget_mapping_not_truncated_without_catalog_hint() -> None:
     payload = _payload(
         ThinkingDialect.BUDGET,
-        ThinkingConfig(enabled=ThinkingMode.ON, effort=ThinkingEffort.HIGH),
+        ThinkingConfig(enabled=True, effort=ThinkingEffortName("high")),
         model_max_output_tokens=None,
     )
+    assert payload["thinking"] == {"type": "enabled"}
     assert payload["thinking_budget"] == 16384  # catalog 缺失时不截断
 
 
-def test_explicit_budget_tokens_passed_through() -> None:
-    payload = _payload(
-        ThinkingDialect.BUDGET,
-        ThinkingConfig(
-            enabled=ThinkingMode.ON,
-            effort=ThinkingEffort.NONE,
-            budget_tokens=3000,
-        ),
-        model_max_output_tokens=2048,
-    )
-    assert payload["thinking_budget"] == 3000  # 显式 budget 直接透传，不截断
-
-
-def test_effort_wins_when_both_given() -> None:
-    payload = _payload(
-        ThinkingDialect.BUDGET,
-        ThinkingConfig(
-            enabled=ThinkingMode.ON,
-            effort=ThinkingEffort.LOW,
-            budget_tokens=9999,
-        ),
-    )
-    assert payload["thinking_budget"] == 1024  # 两者都给以 effort 为准（§3.5）
+def test_budget_dialect_rejects_unmapped_open_effort() -> None:
+    with pytest.raises(ModelBadRequestError, match="无法映射强度"):
+        _payload(
+            ThinkingDialect.BUDGET,
+            ThinkingConfig(enabled=True, effort=ThinkingEffortName("max")),
+        )
 
 
 def test_none_dialect_sends_no_thinking_fields() -> None:
     payload = _payload(
         ThinkingDialect.NONE,
-        ThinkingConfig(enabled=ThinkingMode.ON, effort=ThinkingEffort.HIGH),
+        ThinkingConfig(enabled=True, effort=ThinkingEffortName("high")),
     )
     assert "reasoning_effort" not in payload
     assert "thinking_budget" not in payload
+    assert "thinking" not in payload
 
 
-def test_thinking_off_sends_nothing_regardless_of_dialect() -> None:
+def test_thinking_off_sends_disabled_switch_without_effort() -> None:
     payload = _payload(
         ThinkingDialect.BUDGET,
-        ThinkingConfig(enabled=ThinkingMode.OFF, effort=ThinkingEffort.HIGH),
+        ThinkingConfig(enabled=False, effort=ThinkingEffortName("high")),
     )
-    assert "reasoning_effort" not in payload
+    assert payload["thinking"] == {"type": "disabled"}
     assert "thinking_budget" not in payload
+
+
+def test_thinking_enabled_without_effort_still_sends_switch() -> None:
+    payload = _payload(
+        ThinkingDialect.EFFORT,
+        ThinkingConfig(enabled=True),
+    )
+    assert payload["thinking"] == {"type": "enabled"}
+    assert "reasoning_effort" not in payload

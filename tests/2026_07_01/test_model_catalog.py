@@ -16,6 +16,11 @@ from forgecli.application.llm.gateway import (
     ModelCatalogService,
 )
 from forgecli.application.llm.model_ref import ModelRef
+from forgecli.application.llm.thinking import (
+    ModelThinkingCapabilities,
+    ModelThinkingSettings,
+    ThinkingMode,
+)
 
 
 class _StubCatalog(ModelCatalogService):
@@ -44,7 +49,6 @@ def _entry(
     max_output_tokens: int | None = None,
     supports_structured_output: bool = False,
     supports_tool_calling: bool = False,
-    supports_thinking: bool = False,
     allowlisted: bool = True,
     deprecated: bool = False,
 ) -> ModelCatalogEntry:
@@ -55,7 +59,8 @@ def _entry(
         max_output_tokens=max_output_tokens,
         supports_structured_output=supports_structured_output,
         supports_tool_calling=supports_tool_calling,
-        supports_thinking=supports_thinking,
+        thinking_capabilities=ModelThinkingCapabilities(),
+        thinking_settings=ModelThinkingSettings(mode=ThinkingMode.OFF),
         allowlisted=allowlisted,
         deprecated=deprecated,
     )
@@ -107,7 +112,7 @@ def test_entry_capability_defaults_are_conservative() -> None:
     entry = _entry()
     assert entry.supports_structured_output is False
     assert entry.supports_tool_calling is False
-    assert entry.supports_thinking is False
+    assert entry.thinking_mode is ThinkingMode.OFF
     assert entry.allowlisted is True
     assert entry.deprecated is False
     assert entry.max_output_tokens is None

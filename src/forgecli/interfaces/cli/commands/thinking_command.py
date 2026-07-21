@@ -1,0 +1,108 @@
+"""当前模型的 thinking 快速查看与修改命令。"""
+
+from __future__ import annotations
+
+from forgecli.application.config.config_service import ConfigService
+from forgecli.application.interaction_ports import UserOutput
+from forgecli.application.llm.catalog_builder import build_catalog
+from forgecli.application.llm.config.llm_config_service import LlmConfigService
+from forgecli.application.llm.errors import ConfigError, ConfigValidationError
+from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
+from forgecli.application.llm.model_ref import ModelRef
+from forgecli.application.llm.thinking import ThinkingEffortName, ThinkingMode
+from forgecli.application.slash_commands import CommandHandler
+from forgecli.domain.intents import SlashCommand
+
+_USAGE = (
+    "设置思考模式: /thinking on|off|auto \n"
+    "设置思考强度: /thinking effort <等级> | /thinking on|auto <等级>"
+)
+
+
+class ThinkingCommand(CommandHandler):
+    """只修改应用级 llm.toml 中当前具体模型的 thinking 设置。"""
+
+    def __init__(
+        self,
+        config: ConfigService,
+        llm: LlmConfigService,
+        output: UserOutput,
+    ) -> None:
+        self._config = config
+        self._llm = llm
+        self._output = output
+
+    def execute(self, command: SlashCommand) -> bool:
+        try:
+            ref = self._current_model()
+            if not command.args:
+                self._output.print(self._describe(ref, changed=False))
+                return False
+
+            mode, effort = self._parse_args(command.args)
+            changed = self._llm.update_model_thinking(
+                ref.provider,
+                ref.model,
+                mode=mode,
+                effort=effort,
+            )
+            self._output.print(self._describe(ref, changed=changed))
+            return changed
+        except ConfigError as exc:
+            self._output.print(exc.message)
+            return False
+
+    def _current_model(self) -> ModelRef:
+        ref = self._config.effective().default_model
+        if ref is None:
+            raise ConfigValidationError(
+                "当前未设置模型；请先使用 /model 选择一个模型。"
+            )
+        return ref
+
+    def _parse_args(
+        self, args: tuple[str, ...]
+    ) -> tuple[ThinkingMode | None, ThinkingEffortName | None]:
+        normalized = tuple(item.strip().lower() for item in args)
+        if len(normalized) == 1 and normalized[0] in {
+            item.value for item in ThinkingMode
+        }:
+            return ThinkingMode(normalized[0]), None
+
+        if len(normalized) == 2 and normalized[0] == "effort":
+            return None, self._effort(normalized[1])
+
+        if len(normalized) == 2 and normalized[0] in {
+            ThinkingMode.ON.value,
+        }:
+            return ThinkingMode(normalized[0]), self._effort(normalized[1])
+
+        raise ConfigValidationError(_USAGE)
+
+    @staticmethod
+    def _effort(value: str) -> ThinkingEffortName:
+        try:
+            return ThinkingEffortName(value)
+        except ValueError as exc:
+            raise ConfigValidationError(str(exc)) from exc
+
+    def _describe(self, ref: ModelRef, *, changed: bool) -> str:
+        catalog = build_catalog(self._llm.config())
+        if not catalog.has_model(ref):
+            raise ConfigValidationError(f"模型不存在: {ref}")
+        entry = catalog.get(ref)
+        prefix = "已更新" if changed else "当前设置"
+        return f"{prefix}：模型 {ref} · {self._thinking_text(entry)}"
+
+    @staticmethod
+    def _thinking_text(entry: ModelCatalogEntry) -> str:
+        if entry.thinking_mode is ThinkingMode.OFF:
+            return "thinking off"
+
+        effective = entry.effective_thinking_effort
+        effort = effective.value if effective is not None else "默认"
+        supported = " / ".join(
+            item.value for item in entry.thinking_capabilities.efforts
+        )
+        suffix = f" · 可用强度 [{supported}]" if supported else ""
+        return f"thinking {entry.thinking_mode.value}/{effort}{suffix}"

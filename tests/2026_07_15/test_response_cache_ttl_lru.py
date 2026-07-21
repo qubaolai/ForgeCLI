@@ -20,7 +20,6 @@ from forgecli.application.llm.gateway import (
     StructuredModelRequest,
     TextBlock,
     ThinkingConfig,
-    ThinkingMode,
 )
 from forgecli.application.llm.model_ref import ModelRef
 from forgecli.domain.conversation import MessageRole
@@ -102,8 +101,8 @@ def test_no_ttl_means_no_expiry() -> None:
 
 def test_model_thinking_is_part_of_cache_fingerprint() -> None:
     cache = InMemoryResponseCache(allowed_origins=(RequestOrigin.TITLE,))
-    off = ThinkingConfig(enabled=ThinkingMode.OFF)
-    on = ThinkingConfig(enabled=ThinkingMode.ON)
+    off = ThinkingConfig(enabled=False)
+    on = ThinkingConfig(enabled=True)
     cache.store(_request("q"), _REF, _response("off"), thinking=off)
 
     assert cache.lookup(_request("q"), _REF, thinking=off) is not None

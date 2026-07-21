@@ -36,7 +36,6 @@ class ProviderCapabilities:
     supports_streaming: bool = False
     supports_tools: bool = False
     supports_structured_output: bool = False
-    supports_thinking: bool = False
 
 
 @dataclass(frozen=True)
@@ -74,7 +73,6 @@ class ProviderRequest:
     response_schema: Mapping[str, object] | None = None
     schema_name: str | None = None
     strict_schema: bool = True
-    model_max_output_tokens: int | None = None
 
     def __post_init__(self) -> None:
         if not self.model.strip():

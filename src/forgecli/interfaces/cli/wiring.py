@@ -30,6 +30,7 @@ from forgecli.interfaces.cli.commands.mode_command import ModeCommand
 from forgecli.interfaces.cli.commands.model_command import ModelsCommand
 from forgecli.interfaces.cli.commands.resume_command import ResumeCommand
 from forgecli.interfaces.cli.commands.status_command import StatusCommand
+from forgecli.interfaces.cli.commands.thinking_command import ThinkingCommand
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
 
@@ -117,6 +118,11 @@ def build_registry(
             "model",
             "打开运行时默认模型选择面板",
             handler=ModelsCommand(config_service, llm_service, presenter, output),
+        ),
+        CommandSpec(
+            "thinking",
+            "查看 / 修改当前模型的思考开关与强度",
+            handler=ThinkingCommand(config_service, llm_service, output),
         ),
         CommandSpec(
             "add-dir",

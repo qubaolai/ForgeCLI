@@ -40,13 +40,13 @@ from forgecli.application.llm.gateway.selection_resolver import (
     ResolvedModel,
 )
 from forgecli.application.llm.model_ref import ModelRef
+from forgecli.application.llm.thinking import ThinkingMode
 
 # required_capabilities 里的能力字符串 -> ModelCatalogEntry 上对应的 supports_* 标志。
 # 这是封闭集合：请求未收录的能力字符串视为无法满足，直接归一为 bad request。
 _CAPABILITY_FLAGS: dict[str, str] = {
     "structured_output": "supports_structured_output",
     "tool_calling": "supports_tool_calling",
-    "thinking": "supports_thinking",
 }
 
 
@@ -115,6 +115,15 @@ class DefaultModelSelectionResolver(ModelSelectionResolver):
             )
 
         for capability in required_capabilities:
+            if capability == "thinking":
+                supported = entry.thinking_mode is not ThinkingMode.OFF
+                if not supported:
+                    raise ModelBadRequestError(
+                        f"模型 {ref} 不支持所需能力: {capability}",
+                        provider=ref.provider,
+                        model=ref.model,
+                    )
+                continue
             flag = _CAPABILITY_FLAGS.get(capability)
             if flag is None:
                 raise ModelBadRequestError(

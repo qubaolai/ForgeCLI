@@ -16,9 +16,13 @@ from collections.abc import Callable
 
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.llm import providers as provider_registry
+from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config import STANDARD_FIELDS, StandardField
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import ConfigError
+from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
+from forgecli.application.llm.model_ref import ModelRef
+from forgecli.application.llm.thinking import ThinkingMode
 from forgecli.application.menu import Choice, Menu
 
 # 供应商详情里可编辑的字段（label, key）
@@ -109,6 +113,27 @@ class LlmMenu:
                 self._model_field_choice(provider_id, model_id, field)
                 for field in STANDARD_FIELDS
             ]
+            rows.extend(
+                (
+                    Choice(
+                        "Thinking 支持强度（逗号分隔）",
+                        preview=self._thinking_efforts_preview(provider_id, model_id),
+                        on_text=self._set_thinking_efforts(provider_id, model_id),
+                        text_default=self._thinking_efforts_raw(provider_id, model_id),
+                    ),
+                    Choice(
+                        "Thinking 默认强度",
+                        preview=self._thinking_default_preview(provider_id, model_id),
+                        on_text=self._set_thinking_default(provider_id, model_id),
+                        text_default=self._thinking_default_raw(provider_id, model_id),
+                    ),
+                    Choice(
+                        "Thinking 模式",
+                        preview=self._thinking_mode_preview(provider_id, model_id),
+                        on_cycle=self._cycle_thinking_mode(provider_id, model_id),
+                    ),
+                )
+            )
             rows.append(
                 Choice(
                     "扩展字段(JSON)",
@@ -210,6 +235,48 @@ class LlmMenu:
         except ConfigError as exc:
             self._output.print(exc.message)
 
+    def _set_thinking_efforts(
+        self, provider_id: str, model_id: str
+    ) -> Callable[[str], None]:
+        def submit(value: str) -> None:
+            def update() -> None:
+                self._service.set_model_thinking_efforts(provider_id, model_id, value)
+
+            self._safe(update)
+
+        return submit
+
+    def _set_thinking_default(
+        self, provider_id: str, model_id: str
+    ) -> Callable[[str], None]:
+        def submit(value: str) -> None:
+            def update() -> None:
+                self._service.set_model_thinking_default_effort(
+                    provider_id, model_id, value
+                )
+
+            self._safe(update)
+
+        return submit
+
+    def _cycle_thinking_mode(
+        self, provider_id: str, model_id: str
+    ) -> Callable[[int], None]:
+        modes = tuple(ThinkingMode)
+
+        def cycle(delta: int) -> None:
+            entry = self._catalog_entry(provider_id, model_id)
+            current = entry.thinking_mode if entry is not None else ThinkingMode.OFF
+            index = modes.index(current)
+            target = modes[(index + delta) % len(modes)]
+
+            def update() -> None:
+                self._service.update_model_thinking(provider_id, model_id, mode=target)
+
+            self._safe(update)
+
+        return cycle
+
     # ---- preview 取值 ----
 
     def _provider_preview(self, provider_id: str) -> Callable[[], str]:
@@ -254,11 +321,9 @@ class LlmMenu:
             if model is None:
                 return ""
             p = model.params
-            mode = p.thinking_mode.value if p.thinking_mode else "auto"
-            effort = p.thinking_effort.value if p.thinking_effort else "none"
             return (
                 f"ctx={p.context_window or '-'} max={p.max_tokens or '-'} "
-                f"thinking={mode}/{effort}"
+                f"{self._thinking_preview(provider_id, model_id)()}"
             )
 
         return preview
@@ -271,16 +336,84 @@ class LlmMenu:
             if model is None:
                 return ""
             value = getattr(model.params, field, None)
-            if value is None and field == "thinking_mode":
-                return "auto"
-            if value is None and field == "thinking_effort":
-                return "none"
             enum_value = getattr(value, "value", None)
             if isinstance(enum_value, str):
                 return enum_value
             return "" if value is None else str(value)
 
         return preview
+
+    def _thinking_preview(self, provider_id: str, model_id: str) -> Callable[[], str]:
+        def preview() -> str:
+            entry = self._catalog_entry(provider_id, model_id)
+            if entry is None:
+                return "thinking=未配置"
+            if entry.thinking_mode is ThinkingMode.OFF:
+                return "thinking=off"
+            effort = entry.effective_thinking_effort
+            effort_text = effort.value if effort is not None else "默认"
+            return f"thinking={entry.thinking_mode.value}/{effort_text}"
+
+        return preview
+
+    def _thinking_efforts_preview(
+        self, provider_id: str, model_id: str
+    ) -> Callable[[], str]:
+        def preview() -> str:
+            entry = self._catalog_entry(provider_id, model_id)
+            if entry is None:
+                return "（未配置）"
+            efforts = entry.thinking_capabilities.efforts
+            return " / ".join(item.value for item in efforts) or "（无可调强度）"
+
+        return preview
+
+    def _thinking_efforts_raw(
+        self, provider_id: str, model_id: str
+    ) -> Callable[[], str]:
+        def preview() -> str:
+            entry = self._catalog_entry(provider_id, model_id)
+            if entry is None:
+                return ""
+            return ", ".join(item.value for item in entry.thinking_capabilities.efforts)
+
+        return preview
+
+    def _thinking_default_preview(
+        self, provider_id: str, model_id: str
+    ) -> Callable[[], str]:
+        def preview() -> str:
+            raw = self._thinking_default_raw(provider_id, model_id)()
+            return raw or "（无）"
+
+        return preview
+
+    def _thinking_default_raw(
+        self, provider_id: str, model_id: str
+    ) -> Callable[[], str]:
+        def preview() -> str:
+            entry = self._catalog_entry(provider_id, model_id)
+            if entry is None or entry.thinking_capabilities.default_effort is None:
+                return ""
+            return entry.thinking_capabilities.default_effort.value
+
+        return preview
+
+    def _thinking_mode_preview(
+        self, provider_id: str, model_id: str
+    ) -> Callable[[], str]:
+        def preview() -> str:
+            entry = self._catalog_entry(provider_id, model_id)
+            return entry.thinking_mode.value if entry is not None else "off"
+
+        return preview
+
+    def _catalog_entry(
+        self, provider_id: str, model_id: str
+    ) -> ModelCatalogEntry | None:
+        catalog = build_catalog(self._service.config())
+        ref = ModelRef(provider=provider_id, model=model_id)
+        return catalog.get(ref) if catalog.has_model(ref) else None
 
     def _model_field_choice(
         self,

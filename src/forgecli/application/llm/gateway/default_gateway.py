@@ -73,7 +73,6 @@ from forgecli.application.llm.gateway.origin import RequestOrigin
 from forgecli.application.llm.gateway.params import (
     ModelParams,
     ThinkingConfig,
-    ThinkingMode,
 )
 from forgecli.application.llm.gateway.provider import (
     ModelProvider,
@@ -107,6 +106,7 @@ from forgecli.application.llm.gateway.token_estimator import (
 )
 from forgecli.application.llm.gateway.tokenizer_registry import TokenizerRegistry
 from forgecli.application.llm.model_ref import ModelRef
+from forgecli.application.llm.thinking import ThinkingMode
 
 # thinking.enabled=auto 时按 origin 的默认策略（§3.5）：计划 / review / debug 默认开。
 _THINKING_AUTO_ON_ORIGINS = frozenset(
@@ -798,33 +798,18 @@ class DefaultLlmGateway(LlmGateway):
         return resolved.ref, resolved.entry
 
     def _resolve_thinking(
-        self, request: ModelRequest, ref: ModelRef, entry: ModelCatalogEntry
+        self,
+        request: ModelRequest,
+        ref: ModelRef,
+        entry: ModelCatalogEntry,
     ) -> ThinkingConfig:
-        """读取具体模型 thinking 配置并解析 auto；ModelRequest 不得覆盖。"""
-        supports_thinking = entry.supports_thinking
-        enabled = entry.thinking_mode
-        if enabled is ThinkingMode.ON and not supports_thinking:
-            # 模型配置要求 thinking 但能力目录不支持：请求前报错，不得静默忽略。
-            raise ModelBadRequestError(
-                f"模型 {ref} 不支持 thinking，无法按当前 thinking 配置调用",
-                provider=ref.provider,
-                model=ref.model,
-                request_id=request.request_id,
-            )
-        if enabled is ThinkingMode.AUTO:
-            # auto 由 gateway 按 origin 默认策略决定（§3.5），不交给 LLM；
-            # 策略本身参考模型能力位：模型不支持 thinking 时 auto 解析为 off。
-            wants_thinking = request.origin in _THINKING_AUTO_ON_ORIGINS
-            enabled = (
-                ThinkingMode.ON
-                if wants_thinking and supports_thinking
-                else ThinkingMode.OFF
-            )
-        resolved = ThinkingConfig(
+        """读取模型配置、解析 auto，并生成 provider 运行时参数。"""
+        mode = entry.thinking_mode
+        enabled = mode is ThinkingMode.ON
+        return ThinkingConfig(
             enabled=enabled,
-            effort=entry.thinking_effort,
+            effort=(entry.effective_thinking_effort if enabled else None),
         )
-        return resolved
 
     # ---- 治理管线 ----
 
@@ -919,7 +904,6 @@ class DefaultLlmGateway(LlmGateway):
             response_schema=response_schema,
             schema_name=schema_name,
             strict_schema=strict_schema,
-            model_max_output_tokens=entry.max_output_tokens,
         )
 
     # ---- 可观测性（ADR-0012 §9）----

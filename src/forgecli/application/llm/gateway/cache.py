@@ -252,13 +252,19 @@ def _params_key(request: ModelRequest) -> dict[str, object]:
     }
 
 
-def _thinking_key(thinking: ThinkingConfig | None) -> dict[str, object] | None:
+def _thinking_key(
+    thinking: ThinkingConfig | None,
+) -> dict[str, object] | None:
     if thinking is None:
         return None
+
     return {
-        "enabled": thinking.enabled.value,
-        "effort": thinking.effort.value,
-        "budget_tokens": thinking.budget_tokens,
+        "enabled": thinking.enabled,
+        "effort": (
+            thinking.effort.value
+            if thinking.enabled and thinking.effort is not None
+            else None
+        ),
     }
 
 

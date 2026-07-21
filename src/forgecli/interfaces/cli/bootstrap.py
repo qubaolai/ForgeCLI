@@ -16,6 +16,7 @@ from forgecli.application.config.config_service import ConfigService
 from forgecli.application.intent_router import IntentRouter
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
+from forgecli.application.llm.thinking import ThinkingMode
 from forgecli.application.project import (
     ProjectContext,
     ProjectService,
@@ -72,10 +73,11 @@ def _prompt_runtime_status(
     if not catalog.has_model(ref):
         return f"模型 {ref} · thinking 未配置"
     entry = catalog.get(ref)
-    return (
-        f"模型 {ref} · thinking "
-        f"{entry.thinking_mode.value}/{entry.thinking_effort.value}"
-    )
+    if entry.thinking_mode is ThinkingMode.OFF:
+        return f"模型 {ref} · thinking off"
+    effort = entry.effective_thinking_effort
+    effort_text = effort.value if effort is not None else "默认"
+    return f"模型 {ref} · thinking {entry.thinking_mode.value}/{effort_text}"
 
 
 def run() -> None:

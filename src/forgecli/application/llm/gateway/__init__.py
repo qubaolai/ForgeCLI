@@ -70,8 +70,6 @@ from forgecli.application.llm.gateway.origin import RequestOrigin
 from forgecli.application.llm.gateway.params import (
     ModelParams,
     ThinkingConfig,
-    ThinkingEffort,
-    ThinkingMode,
 )
 from forgecli.application.llm.gateway.provider import (
     ModelProvider,
@@ -119,6 +117,7 @@ from forgecli.application.llm.gateway.token_estimator import (
     TokenEstimator,
 )
 from forgecli.application.llm.gateway.tokenizer_registry import TokenizerRegistry
+from forgecli.application.llm.thinking import ThinkingEffortName, ThinkingMode
 
 __all__ = [
     # 端口
@@ -163,8 +162,8 @@ __all__ = [
     # 超参
     "ModelParams",
     "ThinkingConfig",
+    "ThinkingEffortName",
     "ThinkingMode",
-    "ThinkingEffort",
     # message / tool 词汇
     "ChatMessage",
     "ContentBlock",

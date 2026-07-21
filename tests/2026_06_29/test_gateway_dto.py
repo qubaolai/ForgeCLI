@@ -16,8 +16,6 @@ from forgecli.application.llm.gateway import (
     StructuredModelRequest,
     TextBlock,
     ThinkingConfig,
-    ThinkingEffort,
-    ThinkingMode,
 )
 from forgecli.domain.conversation import MessageRole
 
@@ -105,11 +103,11 @@ def test_params_validate_ranges() -> None:
         ModelParams(max_output_tokens=0)
 
 
-def test_thinking_config_auto_default_and_budget_validation() -> None:
+def test_thinking_config_has_resolved_runtime_shape_only() -> None:
     cfg = ThinkingConfig()
-    assert cfg.enabled is ThinkingMode.AUTO
-    assert cfg.effort is ThinkingEffort.NONE
-    with pytest.raises(ValueError):
+    assert cfg.enabled is False
+    assert cfg.effort is None
+    with pytest.raises(TypeError):
         ThinkingConfig(budget_tokens=0)
 
 

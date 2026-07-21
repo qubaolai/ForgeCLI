@@ -23,11 +23,11 @@ from forgecli.application.llm.errors import UnknownProvider
 
 
 class ThinkingDialect(Enum):
-    """provider 的 thinking 方言（ADR-0012 §4，代码内注册）。
+    """provider 的 thinking 协议方言。
 
-    effort 型发 ``reasoning_effort``；budget 型由 adapter 把 effort 映射为
-    budget_tokens（固定档位表，受模型 max_output_tokens 截断）；none 表示该
-    provider 无 thinking 表达，adapter 不发送任何 thinking 字段。
+    EFFORT 将模型声明的 effort 名称原样发送；
+    BUDGET 通过 adapter 的已知映射转换为 token budget；
+    NONE 表示该 provider 协议没有可发送的 thinking 字段。
     """
 
     EFFORT = "effort"

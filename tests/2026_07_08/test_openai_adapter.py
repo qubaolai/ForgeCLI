@@ -21,13 +21,12 @@ from forgecli.application.llm.gateway import (
     ModelUnavailableError,
     TextBlock,
     ThinkingConfig,
-    ThinkingEffort,
-    ThinkingMode,
     ToolResultBlock,
     ToolSpec,
 )
 from forgecli.application.llm.gateway.messages import ChatMessage, ToolCall
 from forgecli.application.llm.gateway.provider import ProviderRequest
+from forgecli.application.llm.thinking import ThinkingEffortName
 from forgecli.domain.conversation import MessageRole
 from forgecli.infrastructure.llm.adapters import OpenAICompatibleProvider
 
@@ -241,8 +240,9 @@ def test_thinking_effort_mapped_to_reasoning_effort() -> None:
         captured["payload"] = json.loads(request.content)
         return httpx.Response(200, json=_ok_body())
 
-    thinking = ThinkingConfig(enabled=ThinkingMode.ON, effort=ThinkingEffort.HIGH)
+    thinking = ThinkingConfig(enabled=True, effort=ThinkingEffortName("high"))
     _provider(handler).complete(_request(thinking=thinking))
+    assert captured["payload"]["thinking"] == {"type": "enabled"}
     assert captured["payload"]["reasoning_effort"] == "high"
 
 
@@ -253,8 +253,9 @@ def test_thinking_off_sends_no_thinking_fields() -> None:
         captured["payload"] = json.loads(request.content)
         return httpx.Response(200, json=_ok_body())
 
-    thinking = ThinkingConfig(enabled=ThinkingMode.OFF)
+    thinking = ThinkingConfig(enabled=False)
     _provider(handler).complete(_request(thinking=thinking))
+    assert captured["payload"]["thinking"] == {"type": "disabled"}
     assert "reasoning_effort" not in captured["payload"]
 
 

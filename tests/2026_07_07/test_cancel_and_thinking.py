@@ -9,7 +9,6 @@ from forgecli.application.llm.gateway import (
     DefaultLlmGateway,
     DefaultModelSelectionResolver,
     InMemoryModelCatalog,
-    ModelBadRequestError,
     ModelCancelledError,
     ModelCatalogEntry,
     ModelParams,
@@ -17,7 +16,6 @@ from forgecli.application.llm.gateway import (
     ProviderRegistry,
     RequestOrigin,
     TextBlock,
-    ThinkingEffort,
     ThinkingMode,
 )
 from forgecli.application.llm.gateway.provider import (
@@ -25,6 +23,11 @@ from forgecli.application.llm.gateway.provider import (
     ProviderResponse,
 )
 from forgecli.application.llm.model_ref import ModelRef
+from forgecli.application.llm.thinking import (
+    ModelThinkingCapabilities,
+    ModelThinkingSettings,
+    ThinkingEffortName,
+)
 from forgecli.domain.conversation import MessageRole
 from forgecli.infrastructure.llm.adapters import FakeModelProvider
 
@@ -47,9 +50,8 @@ class _CancelMidCallProvider(FakeModelProvider):
 def _gateway(
     provider: FakeModelProvider,
     *,
-    supports_thinking: bool = True,
     thinking_mode: ThinkingMode = ThinkingMode.AUTO,
-    thinking_effort: ThinkingEffort = ThinkingEffort.NONE,
+    thinking_effort: ThinkingEffortName | None = None,
 ) -> DefaultLlmGateway:
     registry = ProviderRegistry()
     registry.register(provider)
@@ -59,9 +61,13 @@ def _gateway(
                 provider="deepseek",
                 model="deepseek-chat",
                 context_window=65536,
-                supports_thinking=supports_thinking,
-                thinking_mode=thinking_mode,
-                thinking_effort=thinking_effort,
+                thinking_capabilities=ModelThinkingCapabilities(
+                    efforts=(thinking_effort,) if thinking_effort is not None else (),
+                ),
+                thinking_settings=ModelThinkingSettings(
+                    mode=thinking_mode,
+                    effort=thinking_effort,
+                ),
             ),
         )
     )
@@ -126,13 +132,14 @@ def test_cancel_token_reaches_provider_request() -> None:
 
 def test_model_thinking_config_is_applied() -> None:
     provider = FakeModelProvider(content="ok")
-    gw = _gateway(provider, thinking_effort=ThinkingEffort.MEDIUM)
+    effort = ThinkingEffortName("medium")
+    gw = _gateway(provider, thinking_effort=effort)
     gw.complete(_request(origin=RequestOrigin.PLAN))
     assert provider.last_request is not None
     thinking = provider.last_request.thinking
     assert thinking is not None
-    assert thinking.enabled is ThinkingMode.ON  # plan：auto -> 开（§3.5）
-    assert thinking.effort is ThinkingEffort.MEDIUM
+    assert thinking.enabled is True  # plan：auto -> 开（§3.5）
+    assert thinking.effort == effort
 
 
 def test_auto_thinking_off_for_chat_origin() -> None:
@@ -142,7 +149,7 @@ def test_auto_thinking_off_for_chat_origin() -> None:
     assert provider.last_request is not None
     thinking = provider.last_request.thinking
     assert thinking is not None
-    assert thinking.enabled is ThinkingMode.OFF
+    assert thinking.enabled is False
 
 
 def test_model_thinking_off_cannot_be_overridden_by_request() -> None:
@@ -152,28 +159,16 @@ def test_model_thinking_off_cannot_be_overridden_by_request() -> None:
     assert provider.last_request is not None
     thinking = provider.last_request.thinking
     assert thinking is not None
-    assert thinking.enabled is ThinkingMode.OFF
+    assert thinking.enabled is False
 
 
-def test_thinking_on_unsupported_model_is_capability_error() -> None:
+def test_thinking_on_needs_no_separate_capability_flag() -> None:
     provider = FakeModelProvider(content="ok")
-    gw = _gateway(
-        provider,
-        supports_thinking=False,
-        thinking_mode=ThinkingMode.ON,
-    )
-    with pytest.raises(ModelBadRequestError):
-        gw.complete(_request())
-    assert provider.complete_calls == 0  # 请求前报能力错误，不静默忽略
-
-
-def test_unsupported_model_auto_resolves_thinking_off() -> None:
-    provider = FakeModelProvider(content="ok")
-    gw = _gateway(provider, supports_thinking=False)
-    gw.complete(_request())
+    gw = _gateway(provider, thinking_mode=ThinkingMode.ON)
+    gw.complete(_request(origin=RequestOrigin.CHAT))
     assert provider.last_request is not None
     assert provider.last_request.thinking is not None
-    assert provider.last_request.thinking.enabled is ThinkingMode.OFF
+    assert provider.last_request.thinking.enabled is True
 
 
 def test_model_request_params_reject_explicit_thinking() -> None:

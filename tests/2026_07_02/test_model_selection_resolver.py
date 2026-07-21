@@ -35,7 +35,6 @@ def _entry(
     context_window: int = 64000,
     supports_structured_output: bool = False,
     supports_tool_calling: bool = False,
-    supports_thinking: bool = False,
     allowlisted: bool = True,
     deprecated: bool = False,
 ) -> ModelCatalogEntry:
@@ -45,7 +44,6 @@ def _entry(
         context_window=context_window,
         supports_structured_output=supports_structured_output,
         supports_tool_calling=supports_tool_calling,
-        supports_thinking=supports_thinking,
         allowlisted=allowlisted,
         deprecated=deprecated,
     )

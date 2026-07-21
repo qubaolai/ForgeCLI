@@ -76,7 +76,7 @@ def test_runtime_status_is_read_again_for_each_render() -> None:
     assert (
         "".join(text for _, text in prompt._bottom_status()).strip() == state["value"]
     )
-    state["value"] = "模型 deepseek:deepseek-chat · thinking off/none"
+    state["value"] = "模型 deepseek:deepseek-chat · thinking off"
     assert (
         "".join(text for _, text in prompt._bottom_status()).strip() == state["value"]
     )

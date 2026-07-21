@@ -19,8 +19,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 
 from forgecli.application.llm import providers as provider_registry
+from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config import (
     CacheSettings,
     CircuitBreakerSettings,
@@ -34,7 +36,14 @@ from forgecli.application.llm.config.llm_config import (
 )
 from forgecli.application.llm.config.llm_config_store import LlmConfigStore
 from forgecli.application.llm.errors import ConfigValidationError
+from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
 from forgecli.application.llm.gateway.origin import RequestOrigin
+from forgecli.application.llm.model_ref import ModelRef
+from forgecli.application.llm.thinking import (
+    ModelThinkingCapabilities,
+    ThinkingEffortName,
+    ThinkingMode,
+)
 
 _DEFAULT_TIMEOUT = 60
 _DEFAULT_MAX_RETRIES = 2
@@ -157,10 +166,7 @@ class LlmConfigService:
         if not model_id.strip():
             raise ConfigValidationError("模型 id 不能为空")
         # 用同一套校验，保证菜单写入与手改文件得到一致约束。
-        configured = dict(params)
-        configured.setdefault("thinking_mode", "auto")
-        configured.setdefault("thinking_effort", "none")
-        parsed = ModelParams.parse(configured)
+        parsed = ModelParams.parse(params)
         self._store.upsert_model(
             provider_id,
             model_id,
@@ -171,6 +177,82 @@ class LlmConfigService:
     def remove_model(self, provider_id: str, model_id: str) -> None:
         provider_registry.require_known_provider(provider_id)
         self._store.remove_model(provider_id, model_id)
+
+    def update_model_thinking(
+        self,
+        provider_id: str,
+        model_id: str,
+        *,
+        mode: ThinkingMode | None = None,
+        effort: ThinkingEffortName | None = None,
+    ) -> bool:
+        """原子更新一个模型的 thinking 设置。
+
+        mode/effort 均为 None 时不写入。mode 直接控制 thinking；mode=off 只关闭
+        使用并保留强度配置。候选配置会在唯一一次持久化前完整校验。
+        返回配置文件是否实际发生变化。
+        """
+        provider_registry.require_known_provider(provider_id)
+        fields = self._existing_fields(provider_id, model_id)
+        before = dict(fields)
+        if mode is not None:
+            fields["thinking_mode"] = mode.value
+        if effort is not None:
+            fields["thinking_effort"] = effort.value
+        return self._write_model_fields(provider_id, model_id, before, fields)
+
+    def set_model_thinking_efforts(
+        self, provider_id: str, model_id: str, raw: str
+    ) -> bool:
+        """以逗号分隔文本设置模型支持的开放 effort 集合。"""
+        values = tuple(item.strip().lower() for item in raw.split(",") if item.strip())
+        try:
+            efforts = tuple(ThinkingEffortName(item) for item in values)
+            # 复用值对象做重复值等能力不变量校验。
+            ModelThinkingCapabilities(efforts=efforts)
+        except ValueError as exc:
+            raise ConfigValidationError(str(exc)) from exc
+
+        fields = self._existing_fields(provider_id, model_id)
+        before = dict(fields)
+        fields["thinking_efforts"] = [item.value for item in efforts]
+
+        selected = fields.get("thinking_effort")
+        if selected not in values:
+            fields.pop("thinking_effort", None)
+        configured_default = fields.get("thinking_default_effort")
+        if configured_default not in values:
+            fields.pop("thinking_default_effort", None)
+        return self._write_model_fields(provider_id, model_id, before, fields)
+
+    def set_model_thinking_default_effort(
+        self, provider_id: str, model_id: str, raw: str
+    ) -> bool:
+        """设置默认 effort；留空表示该模型不配置默认强度。"""
+        entry = self._thinking_entry(provider_id, model_id)
+        text = raw.strip().lower()
+        fields = self._existing_fields(provider_id, model_id)
+        before = dict(fields)
+        if not text:
+            fields.pop("thinking_default_effort", None)
+        else:
+            try:
+                effort = ThinkingEffortName(text)
+            except ValueError as exc:
+                raise ConfigValidationError(str(exc)) from exc
+            if effort not in entry.thinking_capabilities.efforts:
+                allowed = " / ".join(
+                    item.value for item in entry.thinking_capabilities.efforts
+                )
+                raise ConfigValidationError(
+                    f"模型 {provider_id}:{model_id} 不支持默认强度 {text!r}；"
+                    f"可选值 [{allowed}]"
+                )
+            fields["thinking_efforts"] = [
+                item.value for item in entry.thinking_capabilities.efforts
+            ]
+            fields["thinking_default_effort"] = effort.value
+        return self._write_model_fields(provider_id, model_id, before, fields)
 
     def set_model_field(
         self, provider_id: str, model_id: str, field: str, raw: str
@@ -344,6 +426,49 @@ class LlmConfigService:
         if model is None:
             raise ConfigValidationError(f"模型不存在: {provider_id}/{model_id}")
         return model.params.to_fields()
+
+    def _thinking_entry(self, provider_id: str, model_id: str) -> ModelCatalogEntry:
+        ref = ModelRef(provider=provider_id, model=model_id)
+        catalog = build_catalog(self.config())
+        if not catalog.has_model(ref):
+            raise ConfigValidationError(f"模型不存在: {ref}")
+        return catalog.get(ref)
+
+    def _write_model_fields(
+        self,
+        provider_id: str,
+        model_id: str,
+        before: Mapping[str, object],
+        fields: Mapping[str, object],
+    ) -> bool:
+        if fields == before:
+            return False
+        parsed = ModelParams.parse(fields)
+        config = self.config()
+        provider = config.provider(provider_id)
+        if provider is None:
+            raise ConfigValidationError(f"供应商不存在: {provider_id}")
+        replacement = ModelSpec(provider=provider_id, id=model_id, params=parsed)
+        models = tuple(
+            replacement if model.id == model_id else model for model in provider.models
+        )
+        candidate_provider = replace(provider, models=models)
+        candidate = replace(
+            config,
+            providers=tuple(
+                candidate_provider if item.id == provider_id else item
+                for item in config.providers
+            ),
+        )
+        # 先在内存候选配置上完成 catalog 合并校验，再进行唯一一次持久化写入。
+        build_catalog(candidate)
+        self._store.upsert_model(
+            provider_id,
+            model_id,
+            parsed.to_fields(),
+            provider_defaults=self._defaults(provider_id),
+        )
+        return True
 
     def _parse_provider(
         self, provider_id: str, body: Mapping[str, object]

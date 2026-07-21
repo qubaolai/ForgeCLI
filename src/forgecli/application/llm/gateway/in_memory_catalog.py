@@ -1,9 +1,8 @@
 """内存态模型目录 InMemoryModelCatalog（ADR-0011 §4）。
 
 ModelCatalogService 的最小具体实现：由一组 ModelCatalogEntry 在内存里索引，供
-ModelSelectionResolver 做存在性与能力前置校验。它*不解析任何配置*——真实的「内置
-baseline 与用户 `[providers.*.models.*]` TOML 合并」的运行时视图留给后续切片；本类是那个
-加载器最终要填充的内存缝，也让 gateway / resolver 现在就能端到端跑通。
+ModelSelectionResolver 做存在性与能力前置校验。它*不解析任何配置*；由上层把用户
+`[providers.*.models.*]` 配置转换成条目后填入。代码不提供内置模型目录。
 
 单模型能力的唯一事实来源仍是这里的 ModelCatalogEntry（§4）：provider/model 存在性、
 context window、allowlist、supports_* 都从条目读，调用方不各自复述 provider 能力。

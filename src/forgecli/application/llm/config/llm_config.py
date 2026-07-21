@@ -24,7 +24,12 @@ from types import MappingProxyType
 
 from forgecli.application.llm.errors import ConfigValidationError
 from forgecli.application.llm.gateway.origin import RequestOrigin
-from forgecli.application.llm.gateway.params import ThinkingEffort, ThinkingMode
+from forgecli.application.llm.thinking import (
+    ModelThinkingCapabilities,
+    ModelThinkingSettings,
+    ThinkingEffortName,
+    ThinkingMode,
+)
 
 # 标准化字段名（出现在模型行内表里、且我们认识的键）。其余键归入 extra。
 _KNOWN_FIELDS = {
@@ -38,6 +43,8 @@ _KNOWN_FIELDS = {
     "top_p",
     "thinking_mode",
     "thinking_effort",
+    "thinking_efforts",
+    "thinking_default_effort",
     "extra",
 }
 
@@ -80,16 +87,24 @@ def _as_thinking_mode(value: object) -> ThinkingMode:
         ) from None
 
 
-def _as_thinking_effort(value: object) -> ThinkingEffort:
+def _as_effort_name(name: str, value: object) -> ThinkingEffortName:
     if not isinstance(value, str):
-        raise ConfigValidationError(f"thinking_effort 必须是字符串，收到: {value!r}")
+        raise ConfigValidationError(f"{name} must be a string")
+
     try:
-        return ThinkingEffort(value)
-    except ValueError:
-        allowed = " / ".join(item.value for item in ThinkingEffort)
-        raise ConfigValidationError(
-            f"thinking_effort 只能是 [{allowed}]，收到: {value!r}"
-        ) from None
+        return ThinkingEffortName(value)
+    except ValueError as exc:
+        raise ConfigValidationError(f"invalid {name}: {value}") from exc
+
+
+def _as_effort_names(value: object) -> tuple[ThinkingEffortName, ...]:
+    if not isinstance(value, list):
+        raise ConfigValidationError("thinking_efforts must be a list")
+
+    return tuple(
+        _as_effort_name(f"thinking_efforts[{index}]", item)
+        for index, item in enumerate(value)
+    )
 
 
 @dataclass(frozen=True)
@@ -109,13 +124,6 @@ STANDARD_FIELDS: tuple[StandardField, ...] = (
     StandardField("max_tokens", "最大输出 tokens", int),
     StandardField("temperature", "温度", float),
     StandardField("top_p", "top_p", float),
-    StandardField("thinking_mode", "思考模式", str, ("auto", "on", "off")),
-    StandardField(
-        "thinking_effort",
-        "思考强度",
-        str,
-        ("none", "low", "medium", "high"),
-    ),
     StandardField("cost_per_1k_input", "输入价格/1k", float),
     StandardField("cost_per_1k_output", "输出价格/1k", float),
     StandardField("cost_per_1k_cached_input", "缓存输入价格/1k", float),
@@ -171,13 +179,21 @@ class ModelParams:
     cost_per_1k_reasoning: float = 0.0
     temperature: float | None = None
     top_p: float | None = None
+
+    # 模型 thinking 强度声明。
+    thinking_efforts: tuple[ThinkingEffortName, ...] | None = None
+    thinking_default_effort: ThinkingEffortName | None = None
+
+    # 用户对当前模型的 thinking 设置。
     thinking_mode: ThinkingMode | None = None
-    thinking_effort: ThinkingEffort | None = None
+    thinking_effort: ThinkingEffortName | None = None
+
     extra: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
 
     def to_fields(self) -> dict[str, object]:
-        """转回可写入 TOML 的字段 dict（只含已设置的项），供读-改-写复用。"""
+        """转回可写入 TOML 的字段 dict，只包含已设置的项目。"""
         out: dict[str, object] = {}
+
         if self.context_window is not None:
             out["context_window"] = self.context_window
         if self.max_tokens is not None:
@@ -186,10 +202,16 @@ class ModelParams:
             out["temperature"] = self.temperature
         if self.top_p is not None:
             out["top_p"] = self.top_p
+
+        if self.thinking_efforts is not None:
+            out["thinking_efforts"] = [effort.value for effort in self.thinking_efforts]
+        if self.thinking_default_effort is not None:
+            out["thinking_default_effort"] = self.thinking_default_effort.value
         if self.thinking_mode is not None:
             out["thinking_mode"] = self.thinking_mode.value
         if self.thinking_effort is not None:
             out["thinking_effort"] = self.thinking_effort.value
+
         if self.cost_per_1k_input:
             out["cost_per_1k_input"] = self.cost_per_1k_input
         if self.cost_per_1k_output:
@@ -198,59 +220,136 @@ class ModelParams:
             out["cost_per_1k_cached_input"] = self.cost_per_1k_cached_input
         if self.cost_per_1k_reasoning:
             out["cost_per_1k_reasoning"] = self.cost_per_1k_reasoning
+
         if self.extra:
             out["extra"] = dict(self.extra)
+
         return out
 
     def extra_json(self) -> str:
         """extra 的单行 JSON 文本，供菜单展示与编辑初值。"""
-        return json.dumps(dict(self.extra), ensure_ascii=False) if self.extra else ""
+        if not self.extra:
+            return ""
+        return json.dumps(dict(self.extra), ensure_ascii=False)
 
     @classmethod
     def parse(cls, raw: Mapping[str, object]) -> ModelParams:
-        """从配置行内表构造；非法值抛 ConfigValidationError。"""
-        cw = raw.get("context_window")
-        mt = raw.get("max_tokens")
-        temp = raw.get("temperature")
+        """从模型配置构造参数对象；非法值抛 ConfigValidationError。"""
+        context_window = raw.get("context_window")
+        max_tokens = raw.get("max_tokens")
+        temperature = raw.get("temperature")
         top_p = raw.get("top_p")
-        thinking_mode = raw.get("thinking_mode")
-        thinking_effort = raw.get("thinking_effort")
         extra = raw.get("extra", {})
 
         if not isinstance(extra, Mapping):
             raise ConfigValidationError("extra 必须是 JSON 对象（键值表）")
 
-        # 未在标准字段列表里的多余键，宽容地并入 extra，便于厂商自定义透传。
-        merged_extra = {k: v for k, v in raw.items() if k not in _KNOWN_FIELDS}
+        # 未被 ForgeCLI 标准化的字段兼容性地归入 extra，
+        # 供具体供应商 adapter 使用。
+        merged_extra = {
+            key: value for key, value in raw.items() if key not in _KNOWN_FIELDS
+        }
         merged_extra.update(extra)
 
+        thinking_efforts = (
+            _as_effort_names(raw["thinking_efforts"])
+            if "thinking_efforts" in raw
+            else None
+        )
+
+        thinking_default_effort = (
+            _as_effort_name(
+                "thinking_default_effort",
+                raw["thinking_default_effort"],
+            )
+            if "thinking_default_effort" in raw
+            else None
+        )
+
+        thinking_mode = (
+            _as_thinking_mode(raw["thinking_mode"]) if "thinking_mode" in raw else None
+        )
+
+        thinking_effort = (
+            _as_effort_name(
+                "thinking_effort",
+                raw["thinking_effort"],
+            )
+            if "thinking_effort" in raw
+            else None
+        )
+
+        try:
+            capabilities = ModelThinkingCapabilities(
+                efforts=thinking_efforts or (),
+                default_effort=thinking_default_effort,
+            )
+            capabilities.validate(
+                ModelThinkingSettings(
+                    mode=thinking_mode or ThinkingMode.OFF,
+                    effort=thinking_effort,
+                )
+            )
+        except ValueError as exc:
+            raise ConfigValidationError(str(exc)) from exc
+
         return cls(
-            context_window=None
-            if cw is None
-            else _as_positive_int("context_window", cw),
-            max_tokens=None if mt is None else _as_positive_int("max_tokens", mt),
+            context_window=(
+                None
+                if context_window is None
+                else _as_positive_int(
+                    "context_window",
+                    context_window,
+                )
+            ),
+            max_tokens=(
+                None
+                if max_tokens is None
+                else _as_positive_int(
+                    "max_tokens",
+                    max_tokens,
+                )
+            ),
             cost_per_1k_input=_as_nonneg_float(
-                "cost_per_1k_input", raw.get("cost_per_1k_input", 0.0)
+                "cost_per_1k_input",
+                raw.get("cost_per_1k_input", 0.0),
             ),
             cost_per_1k_output=_as_nonneg_float(
-                "cost_per_1k_output", raw.get("cost_per_1k_output", 0.0)
+                "cost_per_1k_output",
+                raw.get("cost_per_1k_output", 0.0),
             ),
             cost_per_1k_cached_input=_as_nonneg_float(
-                "cost_per_1k_cached_input", raw.get("cost_per_1k_cached_input", 0.0)
+                "cost_per_1k_cached_input",
+                raw.get("cost_per_1k_cached_input", 0.0),
             ),
             cost_per_1k_reasoning=_as_nonneg_float(
-                "cost_per_1k_reasoning", raw.get("cost_per_1k_reasoning", 0.0)
+                "cost_per_1k_reasoning",
+                raw.get("cost_per_1k_reasoning", 0.0),
             ),
-            temperature=None
-            if temp is None
-            else _as_ranged_float("temperature", temp, 0.0, 2.0),
-            top_p=None if top_p is None else _as_ranged_float("top_p", top_p, 0.0, 1.0),
-            thinking_mode=None
-            if thinking_mode is None
-            else _as_thinking_mode(thinking_mode),
-            thinking_effort=None
-            if thinking_effort is None
-            else _as_thinking_effort(thinking_effort),
+            temperature=(
+                None
+                if temperature is None
+                else _as_ranged_float(
+                    "temperature",
+                    temperature,
+                    0.0,
+                    2.0,
+                )
+            ),
+            top_p=(
+                None
+                if top_p is None
+                else _as_ranged_float(
+                    "top_p",
+                    top_p,
+                    0.0,
+                    1.0,
+                )
+            ),
+            thinking_efforts=thinking_efforts,
+            thinking_default_effort=thinking_default_effort,
+            thinking_mode=thinking_mode,
+            thinking_effort=thinking_effort,
             extra=MappingProxyType(dict(merged_extra)),
         )
 

@@ -11,8 +11,8 @@ from forgecli.application.config.config_service import ConfigService
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import ConfigValidationError
-from forgecli.application.llm.gateway import ThinkingEffort, ThinkingMode
 from forgecli.application.llm.model_ref import ModelRef
+from forgecli.application.llm.thinking import ThinkingEffortName, ThinkingMode
 from forgecli.infrastructure.config.toml_store import TomlConfigStore
 from forgecli.infrastructure.llm import TomlLlmConfigStore
 from forgecli.interfaces.cli.bootstrap import _prompt_runtime_status
@@ -34,13 +34,13 @@ def test_thinking_is_not_a_generic_app_or_project_key() -> None:
     assert config_keys.is_known("thinking.effort") is False
 
 
-def test_new_model_gets_explicit_thinking_defaults(tmp_path: Path) -> None:
+def test_new_model_does_not_invent_thinking_defaults(tmp_path: Path) -> None:
     llm = _llm_service(tmp_path)
     llm.add_model("deepseek", "deepseek-chat", {})
 
     params = llm.config().model("deepseek", "deepseek-chat").params
-    assert params.thinking_mode is ThinkingMode.AUTO
-    assert params.thinking_effort is ThinkingEffort.NONE
+    assert params.thinking_mode is None
+    assert params.thinking_effort is None
     assert (tmp_path / "llm.toml").exists()
     assert not (tmp_path / "config.toml").exists()
     assert not (tmp_path / "forge.toml").exists()
@@ -51,29 +51,54 @@ def test_model_thinking_fields_round_trip_and_feed_catalog(tmp_path: Path) -> No
     llm.add_model(
         "deepseek",
         "deepseek-reasoner",
-        {"extra": {"supports_thinking": True}},
+        {
+            "thinking_efforts": ["high", "max"],
+            "thinking_default_effort": "high",
+        },
     )
-    llm.set_model_field("deepseek", "deepseek-reasoner", "thinking_mode", "on")
-    llm.set_model_field("deepseek", "deepseek-reasoner", "thinking_effort", "high")
+    changed = llm.update_model_thinking(
+        "deepseek",
+        "deepseek-reasoner",
+        mode=ThinkingMode.ON,
+        effort=ThinkingEffortName("max"),
+    )
 
     entry = build_catalog(llm.config()).get(
         ModelRef(provider="deepseek", model="deepseek-reasoner")
     )
+    assert changed is True
     assert entry.thinking_mode is ThinkingMode.ON
-    assert entry.thinking_effort is ThinkingEffort.HIGH
+    assert entry.effective_thinking_effort == ThinkingEffortName("max")
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    (("thinking_mode", "maybe"), ("thinking_effort", "extreme")),
-)
-def test_invalid_model_thinking_choice_rejected(
-    tmp_path: Path, field: str, value: str
-) -> None:
+def test_enabling_mode_needs_no_separate_capability_field(tmp_path: Path) -> None:
     llm = _llm_service(tmp_path)
-    llm.add_model("deepseek", "deepseek-chat", {})
+    llm.add_model("deepseek", "custom-reasoner", {})
+
+    assert llm.update_model_thinking(
+        "deepseek", "custom-reasoner", mode=ThinkingMode.ON
+    )
+
+    params = llm.config().model("deepseek", "custom-reasoner").params
+    assert params.thinking_mode is ThinkingMode.ON
+
+
+def test_model_rejects_effort_outside_its_capability_list(tmp_path: Path) -> None:
+    llm = _llm_service(tmp_path)
+    llm.add_model(
+        "deepseek",
+        "deepseek-reasoner",
+        {
+            "thinking_efforts": ["high", "max"],
+            "thinking_default_effort": "high",
+        },
+    )
     with pytest.raises(ConfigValidationError):
-        llm.set_model_field("deepseek", "deepseek-chat", field, value)
+        llm.update_model_thinking(
+            "deepseek",
+            "deepseek-reasoner",
+            effort=ThinkingEffortName("xhigh"),
+        )
 
 
 def test_prompt_status_combines_project_model_and_its_thinking(tmp_path: Path) -> None:
@@ -87,7 +112,8 @@ def test_prompt_status_combines_project_model_and_its_thinking(tmp_path: Path) -
         {
             "thinking_mode": "auto",
             "thinking_effort": "medium",
-            "extra": {"supports_thinking": True},
+            "thinking_efforts": ["low", "medium", "high"],
+            "thinking_default_effort": "medium",
         },
     )
 
@@ -98,9 +124,10 @@ def test_prompt_status_combines_project_model_and_its_thinking(tmp_path: Path) -
     llm.add_model(
         "deepseek",
         "deepseek-chat",
-        {"thinking_mode": "off", "thinking_effort": "none"},
+        {"thinking_mode": "off"},
     )
     config.set(config_keys.DEFAULT_MODEL_NAME_KEY, "deepseek-chat")
-    assert _prompt_runtime_status(config, llm) == (
-        "模型 deepseek:deepseek-chat · thinking off/none"
+    assert (
+        _prompt_runtime_status(config, llm)
+        == "模型 deepseek:deepseek-chat · thinking off"
     )

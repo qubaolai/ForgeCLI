@@ -8,17 +8,29 @@ context window、structured output、tool calling、thinking、allowlist 等元�
 provider 级能力（协议特性、streaming / tool schema 变体）；单模型能力一律以本 service
 为准，路由与能力过滤都读 catalog，不复述 provider 能力。
 
-今日只冻结接口与元数据边界（0701）：不实现任何具体视图。真实视图（内置 baseline 与用户
-`[providers.*.models.*]` TOML 合并成的只读运行时视图）留给后续切片，本切片不解析配置。
+具体视图由用户 `[providers.*.models.*]` TOML 构建；代码不内置具体模型。
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from forgecli.application.llm.gateway.params import ThinkingEffort, ThinkingMode
 from forgecli.application.llm.model_ref import ModelRef
+from forgecli.application.llm.thinking import (
+    ModelThinkingCapabilities,
+    ModelThinkingSettings,
+    ThinkingEffortName,
+    ThinkingMode,
+)
+
+
+def _default_thinking_options() -> ModelThinkingCapabilities:
+    return ModelThinkingCapabilities()
+
+
+def _disabled_thinking() -> ModelThinkingSettings:
+    return ModelThinkingSettings(mode=ThinkingMode.OFF)
 
 
 @dataclass(frozen=True)
@@ -36,10 +48,10 @@ class ModelCatalogEntry:
     max_output_tokens: int | None = None
     supports_structured_output: bool = False
     supports_tool_calling: bool = False
-    supports_thinking: bool = False
-    # 具体模型的 thinking 默认值；请求层不得覆盖。
-    thinking_mode: ThinkingMode = ThinkingMode.AUTO
-    thinking_effort: ThinkingEffort = ThinkingEffort.NONE
+    thinking_capabilities: ModelThinkingCapabilities = field(
+        default_factory=_default_thinking_options
+    )
+    thinking_settings: ModelThinkingSettings = field(default_factory=_disabled_thinking)
     allowlisted: bool = True
     deprecated: bool = False
     # 价格（每 1k token；None = 未知）。cached 价格缺失时按 input 价计；
@@ -48,6 +60,20 @@ class ModelCatalogEntry:
     output_price_per_1k: float | None = None
     cached_input_price_per_1k: float | None = None
     reasoning_price_per_1k: float | None = None
+
+    @property
+    def thinking_mode(self) -> ThinkingMode:
+        return self.thinking_settings.mode
+
+    @property
+    def thinking_effort(self) -> ThinkingEffortName | None:
+        """用户显式选择的强度；None 表示使用模型默认值。"""
+        return self.thinking_settings.effort
+
+    @property
+    def effective_thinking_effort(self) -> ThinkingEffortName | None:
+        """发送请求时实际使用的强度。"""
+        return self.thinking_capabilities.effective_effort(self.thinking_settings)
 
     def __post_init__(self) -> None:
         if not self.provider.strip() or not self.model.strip():
@@ -65,6 +91,10 @@ class ModelCatalogEntry:
             price = getattr(self, name)
             if price is not None and price < 0:
                 raise ValueError(f"ModelCatalogEntry.{name} 不能为负")
+        try:
+            self.thinking_capabilities.validate(self.thinking_settings)
+        except ValueError as exc:
+            raise ValueError(f"ModelCatalogEntry thinking 配置无效: {exc}") from exc
 
 
 class ModelCatalogService(ABC):

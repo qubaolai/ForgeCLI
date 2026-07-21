@@ -17,38 +17,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import Enum
 from types import MappingProxyType
 
-
-class ThinkingMode(Enum):
-    """是否开启思考。auto 表示由 gateway 按 origin 默认策略决定（ADR §3.5）。"""
-
-    ON = "on"
-    OFF = "off"
-    AUTO = "auto"
-
-
-class ThinkingEffort(Enum):
-    """思考强度档位。与 budget_tokens 互为高低层表达，两者都给时以 effort 为准。"""
-
-    NONE = "none"
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
+from forgecli.application.llm.thinking import ThinkingEffortName
 
 
 @dataclass(frozen=True)
 class ThinkingConfig:
-    """统一思考配置；provider adapter 负责翻译为供应商字段。"""
+    """Gateway 解析完成后交给 provider adapter 的 thinking 参数。
 
-    enabled: ThinkingMode = ThinkingMode.AUTO
-    effort: ThinkingEffort = ThinkingEffort.NONE
-    budget_tokens: int | None = None
+    模型配置中的 auto 已由 gateway 解析，因此运行时只需要布尔开关。
+    effort 是当前模型的有效强度，不使用跨供应商固定枚举。
+    """
 
-    def __post_init__(self) -> None:
-        if self.budget_tokens is not None and self.budget_tokens <= 0:
-            raise ValueError("ThinkingConfig.budget_tokens 必须为正整数")
+    enabled: bool = False
+    effort: ThinkingEffortName | None = None
 
 
 @dataclass(frozen=True)

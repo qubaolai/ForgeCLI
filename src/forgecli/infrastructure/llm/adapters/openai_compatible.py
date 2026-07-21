@@ -10,8 +10,6 @@ deepseek / mimo / openai / local 均走 OpenAI chat-completions 协议，本 ada
     - cancel_token（§8 / §9）：非流式在发送前检查；流式在读行间隙检查并
       close 在途响应，不等待自然超时。
 
-httpx 只出现在 infrastructure（§19：application 不 import 供应商 SDK / HTTP 库）。
-httpx.Client 由注入的 client_factory 提供，测试用 httpx.MockTransport，默认不打网络。
 """
 
 from __future__ import annotations
@@ -64,16 +62,7 @@ _PROTOCOL_CAPABILITIES = ProviderCapabilities(
     supports_streaming=True,
     supports_tools=True,
     supports_structured_output=True,
-    supports_thinking=True,
 )
-
-# budget 型方言的 effort -> budget_tokens 固定档位表（ADR-0012 §4）。
-_EFFORT_BUDGET_TOKENS: dict[str, int] = {
-    "low": 1024,
-    "medium": 4096,
-    "high": 16384,
-}
-
 
 def _default_client_factory() -> httpx.Client:
     return httpx.Client()
@@ -186,8 +175,6 @@ class OpenAICompatibleProvider(ModelProvider):
             payload["top_p"] = params.top_p
         if params.max_output_tokens is not None:
             payload["max_tokens"] = params.max_output_tokens
-        if params.stop:
-            payload["stop"] = list(params.stop)
         if request.tools:
             payload["tools"] = [
                 {
@@ -208,7 +195,6 @@ class OpenAICompatibleProvider(ModelProvider):
             payload.update(dict(options))
         if stream:
             payload["stream"] = True
-            payload["stream_options"] = {"include_usage": True}
         return payload
 
     def _messages(self, request: ProviderRequest) -> list[dict[str, Any]]:
@@ -271,35 +257,39 @@ class OpenAICompatibleProvider(ModelProvider):
             return {"response_format": {"type": "json_object"}}
         return {}
 
-    def _thinking_fields(self, request: ProviderRequest) -> dict[str, Any]:
-        """thinking 统一抽象 -> 供应商字段，按方言翻译（§3.5 / ADR-0012 §4）。
-
-        - effort 型：发 ``reasoning_effort``（现行为）。
-        - budget 型：effort 经固定档位表映射为 budget_tokens（受模型
-          max_output_tokens 截断）；显式 budget_tokens 直接透传（不截断）；
-          两者都给时以 effort 为准。wire 字段用 ``thinking_budget``
-          （Qwen/DashScope 风格；后续 provider 若用不同字段名在注册表侧扩展）。
-        - none 型：该 provider 无 thinking 表达，不发送任何字段。
-        enabled=off / 未配置时不发送任何 thinking 字段。
+    def _thinking_fields(
+        self,
+        request: ProviderRequest,
+    ) -> dict[str, Any]:
+        """将模型级 thinking 设置翻译为供应商协议字段。
+        thinking.enabled == true：发送 thinking.type=enabled
+        thinking.enabled == false：发送 thinking.type=disabled
+        开启且有 effort 时, 再发送 reasoning_effort, 关闭时不会发送 effort
+        ThinkingDialect.NONE 仍不发送 Thinking 字段
+        开启但没有 effort 时，也会发送 thinking.type=enabled, 此时为模型默认强度
         """
         thinking = request.thinking
-        if thinking is None or thinking.enabled.value != "on":
+
+        if thinking is None or self._thinking_dialect is ThinkingDialect.NONE:
             return {}
-        if self._thinking_dialect is ThinkingDialect.NONE:
-            return {}
+
+        fields: dict[str, Any] = {
+            "thinking": {
+                "type": "enabled" if thinking.enabled else "disabled",
+            }
+        }
+        if not thinking.enabled:
+            return fields
+
+        effort = thinking.effort
+        if effort is None:
+            return fields
+
         if self._thinking_dialect is ThinkingDialect.EFFORT:
-            if thinking.effort.value != "none":
-                return {"reasoning_effort": thinking.effort.value}
-            return {}
-        # BUDGET 型：effort 优先映射，显式 budget 其次透传。
-        if thinking.effort.value != "none":
-            budget = _EFFORT_BUDGET_TOKENS[thinking.effort.value]
-            if request.model_max_output_tokens is not None:
-                budget = min(budget, request.model_max_output_tokens)
-            return {"thinking_budget": budget}
-        if thinking.budget_tokens is not None:
-            return {"thinking_budget": thinking.budget_tokens}
-        return {}
+            fields["reasoning_effort"] = effort.value
+            return fields
+
+        return fields
 
     # ---- 响应映射 ----
 

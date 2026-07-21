@@ -72,7 +72,7 @@ def build_llm_runtime(
     llm_config_service: LlmConfigService,
     forge_toml: Path,
 ) -> LlmRuntime:
-    """装配统一 LLM 网关及其协作件（唯一知道具体实现的位置）。"""
+    """装配统一 LLM 网关及其协作件"""
     overrides_service = ModelOverridesService(
         TomlModelOverridesStore(forge_toml), llm_config_service
     )

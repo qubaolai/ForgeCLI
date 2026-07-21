@@ -28,13 +28,12 @@ from forgecli.application.llm.gateway import (
     ProviderRegistry,
     RequestOrigin,
     TextBlock,
-    ThinkingEffort,
-    ThinkingMode,
 )
 from forgecli.application.llm.metering import CostEstimator, UsageMeter
 from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.llm.overrides_service import ModelOverridesService
 from forgecli.application.llm.runtime_resolver import ConfigBackedSelectionResolver
+from forgecli.application.llm.thinking import ThinkingEffortName
 from forgecli.application.session import EventType, SessionService
 from forgecli.domain.conversation import MessageRole
 from forgecli.infrastructure.config.toml_store import TomlConfigStore
@@ -49,13 +48,13 @@ context_window = 65536
 cost_per_1k_input = 0.2
 cost_per_1k_output = 0.4
 thinking_mode = "off"
-thinking_effort = "none"
 
 [llm.providers.deepseek.models.deepseek-mini]
 context_window = 8192
 thinking_mode = "on"
 thinking_effort = "high"
-extra = { supports_thinking = true }
+thinking_efforts = ["high", "max"]
+thinking_default_effort = "high"
 """
 
 
@@ -113,14 +112,14 @@ def test_switching_current_model_switches_thinking_config(tmp_path: Path) -> Non
     env.gateway.complete(_request(RequestOrigin.PLAN))
     assert env.provider.last_request is not None
     assert env.provider.last_request.thinking is not None
-    assert env.provider.last_request.thinking.enabled is ThinkingMode.OFF
+    assert env.provider.last_request.thinking.enabled is False
 
     env.set_current("deepseek-mini")
     env.gateway.complete(_request(RequestOrigin.PLAN))
     assert env.provider.last_request is not None
     assert env.provider.last_request.thinking is not None
-    assert env.provider.last_request.thinking.enabled is ThinkingMode.ON
-    assert env.provider.last_request.thinking.effort is ThinkingEffort.HIGH
+    assert env.provider.last_request.thinking.enabled is True
+    assert env.provider.last_request.thinking.effort == ThinkingEffortName("high")
 
 
 def test_origin_override_routes_only_that_origin(tmp_path: Path) -> None:
@@ -144,7 +143,7 @@ def test_capability_shortfall_errors_without_model_switch(tmp_path: Path) -> Non
         model_selection=CurrentModelSelection(),
         messages=(ChatMessage(role=MessageRole.USER, content=(TextBlock("hi"),)),),
         params=ModelParams(),
-        # deepseek-chat 的基线与用户配置都未声明 thinking 能力。
+        # deepseek-chat 的 thinking_mode=off，不能满足 thinking 能力诉求。
         required_capabilities=("thinking",),
     )
     with pytest.raises(ModelBadRequestError):

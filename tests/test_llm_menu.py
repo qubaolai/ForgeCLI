@@ -11,6 +11,7 @@ from pathlib import Path
 
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
+from forgecli.application.llm.thinking import ThinkingMode
 from forgecli.application.menu import Choice, Menu
 from forgecli.infrastructure.llm import TomlLlmConfigStore
 from forgecli.interfaces.cli.menus.llm_menu import LlmMenu
@@ -94,23 +95,98 @@ def test_edit_standard_field(tmp_path: Path) -> None:
     assert params.temperature == 0.7
 
 
-def test_edit_model_thinking_choices(tmp_path: Path) -> None:
+def test_model_detail_edits_thinking_capabilities_and_settings(tmp_path: Path) -> None:
     menu, _, service = _menu(tmp_path)
-    service.add_model("deepseek", "deepseek-reasoner", {})
+    service.add_model(
+        "deepseek",
+        "deepseek-reasoner",
+        {
+            "thinking_efforts": ["high", "max"],
+            "thinking_default_effort": "high",
+            "thinking_mode": "auto",
+        },
+    )
     detail = _find(
         _find(menu.models_menu(), "DeepSeek").submenu(), "deepseek-reasoner"
     ).submenu()
 
-    mode = _find(detail, "思考模式")
-    effort = _find(detail, "思考强度")
+    efforts = _find(detail, "Thinking 支持强度（逗号分隔）")
+    default = _find(detail, "Thinking 默认强度")
+    mode = _find(detail, "Thinking 模式")
+
+    assert "支持 Thinking" not in {choice.label for choice in detail.choices}
+    assert "Thinking 当前强度" not in {choice.label for choice in detail.choices}
+    assert efforts.preview() == "high / max"
+    assert default.preview() == "high"
     assert mode.preview() == "auto"
-    assert effort.preview() == "none"
+
+    efforts.on_text("low, high, max")
+    default.on_text("max")
     mode.on_cycle(1)
-    effort.on_cycle(2)
 
     params = service.config().model("deepseek", "deepseek-reasoner").params
+    assert tuple(item.value for item in params.thinking_efforts) == (
+        "low",
+        "high",
+        "max",
+    )
+    assert params.thinking_default_effort.value == "max"
     assert params.thinking_mode.value == "on"
-    assert params.thinking_effort.value == "medium"
+    assert params.thinking_effort is None
+
+
+def test_thinking_mode_off_preserves_model_capabilities_and_effort(
+    tmp_path: Path,
+) -> None:
+    menu, _, service = _menu(tmp_path)
+    service.add_model(
+        "deepseek",
+        "deepseek-reasoner",
+        {
+            "thinking_efforts": ["high", "max"],
+            "thinking_default_effort": "high",
+            "thinking_mode": "on",
+            "thinking_effort": "max",
+        },
+    )
+    detail = _find(
+        _find(menu.models_menu(), "DeepSeek").submenu(), "deepseek-reasoner"
+    ).submenu()
+
+    _find(detail, "Thinking 模式").on_cycle(1)
+
+    params = service.config().model("deepseek", "deepseek-reasoner").params
+    assert params.thinking_mode.value == "off"
+    assert tuple(item.value for item in params.thinking_efforts) == ("high", "max")
+    assert params.thinking_default_effort.value == "high"
+    assert params.thinking_effort.value == "max"
+
+
+def test_model_detail_rebuild_reads_thinking_change_immediately(tmp_path: Path) -> None:
+    menu, _, service = _menu(tmp_path)
+    service.add_model(
+        "deepseek",
+        "deepseek-reasoner",
+        {
+            "thinking_efforts": ["high", "max"],
+            "thinking_default_effort": "high",
+            "thinking_mode": "auto",
+        },
+    )
+    detail_builder = _find(
+        _find(menu.models_menu(), "DeepSeek").submenu(), "deepseek-reasoner"
+    ).submenu
+
+    assert _find(detail_builder(), "Thinking 模式").preview() == "auto"
+
+    # 模拟 /thinking 对同一 service 的写入；复用既有菜单构建器也必须读取最新文件。
+    service.update_model_thinking("deepseek", "deepseek-reasoner", mode=ThinkingMode.ON)
+
+    assert _find(detail_builder(), "Thinking 模式").preview() == "on"
+    model_row = _find(
+        _find(menu.models_menu(), "DeepSeek").submenu(), "deepseek-reasoner"
+    )
+    assert model_row.preview() == "ctx=- max=- thinking=on/high"
 
 
 def test_edit_standard_field_out_of_range_is_reported(tmp_path: Path) -> None:
