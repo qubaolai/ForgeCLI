@@ -89,6 +89,11 @@ class Repl:
             except QuitSignal:
                 # 主动退出，不向终端暴露 traceback。
                 break
+            except EOFError:
+                # 输入流结束（stdin 被关闭等）：已经读不到下一行，安全收尾。
+                # 空行 Ctrl-D 不走这里——prompt 的 c-d 绑定消费掉了它（退出只认
+                # Ctrl-C×2，ADR-0007），所以这里不是退出快捷键，只是流末尾兜底。
+                break
             self._process_line(line)
 
     def _process_line(self, line: str) -> None:
@@ -118,7 +123,8 @@ class Repl:
         if spec is None or spec.handler is None:
             self._output.print(f"命令 /{intent.command} 暂未实现。")
             return
-        # 27 日暂不记录 slash_command 事件；后续由 handler 返回值决定是否落盘。
-        # if spec.handler.execute(intent):
-        spec.handler.execute(intent)
-        # self._session.record_slash_command(intent.command, intent.args)
+        # 由 handler 返回值决定是否落盘：True = 真正写了持久状态。只读命令
+        # （/status、/help）返回 False；自己已写专属事件的命令（/plan 写
+        # mode_changed）也返回 False，避免同一次操作记两条事件。
+        if spec.handler.execute(intent):
+            self._session.record_slash_command(intent.command, intent.args)

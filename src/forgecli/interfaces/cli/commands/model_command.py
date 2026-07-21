@@ -40,4 +40,4 @@ class ModelsCommand(CommandHandler):
             return False
         self._presenter.present(self._menu.root_menu())
         # 只有真的切换了默认模型才算写入
-        return self._config.effective().default_model == before
+        return self._config.effective().default_model != before

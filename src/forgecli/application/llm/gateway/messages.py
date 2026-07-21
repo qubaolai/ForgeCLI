@@ -54,15 +54,20 @@ class ToolResultBlock(ContentBlock):
 
 @dataclass(frozen=True)
 class ChatMessage:
-    """一条对话消息：角色 + 内容块数组。"""
+    """一条对话消息：角色 + 内容块数组。
+
+    content 与 tool_calls 至少有一个非空：模型只决定调工具、不带任何文本时，
+    assistant 消息的 content 为空、tool_calls 非空（§10 tool call 回填必须能把
+    这条消息放回 transcript，否则 tool result 关联不上触发它的 tool call）。
+    """
 
     role: MessageRole
     content: tuple[ContentBlock, ...]
     tool_calls: tuple[ToolCall, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.content:
-            raise ValueError("ChatMessage.content 不能为空")
+        if not self.content and not self.tool_calls:
+            raise ValueError("ChatMessage 的 content 与 tool_calls 不能同时为空")
 
 
 @dataclass(frozen=True)

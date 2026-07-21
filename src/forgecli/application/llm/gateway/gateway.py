@@ -17,6 +17,7 @@ complete / complete_structured 两个契约；stream 的 chunk DTO 不提前创�
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 
 from forgecli.application.llm.gateway.request import (
     ModelRequest,
@@ -26,6 +27,7 @@ from forgecli.application.llm.gateway.response import (
     ModelResponse,
     StructuredModelResponse,
 )
+from forgecli.application.llm.gateway.streaming import ModelStreamChunk
 
 
 class LlmGateway(ABC):
@@ -40,3 +42,11 @@ class LlmGateway(ABC):
         self, request: StructuredModelRequest
     ) -> StructuredModelResponse:
         """结构化输出：按 schema 校验，失败归一化为 ModelResponseParseError。"""
+
+    @abstractmethod
+    def stream(self, request: ModelRequest) -> Iterator[ModelStreamChunk]:
+        """流式输出：产出统一 ModelStreamChunk（§9）。
+
+        末块必须携带 usage_delta 与 finish_reason；取消 / 中断时产出
+        interrupted=True 的收尾块，而不是直接断流。
+        """
