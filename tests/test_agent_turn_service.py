@@ -53,12 +53,12 @@ def test_handle_user_message_writes_pair_with_shared_turn_id(tmp_path: Path) -> 
     assert assistant.payload["status"] == "completed"
 
 
-@pytest.mark.parametrize("mode", [SessionMode.CHAT, SessionMode.PLAN, SessionMode.ACT])
+@pytest.mark.parametrize("mode", [SessionMode.ACCEPT_EDITS, SessionMode.PLAN, SessionMode.AUTO])
 def test_stub_reply_reflects_mode_read_from_session(
     tmp_path: Path, mode: SessionMode
 ) -> None:
     session = _session(tmp_path)
-    if mode is not SessionMode.CHAT:
+    if mode is not SessionMode.ACCEPT_EDITS:
         session.record_mode_change(mode)
 
     response = AgentTurnService(session).handle_user_message("看看")

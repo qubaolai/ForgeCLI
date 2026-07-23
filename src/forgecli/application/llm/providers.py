@@ -51,7 +51,7 @@ REGISTRY: dict[str, ProviderSpec] = {
     "deepseek": ProviderSpec(
         id="deepseek",
         label="DeepSeek",
-        default_api_base="https://api.deepseek.com",
+        default_api_base="https://api.deepseek.com/chat/completions",
         api_key_env="DEEPSEEK_API_KEY",
     ),
     # 注意：MiMo 的官方 OpenAI 兼容 base_url 请按实际填写（配置文件可覆盖）。
@@ -67,6 +67,12 @@ REGISTRY: dict[str, ProviderSpec] = {
         label="OpenAI",
         default_api_base="",
         api_key_env="OPENAI_API_KEY",
+    ),
+    "GLM": ProviderSpec(
+        id="glm",
+        label="GLM",
+        default_api_base="https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        api_key_env="GLM_API_KEY",
     ),
     # 本地推理端点（Ollama / vLLM 等）：默认免凭证，api_base 由配置给出。
     "local": ProviderSpec(

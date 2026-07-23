@@ -81,19 +81,24 @@ def build_registry(
     # 模式切换归一为普通斜杠命令：三条共用 ModeCommand，靠构造参数区分目标模式。
     mode_specs = [
         CommandSpec(
-            "chat",
-            "切换到对话模式",
-            handler=ModeCommand(SessionMode.CHAT, session_service, output),
+            "accept_edits",
+            "切换到ACCEPT_EDITS",
+            handler=ModeCommand(SessionMode.ACCEPT_EDITS, session_service, output),
         ),
         CommandSpec(
             "plan",
-            "切换到计划模式",
+            "切换到PLAN",
             handler=ModeCommand(SessionMode.PLAN, session_service, output),
         ),
         CommandSpec(
-            "act",
-            "切换到执行模式",
-            handler=ModeCommand(SessionMode.ACT, session_service, output),
+            "auto",
+            "切换到AUTO",
+            handler=ModeCommand(SessionMode.AUTO, session_service, output),
+        ),
+        CommandSpec(
+            "full_access",
+            "切换到FULL_ACCESS",
+            handler=ModeCommand(SessionMode.FULL_ACCESS, session_service, output),
         ),
     ]
     slash_specs = [

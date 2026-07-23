@@ -37,9 +37,11 @@ class IntentKind(Enum):
 class SessionMode(Enum):
     """会话模式"""
 
-    CHAT = "chat"
+    ACCEPT_EDITS = "accept_edits"
     PLAN = "plan"
-    ACT = "act"
+    AUTO = "auto"
+    FULL_ACCESS = "full_access"
+
 
 
 @dataclass(frozen=True)

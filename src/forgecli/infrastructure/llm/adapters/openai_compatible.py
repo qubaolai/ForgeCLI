@@ -105,7 +105,7 @@ class OpenAICompatibleProvider(ModelProvider):
         with self._client_factory() as client:
             try:
                 response = client.post(
-                    self._url(),
+                    self._base_url,
                     json=payload,
                     headers=self._headers(request),
                     timeout=request.timeout_seconds,
@@ -132,7 +132,7 @@ class OpenAICompatibleProvider(ModelProvider):
         try:
             with client.stream(
                 "POST",
-                self._url(),
+                self._base_url,
                 json=payload,
                 headers=self._headers(request),
                 timeout=request.timeout_seconds,
@@ -154,9 +154,6 @@ class OpenAICompatibleProvider(ModelProvider):
             client.close()
 
     # ---- 请求映射 ----
-
-    def _url(self) -> str:
-        return f"{self._base_url}/chat/completions"
 
     def _headers(self, request: ProviderRequest) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}

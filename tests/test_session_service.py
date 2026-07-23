@@ -41,7 +41,7 @@ def test_start_is_lazy_and_writes_no_files(tmp_path: Path) -> None:
     snapshot = service.start()
 
     assert snapshot.session_id == _SID
-    assert snapshot.mode is SessionMode.CHAT
+    assert snapshot.mode is SessionMode.ACCEPT_EDITS
     assert snapshot.last_event_id is None
     assert not (tmp_path / "sessions" / _SID).exists()
 
@@ -62,7 +62,7 @@ def test_first_event_flushes_session_created_then_event(tmp_path: Path) -> None:
     state = JsonStateStore(tmp_path / "sessions").read(_SID)
     assert state is not None
     assert state.last_event_id == "evt_0002"
-    assert state.mode is SessionMode.CHAT
+    assert state.mode is SessionMode.ACCEPT_EDITS
 
 
 def test_mode_change_records_event_and_updates_snapshot(tmp_path: Path) -> None:

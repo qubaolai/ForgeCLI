@@ -87,7 +87,7 @@ class SessionService:
         snapshot = SessionSnapshot(
             session_id=self._new_id(),
             workspace_root=self._root,
-            mode=SessionMode.CHAT,
+            mode=SessionMode.ACCEPT_EDITS,
             last_event_id=None,
             updated_at=self._clock(),
         )

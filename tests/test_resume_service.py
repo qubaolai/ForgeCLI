@@ -66,7 +66,7 @@ def _make_session(
     snapshot = SessionSnapshot(
         session_id=session_id,
         workspace_root=workspace_root,
-        mode=SessionMode.CHAT,
+        mode=SessionMode.ACCEPT_EDITS,
         last_event_id=last,
         updated_at=updated_at,
         title=title,

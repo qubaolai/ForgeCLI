@@ -232,7 +232,7 @@ def test_repl_process_line_routes_user_message() -> None:
     rendered = console.export_text()
     assert "› 解释这个项目" in rendered
     assert "●" in rendered
-    assert session.current().mode is SessionMode.CHAT
+    assert session.current().mode is SessionMode.ACCEPT_EDITS
 
 
 def test_repl_process_line_switches_mode_via_session() -> None:

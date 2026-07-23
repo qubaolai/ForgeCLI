@@ -47,7 +47,7 @@ def test_state_store_round_trips(tmp_path: Path) -> None:
     snapshot = SessionSnapshot(
         session_id="s1",
         workspace_root="/repo",
-        mode=SessionMode.ACT,
+        mode=SessionMode.AUTO,
         last_event_id="evt_0009",
         updated_at="2026-06-27T10:30:00+08:00",
     )
@@ -66,7 +66,7 @@ def test_state_write_leaves_no_tmp_file(tmp_path: Path) -> None:
     snapshot = SessionSnapshot(
         session_id="s1",
         workspace_root="/repo",
-        mode=SessionMode.CHAT,
+        mode=SessionMode.ACCEPT_EDITS,
         last_event_id=None,
         updated_at="t",
     )
