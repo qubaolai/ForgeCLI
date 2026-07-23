@@ -2,7 +2,16 @@
 
 ## 状态
 
-Accepted
+Discarded（2026-07-21，由 [ADR-0010](2026-07-01-0010-采用受控ReAct作为Agent主循环架构.md) 取代）
+
+废弃原因：ADR-0010 用 `AgentLoop` 定义了同一位置的编排内核，且明确"不再使用 `Workflow`
+表达 ReAct 循环的输入、输出或状态"。两个 ADR 描述的是同一个抽象，保留双份会让代码里
+同时出现 `AgentWorkflow` 与 `AgentLoop` 两套命名。
+
+本文保留作为历史记录。`AgentWorkflow` / `BuiltinWorkflow` / `WorkflowResult` 一律
+不再作为实现命名；对应概念见 ADR-0010 的 `AgentLoop` / `BuiltinAgentLoop` /
+`LoopDecision`+`LoopAction`+`LoopStop`。本文的框架隔离立场（第三方框架不得接管会话
+存储、权限审批、工具执行、事件日志和上下文恢复）由 ADR-0010 继承，未被废弃。
 
 ## 日期
 

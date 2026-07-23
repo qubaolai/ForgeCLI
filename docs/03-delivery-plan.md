@@ -72,7 +72,7 @@ ForgeCLI 按企业级产品节奏推进，采用“核心闭环先行、能力�
 
 - `pyproject.toml`、`poetry.lock`、`src/forgecli + tests` 包结构、测试框架、lint/format/typecheck。
 - `Session`、`Message`、`AgentTurn`、`Plan`、`ModePolicy`、`ToolSpec`。
-- `AgentWorkflow` 抽象和 `BuiltinWorkflow`。
+- `AgentLoop` 内核和 `BuiltinAgentLoop`。
 - `EventStore`：append、read、replay。
 - `StateStore`：原子快照写入和恢复。
 - 裸 `forge` 交互式入口，以及 `/resume`、`/status` 基础 slash command。
@@ -96,22 +96,22 @@ ForgeCLI 按企业级产品节奏推进，采用“核心闭环先行、能力�
 - 建立 conversation-first 的 Agent Turn。
 - 落地受控 ReAct 主循环。
 - 建立统一 LLM 调用控制面。
-- 实现 chat/plan/act 模式。
+- 实现 plan / accept_edits / auto / full_access 权限模式（默认 accept_edits）。
 - 实现 Context Package。
 - 接入第一个 LLM Provider。
 
 主要工作：
 
-- `Agent ReAct` 主架构设计与 `BuiltinReactWorkflow` 最小实现。
+- `Agent ReAct` 主架构设计与 `BuiltinAgentLoop` 最小实现。
 - 多供应商 LLM 调用架构设计：`LlmGateway`、`ModelProvider`、usage/cost/token 计量。
 - `AgentTurnService`。
-- `AgentWorkflow` 接入 `AgentTurnService`。
+- `AgentLoop` 接入 `AgentTurnService`。
 - `IntentRouter`。
 - `ModePolicyResolver`。
 - `ContextManager`。
 - `ModelProvider` 抽象、fake provider 和一个实际 provider。
 - LangGraph adapter 技术验证，不作为默认唯一执行路径。
-- slash commands：`/help`、`/chat`、`/plan`、`/act`、`/config`、`/models`、`/status`、`/pause`、`/exit`。
+- slash commands：`/help`、`/plan`、`/accept-edits`、`/auto`、`/full-access`、`/config`、`/models`、`/status`、`/pause`、`/exit`。
 
 验收标准：
 
@@ -119,7 +119,7 @@ ForgeCLI 按企业级产品节奏推进，采用“核心闭环先行、能力�
 - 普通 chat turn 通过统一 LLM gateway 完成，不再直接使用 stub reply。
 - 每次模型调用有 provider、model、request_id、usage 或 estimated usage。
 - plan 模式只读，不允许写文件。
-- act 模式可在审批后执行写操作。
+- accept_edits 模式可自动放行区内编辑，命令仍确认。
 - 模式切换写入事件日志。
 - 中断后 resume 能继续对话。
 
@@ -213,7 +213,7 @@ ForgeCLI 按企业级产品节奏推进，采用“核心闭环先行、能力�
 目标：
 
 - 实现 Sub-Agent Runtime。
-- 增加 review/debug/auto 模式。
+- 增加 review/debug 模式。
 - 提升复杂任务处理能力。
 
 主要工作：
@@ -223,7 +223,7 @@ ForgeCLI 按企业级产品节奏推进，采用“核心闭环先行、能力�
 - `ReviewerAgent`。
 - `DebugAgent`。
 - LangGraphWorkflowAdapter 试点复杂 workflow。
-- `auto` 模式预算和停止条件。
+- `auto` 模式的预算和停止条件细化。
 - Sub-Agent 报告合并。
 - 多 Sub-Agent 并行只读探索。
 
@@ -246,7 +246,9 @@ ForgeCLI 按企业级产品节奏推进，采用“核心闭环先行、能力�
 
 主要工作：
 
-- 命令风险分类完善。
+- 高危 deny 清单与命令规范化解析完善（复合拆解 / 包装器 / 替换扫描，ADR-0009 决策 4/8）。
+- 启动 root 校验与命令解析器（高危检测 + 工作区内外判定 + git 写识别，ADR-0009 决策 2/4）。
+- Bash 沙箱：macOS Seatbelt / Linux bubblewrap containment，不可用平台回退 rule-engine-only（ADR-0009 决策 14）。
 - 路径越权保护。
 - 事件日志脱敏。
 - OpenTelemetry 可选接入。
@@ -294,11 +296,11 @@ ForgeCLI 按企业级产品节奏推进，采用“核心闭环先行、能力�
 | --- | --- | --- |
 | M0 | 第 1 周 | 设计冻结、backlog 建立 |
 | M1 | 第 3 周 | CLI 骨架、事件存储、状态恢复 |
-| M2 | 第 6 周 | 对话循环、chat/plan/act |
+| M2 | 第 6 周 | 对话循环、plan/accept_edits/auto/full_access |
 | M3 | 第 9 周 | 工具系统、审批、artifacts |
 | M4 | 第 11 周 | 上下文压缩、基础记忆 |
 | M5 | 第 14 周 | MCP、Skills |
-| M6 | 第 17 周 | Sub-Agent、auto/review/debug |
+| M6 | 第 17 周 | Sub-Agent、review/debug |
 | Beta | 第 18 周 | 真实仓库试用 |
 | GA | 第 20 周 | 生产发布 |
 
@@ -310,7 +312,7 @@ ForgeCLI 按企业级产品节奏推进，采用“核心闭环先行、能力�
 
 - 本地 CLI 会话。
 - `events.jsonl` 和 `state.json`。
-- chat/plan/act。
+- plan / accept_edits / auto / full_access。
 - 基础工具。
 - 审批。
 - resume。
@@ -326,7 +328,7 @@ ForgeCLI 按企业级产品节奏推进，采用“核心闭环先行、能力�
 
 ### Beta 必须包含
 
-- review/debug/auto。
+- review/debug。
 - Sub-Agent。
 - 安全策略完善。
 - 真实仓库验证。

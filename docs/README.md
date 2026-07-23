@@ -20,7 +20,7 @@ ForgeCLI 的目标是建设一个企业级、生产可用、本地优先的对�
 
 - ForgeCLI 是 conversation-first 的 CLI Agent，不是一次性 goal runner。
 - 长任务能力通过 session resume、event log、state snapshot、context compaction 实现。
-- Agent 自治程度由 mode policy 控制，默认从保守的 chat/plan 开始，按需进入 act/auto。
+- Agent 自治程度由 mode policy 控制，默认 accept_edits（改文件自动、命令确认），按需进入 auto / full_access。
 - Agent 主循环采用受控 ReAct：模型只产出意图，副作用由 ForgeCLI 控制面执行。
 - 所有 LLM 调用必须经过统一 `LlmGateway`，统一执行 token/成本计量、缓存、重试、熔断、预算与审计摘要。
 - 本地存储首选 `jsonl + state.json + artifacts`，数据库作为企业版或服务端化增强。

@@ -21,9 +21,9 @@ src/
         resume_service.py
         config_service.py
         tool_service.py
-      workflows/
-        agent_workflow.py
-        builtin_workflow.py
+      agent_loop/
+        agent_loop.py
+        builtin_agent_loop.py
     domain/
       config/
       conversation/
@@ -84,14 +84,14 @@ domain -> shared
 
 ### 1.1 模块边界说明
 
-配置、工具和 Agent workflow 都是一等模块，不应被简单归入 `infrastructure`。
+配置、工具和 Agent 主循环都是一等模块，不应被简单归入 `infrastructure`。
 
 - `domain/config`：定义配置值对象和校验规则，例如模型、权限、MCP、存储、上下文预算。
 - `application/services/config_service.py`：负责配置加载、合并、查询、更新和迁移。
 - `infrastructure/config_sources`：只负责从文件、环境变量、交互式命令输入等来源读取配置。
 - `tools`：负责 Tool Registry、Tool Runtime、内置工具定义和 MCP tool 适配，是 Agent 能力面的一部分。
 - `infrastructure/shell`、`infrastructure/git`、`infrastructure/filesystem`：只是工具实现依赖的底层适配器。
-- `application/workflows`：定义 AgentWorkflow 抽象和内置 workflow。
+- `application/agent_loop`：定义 `AgentLoop` ReAct 内核与 `BuiltinAgentLoop`（ADR-0010）。
 - `infrastructure/agent_frameworks`：放第三方框架适配器，例如 LangGraph、LangChain。AutoGen 适配器只在 V2 Multi-Agent 阶段需要时创建。
 
 因此，工具系统不属于普通基础设施。工具对 Agent 来说是业务能力和安全边界，必须有自己的 registry、schema、权限和审计。基础设施只提供工具执行所需的底层能力。
@@ -106,54 +106,52 @@ ForgeCLI 可以使用 Agent 开发框架，但不能把第三方框架的数据�
 
 ```text
 AgentTurnService
-  -> AgentWorkflow
-      -> BuiltinWorkflow
-      -> LangGraphWorkflowAdapter
-      -> FutureAutoGenWorkflowAdapter
+  -> AgentLoop（MVP 唯一实现：BuiltinAgentLoop）
   -> ToolRuntime
   -> EventStore
   -> PolicyContext
 ```
 
-这里的 `AgentWorkflow` 不是另一个 Agent，而是“单个 turn 或一段内部推理流程如何被编排”的接口。它解决的是框架替换问题：今天可以用自研流程，明天可把复杂流程交给 LangGraph，但 application 层、事件日志、权限审批和工具运行时不需要重写。
+这里的 `AgentLoop` 不是另一个 Agent，而是“单个 turn 或一段内部推理流程如何被编排”的内核。
+它只产出结构化意图，副作用一律由 `AgentTurnService` 执行——正是这条边界（而不是某个
+预留的 adapter 接口）保证了编排内核将来可替换：换掉它时，事件日志、权限审批和工具运行时
+都不需要重写。MVP 不预先抽象编排适配层，理由见 ADR-0010 §3。
 
 Agent 主循环以受控 ReAct 为基石：模型只生成回答、计划、工具请求或继续观察的意图，
 副作用由 `AgentTurnService` 按 mode policy、approval 和 Tool Runtime 执行。完整主架构见
 `docs/adr/2026-07-01-0010-采用受控ReAct作为Agent主循环架构.md`。
 
-### 2.2 AgentWorkflow 接口
+### 2.2 AgentLoop 接口
 
-`AgentWorkflow` 是框架隔离层。application 层只依赖该接口，不直接依赖 LangGraph、LangChain 或 AutoGen。
+`AgentLoop` 是编排隔离层。application 层只依赖它，不直接依赖 LangGraph、LangChain 或
+AutoGen。字段口径以 ADR-0010 §4 为准，本节只作索引。
 
-输入：
+输入 `LoopInput`：
 
-- `WorkflowInput`：用户消息、slash command、审批回复或系统恢复事件。
-- `AgentState`：当前计划、摘要、最近观察、预算、活跃 Sub-Agent。
-- `ContextPackage`：本轮模型上下文。
-- `ModePolicy`：当前模式能力边界。
-- `ToolCatalog`：当前允许暴露给模型的工具清单。
+- `user_intent`：用户消息、slash command、审批回复或系统恢复事件。
+- `resume_state`：由 `events.jsonl + state.json` 还原，不依赖第三方 checkpoint。
+- `context_package`：本轮模型上下文。
+- `mode` / `mode_policy`：当前模式能力边界。
+- `tool_catalog`：当前允许暴露给模型的工具清单。
+- `budgets`：本轮 step / tool call / model call / token 预算。
 
-输出：
+输出（每次迭代三选一）：
 
-- `WorkflowResult`
-- `AssistantMessage`
-- `PlanUpdate`
-- `ToolRequest`
-- `ApprovalRequest`
-- `ContextCompactionRequest`
-- `SubAgentTask`
-- `StopReason`
+- `LoopDecision`：可审计的决策摘要，不含 raw chain-of-thought。
+- `LoopAction`：`answer` / `request_tool` / `ask_user` / `request_approval` /
+  `request_compaction`，只表达意图。
+- `LoopStop`：以统一 `LoopStopReason` 表达正常完成、可恢复暂停或阻塞停止。
 
 约束：
 
-- Workflow 不直接写文件。
-- Workflow 不直接执行 shell。
-- Workflow 不直接写 `events.jsonl`。
-- Workflow 不直接写长期 memory。
-- Workflow 不绕过 Tool Registry 调用 MCP。
-- Workflow 只返回意图，由 `AgentTurnService` 执行副作用。
+- `AgentLoop` 不直接写文件。
+- `AgentLoop` 不直接执行 shell。
+- `AgentLoop` 不直接写 `events.jsonl`。
+- `AgentLoop` 不直接写长期 memory。
+- `AgentLoop` 不绕过 Tool Registry 调用 MCP。
+- `AgentLoop` 只返回意图，由 `AgentTurnService` 执行副作用。
 
-### 2.2.1 AgentWorkflow 和 AgentTurnService 的分工
+### 2.2.1 AgentLoop 和 AgentTurnService 的分工
 
 `AgentTurnService` 负责产品级控制流：
 
@@ -161,27 +159,27 @@ Agent 主循环以受控 ReAct 为基石：模型只生成回答、计划、工�
 - 解析 slash command。
 - 加载配置和模式策略。
 - 构建上下文。
-- 调用 `AgentWorkflow`。
+- 调用 `AgentLoop`。
 - 执行审批、工具调用、事件写入和状态快照。
 
-`AgentWorkflow` 负责模型级编排：
+`AgentLoop` 负责模型级编排：
 
 - 判断本轮应该回答、规划、调用工具还是反思。
-- 组织 prompt、node、分支或循环。
+- 组织 prompt、分支或循环。
 - 生成结构化意图。
-- 在 auto/debug/review 等复杂模式下决定下一步。
+- 在 debug/review 等复杂流程下决定下一步。
 
-该分工保证第三方框架只影响“怎么思考和编排”，不接管“怎么落盘、怎么审批、怎么执行副作用”。
+该分工保证编排内核只影响“怎么思考和编排”，不接管“怎么落盘、怎么审批、怎么执行副作用”。
 
-### 2.3 BuiltinWorkflow
+### 2.3 BuiltinAgentLoop
 
-MVP 默认实现，也就是 ForgeCLI 自研的轻量 workflow。
+MVP 默认实现，也是当前唯一实现：ForgeCLI 自研的轻量 ReAct 循环。
 
 职责：
 
-- 普通 chat turn。
-- plan 模式只读规划。
-- act 模式下的工具请求。
+- 普通对话 turn。
+- `plan` 模式只读规划。
+- `accept_edits` / `auto` / `full_access` 模式下的工具请求。
 - 基础 reflection。
 - 简单 Plan-Act 循环。
 
@@ -192,7 +190,7 @@ MVP 默认实现，也就是 ForgeCLI 自研的轻量 workflow。
 - 易于测试。
 - 便于验证 ForgeCLI 自有事件和权限模型。
 
-`BuiltinWorkflow` 的目标不是替代所有框架，而是在 MVP 阶段提供最小、透明、可调试的 Agent 编排能力。等核心闭环稳定后，复杂流程可逐步迁移到 LangGraph adapter。
+`BuiltinAgentLoop` 的目标不是替代所有框架，而是在 MVP 阶段提供最小、透明、可调试的 Agent 编排能力。等核心闭环稳定后，复杂流程可逐步迁移到 LangGraph adapter。
 
 ### 2.4 LangGraphWorkflowAdapter
 
@@ -323,7 +321,7 @@ AutoGen 更适合 V2 的完整 Multi-Agent 能力，不进入 MVP。
 
 ### 3.4 Plan
 
-`Plan` 是可选对象，只在复杂任务、plan 模式或 act/auto 需要时产生。
+`Plan` 是可选对象，只在复杂任务、`plan` 模式或需要连续执行时产生。
 
 字段：
 
@@ -632,10 +630,12 @@ Intent Router 不直接执行动作，只返回结构化意图。
 
 - `/help`：查看会话内可用命令。
 - `/mode`：查看当前模式。
-- `/chat`：切换到 chat。
-- `/plan`：切换到 plan。
-- `/act`：切换到 act。
-- `/auto`：切换到 auto。
+- `/plan`：切换到 `plan`（只读计划）。
+- `/act`：兼容别名，映射到默认的 `accept_edits`。
+- `/accept-edits`：切换到 `accept_edits`（放行低风险编辑，命令仍询问）。
+- `/auto`：切换到 `auto`（额外放行低风险命令）。
+- `/full-access`：切换到 `full_access`（可跨工作区、联网；仅 OS 非 root 与红线兜底）。
+- `/chat`：兼容别名，映射到默认的 `accept_edits`（ADR-0009 决策 3）。
 - `/review`：切换到 review。
 - `/debug`：切换到 debug。
 - `/status`：查看会话、计划、预算。
@@ -775,15 +775,24 @@ Intent Router 不直接执行动作，只返回结构化意图。
 7. Artifact Store 保存长输出。
 8. Event Store 记录结果。
 
-### 8.2 工具风险等级
+### 8.2 动作裁决：规则引擎 + 模式预设（ADR-0009 决策 3/6/8）
 
-| 等级 | 示例 | 默认策略 |
-| --- | --- | --- |
-| readonly | 读文件、搜索、git status | 允许 |
-| write | 编辑文件、生成文档 | act/auto 允许 |
-| network | 下载依赖、访问 API | 询问 |
-| destructive | 删除文件、reset、清库 | 强制询问 |
-| external | push、发布、发消息 | 强制询问 |
+裁决是一个规则引擎：**`deny → ask → allow` 优先级，第一个匹配即决定**；OS 非 root 是外墙；
+模式只决定默认往 allow 集预填什么。命令先经规范化解析（复合拆解、包装器剥离、`$(...)` 替换
+扫描）再匹配，防 `git status && rm -rf ~` 一类绕过。用户可用 glob 规则语法精确追加规则。
+
+| 动作 | 示例 | accept_edits | auto | full_access |
+| --- | --- | --- | --- | --- |
+| 只读命令 | `ls`/`grep`/`git status`（内置只读集） | 允许 | 允许 | 允许 |
+| 区内文件编辑 | Edit/Write | 允许 | 允许 | 允许 |
+| 文件操作命令 | `mkdir touch rm mv cp sed`（区内非受保护） | 允许 | 允许 | 允许 |
+| 其他命令（含 git 写） | 测试 / 构建 / python / `git commit`/`push` | 询问 | 允许 | 允许 |
+| 动工作区外·读/写 | 读凭证文件、写区外路径 | 询问 | 询问 | 允许 |
+| 高危 deny | `rm -rf ~`、`mkfs`、写 `.git/hooks`/`.npmrc`/`~/.ssh`/`.forge/` | **拒绝** | 拒绝 | 拒绝 |
+
+git 写不做硬性限制，按普通命令走。高危 deny 穿透所有模式（含 `full_access`，选择 A）；
+`accept_edits` 的命令询问支持 once/always/session/deny（学习式授权）。**MVP 即实现 glob 规则
+配置语法**（gitignore 式 `//`/`~/`/`/`/`./` 路径锚定 + Bash `*` 模式）。
 
 ### 8.3 内置工具
 
@@ -1072,9 +1081,11 @@ MVP 当前配置存储遵循 ADR-0008：应用级配置位于 Forge home 下的
 归属规则如下：
 
 - `config.toml`：跨项目共享的通用应用偏好，包括 telemetry、输出和日志。
-- `llm.toml`：跨项目共享的 provider/model 目录；每个具体模型保存自己的
-  `thinking_mode` / `thinking_effort`。同一文件还保存 ADR-0012 的
+- `llm.toml`：跨项目共享的 provider/model 目录；每个具体模型保存 thinking 模式、
+  支持的开放强度集合和默认强度。同一文件还保存 ADR-0012 的
   `[llm.cache]`、`[llm.circuit_breaker]`、`[llm.retry]` 网关运行时策略。
+- 代码只内置供应商和 adapter，不内置任何具体模型；未写入 `llm.toml` 的模型不进入
+  `ModelCatalogService`。
 - `forge.toml`：当前项目模型与用途模型覆盖。项目文件不得保存 thinking、缓存、
   熔断或重试策略。
 
@@ -1088,11 +1099,13 @@ api_key_env = "DEEPSEEK_API_KEY"
 timeout = 60
 max_retries = 2
 
-[llm.providers.deepseek.models.deepseek-chat]
+[llm.providers.deepseek.models.deepseek-reasoner]
 context_window = 65536
 max_tokens = 8192
-thinking_mode = "off"
-thinking_effort = "none"
+thinking_efforts = ["high", "max"]
+thinking_default_effort = "high"
+thinking_mode = "on"
+thinking_effort = "high"
 
 [llm.cache]
 enabled = false
@@ -1152,7 +1165,12 @@ model = "gpt-5-mini"
 当前 MVP 提供交互式 `/config` 能力：
 
 - 通用应用配置：telemetry、输出主题、日志级别。
-- LLM 配置：供应商字段、模型参数；thinking mode / effort 位于具体模型编辑页。
+- LLM 配置：供应商字段、模型参数；具体模型页可编辑 thinking 开放强度集合、
+  默认强度和 mode，不存在单独的“是否支持”字段，也不编辑当前 effort。
+  mode 直接控制是否使用 thinking，`off` 保留强度配置。
+- `/thinking` 是当前模型 mode / effort 的快捷入口；它只更新当前 Forge 进程内的
+  thinking override，不写入 `llm.toml`。`/config` 继续编辑模型默认值，二者在同一
+  进程内通过共享运行时状态立即可见。
 - 项目配置：当前模型、按用途的显式模型覆盖。
 - 网关运行时配置：响应缓存（enabled / TTL / 容量 / origins）、熔断器
   （enabled / 失败阈值 / 冷却时间）、重试策略（429 短等阈值）。
@@ -1167,10 +1185,20 @@ model = "gpt-5-mini"
 模型 <provider:model> · thinking <mode>/<effort>
 ```
 
-当前模型来自项目级 `forge.toml`，thinking 来自该模型在应用级 `llm.toml` 中的目录条目。
-状态提供器每次渲染现读当前模型和模型目录，因此 `/model` 或 `/config` 修改后不需要重启
-CLI。`ModelRequest` 不包含 thinking；gateway 必须在模型解析后从 `ModelCatalogEntry`
-读取 mode/effort，并通过内部 `ProviderRequest` 下发 adapter。
+当 mode 为 `off` 时只显示 `thinking off`；effort 仍保留在模型配置中。当前模型可通过
+`/thinking`、`/thinking on|off`、`/thinking effort <level>` 或
+`/thinking on <level>` 快速查看和原子修改。
+
+`/thinking` 是当前模型 mode / effort 的快捷入口；`/config` 可以编辑任意已配置
+模型的开放强度集合、默认强度和 mode。`/thinking` 的覆盖按 `ModelRef` 保存在
+当前进程内，不提供持久化的项目级 thinking 配置，也不提供独立支持开关或当前 effort
+文件编辑项。
+
+当前模型来自项目级 `forge.toml`，thinking 默认值来自该模型在应用级 `llm.toml` 中的
+目录条目，`/thinking` 的临时覆盖来自当前进程内状态。状态提供器与 resolver 每次
+读取共享状态，因此 `/model`、`/config` 或 `/thinking` 修改后不需要重启 CLI。
+`ModelRequest` 不包含 thinking；gateway 必须在模型解析后从叠加了运行时覆盖的
+`ModelCatalogEntry` 读取 mode/effort，并通过内部 `ProviderRequest` 下发 adapter。
 
 ### 17.5 可配置范围
 
@@ -1178,7 +1206,7 @@ CLI。`ModelRequest` 不包含 thinking；gateway 必须在模型解析后从 `M
 
 - telemetry、输出主题和日志级别。
 - 项目级模型 provider / name 与用途模型覆盖。
-- 应用级 provider/model 参数（包含模型级 thinking mode / effort）与 cache /
+- 应用级 provider/model 参数（包含模型级 thinking mode / effort 配置）与 cache /
   circuit breaker / retry 网关策略。
 - MCP server 配置路径
 - 高风险操作审批策略
@@ -1233,7 +1261,7 @@ CLI。`ModelRequest` 不包含 thinking；gateway 必须在模型解析后从 `M
 ## 19. 首版验收标准
 
 - `forge` 启动交互式会话。
-- 支持 chat/plan/act 模式切换。
+- 支持 plan / accept_edits / auto / full_access 权限模式切换（默认 accept_edits）。
 - 会话落盘为 `events.jsonl` 和 `state.json`。
 - 中断后可通过再次执行 `forge` 或 `/resume` 恢复。
 - 可读文件、搜索、运行受控 shell。

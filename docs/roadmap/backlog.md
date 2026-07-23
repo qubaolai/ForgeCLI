@@ -38,11 +38,11 @@ ForgeCLI 定位为个人单用户 CLI，本地限流阈值相对 provider 真实
 
 ## 2. Workflow Adapter 与完整 Multi-Agent
 
-MVP 的 Agent 主循环、Sub-Agent 用自研轻量 Runtime（`BuiltinWorkflow`）实现，属 MVP；下列为可替换框架适配与完整 Multi-Agent，明确排在 MVP 之后。
+MVP 的 Agent 主循环、Sub-Agent 用自研轻量 Runtime（`BuiltinAgentLoop`）实现，属 MVP；下列为可替换框架适配与完整 Multi-Agent，明确排在 MVP 之后。
 
 | 能力 | MVP 取舍 | 来源 | 目标版本 |
 | --- | --- | --- | --- |
-| `LangGraphWorkflowAdapter` 复杂 workflow 试点 | MVP 用自研 `BuiltinWorkflow`，不暴露 LangGraph checkpoint/schema 为公共协议 | 01-overview §172/§194、03-delivery §56/§113 | V1 |
+| `LangGraphWorkflowAdapter` 复杂 workflow 试点 | MVP 用自研 `BuiltinAgentLoop`，不暴露 LangGraph checkpoint/schema 为公共协议 | 01-overview §172/§194、03-delivery §56/§113 | V1 |
 | 完整 Multi-Agent（AutoGen `FutureAutoGenWorkflowAdapter`） | 仅预留命名，不让代码依赖 AutoGen 的 agent/session/message 模型 | 01-overview §194、02-detailed §265 | V2 |
 
 ---

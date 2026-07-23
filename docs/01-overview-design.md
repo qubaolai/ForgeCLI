@@ -10,7 +10,7 @@ ForgeCLI 是一个本地优先的对话式软件工程 CLI Agent，面向开发�
 
 - 通过 CLI 对话完成代码理解、修改、调试、测试、Review、提交说明等工程任务。
 - 支持长任务会话恢复，避免上下文丢失和中断后重来。
-- 通过 mode policy 控制自治程度，让用户可在 plan、act、auto、review 等模式间切换。
+- 通过 mode policy 控制自治程度，让用户可在 plan、accept_edits、auto、full_access 之间切换。
 - 通过本地事件日志和状态快照实现可审计、可恢复、可复盘。
 - 通过 MCP、内置工具、Skills 扩展能力。
 - 以企业生产可用为目标，具备权限、安全、审计、质量门禁和发布流程。
@@ -34,7 +34,7 @@ Agent 的能力不是全局开关，而是由模式控制：
 
 - 只读分析时不允许写文件。
 - 执行模式可写文件但高风险操作需审批。
-- auto 模式允许连续推进，但必须受预算、权限和安全策略限制。
+- `auto` 模式允许连续推进，但必须受预算、权限和安全策略限制，且红线命令一律拒绝。
 - review/debug 模式改变 Agent 的目标函数和输出结构。
 
 ### 2.3 优先本地存储
@@ -68,7 +68,7 @@ Agent 开发框架可以作为执行引擎或适配层接入，但不能替代�
 - LangGraph 可作为复杂 Agent workflow 的可选编排引擎。
 - LangChain 可选择性使用模型、工具、文本处理等生态组件，不直接使用其高层 Agent Executor 作为核心。
 - AutoGen 适合作为后续 Multi-Agent 实验或企业多角色协作能力，不进入 MVP 主路径。
-- 所有框架能力必须通过 ForgeCLI 的 `AgentWorkflow`、`ToolRuntime`、`EventStore`、`PolicyContext` 适配。
+- 所有框架能力必须通过 ForgeCLI 的 `AgentLoop`、`ToolRuntime`、`EventStore`、`PolicyContext` 适配。
 
 ## 3. 用户场景
 
@@ -76,7 +76,7 @@ Agent 开发框架可以作为执行引擎或适配层接入，但不能替代�
 
 用户询问某个模块、调用链、错误原因或重构影响范围。Agent 读取代码、搜索符号、总结结构，不修改文件。
 
-适用模式：`chat`、`plan`。
+适用模式：`plan`、`accept_edits`。
 
 ### 3.2 计划设计
 
@@ -88,7 +88,7 @@ Agent 开发框架可以作为执行引擎或适配层接入，但不能替代�
 
 用户确认计划后，Agent 修改代码、运行测试、根据失败结果迭代修复，并汇报最终 diff 和验证结果。
 
-适用模式：`act`。
+适用模式：`accept_edits`。
 
 ### 3.4 有限自治
 
@@ -104,14 +104,30 @@ Agent 审查当前 diff、PR 评论、CI 日志或测试失败，优先输出风
 
 ## 4. 交互模式
 
-| 模式 | 默认写文件 | 默认运行 shell | 默认联网 | 自治程度 | 典型用途 |
-| --- | --- | --- | --- | --- | --- |
-| `chat` | 否 | 低风险只读命令需确认 | 否 | 低 | 问答、解释、轻量分析 |
-| `plan` | 否 | 允许只读探索 | 否 | 中 | 需求分析、方案设计 |
-| `act` | 是 | 允许测试和构建 | 需确认 | 中 | 执行已确认任务 |
-| `auto` | 是 | 允许连续执行 | 需确认 | 高 | 明确目标下的自动推进 |
-| `review` | 否 | 允许只读检查 | 否 | 中 | 代码审查、风险识别 |
-| `debug` | 可选 | 允许诊断命令 | 需确认 | 中 | 测试失败、运行错误、CI |
+模式是**权限边界**，只回答"要不要询问人类"，不回答"Agent 该做什么"——做什么由模型按
+turn 判断（ADR-0009 决策 3）。裁决核心是**规则引擎**（`deny → ask → allow`），以当前普通用户
+身份运行、OS 非 root 权限当外墙；可用平台（macOS Seatbelt / Linux bubblewrap）再叠加 **Bash
+沙箱**做 containment，Windows 等无沙箱平台回退到 rule-engine-only（ADR-0009 决策 14）。模式是
+一道"问不问"的梯度，默认 `accept_edits`：
+
+| 模式 | 文件编辑 + 文件操作命令(区内) | 其他命令（含 git 写） | 动工作区外读/写 | 典型用途 |
+| --- | --- | --- | --- | --- |
+| `plan` | 不暴露 | 不暴露 | 不暴露 | 需求分析、方案设计；产出计划待批准 |
+| `accept_edits`（默认） | 自动 | 询问（once/always/deny） | 询问 | 连续改代码，命令逐条把关 |
+| `auto` | 自动 | 自动 | 询问 | 让 Agent 在本项目内自主推进 |
+| `full_access` | 自动 | 自动 | 自动 | 需要跨工作区、且知情授权 |
+
+裁决是一个**规则引擎**（`deny → ask → allow`，首个匹配即决定，ADR-0009 决策 3）；上表四档
+只是往 allow 集预填内容的**预设**，用户可用 glob 规则语法（`Bash(npm run *)`、`Read(~/.ssh/**)`）
+精确追加 allow/ask/deny。命令先经规范化解析（复合命令按 `&&`/`|` 拆解、`$(...)` 替换扫描、
+包装器剥离）再匹配，防 `git status && rm -rf ~` 一类靠组合绕过。git 写不做硬性限制，按普通
+命令走（accept_edits 问、auto 起放行）。两道防线横切所有模式：**OS 非 root 权限**当外墙（故
+**启动即拒绝 root**）；**主动的执行前高危 deny**（`rm -rf ~`、`rm -rf ./*`、`mkfs`、`curl|sh`，
+以及写系统/凭证目录、`.git/hooks`、`.npmrc`、`.forge/` 等"写入即执行"类路径）在所有模式下
+直接拒绝，`full_access` 也不豁免——因为 OS 不拦你删自己的家目录。完整口径见 ADR-0009。
+
+`review`、`debug` 不是权限模式，而是改变 Agent 目标函数和输出结构的**任务模式**，与
+上表正交，属 Beta 阶段能力。
 
 模式不是独立 Agent，而是 Policy。它影响同一个 Orchestrator 的工具权限、上下文策略、输出结构和是否自动继续。
 
@@ -166,7 +182,7 @@ flowchart TD
 ForgeCLI 的推荐方案是：
 
 ```text
-ForgeCLI 自有控制面 + 可替换 AgentWorkflow 编排层 + 可选 LangGraph 后端
+ForgeCLI 自有控制面 + 可替换 AgentLoop 编排内核 + 可选 LangGraph 后端
 ```
 
 也就是说，首版必须先实现稳定的本地 CLI 控制面，然后在 Agent Runtime 内预留框架适配接口。复杂 workflow 可以优先评估 LangGraph，但不把 LangGraph 的 checkpoint、message schema、tool schema 直接暴露为 ForgeCLI 的公共协议。
@@ -189,7 +205,7 @@ LangChain、LangGraph、AutoGen 能提升 Agent 编排效率，但它们不能�
 
 | 框架 | 适合使用的位置 | 优点 | 风险 | ForgeCLI 策略 |
 | --- | --- | --- | --- | --- |
-| LangGraph | Agent workflow、状态图、Plan-Act-Reflect 流程 | 状态机清晰，适合可恢复长流程和复杂分支 | checkpoint 和状态模型可能与本地 event store 重叠 | V1 优先评估作为 `AgentWorkflow` 后端 |
+| LangGraph | Agent 编排、状态图、Plan-Act-Reflect 流程 | 状态机清晰，适合可恢复长流程和复杂分支 | checkpoint 和状态模型可能与本地 event store 重叠 | V1 优先评估作为 `AgentLoop` 后端 |
 | LangChain | LLM provider、prompt、output parser、部分工具生态 | 生态丰富，接入快 | 抽象层较厚，依赖面大，高层 Agent 不易控 | 选择性使用底层组件，不作为核心 Agent Runtime |
 | AutoGen | 多角色协作、Multi-Agent 原型 | 多 Agent 对话模型成熟 | 对 CLI 人机协作、权限和本地审计不够贴合 | V2 Multi-Agent 实验，不进入 MVP |
 | CrewAI 等任务编排框架 | 角色化任务流 | 上手简单 | 更偏任务自动化，不适合作为 Claude Code 风格交互内核 | 暂不作为主路径 |
@@ -198,19 +214,19 @@ LangChain、LangGraph、AutoGen 能提升 Agent 编排效率，但它们不能�
 ### 6.4 框架引入阶段
 
 - MVP：自研轻量 Runtime，完成会话、模式、工具、审批、事件日志和恢复。
-- Alpha：定义 `AgentWorkflow` 接口，允许内置 workflow 和 LangGraph workflow 并存。
+- Alpha：稳定 `AgentLoop` 边界（只产出意图、不执行副作用），使编排内核可替换。
 - Beta：对 plan/act/debug/review 等复杂流程试点 LangGraph 后端。
 - V2：评估 AutoGen 或自研 Multi-Agent Runtime，用于跨角色、跨任务、后台长期 Agent。
 
-### 6.5 AgentWorkflow 抽象
+### 6.5 AgentLoop 编排内核
 
-无论是否使用 LangGraph，ForgeCLI 对 application 层只暴露统一接口：
+无论是否使用 LangGraph，ForgeCLI 对 application 层只暴露统一内核（字段口径见 ADR-0010 §4）：
 
 ```text
-AgentWorkflow.run_turn(input, state, context, policy) -> WorkflowResult
+AgentLoop：LoopInput -> LoopDecision | LoopAction | LoopStop
 ```
 
-`WorkflowResult` 只能返回：
+`LoopAction` 只能返回：
 
 - assistant message
 - plan update
@@ -391,7 +407,7 @@ Context Manager 每轮按 token budget 组装，超过阈值时压缩历史。
 - shell 命令按风险分级。
 - 敏感信息不写入日志。
 - MCP server 必须可配置、可禁用、可审计。
-- auto 模式必须有步骤、时间、token 和工具调用预算。
+- `auto` 模式必须有步骤、时间、token 和工具调用预算。
 
 ## 12. 非功能性要求
 
@@ -412,7 +428,7 @@ Context Manager 每轮按 token budget 组装，超过阈值时压缩历史。
 
 - CLI 对话入口。
 - session 存储：`events.jsonl` + `state.json`。
-- chat/plan/act 三种模式。
+- plan / accept_edits / auto / full_access 四档权限模式（默认 accept_edits）。
 - 文件、搜索、shell、git、测试基础工具。
 - 基础上下文压缩。
 - 人工审批。

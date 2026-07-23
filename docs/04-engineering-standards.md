@@ -86,7 +86,7 @@ Accepted
 
 - 本地存储选型：JSONL + state。
 - 架构分层：轻量 DDD。
-- Agent 开发框架选型：自有控制面 + 可替换 workflow adapter。
+- Agent 开发框架选型：自有控制面 + 可替换 `AgentLoop` 编排内核（ADR-0010）。
 - Agent 模式策略。
 - Sub-Agent 和 Multi-Agent 边界。
 - Tool/MCP 统一注册。
@@ -134,7 +134,7 @@ Accepted
 要求：
 
 - `domain` 不依赖 `infrastructure`。
-- application 层只依赖 `AgentWorkflow` 接口，不直接依赖 LangGraph、LangChain、AutoGen。
+- application 层只依赖 `AgentLoop`，不直接依赖 LangGraph、LangChain、AutoGen。
 - application service 负责用例编排，不堆业务规则。
 - 基础设施适配器必须通过接口暴露能力。
 - 工具结果必须结构化，不直接把 stdout 当业务对象。
@@ -191,25 +191,34 @@ GA：
 
 ### 7.1 权限边界
 
-默认策略：
+裁决是规则引擎（`deny → ask → allow`，首个匹配即决定，ADR-0009 决策 3）；外墙是 OS 非 root
+用户权限（**启动即拒绝 root**）；模式只是往 allow 集预填内容的预设。默认策略：
 
-- 只读允许。
-- 写 workspace 内文件需 act/auto。
-- workspace 外写入默认拒绝。
-- 删除、reset、push、发布强制确认。
-- 网络访问默认询问。
+- 内置只读集（`ls cat grep find …` + git 只读）：所有模式免提示。
+- 区内文件编辑 + 文件操作命令（`mkdir touch rm mv cp sed`，非受保护路径）：`accept_edits` 起放行。
+- 命令（测试 / 构建 / python / **git 写** commit/push 等）：`accept_edits` 询问，`auto` 起放行。
+  git 写不做硬性限制，按普通命令走。
+- 动 workspace 外**写与读**：`accept_edits` / `auto` 询问，`full_access` 放行。
+- 高危 deny 命中：所有模式一律拒绝（含 `full_access`）。
+- 用户可用 glob 规则语法（`Bash(npm run *)`、`Read(~/.ssh/**)`，MVP 即实现）精确追加 allow/ask/deny。
 
-### 7.2 命令风险分类
+### 7.2 命令规范化与高危 deny（ADR-0009 决策 4/8）
 
-Shell 执行前必须分类：
+规则**必须作用于解析后的结构**，不做原始串子串匹配：复合命令按 `&& || ; | &` 拆解、每个子命令
+独立裁决取最严；`$(...)`/反引号/`<(...)` 替换内部一并扫描；剥离 `timeout/nice/nohup/xargs`
+包装器；`watch/flock/find -exec` 永远提示；`npx/docker/devbox run` 不剥离、须匹配内层。
 
-- 只读：`ls`、`git status`、`pytest --collect-only`。
-- 写入：测试生成缓存、构建产物、格式化。
-- 网络：安装依赖、curl、包管理器。
-- destructive：删除、reset、clean、权限修改。
-- external：push、发布、发消息。
+命中高危即**拒绝**（选择 A）。命令黑名单 + 目录/文件黑名单：
 
-无法分类时按更高风险处理。
+- 命令黑名单：`rm -rf` 危险目标（`/`、`~`、`./*`、`*`、`..`、工作区根、区外绝对路径）、
+  `mkfs*`、`dd of=/dev/*`、fork bomb、`curl|sh`、`chmod/chown -R` 系统路径、`shred`/`wipefs`。
+- 目录/文件黑名单（写/删拒绝，重点是"写入即执行"类）：系统路径；`.git`（含 hooks）、`.husky`、
+  `.pre-commit-config.yaml`；`.npmrc`/`.yarnrc`/`bunfig.toml`、gradle/maven wrapper、`.bazelrc`；
+  `.vscode`/`.idea`/`.devcontainer`、`.mcp.json`；凭证与 shell rc（`~/.ssh`、`~/.aws`、
+  `~/.gnupg`、`.bashrc`/`.zshrc`/`.envrc`）；ForgeCLI 自身（`.forge/`、`events.jsonl`、`state.json`）。
+
+高危 deny 是主动执行前闸门，与 OS 非 root 边界叠加（能被变量/编码绕过的部分由 OS 兜底）。
+**无法解析时高危不误伤也不硬拦，由 OS 兜底。** 命中须有等价变形（复合、替换、`~` 展开）测试。
 
 ### 7.3 敏感信息
 
