@@ -177,7 +177,7 @@ LLM 网关；当前切片（07-23 起）聚焦 Agent 主循环与权限引擎。
 | --- | --- | --- |
 | 2026-07-23 | `AgentLoop` 边界冻结：`LoopInput/State/Decision/Action/Stop` 全字段 + `LoopStopReason` 全集 + `LoopHook/LoopEvent/LoopEventBus` 骨架，仅冻契约不实现循环体 | 0010 §4/§6/§7 |
 | 2026-07-24 | `BuiltinAgentLoop` 最小实现（answer + `FINAL_ANSWER`）+ `AgentTurnService` 改调 `AgentLoop` 替换 `GatewayReplier` + fake provider 测试 + streaming 渲染 / Ctrl-C 取消接线 | 0010 §5/§13(1-5) |
-| 2026-07-27 | `SessionMode` 改四模式（默认 accept_edits）+ `/chat` 别名 + mode/status/menu 同步；root 启动校验 | 0009 §2/§6 |
+| 2026-07-27 | `SessionMode` 改四模式（默认 accept_edits，纯运行时状态不落盘）+ `Tab`/`Shift+Tab` 切档 + mode/status/menu 同步；root 启动校验 | 0009 §2/§6 |
 | 2026-07-28 | 命令规范化解析器：复合拆解 + 包装器剥离 + 替换扫描 + 只读集 / 文件操作集 / 危险目标识别（纯函数，重绕过用例测试） | 0009 §4/§5 |
 | 2026-07-29 | 规则引擎 `deny→ask→allow` + 内置高危 deny（命令 + 目录黑名单）+ 能力门/裁决门 + 执行流水线骨架 | 0009 §3/§7/§8/§14 |
 | 2026-07-30 | `ToolRuntime` + `ToolRegistry` + 只读工具（read_file/glob/grep）经能力门进 `tool_catalog`；`AgentLoop` 开放 tool request，`ActionDispatcher` 执行、observation 回填 | 0004 / 0010 §13(6-7) |

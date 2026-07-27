@@ -22,7 +22,8 @@ class HelpCommand(CommandHandler):
     def _show_all(self) -> None:
         self._output.print("可用命令：")
         for spec in self._registry.all_specs():
-            self._output.print(f"  /{spec.name:<8} {spec.summary}")
+            # 宽度按最长命令名 accept-edits (12) 取, 保证说明列对齐.
+            self._output.print(f"  /{spec.name:<12} {spec.summary}")
 
     def _show_one(self, name: str) -> None:
         spec = self._registry.get(name)

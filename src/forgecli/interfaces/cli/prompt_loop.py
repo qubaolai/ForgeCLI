@@ -15,6 +15,11 @@
     - Enter 选中（填入输入行）；命令已完整时 Enter 直接提交；
     - Esc 关闭菜单。
 
+模式切换：
+    - 菜单未打开时 Tab 前进、Shift+Tab 后退，沿权限梯度循环切换会话模式（两端截断
+      不回绕），切到哪一档由注入的回调决定；新模式经状态栏反馈。菜单打开时 Tab /
+      Shift+Tab 仍是菜单前进/后退导航（默认行为）。
+
 退出逻辑：
     - 输入框有内容时按 Ctrl-C → 清空内容（不退出）；
     - 空行第一次 Ctrl-C → 提示行变为"再按一次 Ctrl-C 退出"，并起一个退出窗口定时器；
@@ -129,6 +134,7 @@ class ForgePrompt:
         commands: Sequence[tuple[str, str]],
         *,
         status_provider: Callable[[], str] | None = None,
+        on_mode_step: Callable[[int], None],
     ) -> None:
         # "待退出"标志：空行第一次 Ctrl-C 后置 True；它决定提示行是否显示退出警示。
         self._exit_armed = False
@@ -136,6 +142,9 @@ class ForgePrompt:
         self._reset_handle: asyncio.TimerHandle | None = None
         # 每次渲染现读：/model 或 /config 改动后下一帧立即反映。
         self._status_provider = status_provider
+        # shift+tab 的模式切换回调. 本类是 UI 适配器, 不认识 SessionMode/SessionService,
+        # 具体切到哪一档、要不要落事件, 都由注入方 (Repl) 决定.
+        self._on_mode_step = on_mode_step
 
         # 输入缓冲区：挂上斜杠补全器，并开启"边打字边补全"。
         self._buffer = Buffer(
@@ -197,7 +206,7 @@ class ForgePrompt:
         """框下提示行的内容，随"待退出"状态切换。"""
         if self._exit_armed:
             return [("class:hint-alert", "  再按一次 Ctrl-C 退出")]
-        # 普通态：列出主要按键，仿照 Claude Code 的快捷键提示。
+        # 普通态：列出主要按键，快捷键提示。
         return [
             ("class:hint-dim", "  "),
             ("class:hint", "/"),
@@ -334,6 +343,28 @@ class ForgePrompt:
         @kb.add("escape", filter=has_completions)
         def _close_menu(event: KeyPressEvent) -> None:
             event.current_buffer.cancel_completion()
+
+        # shift+tab：逆向切换会话模式。prompt_toolkit 默认把 s-tab 绑成
+        # menu-complete-backward（菜单反向导航），我们的绑定会覆盖它，所以加
+        # ~has_completions：菜单开着时让回默认行为，只有菜单没开时才切模式。
+        @kb.add("s-tab", filter=~has_completions)
+        def _reverse_switch_mode(event: KeyPressEvent) -> None:
+            if self._on_mode_step is None:
+                return
+            self._on_mode_step(-1)
+            # 立刻重绘，让状态栏显示新模式（它就是这个快捷键的视觉反馈）。
+            event.app.invalidate()
+
+        # tab：切换会话模式。prompt_toolkit 默认把 tab 绑成
+        # menu-complete-backward（菜单反向导航），我们的绑定会覆盖它，所以加
+        # ~has_completions：菜单开着时让回默认行为，只有菜单没开时才切模式。
+        @kb.add("tab", filter=~has_completions)
+        def _forward_switching_mode(event: KeyPressEvent) -> None:
+            if self._on_mode_step is None:
+                return
+            self._on_mode_step(1)
+            # 立刻重绘，让状态栏显示新模式（它就是这个快捷键的视觉反馈）。
+            event.app.invalidate()
 
         @kb.add("enter")
         def _accept(event: KeyPressEvent) -> None:

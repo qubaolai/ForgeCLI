@@ -10,6 +10,7 @@ import typer
 from rich.console import Console
 
 from forgecli.interfaces.cli.bootstrap import run as run_session
+from forgecli.interfaces.cli.exit_codes import ExitCode
 from forgecli.shared import __version__
 
 app = typer.Typer(
@@ -54,7 +55,11 @@ def _root(
     不注册 Typer 子命令，避免形成交互式和命令式两套入口。
     """
     if ctx.invoked_subcommand is None:
-        run_session()
+        # 会话没能开始时以非零码退出, 让脚本与 CI 可判据 (码值语义见 exit_codes 模块).
+        # 正常收尾返回 0, 不抛 typer.Exit.
+        code = run_session()
+        if code is not ExitCode.OK:
+            raise typer.Exit(code)
 
 
 def main() -> None:

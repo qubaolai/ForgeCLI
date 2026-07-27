@@ -35,12 +35,27 @@ class IntentKind(Enum):
 
 
 class SessionMode(Enum):
-    """会话模式"""
+    """会话模式 (ADR-0009 决策 6 的四档预设; 取值会落盘进 state.json, 不可改)."""
 
     ACCEPT_EDITS = "accept_edits"
     PLAN = "plan"
     AUTO = "auto"
     FULL_ACCESS = "full_access"
+
+    def step(self, delta: int) -> SessionMode:
+        """沿权限梯度移动 delta 档, 两端截断不回绕."""
+        idx = _MODE_LADDER.index(self) + delta
+        return _MODE_LADDER[max(0, min(idx, len(_MODE_LADDER) - 1))]
+
+
+# 权限从紧到松, tab / shift+tab 按此序循环. 不用枚举声明顺序: 安全相关的次序应显式写出.
+# ADR-0009 决策 13: 模式定义是代码级常量, 配置只能收紧, 不能放宽.
+_MODE_LADDER: tuple[SessionMode, ...] = (
+    SessionMode.PLAN,
+    SessionMode.ACCEPT_EDITS,
+    SessionMode.AUTO,
+    SessionMode.FULL_ACCESS,
+)
 
 
 @dataclass(frozen=True)

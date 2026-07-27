@@ -82,7 +82,7 @@ class ResumeCommand(CommandHandler):
         session_id = snapshot.session_id
         return Choice(
             label=snapshot.title or _NO_TITLE,
-            preview=lambda: f"{snapshot.mode.value} · {snapshot.updated_at}",
+            preview=lambda: f"{snapshot.updated_at}",
             payload=lambda: _preview_block(snapshot),
             on_select=lambda: chosen.append(session_id),
             close_on_select=True,
@@ -95,7 +95,6 @@ def _preview_block(snapshot: SessionSnapshot) -> str:
         [
             f"title: {snapshot.title or _NO_TITLE}",
             f"session: {snapshot.session_id}",
-            f"mode: {snapshot.mode.value}",
             f"status: {snapshot.status}",
             f"updated_at: {snapshot.updated_at}",
             f"last_event: {snapshot.last_event_id or '-'}",
@@ -109,7 +108,6 @@ def _summary(snapshot: SessionSnapshot, event_count: int) -> str:
             "已恢复会话：",
             f"  title: {snapshot.title or _NO_TITLE}",
             f"  session: {snapshot.session_id}",
-            f"  mode: {snapshot.mode.value}",
             f"  status: {snapshot.status}",
             f"  updated_at: {snapshot.updated_at}",
             f"  last_event: {snapshot.last_event_id or '-'}",

@@ -157,9 +157,19 @@ class SessionService:
         """
         return self._append(EventType.USAGE_RECORDED, {"turn_id": turn_id, **payload})
 
-    def record_mode_change(self, mode: SessionMode) -> SessionEvent:
-        """记录一次模式切换，并把快照 mode 推进到新模式。"""
-        return self._append(EventType.MODE_CHANGED, {"mode": mode.value}, mode=mode)
+    def set_mode(self, mode: SessionMode) -> SessionSnapshot:
+        """把当前会话切到某个模式：纯内存推进，不写事件、也不触发落盘。
+
+        模式是**运行时状态而非会话史实**：既不进 events.jsonl，也不进 state.json，
+        因此每个新会话（含 /resume 续写的会话）都从默认档 accept_edits 起步。两条理由：
+
+        - 快照必须能由事件日志重建（ADR-0001）。若把模式写进 state.json 却不写对应
+          事件，就多出一个无从重建的字段，这条不变量即告破。
+        - 模式直接决定权限裁决（ADR-0009 决策 6）。昨天升到 full_access，不该在今天
+          /resume 时被静默继承——重新授权应当是显式动作。
+        """
+        self._current = replace(self.current(), mode=mode)
+        return self._current
 
     def record_slash_command(
         self, name: str, args: tuple[str, ...] = ()
@@ -173,8 +183,8 @@ class SessionService:
         self,
         event_type: EventType,
         payload: Mapping[str, object],
-        *,
-        mode: SessionMode | None = None,
+        # *,
+        # mode: SessionMode | None = None,
     ) -> SessionEvent:
         if self._current is None:
             raise SessionStateError("会话尚未开始。")
@@ -188,8 +198,8 @@ class SessionService:
             if title:
                 self._current = replace(self._current, title=title)
         self._ensure_persisted()
-        if mode is not None:
-            self._current = replace(self._current, mode=mode)
+        # if mode is not None:
+        #     self._current = replace(self._current, mode=mode)
         return self._emit(event_type, payload)
 
     def _ensure_persisted(self) -> None:
@@ -198,9 +208,11 @@ class SessionService:
             return
         self._persisted = True
         snapshot = self.current()
+        # 不带 mode：模式是运行时状态（见 set_mode），落进事件反而会记下"首个可记录
+        # 事件发生时的模式"这种既非会话起点、又无人消费的值。
         self._emit(
             EventType.SESSION_CREATED,
-            {"workspace_root": snapshot.workspace_root, "mode": snapshot.mode.value},
+            {"workspace_root": snapshot.workspace_root},
         )
 
     def _emit(

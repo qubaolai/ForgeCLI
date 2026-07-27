@@ -1,4 +1,4 @@
-"""/chat、/plan、/act 模式切换命令。
+"""/plan, /accept-edits, /auto, /full-access 模式切换命令。
 
 模式切换归一为普通斜杠命令：handler 调 ``SessionService.record_mode_change`` 把
 mode 单一真相推进到 session 快照（并写一条 ``mode_changed`` 事件）。因为它已经写了
@@ -25,6 +25,6 @@ class ModeCommand(CommandHandler):
         self._output = output
 
     def execute(self, command: SlashCommand) -> bool:
-        self._session.record_mode_change(self._mode)
+        self._session.set_mode(self._mode)
         self._output.print(f"已切换到 [bold]{self._mode.value}[/] 模式。")
         return False  # 已写 mode_changed 事件，无需 REPL 再记 slash_command

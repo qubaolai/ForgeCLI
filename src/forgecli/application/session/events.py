@@ -15,7 +15,8 @@ class EventType(Enum):
     """事件类型。值即落盘字符串。"""
 
     SESSION_CREATED = "session_created"
-    MODE_CHANGED = "mode_changed"
+    # 注释掉：模式改为纯运行时状态后不再写入（见 SessionService.set_mode）
+    # MODE_CHANGED = "mode_changed"
     USER_MESSAGE = "user_message"
     ASSISTANT_MESSAGE = "assistant_message"
     SLASH_COMMAND = "slash_command"

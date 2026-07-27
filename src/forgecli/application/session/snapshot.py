@@ -22,12 +22,13 @@ class SessionSnapshot:
 
     session_id: str
     workspace_root: str
-    mode: SessionMode
     last_event_id: str | None
     updated_at: str
     status: str = "active"
     schema_version: int = 1
     title: str = ""
+    # 运行时字段，不序列化：排在末尾并带默认值，好让 from_dict 无须为它取值。
+    mode: SessionMode = SessionMode.ACCEPT_EDITS
 
     def to_dict(self) -> dict[str, object]:
         """序列化为可 JSON 落盘的纯字典（mode 落字符串值，键名对齐 §4.3）。"""
@@ -35,7 +36,7 @@ class SessionSnapshot:
             "schema_version": self.schema_version,
             "session_id": self.session_id,
             "workspace_root": self.workspace_root,
-            "current_mode": self.mode.value,
+            # "current_mode": self.mode.value,
             "status": self.status,
             "title": self.title,
             "last_event_id": self.last_event_id,
@@ -44,15 +45,16 @@ class SessionSnapshot:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, object]) -> SessionSnapshot:
-        """从 state.json 还原快照（供 read / 测试）。"""
+        """从 state.json 还原快照（供 read / 测试）。
+
+        mode 不从 data 读取：旧 state.json 里可能还留着 ``current_mode``（含已退役的
+        ``chat``），一律忽略并取默认档，读旧文件因此不会失败。
+        """
         last = data.get("last_event_id")
         raw_version = data.get("schema_version", 1)
         return cls(
             session_id=str(data.get("session_id", "")),
             workspace_root=str(data.get("workspace_root", "")),
-            mode=SessionMode(
-                str(data.get("current_mode", SessionMode.ACCEPT_EDITS.value))
-            ),
             last_event_id=None if last is None else str(last),
             updated_at=str(data.get("updated_at", "")),
             status=str(data.get("status", "active")),

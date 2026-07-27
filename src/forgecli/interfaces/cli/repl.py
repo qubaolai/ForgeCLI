@@ -3,9 +3,9 @@
 退出方式：空行连按两次 Ctrl-C。
 本模块只做"读取 + 分派 + 记录会话事件"，具体命令逻辑在各 handler，按键交互在适配器。
 
-会话事件（27 日）：进入 REPL 即 start() 当前 session（惰性落盘，无操作不写文件）；
-自然语言写 user_message、模式切换写 mode_changed；斜杠命令事件类型先保留，
-本日暂不落盘记录。
+会话事件：进入 REPL 即 start() 当前 session（惰性落盘，无操作不写文件）；
+自然语言写 user_message、模式切换写 mode_changed；斜杠命令按 handler 返回值
+落盘 slash_command——只有真正写了持久状态的命令才记录，只读命令不记。
 
 交互式会话需要真终端(TTY)。非终端(管道 / CI / 测试)下 prompt_toolkit 的全屏输入
 无法工作，此时直接拒绝并退出，而不是降级成一个变差的读取器——判断标准与
@@ -80,7 +80,8 @@ class Repl:
                 border_style="cyan",
             )
         )
-        # prompt_toolkit 的底层 Application 依赖真 TTY；管道和测试场景直接安全退出。
+        # prompt_toolkit 的底层 Application 依赖真 TTY。产品路径上 bootstrap 已在最
+        # 前面拒掉非 TTY (退出码 NO_TTY), 这里只是直接构造 Repl 的调用方的兜底。
         if not stdin_is_tty():
             self._console.print("[yellow]Forge 交互式会话需要在终端(TTY)中运行。[/]")
             return
@@ -89,10 +90,10 @@ class Repl:
         self._session.start()
         # 输入框只需要命令名和说明，用于 "/" 补全菜单；执行仍由 registry 分派。
         commands = [(spec.name, spec.summary) for spec in self._registry.all_specs()]
-        prompt = (
-            ForgePrompt(commands)
-            if self._prompt_status is None
-            else ForgePrompt(commands, status_provider=self._prompt_status)
+        prompt = ForgePrompt(
+            commands,
+            status_provider=self._prompt_status,
+            on_mode_step=self._step_mode,
         )
         while True:
             try:
@@ -106,6 +107,17 @@ class Repl:
                 # Ctrl-C×2，ADR-0007），所以这里不是退出快捷键，只是流末尾兜底。
                 break
             self._process_line(line)
+
+    def _step_mode(self, step: int) -> None:
+        """shift+tab 回调: 切到下一档模式并落 mode_changed 事件.
+
+        与 /plan 一类模式命令走同一条落盘路径, 事件日志里两者不可区分 —— 模式的
+        真相源始终是 session 快照, 而不是某个 UI 状态.
+        """
+        current = self._session.current().mode
+        target = current.step(step)
+        if target is not current:
+            self._session.set_mode(target)
 
     def _process_line(self, line: str) -> None:
         """清洗一行输入并分派：空行忽略、退出词退出、其余交给 IntentRouter。"""
