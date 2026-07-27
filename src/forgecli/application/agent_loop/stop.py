@@ -8,6 +8,7 @@
 """
 
 from __future__ import annotations
+
 from enum import Enum
 
 
@@ -30,7 +31,7 @@ class LoopStopReason(Enum):
     def classification(self) -> StopClassification:
         """按 ADR-0010 §6 的分类规则归类。"""
         return _CLASSIFICATION[self]
-    
+
     @property
     def is_normal_completion(self) -> bool:
         return self.classification is StopClassification.NORMAL
@@ -38,9 +39,6 @@ class LoopStopReason(Enum):
     @property
     def is_resumable_pause(self) -> bool:
         return self.classification is StopClassification.RESUMABLE_PAUSE
-
-
-
 
 
 class StopClassification(Enum):

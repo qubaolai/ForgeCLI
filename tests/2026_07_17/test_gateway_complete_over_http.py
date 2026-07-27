@@ -143,7 +143,8 @@ def test_full_non_streaming_path_request_to_normalized_response() -> None:
     assert sent["model"] == "deepseek-chat"  # 由 resolver 解析，非请求硬编码
     assert sent["messages"] == [{"role": "user", "content": "你好"}]
     assert "stream" not in sent  # 非流式调用不带 stream 标志
-    assert str(captured[0].url) == f"{_BASE}/chat/completions"
+    # api_base 即完整 endpoint（GLM 接入后语义）：adapter 不再自行拼接路径。
+    assert str(captured[0].url) == _BASE
 
     # 入站：真实 OpenAI 响应体经 adapter 解析、经网关归一化成 ModelResponse。
     assert isinstance(response, ModelResponse)

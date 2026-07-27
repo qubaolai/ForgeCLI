@@ -50,10 +50,16 @@ class ProviderStreamChunk:
 
 @dataclass(frozen=True)
 class ModelStreamChunk:
-    """gateway 输出的统一流式片段（§9）。sequence 从 0 递增。"""
+    """gateway 输出的统一流式片段（§9）。sequence 从 0 递增。
+
+    provider/model 为 gateway 已解析的模型身份：每块统一携带，收尾块因此
+    自足构成完整 ModelResponse 汇总（§9），消费方（如 usage 计量）无需回查选择器。
+    """
 
     request_id: str
     sequence: int
+    provider: str
+    model: str
     delta_text: str | None = None
     tool_call_delta: ToolCallDelta | None = None
     usage_delta: ModelUsage | None = None
@@ -65,6 +71,10 @@ class ModelStreamChunk:
             raise ValueError("ModelStreamChunk.request_id 不能为空")
         if self.sequence < 0:
             raise ValueError("ModelStreamChunk.sequence 不能为负")
+        if not self.provider.strip():
+            raise ValueError("ModelStreamChunk.provider 不能为空")
+        if not self.model.strip():
+            raise ValueError("ModelStreamChunk.model 不能为空")
 
 
 @dataclass

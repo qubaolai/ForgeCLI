@@ -15,9 +15,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
-
 from rich.console import Console
 from rich.text import Text
 
@@ -29,15 +26,10 @@ _ASSISTANT_TEXT = "#cdd6f4"  # 助手输出正文：提亮主色(对话焦点)
 _THINKING = "处理中..."
 _SPINNER_STYLE = "#94e2d5"
 
+_NOTICE_TEXT = "#6c7086"  # 收尾提示(取消/失败)：灰色，弱化——非模型正文
 
-@contextmanager
-def thinking(console: Console, label: str = _THINKING) -> Iterator[None]:
-    """助手处理中的 loading 动画(青绿 dots);退出 with 自动擦除,不留痕。
-
-    非 TTY(管道/测试)下 Rich 会自动降级为静态文本,不会报错。
-    """
-    with console.status(label, spinner="dots", spinner_style=_SPINNER_STYLE):
-        yield
+_MARK = "●"
+_INDENT = "  "  # 续行悬挂缩进：对齐 "● " 之后的文字列(标记同宽)
 
 
 def render_user_turn(console: Console, text: str) -> None:
@@ -47,8 +39,35 @@ def render_user_turn(console: Console, text: str) -> None:
 
 def render_assistant_turn(console: Console, text: str) -> None:
     """打印助手这一轮输出(青绿 "●" 标记)，末尾留一空行分隔下一轮。"""
-    console.print(_turn("●", _ASSISTANT_MARK, text, _ASSISTANT_TEXT))
+    console.print(assistant_text(text))
     console.print()
+
+
+def assistant_text(text: str) -> Text:
+    """助手样式正文（"●" 标记 + 悬挂缩进）；整块打印用（非流式回退 / 正常轮收尾）。"""
+    return _turn(_MARK, _ASSISTANT_MARK, text, _ASSISTANT_TEXT)
+
+
+def assistant_line(text: str, *, first: bool) -> Text:
+    """流式逐行提交的一行(单行，不含换行)：全局首行带 "●" 标记，续行悬挂缩进。"""
+    body = Text()
+    if first:
+        body.append(f"{_MARK} ", style=_ASSISTANT_MARK)
+    else:
+        body.append(_INDENT)
+    body.append(text, style=_ASSISTANT_TEXT)
+    return body
+
+
+def assistant_notice(text: str) -> Text:
+    """收尾提示(取消 / 失败说明)：灰色，悬挂缩进对齐正文列，无 "●" 标记。"""
+    body = Text()
+    for i, line in enumerate(text.split("\n")):
+        if i:
+            body.append("\n")
+        body.append(_INDENT)
+        body.append(line, style=_NOTICE_TEXT)
+    return body
 
 
 def _turn(mark: str, mark_style: str, text: str, text_style: str) -> Text:

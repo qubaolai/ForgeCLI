@@ -125,18 +125,27 @@ class SessionService:
         )
 
     def record_assistant_message(
-        self, text: str, *, turn_id: str, status: TurnStatus
+        self,
+        text: str,
+        *,
+        turn_id: str,
+        status: TurnStatus,
+        stop_reason: str | None = None,
     ) -> SessionEvent:
-        """记录一条助手输出（与 user_message 同一 turn 成对，带终态）。"""
-        return self._append(
-            EventType.ASSISTANT_MESSAGE,
-            {
-                "turn_id": turn_id,
-                "role": MessageRole.ASSISTANT.value,
-                "status": status.value,
-                "text": text,
-            },
-        )
+        """记录一条助手输出（与 user_message 同一 turn 成对，带终态）。
+
+        stop_reason 为循环停止原因的机器可读标记（LoopStopReason 值，如
+        user_cancelled）；仅在有值时写入 payload，保证取消轮在事件日志无歧义。
+        """
+        payload: dict[str, object] = {
+            "turn_id": turn_id,
+            "role": MessageRole.ASSISTANT.value,
+            "status": status.value,
+            "text": text,
+        }
+        if stop_reason is not None:
+            payload["stop_reason"] = stop_reason
+        return self._append(EventType.ASSISTANT_MESSAGE, payload)
 
     def record_usage(
         self, payload: Mapping[str, object], *, turn_id: str

@@ -12,6 +12,7 @@ event subscriber。hook 不直接写事件：需要记录时发布 LoopEvent 或
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 
 from forgecli.application.agent_loop.actions import LoopAction, LoopObservation
@@ -28,25 +29,26 @@ class HookResult:
     should_continue=False 时必须带 stop_reason；mutated_state / mutated_request 非空表示
     hook 请求以新值替换后续状态 / 模型请求（必须可测试、可追踪）。
     """
+
     should_continue: bool = True
     stop_reason: LoopStopReason | None = None
     mutated_state: LoopState | None = None
     mutated_request: ModelRequest | None = None
-    
+
     def __post_init__(self) -> None:
         if not self.should_continue and self.stop_reason is None:
             raise ValueError("HookResult 要求 stop 时必须给出 stop_reason")
-        
+
     @classmethod
     def proceed(cls) -> HookResult:
         """放行，不改变控制流。"""
         return cls()
-    
+
     @classmethod
     def stop(cls, reason: LoopStopReason) -> HookResult:
         """要求循环停止，并给出原因。"""
         return cls(should_continue=False, stop_reason=reason)
-    
+
     @classmethod
     def mutate(
         cls,
@@ -56,7 +58,7 @@ class HookResult:
     ) -> HookResult:
         """放行但请求替换 state / request。"""
         return cls(mutated_state=state, mutated_request=request)
-    
+
 
 class LoopHook:
     """按稳定顺序影响控制流的 hook。默认各时点放行，子类只覆写关心的时点。"""

@@ -43,7 +43,6 @@ class SessionMode(Enum):
     FULL_ACCESS = "full_access"
 
 
-
 @dataclass(frozen=True)
 class UserIntent(ABC):
     """所有用户意图的值对象基类。

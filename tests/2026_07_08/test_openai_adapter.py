@@ -94,7 +94,8 @@ def test_happy_path_maps_request_and_response() -> None:
             system_prompt="你是助手",
         )
     )
-    assert captured["url"] == f"{_BASE}/chat/completions"
+    # api_base 即完整 endpoint（GLM 接入后语义）：adapter 不再自行拼接路径。
+    assert captured["url"] == _BASE
     assert captured["auth"] == "Bearer fake-key"
     payload = captured["payload"]
     assert payload["model"] == "deepseek-chat"

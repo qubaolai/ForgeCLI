@@ -5,8 +5,9 @@
 唯一实现是 BuiltinAgentLoop（2026-07-24 起落地）；不预先抽象 LoopAdapter 之类的编排
 适配层（ADR-0010 §3）。
 
-2026-07-23：只冻契约（输入 / 状态 / 三类产出 / 停止原因 / hooks / events 骨架），
-不接循环体。
+2026-07-23：只冻契约（输入 / 状态 / 三类产出 / 停止原因 / hooks / events 骨架）。
+2026-07-24：落地 BuiltinAgentLoop（单步：一次模型调用 -> AnswerAction ->
+FINAL_ANSWER）。
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from forgecli.application.agent_loop.actions import (
     ToolRequest,
     ToolRequestAction,
 )
+from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
 from forgecli.application.agent_loop.events import (
     LoopEvent,
     LoopEventBus,
@@ -48,6 +50,7 @@ __all__ = [
     "ApprovalRequest",
     "ApprovalRequestAction",
     "AskUserAction",
+    "BuiltinAgentLoop",
     "CompactionRequestAction",
     "ContextPackage",
     "HookResult",

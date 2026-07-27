@@ -547,6 +547,8 @@ class DefaultLlmGateway(LlmGateway):
             return ModelStreamChunk(
                 request_id=request.request_id,
                 sequence=sequence,
+                provider=ref.provider,
+                model=ref.model,
                 delta_text=provider_chunk.delta_text,
                 tool_call_delta=provider_chunk.tool_call_delta,
                 usage_delta=provider_chunk.usage,
@@ -629,6 +631,8 @@ class DefaultLlmGateway(LlmGateway):
         yield ModelStreamChunk(
             request_id=request.request_id,
             sequence=sequence,
+            provider=ref.provider,
+            model=ref.model,
             usage_delta=usage,
             finish_reason=last_finish or FinishReason.STOP,
         )
@@ -656,6 +660,8 @@ class DefaultLlmGateway(LlmGateway):
         return ModelStreamChunk(
             request_id=request.request_id,
             sequence=sequence,
+            provider=ref.provider,
+            model=ref.model,
             usage_delta=usage,
             finish_reason=FinishReason.USER_CANCELLED,
             interrupted=True,
@@ -674,6 +680,8 @@ class DefaultLlmGateway(LlmGateway):
         return ModelStreamChunk(
             request_id=request.request_id,
             sequence=sequence,
+            provider=ref.provider,
+            model=ref.model,
             usage_delta=usage,
             finish_reason=FinishReason.ERROR,
             interrupted=True,

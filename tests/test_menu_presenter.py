@@ -8,7 +8,7 @@ presenter 平时只在真 TTY 跑，这里把 stdin_is_tty / raw_mode / read_key
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator
+from collections.abc import Generator
 
 import pytest
 import rich.live
@@ -35,7 +35,7 @@ class _FakeLive:
 
 
 @contextlib.contextmanager
-def _noop_raw(fd: int) -> Iterator[None]:
+def _noop_raw(fd: int) -> Generator[None]:
     yield
 
 

@@ -15,7 +15,17 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from forgecli.application.agent_turn import AgentTurnService
+from forgecli.application.agent_loop import (
+    AgentLoop,
+    AnswerAction,
+    LoopDecision,
+    LoopInput,
+    LoopObservation,
+    LoopStepResult,
+    LoopStop,
+    LoopStopReason,
+)
+from forgecli.application.agent_turn import AgentTurnService, TurnCancelSource
 from forgecli.application.intent_router import IntentRouter
 from forgecli.application.interaction_ports import DirectoryPicker
 from forgecli.application.project import (
@@ -41,7 +51,38 @@ from forgecli.interfaces.cli import repl as repl_module
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.repl import QuitSignal, Repl
+from forgecli.interfaces.cli.stream_render import StreamingTranscript
 from forgecli.interfaces.cli.wiring import build_registry
+
+
+class _EchoLoop(AgentLoop):
+    """脚本化单步 loop：固定回答，供本文件驱动 AgentTurnService。"""
+
+    def start(self, loop_input: LoopInput) -> LoopStepResult:
+        return LoopDecision(next_action=AnswerAction(text="好的"))
+
+    def observe(self, observation: LoopObservation) -> LoopStepResult:
+        return LoopStop.of(LoopStopReason.FINAL_ANSWER)
+
+
+def _repl(
+    console: Console,
+    router: IntentRouter,
+    registry: CommandRegistry,
+    output: RichOutput,
+    session: SessionService,
+    agent_turn: AgentTurnService,
+) -> Repl:
+    return Repl(
+        console,
+        router,
+        registry,
+        output,
+        session,
+        agent_turn,
+        stream_view=StreamingTranscript(console),
+        cancel_source=TurnCancelSource(),
+    )
 
 
 class _NullPicker(DirectoryPicker):
@@ -92,7 +133,7 @@ def _runtime() -> (
     console = Console(record=True)
     output = RichOutput(console)
     session = _session()
-    agent_turn = AgentTurnService(session)
+    agent_turn = AgentTurnService(session, loop_factory=_EchoLoop)
     registry = build_registry(
         session,
         _context(),
@@ -118,9 +159,10 @@ def test_registry_contains_all_roadmap_slash_commands() -> None:
     registered_names = {spec.name for spec in registry.all_specs()}
     assert registered_names >= {
         "help",
-        "chat",
+        "accept_edits",
         "plan",
-        "act",
+        "auto",
+        "full_access",
         "status",
         "add-dir",
         "resume",
@@ -188,7 +230,7 @@ def test_normalizes_slash_command_name_to_lowercase() -> None:
     assert intent.command == "help"
 
 
-@pytest.mark.parametrize("command", ["chat", "plan", "act"])
+@pytest.mark.parametrize("command", ["accept_edits", "plan", "auto", "full_access"])
 def test_routes_mode_switch_as_plain_slash_command(command: str) -> None:
     # 模式切换不再是单独意图，统一解析为 SlashCommand，差异落在 handler。
     intent = _router().route(f"/{command}")
@@ -224,7 +266,7 @@ def test_rejects_empty_input(raw_text: str) -> None:
 
 def test_repl_process_line_routes_user_message() -> None:
     console, registry, output, router, session, agent_turn = _runtime()
-    repl = Repl(console, router, registry, output, session, agent_turn)
+    repl = _repl(console, router, registry, output, session, agent_turn)
 
     repl._process_line("解释这个项目")
 
@@ -237,7 +279,7 @@ def test_repl_process_line_routes_user_message() -> None:
 
 def test_repl_process_line_switches_mode_via_session() -> None:
     console, registry, output, router, session, agent_turn = _runtime()
-    repl = Repl(console, router, registry, output, session, agent_turn)
+    repl = _repl(console, router, registry, output, session, agent_turn)
 
     repl._process_line("/plan")
 
@@ -248,7 +290,7 @@ def test_repl_process_line_switches_mode_via_session() -> None:
 
 def test_repl_process_line_dispatches_status_command() -> None:
     console, registry, output, router, session, agent_turn = _runtime()
-    repl = Repl(console, router, registry, output, session, agent_turn)
+    repl = _repl(console, router, registry, output, session, agent_turn)
 
     repl._process_line("/status")
 
@@ -259,7 +301,7 @@ def test_repl_process_line_dispatches_status_command() -> None:
 
 def test_repl_process_line_reports_unknown_command_with_help_hint() -> None:
     console, registry, output, router, session, agent_turn = _runtime()
-    repl = Repl(console, router, registry, output, session, agent_turn)
+    repl = _repl(console, router, registry, output, session, agent_turn)
 
     repl._process_line("/does-not-exist")
 
@@ -283,7 +325,7 @@ def test_repl_run_exits_on_eof(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(repl_module, "ForgePrompt", EofPrompt)
 
     # 不挂起、不抛异常地正常返回即为通过。
-    Repl(console, router, registry, output, session, agent_turn).run()
+    _repl(console, router, registry, output, session, agent_turn).run()
 
 
 def test_repl_run_exits_on_quit_signal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -300,4 +342,4 @@ def test_repl_run_exits_on_quit_signal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(repl_module, "stdin_is_tty", lambda: True)
     monkeypatch.setattr(repl_module, "ForgePrompt", QuitPrompt)
 
-    Repl(console, router, registry, output, session, agent_turn).run()
+    _repl(console, router, registry, output, session, agent_turn).run()

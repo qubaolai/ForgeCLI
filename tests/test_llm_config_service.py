@@ -135,7 +135,8 @@ def test_add_model_creates_provider_section_with_defaults(tmp_path: Path) -> Non
     # provider 段用注册表默认补齐
     deepseek = reopened.config().provider("deepseek")
     assert deepseek is not None
-    assert deepseek.api_base == "https://api.deepseek.com"
+    # api_base 即完整 endpoint（GLM 接入后语义）
+    assert deepseek.api_base == "https://api.deepseek.com/chat/completions"
     assert deepseek.api_key_env == "DEEPSEEK_API_KEY"
 
 

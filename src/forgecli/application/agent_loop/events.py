@@ -13,11 +13,13 @@ event subscriber。
 """
 
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
+
 
 class LoopEventKind(Enum):
     """循环观察事件类型（§7.2）。值即落盘 / 序列化字符串。"""
@@ -42,7 +44,7 @@ class LoopEvent:
     def __post_init__(self) -> None:
         if not self.turn_id.strip():
             raise ValueError("LoopEvent.turn_id 不能为空")
-        
+
 
 class LoopEventSubscriber(ABC):
     """循环事件订阅者。只消费，不返回控制信号。"""
@@ -71,6 +73,7 @@ class LoopEventBus:
             except Exception as exc:  # noqa: BLE001 - 有意隔离，防单个订阅者破坏主循环
                 self._isolated.append((subscriber, event, exc))
 
+    @property
     def isolated_failures(
         self,
     ) -> tuple[tuple[LoopEventSubscriber, LoopEvent, Exception], ...]:

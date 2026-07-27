@@ -70,6 +70,6 @@ def test_status_lists_at_least_primary_with_no_events(tmp_path: Path) -> None:
     )
 
     text = output.lines[0]
-    assert "mode: chat" in text
+    assert "mode: accept_edits" in text
     assert "last_event: -" in text  # 尚无事件
     assert "- /only/primary" in text

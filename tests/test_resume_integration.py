@@ -17,7 +17,17 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from forgecli.application.agent_turn import AgentTurnService
+from forgecli.application.agent_loop import (
+    AgentLoop,
+    AnswerAction,
+    LoopDecision,
+    LoopInput,
+    LoopObservation,
+    LoopStepResult,
+    LoopStop,
+    LoopStopReason,
+)
+from forgecli.application.agent_turn import AgentTurnService, TurnCancelSource
 from forgecli.application.intent_router import IntentRouter
 from forgecli.application.interaction_ports import DirectoryPicker
 from forgecli.application.project import (
@@ -41,7 +51,18 @@ from forgecli.infrastructure.session import JsonlEventStore, JsonStateStore
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.repl import Repl
+from forgecli.interfaces.cli.stream_render import StreamingTranscript
 from forgecli.interfaces.cli.wiring import build_registry
+
+
+class _EchoLoop(AgentLoop):
+    """脚本化单步 loop：固定回答，供本文件驱动 AgentTurnService。"""
+
+    def start(self, loop_input: LoopInput) -> LoopStepResult:
+        return LoopDecision(next_action=AnswerAction(text="好的"))
+
+    def observe(self, observation: LoopObservation) -> LoopStepResult:
+        return LoopStop.of(LoopStopReason.FINAL_ANSWER)
 
 
 class _NoPicker(DirectoryPicker):
@@ -78,7 +99,7 @@ def _repl(sessions: Path) -> Repl:
         id_factory=lambda: "live-sid",
     )
     session.start()
-    agent_turn = AgentTurnService(session)
+    agent_turn = AgentTurnService(session, loop_factory=_EchoLoop)
     registry = build_registry(
         session,
         _context(),
@@ -89,7 +110,16 @@ def _repl(sessions: Path) -> Repl:
         agent_turn,
     )
     router = IntentRouter(registry)
-    return Repl(console, router, registry, output, session, agent_turn)
+    return Repl(
+        console,
+        router,
+        registry,
+        output,
+        session,
+        agent_turn,
+        stream_view=StreamingTranscript(console),
+        cancel_source=TurnCancelSource(),
+    )
 
 
 def _make_history(sessions: Path, session_id: str) -> SessionSnapshot:

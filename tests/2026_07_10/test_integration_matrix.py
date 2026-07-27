@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.agent_turn import AgentTurnService, GatewayReplier
+from forgecli.application.agent_loop import BuiltinAgentLoop
+from forgecli.application.agent_turn import AgentTurnService
 from forgecli.application.config import config_keys
 from forgecli.application.config.config_service import ConfigService
 from forgecli.application.llm.catalog_builder import build_catalog
@@ -205,7 +206,9 @@ def test_full_chain_chat_turn_persists_usage_with_cost(tmp_path: Path) -> None:
     meter = UsageMeter(
         CostEstimator(build_catalog(env.llm.config())), clock=lambda: "t0"
     )
-    agent = AgentTurnService(session, replier=GatewayReplier(env.gateway, meter))
+    agent = AgentTurnService(
+        session, loop_factory=lambda: BuiltinAgentLoop(env.gateway, meter)
+    )
     response = agent.handle_user_message("你好")
     assert response.text == "答"
 

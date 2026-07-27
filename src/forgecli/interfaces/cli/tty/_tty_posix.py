@@ -5,14 +5,14 @@ from __future__ import annotations
 import os
 import select
 import termios
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 from forgecli.interfaces.cli.tty.keys import Key, KeyPress
 
 
 @contextmanager
-def raw_mode(fd: int) -> Iterator[None]:
+def raw_mode(fd: int) -> Generator[None]:
     """进入"准 raw"模式：逐字符、无回显、自行处理 Ctrl-C。
 
     关键：不像 ``tty.setraw`` 那样关闭 OPOST/ONLCR——保留输出后处理，让 "\\n" 仍输出为

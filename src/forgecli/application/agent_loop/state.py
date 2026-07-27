@@ -10,6 +10,7 @@ context 信息。
 """
 
 from __future__ import annotations
+
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -22,23 +23,24 @@ from forgecli.domain.intents import SessionMode, UserIntent
 @dataclass(frozen=True)
 class ModePolicy:
     """当前模式的能力边界(占位)
-    
+
     本切片只冻字段位. 权限引擎切片（ADR-0009：deny→ask→allow 规则引擎、能力门、
     高危拦截）落地后，本类承载解析出的 allow/ask/deny 裁决入口与工具暴露边界。
     现仅携带 mode，供循环与裁决共享单一真相。
     """
 
     mode: SessionMode
-    
+
 
 @dataclass(frozen=True)
 class ContextPackage:
-    """本轮模型上下文(占位)
+    """本轮模型上下文（占位最小形状）。
 
     system_prompt + 归一化对话消息。上下文组装、压缩与记忆注入在后续切片充实；本切片
     只需承载「喂给 gateway 的一轮上下文」这一最小职责。
     """
-    message: tuple[ChatMessage, ...] = ()
+
+    messages: tuple[ChatMessage, ...] = ()
     system_prompt: str | None = None
 
 
@@ -67,7 +69,7 @@ class LoopBudgets:
             value = getattr(self, name)
             if value is not None and value < 0:
                 raise ValueError(f"{name} 不能为负")
-            
+
 
 @dataclass(frozen=True)
 class LoopState:
@@ -91,7 +93,7 @@ class LoopState:
             raise ValueError("LoopState.turn_id 不能为空")
         if self.step_index < 0:
             raise ValueError("LoopState.step_index 不能为负")
-        
+
 
 @dataclass(frozen=True)
 class LoopInput:

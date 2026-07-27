@@ -14,11 +14,11 @@ LLM SDK。
 """
 
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
 
 from forgecli.application.agent_loop.actions import LoopObservation, LoopStepResult
 from forgecli.application.agent_loop.state import LoopInput
-
 
 
 class AgentLoop(ABC):

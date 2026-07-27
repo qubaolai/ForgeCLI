@@ -1,6 +1,11 @@
 """thinking 方言翻译（ADR-0012 §4）：effort 型 / budget 型 / none 型。
 
 用 httpx.MockTransport 捕获请求 payload，全部离线。
+
+协议现状（模式改名 / GLM 接入后统一）：thinking 设置总是翻译为
+``thinking.type`` 开关（enabled/disabled）；EFFORT 方言在开启且有 effort 时追加
+``reasoning_effort``；budget 档位映射（effort -> thinking_budget 及目录截断）已随
+协议简化移除，BUDGET 方言只发开关；NONE 方言不发送任何 thinking 字段。
 """
 
 from __future__ import annotations
@@ -9,9 +14,7 @@ import json
 from typing import Any
 
 import httpx
-import pytest
 
-from forgecli.application.llm.gateway.errors import ModelBadRequestError
 from forgecli.application.llm.gateway.messages import ChatMessage, TextBlock
 from forgecli.application.llm.gateway.params import (
     ModelParams,
@@ -43,31 +46,21 @@ def _provider(
     )
 
 
-def _request(
-    thinking: ThinkingConfig | None,
-    *,
-    model_max_output_tokens: int | None = None,
-) -> ProviderRequest:
+def _request(thinking: ThinkingConfig | None) -> ProviderRequest:
     return ProviderRequest(
         model="deepseek-chat",
         messages=(ChatMessage(role=MessageRole.USER, content=(TextBlock("hi"),)),),
         params=ModelParams(),
         thinking=thinking,
-        model_max_output_tokens=model_max_output_tokens,
     )
 
 
 def _payload(
-    dialect: ThinkingDialect,
-    thinking: ThinkingConfig | None,
-    *,
-    model_max_output_tokens: int | None = None,
+    dialect: ThinkingDialect, thinking: ThinkingConfig | None
 ) -> dict[str, Any]:
     captured: list[dict[str, Any]] = []
     provider = _provider(dialect, captured)
-    provider.complete(
-        _request(thinking, model_max_output_tokens=model_max_output_tokens)
-    )
+    provider.complete(_request(thinking))
     return captured[0]
 
 
@@ -81,42 +74,15 @@ def test_effort_dialect_sends_reasoning_effort() -> None:
     assert "thinking_budget" not in payload
 
 
-def test_budget_dialect_maps_effort_to_budget_tokens() -> None:
+def test_budget_dialect_sends_switch_only() -> None:
+    # budget 档位映射已移除：BUDGET 方言只下发 thinking.type 开关。
     payload = _payload(
         ThinkingDialect.BUDGET,
         ThinkingConfig(enabled=True, effort=ThinkingEffortName("medium")),
     )
     assert payload["thinking"] == {"type": "enabled"}
-    assert payload["thinking_budget"] == 4096  # 档位表 medium -> 4096
+    assert "thinking_budget" not in payload
     assert "reasoning_effort" not in payload
-
-
-def test_budget_mapping_truncated_by_model_max_output_tokens() -> None:
-    payload = _payload(
-        ThinkingDialect.BUDGET,
-        ThinkingConfig(enabled=True, effort=ThinkingEffortName("high")),
-        model_max_output_tokens=2048,
-    )
-    assert payload["thinking"] == {"type": "enabled"}
-    assert payload["thinking_budget"] == 2048  # high=16384 受 max_output 截断
-
-
-def test_budget_mapping_not_truncated_without_catalog_hint() -> None:
-    payload = _payload(
-        ThinkingDialect.BUDGET,
-        ThinkingConfig(enabled=True, effort=ThinkingEffortName("high")),
-        model_max_output_tokens=None,
-    )
-    assert payload["thinking"] == {"type": "enabled"}
-    assert payload["thinking_budget"] == 16384  # catalog 缺失时不截断
-
-
-def test_budget_dialect_rejects_unmapped_open_effort() -> None:
-    with pytest.raises(ModelBadRequestError, match="无法映射强度"):
-        _payload(
-            ThinkingDialect.BUDGET,
-            ThinkingConfig(enabled=True, effort=ThinkingEffortName("max")),
-        )
 
 
 def test_none_dialect_sends_no_thinking_fields() -> None:

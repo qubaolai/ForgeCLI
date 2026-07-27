@@ -3,8 +3,9 @@
 只有这里知道网关的全部具体实现：OpenAI-compatible adapter 的注册（含 thinking
 方言）、凭证解析器（env 环境变量）/ 凭证池、动态选择解析器、token 估算与分词器
 注册表、计量、治理件（熔断 / 预算 / 响应缓存，按 llm.toml 配置段驱动，未启用
-维持 no-op）与进程内观测聚合。application / AgentTurn 只依赖 LlmGateway /
-TurnReplier 端口，不 import httpx 或任何 adapter（§19）。
+维持 no-op）与进程内观测聚合。application / AgentTurn 只依赖 LlmGateway 端口，
+不 import httpx 或任何 adapter（§19）；chat 主路径由 bootstrap 组装
+BuiltinAgentLoop 驱动（ADR-0010），本模块交回网关与计量件。
 
 不装配客户端主动限流：单用户单 key 的个人 CLI 场景下本地限流没有信息优势，
 429 由 gateway 自身的短等重试环处理（详见 gateway/governance.py 模块说明）。
@@ -21,7 +22,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from forgecli.application.agent_turn import GatewayReplier
 from forgecli.application.config.config_service import ConfigService
 from forgecli.application.llm import providers as provider_registry
 from forgecli.application.llm.catalog_builder import build_catalog
@@ -59,10 +59,10 @@ from forgecli.infrastructure.llm.settings import LlmConfigProviderSettingsSource
 
 @dataclass(frozen=True)
 class LlmRuntime:
-    """装配完成的 LLM 运行时：网关 + chat 回复端口 + 覆盖配置服务 + 观测聚合。"""
+    """装配完成的 LLM 运行时：网关 + usage 计量件 + 覆盖配置服务 + 观测聚合。"""
 
     gateway: LlmGateway
-    replier: GatewayReplier
+    usage_meter: UsageMeter
     overrides_service: ModelOverridesService
     # 进程内观测聚合（ADR-0012 §9）：/status 经 snapshot() 消费（展示接入后续切片）。
     gateway_metrics: InProcessGatewayMetrics
@@ -107,10 +107,9 @@ def build_llm_runtime(
 
     # CostEstimator 现读目录视图：包一层动态 catalog，价格随 /config 修改生效。
     usage_meter = UsageMeter(CostEstimator(_DynamicCatalog(llm_config_service)))
-    replier = GatewayReplier(gateway, usage_meter)
     return LlmRuntime(
         gateway=gateway,
-        replier=replier,
+        usage_meter=usage_meter,
         overrides_service=overrides_service,
         gateway_metrics=metrics,
         thinking_state=thinking_state,

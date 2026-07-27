@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Iterator
 
 from forgecli.application.llm.gateway import (
     ChatMessage,
@@ -18,6 +19,7 @@ from forgecli.application.llm.gateway import (
     ModelProvider,
     ModelRequest,
     ModelResponse,
+    ModelStreamChunk,
     ModelUsage,
     ProviderCapabilities,
     ProviderRequest,
@@ -83,6 +85,32 @@ class _FakeGateway(LlmGateway):
             latency_ms=0.0,
         )
 
+    def stream(self, request: ModelRequest) -> Iterator[ModelStreamChunk]:
+        # 逐块产出文本，末块补 usage + finish_reason（§9：末块必须能汇总）。
+        content = self._provider.complete(
+            ProviderRequest(
+                model="fake-model",
+                messages=request.messages,
+                params=request.params,
+            )
+        ).content
+        for sequence, char in enumerate(content):
+            yield ModelStreamChunk(
+                request_id=request.request_id,
+                sequence=sequence,
+                provider="fake",
+                model="fake-model",
+                delta_text=char,
+            )
+        yield ModelStreamChunk(
+            request_id=request.request_id,
+            sequence=len(content),
+            provider="fake",
+            model="fake-model",
+            usage_delta=ModelUsage(input_tokens=1, output_tokens=1, estimated=True),
+            finish_reason=FinishReason.STOP,
+        )
+
 
 def _request() -> ModelRequest:
     return ModelRequest(
@@ -114,6 +142,17 @@ def test_gateway_complete_structured_returns_data() -> None:
     )
     resp = gw.complete_structured(structured)
     assert resp.data == {"ok": True}
+
+
+def test_gateway_stream_is_part_of_the_port_and_summarizes_on_last_chunk() -> None:
+    # stream 是 LlmGateway 的 abstract 成员：网关实现不能只提供非流式入口。
+    assert "stream" in LlmGateway.__abstractmethods__
+    chunks = list(_FakeGateway(_FakeProvider()).stream(_request()))
+    assert "".join(c.delta_text or "" for c in chunks) == "echo:fake-model"
+    assert [c.sequence for c in chunks] == list(range(len(chunks)))
+    last = chunks[-1]
+    assert last.finish_reason is FinishReason.STOP
+    assert last.usage_delta is not None
 
 
 def test_provider_signature_takes_only_protocol_request() -> None:

@@ -14,15 +14,21 @@ menu_presenter 一致，都用 stdin_is_tty()。
 
 from __future__ import annotations
 
+import signal
+import threading
 from collections.abc import Callable
 
 from rich.console import Console
 from rich.panel import Panel
 
 from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
+from forgecli.application.agent_turn.cancellation import TurnCancelSource
+from forgecli.application.agent_turn.turn import AssistantResponse
 from forgecli.application.intent_router import IntentRouter
+from forgecli.application.llm.gateway.request import CancelToken
 from forgecli.application.session import SessionService
 from forgecli.application.slash_commands import CommandRegistry
+from forgecli.domain.conversation import TurnStatus
 from forgecli.domain.intents import (
     SlashCommand,
     UnknownCommand,
@@ -31,10 +37,11 @@ from forgecli.domain.intents import (
 )
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.prompt_loop import ForgePrompt, QuitSignal
+from forgecli.interfaces.cli.stream_render import StreamingTranscript
 from forgecli.interfaces.cli.transcript import (
+    assistant_notice,
     render_assistant_turn,
     render_user_turn,
-    thinking,
 )
 from forgecli.interfaces.cli.tty.tty import stdin_is_tty
 
@@ -49,6 +56,8 @@ class Repl:
         session: SessionService,
         agent_turn: AgentTurnService,
         *,
+        stream_view: StreamingTranscript,
+        cancel_source: TurnCancelSource,
         prompt_status: Callable[[], str] | None = None,
     ) -> None:
         self._console = console
@@ -57,6 +66,8 @@ class Repl:
         self._output = output
         self._session = session
         self._agent_turn = agent_turn
+        self._stream_view = stream_view
+        self._cancel_source = cancel_source
         self._prompt_status = prompt_status
 
     def run(self) -> None:
@@ -107,16 +118,56 @@ class Repl:
         match intent:
             case UserMessage():
                 # 同屏显示一轮对话：先回显用户输入(绿)，再给助手输出(青绿)。
+                # 处理期间流式正文 append-only 逐行提交；收尾按终态追加提示。
                 render_user_turn(self._console, intent.text)
-                with thinking(self._console, label="runing...."):
-                    response = self._agent_turn.handle_user_message(intent.text)
-                render_assistant_turn(self._console, response.text)
+                response = self._run_turn(intent.text)
+                self._finish_render(response)
             case SlashCommand():
                 self._handle_slash(intent)
             case UnknownCommand():
                 self._output.print(intent.error_message)
             case _:
                 self._output.print("无法处理的输入。")
+
+    def _run_turn(self, text: str) -> AssistantResponse:
+        """跑一轮 agent turn：挂取消 token + SIGINT 接线 + 流式渲染。
+
+        finish() 在 Live 激活期间调用，把最后半行正文定稿提交；收尾提示留到
+        turn 之后（Live 已擦除）由 _finish_render 追加。
+        """
+        token = self._cancel_source.issue()
+        restore = _install_sigint(token)
+        try:
+            with self._stream_view.turn():
+                response = self._agent_turn.handle_user_message(text)
+                self._stream_view.finish()
+            return response
+        finally:
+            restore()
+            self._cancel_source.clear()
+
+    def _finish_render(self, response: AssistantResponse) -> None:
+        """turn 收尾渲染：流式正文已 append，这里只补分隔或追加收尾提示。
+
+        - 正常轮：正文已逐行打完，仅补一空行分隔下一轮；若本轮无流式输出
+          （非流式 loop / 零增量），整块打印正文。
+        - 失败 / 取消轮：在已打正文之后换行追加灰色提示——取消轮去掉与正文重复
+          的前缀只留标记，其它失败则整段错误说明作为提示。
+        """
+        rendered = self._stream_view.rendered_text
+        if response.status is TurnStatus.COMPLETED:
+            if self._stream_view.had_output:
+                self._console.print()  # 正文已流式打完，补分隔空行
+            else:
+                render_assistant_turn(self._console, response.text)
+            return
+        notice = response.text
+        if rendered and notice.startswith(rendered):
+            # 取消轮 response.text = 正文 + "\n" + 标记；去掉已打正文，只追加标记。
+            notice = notice[len(rendered) :].lstrip("\n")
+        if notice:
+            self._console.print(assistant_notice(notice))
+        self._console.print()  # 分隔下一轮
 
     def _handle_slash(self, intent: SlashCommand) -> None:
         spec = self._registry.get(intent.command)
@@ -128,3 +179,25 @@ class Repl:
         # mode_changed）也返回 False，避免同一次操作记两条事件。
         if spec.handler.execute(intent):
             self._session.record_slash_command(intent.command, intent.args)
+
+
+def _install_sigint(token: CancelToken) -> Callable[[], None]:
+    """turn 期间把 Ctrl-C 从「抛 KeyboardInterrupt」改为「置取消 token」。
+
+    prompt_toolkit 的 c-c 绑定只在输入框 app.run() 内生效；分派阶段回到默认
+    SIGINT 语义，这里临时接管：handler 只置位 token（协作取消，gateway 在
+    chunk 间检查），不抛异常，模型调用因此在下一个检查点安全中止。返回恢复
+    函数；非主线程无法安装信号处理器，返回 no-op（测试线程等场景安全降级）。
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return lambda: None
+
+    def _cancel(_signum: int, _frame: object) -> None:
+        token.cancel()
+
+    previous = signal.signal(signal.SIGINT, _cancel)
+
+    def _restore() -> None:
+        signal.signal(signal.SIGINT, previous)
+
+    return _restore

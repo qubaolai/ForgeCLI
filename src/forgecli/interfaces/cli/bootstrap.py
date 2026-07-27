@@ -11,7 +11,10 @@ from pathlib import Path
 
 from rich.console import Console
 
+from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
+from forgecli.application.agent_loop.events import LoopEventBus
 from forgecli.application.agent_turn import AgentTurnService
+from forgecli.application.agent_turn.cancellation import TurnCancelSource
 from forgecli.application.config.config_service import ConfigService
 from forgecli.application.intent_router import IntentRouter
 from forgecli.application.llm.catalog_builder import build_catalog
@@ -38,6 +41,7 @@ from forgecli.interfaces.cli.llm_wiring import build_llm_runtime
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.repl import Repl
+from forgecli.interfaces.cli.stream_render import StreamingTranscript
 from forgecli.interfaces.cli.tty.tty import stdin_is_tty
 from forgecli.interfaces.cli.tty_prompts import TtyDirectoryPicker, TtyTrustPrompter
 from forgecli.interfaces.cli.wiring import build_registry
@@ -115,8 +119,10 @@ def run() -> None:
 
     try:
         session = _session_service(context)
-        # LLM 网关运行时（ADR-0011）：与 build_registry 共享同一批配置 service，
-        # chat turn 经 GatewayReplier 走统一网关，usage 由 AgentTurnService 落盘。
+        # LLM 网关运行时（ADR-0011）：与 build_registry 共享同一批配置 service。
+        # chat turn 由 AgentTurnService 驱动 BuiltinAgentLoop（ADR-0010）：模型
+        # 调用经统一网关流式返回，增量进 REPL Live 区；usage 草稿随回复交回、
+        # 由 AgentTurnService 落盘；Ctrl-C 经 TurnCancelSource 协作取消在途调用。
         project_home = config_dir() / "projects" / context.project.project_id
         forge_toml = project_home / "forge.toml"
         config_service = ConfigService(
@@ -128,7 +134,20 @@ def run() -> None:
         llm_runtime = build_llm_runtime(
             config_service, llm_service, forge_toml, thinking_state
         )
-        agent_turn = AgentTurnService(session, replier=llm_runtime.replier)
+        stream_view = StreamingTranscript(console)
+        cancel_source = TurnCancelSource()
+        loop_bus = LoopEventBus()
+
+        def _new_loop() -> BuiltinAgentLoop:
+            return BuiltinAgentLoop(
+                llm_runtime.gateway,
+                llm_runtime.usage_meter,
+                cancel_token_factory=cancel_source.current,
+                on_delta=stream_view.feed,
+                event_bus=loop_bus,
+            )
+
+        agent_turn = AgentTurnService(session, loop_factory=_new_loop)
         output = RichOutput(console=console)
         presenter = RichMenuPresenter(console=console)
         picker = TtyDirectoryPicker(console=console)
@@ -153,6 +172,8 @@ def run() -> None:
             output=output,
             session=session,
             agent_turn=agent_turn,
+            stream_view=stream_view,
+            cancel_source=cancel_source,
             prompt_status=lambda: _prompt_runtime_status(
                 config_service, llm_service, thinking_state
             ),

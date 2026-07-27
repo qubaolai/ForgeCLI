@@ -73,8 +73,8 @@ def test_model_menu_keeps_provider_rows_and_uses_configured_models(
     root = menu.root_menu()
 
     labels = [choice.label for choice in root.choices]
-    # 封闭集并轨后新增 local / openai，行按 provider id 排序。
-    assert labels == ["当前模型", "DeepSeek", "Local", "MiMo", "OpenAI"]
+    # 封闭集并轨后新增 local / openai / GLM，行按注册表键排序（大写键在前）。
+    assert labels == ["当前模型", "GLM", "DeepSeek", "Local", "MiMo", "OpenAI"]
     provider_menu = _find(root, "DeepSeek").submenu()
     assert [choice.label for choice in provider_menu.choices] == ["deepseek-chat"]
     assert _find(root, "MiMo").submenu is None

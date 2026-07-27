@@ -50,7 +50,9 @@ class SessionSnapshot:
         return cls(
             session_id=str(data.get("session_id", "")),
             workspace_root=str(data.get("workspace_root", "")),
-            mode=SessionMode(str(data.get("current_mode", SessionMode.ACCEPT_EDITS.value))),
+            mode=SessionMode(
+                str(data.get("current_mode", SessionMode.ACCEPT_EDITS.value))
+            ),
             last_event_id=None if last is None else str(last),
             updated_at=str(data.get("updated_at", "")),
             status=str(data.get("status", "active")),

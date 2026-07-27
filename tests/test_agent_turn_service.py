@@ -1,15 +1,22 @@
-"""AgentTurnService stub：成对落盘 user/assistant、共享 turn_id、带 role/status。"""
+"""AgentTurnService（loop 驱动）：成对落盘 user/assistant、共享 turn_id、失败隔离。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
+from forgecli.application.agent_loop import (
+    AgentLoop,
+    AnswerAction,
+    LoopDecision,
+    LoopInput,
+    LoopObservation,
+    LoopStepResult,
+    LoopStop,
+    LoopStopReason,
+)
 from forgecli.application.agent_turn import AgentTurnService
 from forgecli.application.session import EventType, SessionEvent, SessionService
 from forgecli.domain.conversation import TurnStatus
-from forgecli.domain.intents import SessionMode
 from forgecli.infrastructure.session import JsonlEventStore, JsonStateStore
 
 _SID = "20260629T100000-abcd1234"
@@ -32,14 +39,41 @@ def _events(tmp_path: Path) -> list[SessionEvent]:
     return JsonlEventStore(tmp_path / "sessions").read(_SID)
 
 
+class _AnswerLoop(AgentLoop):
+    """脚本化单步 loop：一次 start 产出固定回答，observe 后正常结束。"""
+
+    def __init__(self, text: str = "好的") -> None:
+        self._text = text
+
+    def start(self, loop_input: LoopInput) -> LoopStepResult:
+        return LoopDecision(next_action=AnswerAction(text=self._text))
+
+    def observe(self, observation: LoopObservation) -> LoopStepResult:
+        return LoopStop.of(LoopStopReason.FINAL_ANSWER)
+
+
+class _BoomLoop(AgentLoop):
+    """start 即抛错的 loop：驱动器必须把异常隔离为 FAILED。"""
+
+    def start(self, loop_input: LoopInput) -> LoopStepResult:
+        raise RuntimeError("llm down")
+
+    def observe(self, observation: LoopObservation) -> LoopStepResult:
+        raise AssertionError("不应到达 observe")
+
+
+def _service(session: SessionService, text: str = "好的") -> AgentTurnService:
+    return AgentTurnService(session, loop_factory=lambda: _AnswerLoop(text))
+
+
 def test_handle_user_message_writes_pair_with_shared_turn_id(tmp_path: Path) -> None:
     session = _session(tmp_path)
 
-    response = AgentTurnService(session).handle_user_message("你好")
+    response = _service(session).handle_user_message("你好")
 
     assert response.turn_id == "turn_0001"
     assert response.status is TurnStatus.COMPLETED
-    assert "chat" in response.text  # 默认 chat 模式
+    assert response.text == "好的"
     events = _events(tmp_path)
     assert [e.type for e in events] == [
         EventType.SESSION_CREATED,
@@ -51,26 +85,13 @@ def test_handle_user_message_writes_pair_with_shared_turn_id(tmp_path: Path) -> 
     assert user.payload["role"] == "user"
     assert assistant.payload["role"] == "assistant"
     assert assistant.payload["status"] == "completed"
-
-
-@pytest.mark.parametrize("mode", [SessionMode.ACCEPT_EDITS, SessionMode.PLAN, SessionMode.AUTO])
-def test_stub_reply_reflects_mode_read_from_session(
-    tmp_path: Path, mode: SessionMode
-) -> None:
-    session = _session(tmp_path)
-    if mode is not SessionMode.ACCEPT_EDITS:
-        session.record_mode_change(mode)
-
-    response = AgentTurnService(session).handle_user_message("看看")
-
-    assert mode.value in response.text
-    assert session.current().mode is mode
+    assert assistant.payload["stop_reason"] == "final_answer"
 
 
 def test_pair_order_and_state_points_to_assistant(tmp_path: Path) -> None:
     session = _session(tmp_path)
 
-    AgentTurnService(session).handle_user_message("x")
+    _service(session).handle_user_message("x")
 
     events = _events(tmp_path)
     state = JsonStateStore(tmp_path / "sessions").read(_SID)
@@ -80,7 +101,7 @@ def test_pair_order_and_state_points_to_assistant(tmp_path: Path) -> None:
 
 
 def test_turn_id_increments_across_calls(tmp_path: Path) -> None:
-    agent = AgentTurnService(_session(tmp_path))
+    agent = _service(_session(tmp_path))
 
     first = agent.handle_user_message("a")
     second = agent.handle_user_message("b")
@@ -88,11 +109,10 @@ def test_turn_id_increments_across_calls(tmp_path: Path) -> None:
     assert (first.turn_id, second.turn_id) == ("turn_0001", "turn_0002")
 
 
-def test_reply_failure_is_isolated_as_failed(tmp_path: Path) -> None:
-    def boom(text: str, mode: SessionMode) -> str:
-        raise RuntimeError("llm down")
+def test_loop_failure_is_isolated_as_failed(tmp_path: Path) -> None:
+    agent = AgentTurnService(_session(tmp_path), loop_factory=_BoomLoop)
 
-    response = AgentTurnService(_session(tmp_path), reply=boom).handle_user_message("x")
+    response = agent.handle_user_message("x")
 
     assert response.status is TurnStatus.FAILED
     events = _events(tmp_path)
@@ -101,5 +121,5 @@ def test_reply_failure_is_isolated_as_failed(tmp_path: Path) -> None:
 
 
 def test_constructs_with_only_session_facade(tmp_path: Path) -> None:
-    # 门面约束：只靠 SessionService 即可构造，不需要 EventStore/StateStore。
-    AgentTurnService(_session(tmp_path))
+    # 门面约束：只靠 SessionService + loop 工厂即可构造，不需要 EventStore/StateStore。
+    AgentTurnService(_session(tmp_path), loop_factory=_AnswerLoop)

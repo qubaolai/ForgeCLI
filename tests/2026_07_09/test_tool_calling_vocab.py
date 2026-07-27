@@ -17,7 +17,11 @@ from forgecli.domain.conversation import MessageRole
 
 def _chunk(sequence: int, delta: ToolCallDelta) -> ModelStreamChunk:
     return ModelStreamChunk(
-        request_id="req_1", sequence=sequence, tool_call_delta=delta
+        request_id="req_1",
+        sequence=sequence,
+        provider="fake",
+        model="fake-model",
+        tool_call_delta=delta,
     )
 
 

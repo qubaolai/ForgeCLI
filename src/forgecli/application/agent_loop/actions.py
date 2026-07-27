@@ -13,12 +13,12 @@ AgentLoop 每步只能产出这三类结果之一，且都**只表达意图**，
 """
 
 from __future__ import annotations
+
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from forgecli.application.agent_loop.stop import LoopStopReason
-
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,7 @@ class ApprovalRequest:
     action_summary 说明「要做什么」，risk_summary 说明「风险在哪」，二者都只含安全摘要；
     tool_request 为触发审批的工具请求（若来自工具）。
     """
+
     action_summary: str
     risk_summary: str
     tool_request: ToolRequest | None = None
@@ -56,7 +57,7 @@ class ApprovalRequest:
             raise ValueError("ApprovalRequest.action_summary 不能为空")
         if not self.risk_summary.strip():
             raise ValueError("ApprovalRequest.risk_summary 不能为空")
-        
+
 
 @dataclass(frozen=True)
 class LoopObservation:
@@ -99,7 +100,7 @@ class AskUserAction(LoopAction):
     def __post_init__(self) -> None:
         if not self.prompt.strip():
             raise ValueError("AskUserAction.prompt 不能为空")
-        
+
 
 @dataclass(frozen=True)
 class ApprovalRequestAction(LoopAction):
@@ -135,6 +136,7 @@ class LoopStop:
     resumable 默认由 reason 的分类派生（可恢复暂停 → True）；用 of() 构造时自动填充，
     也允许显式覆盖（如预算策略对 BUDGET_EXHAUSTED 的裁定）。
     """
+
     reason: LoopStopReason
     message: str | None = None
     resumable: bool = False
@@ -149,8 +151,8 @@ class LoopStop:
     ) -> LoopStop:
         """按分类派生 resumable 构造 LoopStop；resumable 显式传入时以传入为准。"""
         derived = reason.is_resumable_pause if resumable is None else resumable
-        return cls(reason=reason, message = message, resumable = derived)
-    
+        return cls(reason=reason, message=message, resumable=derived)
+
 
 # 循环每步的产出：决策（含待执行动作）或终止。驱动方（AgentTurnService）据此
 # 执行动作、回填 observation，或结束本轮。

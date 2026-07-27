@@ -41,7 +41,7 @@ def _menu(tmp_path: Path) -> tuple[LlmMenu, _RecordingOutput, LlmConfigService]:
 def test_providers_menu_lists_closed_set(tmp_path: Path) -> None:
     menu, _, _ = _menu(tmp_path)
     labels = {c.label for c in menu.providers_menu().choices}
-    assert labels == {"DeepSeek", "MiMo", "OpenAI", "Local"}
+    assert labels == {"DeepSeek", "MiMo", "OpenAI", "GLM", "Local"}
 
 
 def test_edit_provider_api_base_persists(tmp_path: Path) -> None:
@@ -50,7 +50,8 @@ def test_edit_provider_api_base_persists(tmp_path: Path) -> None:
     detail = deepseek.submenu()
 
     api_base = _find(detail, "API 地址")
-    assert api_base.preview() == "https://api.deepseek.com"  # 注册表默认
+    # 注册表默认：api_base 即完整 endpoint（GLM 接入后语义）
+    assert api_base.preview() == "https://api.deepseek.com/chat/completions"
     api_base.on_text("https://custom.deepseek.local/v1")
 
     assert (

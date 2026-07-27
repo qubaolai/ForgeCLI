@@ -54,10 +54,6 @@ class ProviderRequest:
 
     结构化输出（§3.7 native 通道）：response_schema / schema_name / strict_schema
     由 complete_structured 注入；普通 complete 调用为 None。
-
-    model_max_output_tokens（ADR-0012 §4）：所选模型在目录中的 max_output_tokens，
-    由 gateway 从 catalog 条目填入（目录缺失为 None）；budget 型 thinking 方言
-    的 effort -> budget_tokens 映射按它截断。adapter 只读，不回写目录。
     """
 
     model: str

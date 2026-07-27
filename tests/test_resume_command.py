@@ -8,6 +8,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from forgecli.application.agent_loop import (
+    AgentLoop,
+    AnswerAction,
+    LoopDecision,
+    LoopInput,
+    LoopObservation,
+    LoopStepResult,
+    LoopStop,
+    LoopStopReason,
+)
 from forgecli.application.agent_turn import AgentTurnService
 from forgecli.application.interaction_ports import MenuPresenter, UserOutput
 from forgecli.application.menu import Menu
@@ -26,6 +36,20 @@ from forgecli.infrastructure.session import (
     JsonStateStore,
 )
 from forgecli.interfaces.cli.commands.resume_command import ResumeCommand
+
+
+class _EchoLoop(AgentLoop):
+    """脚本化单步 loop：固定回答，供本文件驱动 AgentTurnService。"""
+
+    def start(self, loop_input: LoopInput) -> LoopStepResult:
+        return LoopDecision(next_action=AnswerAction(text="好的"))
+
+    def observe(self, observation: LoopObservation) -> LoopStepResult:
+        return LoopStop.of(LoopStopReason.FINAL_ANSWER)
+
+
+def _agent_turn(session: SessionService) -> AgentTurnService:
+    return AgentTurnService(session, loop_factory=_EchoLoop)
 
 
 class _RecordingOutput(UserOutput):
@@ -155,9 +179,7 @@ def test_no_args_no_history_prints_message(tmp_path: Path) -> None:
     sessions = tmp_path / "sessions"
     session = _live_session(sessions)
     presenter = _FakePresenter()
-    cmd, output = _command(
-        sessions, session, AgentTurnService(session), presenter=presenter
-    )
+    cmd, output = _command(sessions, session, _agent_turn(session), presenter=presenter)
 
     cmd.execute(SlashCommand(raw_text="/resume", command="resume"))
 
@@ -170,7 +192,7 @@ def test_no_args_presents_menu_with_title_and_summary(tmp_path: Path) -> None:
     _make_history(sessions, "hist-1", title="重构登录")
     session = _live_session(sessions)
     presenter = _FakePresenter()
-    cmd, _ = _command(sessions, session, AgentTurnService(session), presenter=presenter)
+    cmd, _ = _command(sessions, session, _agent_turn(session), presenter=presenter)
 
     cmd.execute(SlashCommand(raw_text="/resume", command="resume"))
 
@@ -187,7 +209,7 @@ def test_menu_selection_resumes(tmp_path: Path) -> None:
     sessions = tmp_path / "sessions"
     _make_history(sessions, "hist-1", title="续写测试", user_count=2)
     session = _live_session(sessions)
-    agent_turn = AgentTurnService(session)
+    agent_turn = _agent_turn(session)
     presenter = _FakePresenter(select=0)  # 模拟在第 1 行 Enter
     cmd, output = _command(sessions, session, agent_turn, presenter=presenter)
 
@@ -207,9 +229,7 @@ def test_direct_session_id_resumes_without_menu(tmp_path: Path) -> None:
     _make_history(sessions, "hist-1", title="直达", user_count=1)
     session = _live_session(sessions)
     presenter = _FakePresenter()
-    cmd, output = _command(
-        sessions, session, AgentTurnService(session), presenter=presenter
-    )
+    cmd, output = _command(sessions, session, _agent_turn(session), presenter=presenter)
 
     cmd.execute(
         SlashCommand(raw_text="/resume hist-1", command="resume", args=("hist-1",))
@@ -224,7 +244,7 @@ def test_resume_cross_project_blocked(tmp_path: Path) -> None:
     sessions = tmp_path / "sessions"
     _make_history(sessions, "other", title="别的项目", workspace_root="/elsewhere")
     session = _live_session(sessions, root="/work")
-    cmd, output = _command(sessions, session, AgentTurnService(session), root="/work")
+    cmd, output = _command(sessions, session, _agent_turn(session), root="/work")
 
     cmd.execute(
         SlashCommand(raw_text="/resume other", command="resume", args=("other",))
@@ -240,14 +260,14 @@ def test_non_id_arg_is_search(tmp_path: Path) -> None:
     session = _live_session(sessions)
 
     presenter = _FakePresenter()
-    cmd, _ = _command(sessions, session, AgentTurnService(session), presenter=presenter)
+    cmd, _ = _command(sessions, session, _agent_turn(session), presenter=presenter)
     cmd.execute(SlashCommand(raw_text="/resume 登录", command="resume", args=("登录",)))
     assert "匹配「登录」" in presenter.menu.title
     assert list(presenter.menu.choices)[0].label == "重构登录"
 
     miss_presenter = _FakePresenter()
     miss_cmd, miss_output = _command(
-        sessions, session, AgentTurnService(session), presenter=miss_presenter
+        sessions, session, _agent_turn(session), presenter=miss_presenter
     )
     miss_cmd.execute(
         SlashCommand(raw_text="/resume zzz", command="resume", args=("zzz",))
