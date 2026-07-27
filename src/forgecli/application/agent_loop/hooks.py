@@ -15,11 +15,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from forgecli.application.agent_loop.actions import LoopAction, LoopObservation
-from forgecli.application.agent_loop.state import LoopState
-from forgecli.application.agent_loop.stop import LoopStopReason
 from forgecli.application.llm.gateway.request import ModelRequest
-from forgecli.application.llm.gateway.response import ModelResponse
+from forgecli.domain.agent.actions import LoopAction, LoopObservation
+from forgecli.domain.agent.state import LoopState
+from forgecli.domain.agent.stop import LoopStopReason
+from forgecli.domain.model.response import ModelResponse
 
 
 @dataclass(frozen=True)

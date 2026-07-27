@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from forgecli.application.config.errors import (
+from forgecli.domain.config.errors import (
     ConfigValidationError,
     UnknownConfigKey,
 )

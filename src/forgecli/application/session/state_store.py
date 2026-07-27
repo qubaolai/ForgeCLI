@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from forgecli.application.session.snapshot import SessionSnapshot
+from forgecli.domain.session.snapshot import SessionSnapshot
 
 
 class StateStore(ABC):

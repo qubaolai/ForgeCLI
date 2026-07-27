@@ -21,22 +21,16 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-from forgecli.application.agent_loop import (
-    AgentLoop,
-    AnswerAction,
-    ContextPackage,
-    LoopInput,
-    LoopObservation,
-    LoopStop,
-    LoopStopReason,
-    ModePolicy,
-)
-from forgecli.application.agent_turn.turn import AssistantResponse
-from forgecli.application.llm.gateway.messages import ChatMessage, TextBlock
+from forgecli.application.agent_loop import AgentLoop
 from forgecli.application.llm.metering import UsageRecordDraft
-from forgecli.application.session import EventType, SessionEvent, SessionService
-from forgecli.domain.conversation import MessageRole, TurnStatus
+from forgecli.application.session import SessionService
+from forgecli.domain.agent.actions import AnswerAction, LoopObservation, LoopStop
+from forgecli.domain.agent.state import ContextPackage, LoopInput, ModePolicy
+from forgecli.domain.agent.stop import LoopStopReason
+from forgecli.domain.conversation.message import ChatMessage, TextBlock
+from forgecli.domain.conversation.turn import AssistantResponse, MessageRole, TurnStatus
 from forgecli.domain.intents import SessionMode, UserMessage
+from forgecli.domain.session.events import EventType, SessionEvent
 
 # 单轮驱动的安全步数上限：本切片只需 start + observe 两步，上限防御失控实现。
 _MAX_LOOP_STEPS = 8

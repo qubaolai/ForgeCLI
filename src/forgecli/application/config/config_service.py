@@ -11,11 +11,11 @@ ConfigKey 负责。项目级 store 在装配时绑定当前项目的 forge.toml�
 
 from __future__ import annotations
 
-from forgecli.application.config import config_keys
-from forgecli.application.config.config_keys import ConfigKey, ConfigLevel
 from forgecli.application.config.config_store import ConfigStore
-from forgecli.application.config.effective_config import EffectiveConfig
-from forgecli.application.config.errors import ConfigValidationError
+from forgecli.domain.config import config_keys
+from forgecli.domain.config.config_keys import ConfigKey, ConfigLevel
+from forgecli.domain.config.effective_config import EffectiveConfig
+from forgecli.domain.config.errors import ConfigValidationError
 
 
 class ConfigService:

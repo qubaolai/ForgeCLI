@@ -6,10 +6,8 @@ GatewayReplier/TurnReplier 路径已退场。
 
 from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
 from forgecli.application.agent_turn.cancellation import TurnCancelSource
-from forgecli.application.agent_turn.turn import AssistantResponse
 
 __all__ = [
     "AgentTurnService",
-    "AssistantResponse",
     "TurnCancelSource",
 ]

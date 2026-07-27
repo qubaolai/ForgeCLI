@@ -11,11 +11,11 @@
 from __future__ import annotations
 
 from forgecli.application.config.config_service import ConfigService
-from forgecli.application.config.errors import ConfigReadError
 from forgecli.application.interaction_ports import MenuPresenter, UserOutput
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.overrides_service import ModelOverridesService
 from forgecli.application.slash_commands import CommandHandler
+from forgecli.domain.config.errors import ConfigReadError
 from forgecli.domain.intents import SlashCommand
 from forgecli.interfaces.cli.menus.config_menu import ConfigMenu
 

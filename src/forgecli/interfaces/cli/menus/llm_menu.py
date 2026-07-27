@@ -21,9 +21,9 @@ from forgecli.application.llm.config.llm_config import STANDARD_FIELDS, Standard
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import ConfigError
 from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
-from forgecli.application.llm.model_ref import ModelRef
-from forgecli.application.llm.thinking import ThinkingMode
 from forgecli.application.menu import Choice, Menu
+from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.thinking import ThinkingMode
 
 # 供应商详情里可编辑的字段（label, key）
 _PROVIDER_FIELDS = (

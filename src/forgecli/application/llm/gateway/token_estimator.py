@@ -17,12 +17,8 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 
-from forgecli.application.llm.gateway.messages import (
-    ChatMessage,
-    ContentBlock,
-    TextBlock,
-    ToolSpec,
-)
+from forgecli.domain.conversation.message import ChatMessage, ContentBlock, TextBlock
+from forgecli.domain.tool.tool_call import ToolSpec
 
 # 经验近似：平均约 4 个字符折 1 token（对中英文混排偏保守）。
 _CHARS_PER_TOKEN = 4

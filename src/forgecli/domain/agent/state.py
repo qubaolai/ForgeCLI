@@ -15,9 +15,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from forgecli.application.agent_loop.actions import LoopAction, LoopObservation
-from forgecli.application.llm.gateway.messages import ChatMessage, ToolSpec
+from forgecli.domain.agent.actions import LoopAction, LoopObservation
+from forgecli.domain.conversation.message import ChatMessage
 from forgecli.domain.intents import SessionMode, UserIntent
+from forgecli.domain.tool.tool_call import ToolSpec
 
 
 @dataclass(frozen=True)

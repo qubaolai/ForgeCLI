@@ -18,11 +18,11 @@ from dataclasses import replace
 from datetime import datetime
 
 from forgecli.application.session.event_store import EventStore
-from forgecli.application.session.events import EventType, SessionEvent
-from forgecli.application.session.snapshot import SessionSnapshot
 from forgecli.application.session.state_store import StateStore
-from forgecli.domain.conversation import MessageRole, TurnStatus
+from forgecli.domain.conversation.turn import MessageRole, TurnStatus
 from forgecli.domain.intents import SessionMode
+from forgecli.domain.session.events import EventType, SessionEvent
+from forgecli.domain.session.snapshot import SessionSnapshot
 from forgecli.shared.errors import SessionStateError
 
 

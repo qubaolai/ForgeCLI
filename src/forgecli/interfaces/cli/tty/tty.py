@@ -10,7 +10,7 @@ import sys
 from forgecli.interfaces.cli.tty.keys import Key, KeyPress, stdin_is_tty
 
 if sys.platform == "win32":
-    from forgecli.interfaces.cli._tty_windows import raw_mode, read_key
+    from forgecli.interfaces.cli.tty._tty_windows import raw_mode, read_key
 else:
     from forgecli.interfaces.cli.tty._tty_posix import raw_mode, read_key
 

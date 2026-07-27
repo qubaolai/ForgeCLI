@@ -8,15 +8,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from forgecli.application.config import config_keys
 from forgecli.application.config.config_service import ConfigService
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.llm import providers as provider_registry
 from forgecli.application.llm.availability import EnvProviderAvailability
 from forgecli.application.llm.config.llm_config import ModelSpec
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
-from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.menu import Choice, Menu
+from forgecli.domain.config import config_keys
+from forgecli.domain.model.model_ref import ModelRef
 
 
 class ModelsMenu:
@@ -70,6 +70,8 @@ class ModelsMenu:
                     model.id,
                     preview=self._model_preview(model),
                     on_select=self._select(model),
+                    # 选中即切换完成, 没有第二步要做, 停在菜单里只会让人再按一次 Esc.
+                    close_on_select=True,
                 )
                 for model in models
             )

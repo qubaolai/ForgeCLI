@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from forgecli.application.session.events import SessionEvent
+from forgecli.domain.session.events import SessionEvent
 
 
 class EventStore(ABC):

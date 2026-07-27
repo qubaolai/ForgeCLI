@@ -21,7 +21,6 @@ from types import MappingProxyType
 from forgecli.domain.agent.stop import LoopStopReason
 
 
-
 @dataclass(frozen=True)
 class ToolRequest:
     """一次工具调用意图（§4.3）。必须经 Tool Registry 执行，不能携带可执行匿名代码块。

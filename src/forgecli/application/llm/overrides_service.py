@@ -12,10 +12,10 @@ from __future__ import annotations
 from forgecli.application.llm import providers as provider_registry
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import ConfigValidationError
-from forgecli.application.llm.gateway.origin import RequestOrigin
 from forgecli.application.llm.model_overrides import build_model_overrides
-from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.llm.overrides_store import ModelOverridesStore
+from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.origin import RequestOrigin
 
 
 class ModelOverridesService:

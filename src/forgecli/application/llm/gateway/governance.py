@@ -28,7 +28,7 @@ from forgecli.application.llm.gateway.errors import (
     ModelUnavailableError,
 )
 from forgecli.application.llm.gateway.request import BudgetSnapshot
-from forgecli.application.llm.model_ref import ModelRef
+from forgecli.domain.model.model_ref import ModelRef
 
 
 class ProviderHealthRegistry(ABC):

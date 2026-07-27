@@ -19,7 +19,6 @@ from forgecli.application.config.config_service import ConfigService
 from forgecli.application.intent_router import IntentRouter
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
-from forgecli.application.llm.thinking import ThinkingMode
 from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.application.project import (
     ProjectContext,
@@ -27,6 +26,7 @@ from forgecli.application.project import (
     WorkspaceStartup,
 )
 from forgecli.application.session import SessionService
+from forgecli.domain.model.thinking import ThinkingMode
 from forgecli.infrastructure.config import TomlConfigStore, config_dir, config_file
 from forgecli.infrastructure.llm import TomlLlmConfigStore
 from forgecli.infrastructure.project import (

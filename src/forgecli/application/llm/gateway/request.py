@@ -21,10 +21,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from forgecli.application.llm.gateway.messages import ChatMessage, ToolSpec
-from forgecli.application.llm.gateway.origin import RequestOrigin
-from forgecli.application.llm.gateway.params import ModelParams
-from forgecli.application.llm.gateway.selection import ModelSelection
+from forgecli.domain.conversation.message import ChatMessage
+from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.params import ModelParams
+from forgecli.domain.model.selection import ModelSelection
+from forgecli.domain.tool.tool_call import ToolSpec
 
 # metadata 中禁止出现的凭证类键（子串匹配，大小写无关）。
 # 不含裸 "token"，避免误伤 max_tokens 等安全摘要键。

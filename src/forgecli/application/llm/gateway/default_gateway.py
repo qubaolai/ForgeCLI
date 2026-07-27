@@ -69,10 +69,6 @@ from forgecli.application.llm.gateway.observability import (
     GatewayObserver,
     InProcessGatewayMetrics,
 )
-from forgecli.application.llm.gateway.params import (
-    ModelParams,
-    ThinkingConfig,
-)
 from forgecli.application.llm.gateway.provider import (
     ModelProvider,
     ProviderRequest,
@@ -87,12 +83,6 @@ from forgecli.application.llm.gateway.request import (
     ModelRequest,
     StructuredModelRequest,
 )
-from forgecli.application.llm.gateway.response import (
-    FinishReason,
-    ModelResponse,
-    ModelUsage,
-    StructuredModelResponse,
-)
 from forgecli.application.llm.gateway.schema_validation import validate_json_schema
 from forgecli.application.llm.gateway.selection_resolver import ModelSelectionResolver
 from forgecli.application.llm.gateway.streaming import (
@@ -104,8 +94,18 @@ from forgecli.application.llm.gateway.token_estimator import (
     TokenEstimator,
 )
 from forgecli.application.llm.gateway.tokenizer_registry import TokenizerRegistry
-from forgecli.application.llm.model_ref import ModelRef
-from forgecli.application.llm.thinking import ThinkingMode
+from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.params import (
+    ModelParams,
+    ThinkingConfig,
+)
+from forgecli.domain.model.response import (
+    FinishReason,
+    ModelResponse,
+    ModelUsage,
+    StructuredModelResponse,
+)
+from forgecli.domain.model.thinking import ThinkingMode
 
 # settings_source 未注入时的 provider 默认（与配置切片默认一致）。
 _FALLBACK_TIMEOUT_SECONDS = 60.0

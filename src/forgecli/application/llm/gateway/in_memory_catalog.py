@@ -17,7 +17,7 @@ from forgecli.application.llm.gateway.catalog import (
     ModelCatalogService,
 )
 from forgecli.application.llm.gateway.errors import ModelBadRequestError
-from forgecli.application.llm.model_ref import ModelRef
+from forgecli.domain.model.model_ref import ModelRef
 
 
 class InMemoryModelCatalog(ModelCatalogService):

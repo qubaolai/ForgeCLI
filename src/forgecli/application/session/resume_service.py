@@ -12,10 +12,10 @@
 from __future__ import annotations
 
 from forgecli.application.session.event_store import EventStore
-from forgecli.application.session.events import SessionEvent
 from forgecli.application.session.session_catalog import SessionCatalog
-from forgecli.application.session.snapshot import SessionSnapshot
 from forgecli.application.session.state_store import StateStore
+from forgecli.domain.session.events import SessionEvent
+from forgecli.domain.session.snapshot import SessionSnapshot
 from forgecli.shared.errors import SessionStateError
 
 _DEFAULT_LIMIT = 20

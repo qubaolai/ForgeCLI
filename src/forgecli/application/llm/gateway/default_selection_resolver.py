@@ -30,17 +30,17 @@ from forgecli.application.llm.gateway.errors import (
     ModelBadRequestError,
     ModelContextOverflowError,
 )
-from forgecli.application.llm.gateway.origin import RequestOrigin
-from forgecli.application.llm.gateway.selection import (
-    ExplicitModelSelection,
-    ModelSelection,
-)
 from forgecli.application.llm.gateway.selection_resolver import (
     ModelSelectionResolver,
     ResolvedModel,
 )
-from forgecli.application.llm.model_ref import ModelRef
-from forgecli.application.llm.thinking import ThinkingMode
+from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.selection import (
+    ExplicitModelSelection,
+    ModelSelection,
+)
+from forgecli.domain.model.thinking import ThinkingMode
 
 # required_capabilities 里的能力字符串 -> ModelCatalogEntry 上对应的 supports_* 标志。
 # 这是封闭集合：请求未收录的能力字符串视为无法满足，直接归一为 bad request。

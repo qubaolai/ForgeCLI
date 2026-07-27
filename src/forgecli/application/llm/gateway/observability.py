@@ -15,8 +15,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from forgecli.application.llm.gateway.origin import RequestOrigin
-from forgecli.application.llm.gateway.response import FinishReason
+from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.response import FinishReason
 
 # 延迟分桶上界（ms）；最后追加一个「以上」桶。
 _LATENCY_BUCKET_UPPER_MS: tuple[float, ...] = (100.0, 500.0, 2000.0, 10000.0)

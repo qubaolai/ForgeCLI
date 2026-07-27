@@ -8,24 +8,13 @@
 2026-07-23：只冻契约（输入 / 状态 / 三类产出 / 停止原因 / hooks / events 骨架）。
 2026-07-24：落地 BuiltinAgentLoop（单步：一次模型调用 -> AnswerAction ->
 FINAL_ANSWER）。
+
+循环的词汇 (动作 / 状态 / 停止原因) 住在 domain.agent, 本包只暴露编排侧的实现与
+扩展点, 不转手再导出领域类型。
 """
 
 from __future__ import annotations
 
-from forgecli.application.agent_loop.actions import (
-    AnswerAction,
-    ApprovalRequest,
-    ApprovalRequestAction,
-    AskUserAction,
-    CompactionRequestAction,
-    LoopAction,
-    LoopDecision,
-    LoopObservation,
-    LoopStepResult,
-    LoopStop,
-    ToolRequest,
-    ToolRequestAction,
-)
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
 from forgecli.application.agent_loop.events import (
     LoopEvent,
@@ -35,41 +24,14 @@ from forgecli.application.agent_loop.events import (
 )
 from forgecli.application.agent_loop.hooks import HookResult, LoopHook
 from forgecli.application.agent_loop.loop import AgentLoop
-from forgecli.application.agent_loop.state import (
-    ContextPackage,
-    LoopBudgets,
-    LoopInput,
-    LoopState,
-    ModePolicy,
-)
-from forgecli.application.agent_loop.stop import LoopStopReason, StopClassification
 
 __all__ = [
     "AgentLoop",
-    "AnswerAction",
-    "ApprovalRequest",
-    "ApprovalRequestAction",
-    "AskUserAction",
     "BuiltinAgentLoop",
-    "CompactionRequestAction",
-    "ContextPackage",
     "HookResult",
-    "LoopAction",
-    "LoopBudgets",
-    "LoopDecision",
     "LoopEvent",
     "LoopEventBus",
     "LoopEventKind",
     "LoopEventSubscriber",
     "LoopHook",
-    "LoopInput",
-    "LoopObservation",
-    "LoopState",
-    "LoopStepResult",
-    "LoopStop",
-    "LoopStopReason",
-    "ModePolicy",
-    "StopClassification",
-    "ToolRequest",
-    "ToolRequestAction",
 ]

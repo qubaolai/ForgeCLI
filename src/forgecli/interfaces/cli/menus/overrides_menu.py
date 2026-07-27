@@ -12,10 +12,10 @@ from collections.abc import Callable
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import ConfigError
-from forgecli.application.llm.gateway.origin import RequestOrigin
-from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.llm.overrides_service import ModelOverridesService
 from forgecli.application.menu import Choice, Menu
+from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.origin import RequestOrigin
 
 
 class OverridesMenu:

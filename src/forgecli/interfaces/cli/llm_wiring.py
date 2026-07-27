@@ -44,10 +44,10 @@ from forgecli.application.llm.gateway import (
     TokenizerRegistry,
 )
 from forgecli.application.llm.metering import CostEstimator, UsageMeter
-from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.llm.overrides_service import ModelOverridesService
 from forgecli.application.llm.runtime_resolver import ConfigBackedSelectionResolver
 from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
+from forgecli.domain.model.model_ref import ModelRef
 from forgecli.infrastructure.llm.adapters import OpenAICompatibleProvider
 from forgecli.infrastructure.llm.credentials import (
     EnvCredentialResolver,

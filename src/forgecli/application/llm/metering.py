@@ -17,10 +17,10 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from forgecli.application.llm.gateway.catalog import ModelCatalogService
-from forgecli.application.llm.gateway.origin import RequestOrigin
 from forgecli.application.llm.gateway.request import ModelRequest
-from forgecli.application.llm.gateway.response import ModelResponse, ModelUsage
-from forgecli.application.llm.model_ref import ModelRef
+from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.response import ModelResponse, ModelUsage
 
 
 def _now_iso() -> str:

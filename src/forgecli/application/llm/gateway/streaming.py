@@ -16,8 +16,8 @@ import json
 from dataclasses import dataclass, field
 
 from forgecli.application.llm.gateway.errors import ModelResponseParseError
-from forgecli.application.llm.gateway.messages import ToolCall
-from forgecli.application.llm.gateway.response import FinishReason, ModelUsage
+from forgecli.domain.model.response import FinishReason, ModelUsage
+from forgecli.domain.tool.tool_call import ToolCall
 
 
 @dataclass(frozen=True)

@@ -6,8 +6,8 @@
 
 from __future__ import annotations
 
-from forgecli.application.config import config_keys
-from forgecli.application.config.effective_config import EffectiveConfig
+from forgecli.domain.config import config_keys
+from forgecli.domain.config.effective_config import EffectiveConfig
 
 # 键 -> 默认规范字符串
 DEFAULTS: dict[str, str] = {key.name: key.default for key in config_keys.SCHEMA}

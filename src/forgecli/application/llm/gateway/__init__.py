@@ -52,24 +52,11 @@ from forgecli.application.llm.gateway.governance import (
     SnapshotBudgetGuard,
 )
 from forgecli.application.llm.gateway.in_memory_catalog import InMemoryModelCatalog
-from forgecli.application.llm.gateway.messages import (
-    ChatMessage,
-    ContentBlock,
-    TextBlock,
-    ToolCall,
-    ToolResultBlock,
-    ToolSpec,
-)
 from forgecli.application.llm.gateway.observability import (
     GatewayCallSample,
     GatewayObserver,
     InProcessGatewayMetrics,
     NoopGatewayObserver,
-)
-from forgecli.application.llm.gateway.origin import RequestOrigin
-from forgecli.application.llm.gateway.params import (
-    ModelParams,
-    ThinkingConfig,
 )
 from forgecli.application.llm.gateway.provider import (
     ModelProvider,
@@ -89,19 +76,7 @@ from forgecli.application.llm.gateway.request import (
     ModelRequest,
     StructuredModelRequest,
 )
-from forgecli.application.llm.gateway.response import (
-    FinishReason,
-    ModelResponse,
-    ModelUsage,
-    StructuredModelResponse,
-)
 from forgecli.application.llm.gateway.schema_validation import validate_json_schema
-from forgecli.application.llm.gateway.selection import (
-    CurrentModelSelection,
-    ExplicitModelSelection,
-    ModelSelection,
-    SelectionKind,
-)
 from forgecli.application.llm.gateway.selection_resolver import (
     ModelSelectionResolver,
     ResolvedModel,
@@ -117,7 +92,31 @@ from forgecli.application.llm.gateway.token_estimator import (
     TokenEstimator,
 )
 from forgecli.application.llm.gateway.tokenizer_registry import TokenizerRegistry
-from forgecli.application.llm.thinking import ThinkingEffortName, ThinkingMode
+from forgecli.domain.conversation.message import (
+    ChatMessage,
+    ContentBlock,
+    TextBlock,
+    ToolResultBlock,
+)
+from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.params import (
+    ModelParams,
+    ThinkingConfig,
+)
+from forgecli.domain.model.response import (
+    FinishReason,
+    ModelResponse,
+    ModelUsage,
+    StructuredModelResponse,
+)
+from forgecli.domain.model.selection import (
+    CurrentModelSelection,
+    ExplicitModelSelection,
+    ModelSelection,
+    SelectionKind,
+)
+from forgecli.domain.model.thinking import ThinkingEffortName, ThinkingMode
+from forgecli.domain.tool.tool_call import ToolCall, ToolSpec
 
 __all__ = [
     # 端口

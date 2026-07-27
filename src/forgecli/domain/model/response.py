@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 
-from forgecli.application.llm.gateway.messages import ToolCall
+from forgecli.domain.tool.tool_call import ToolCall
 
 
 class FinishReason(Enum):

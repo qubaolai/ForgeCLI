@@ -23,11 +23,11 @@ from forgecli.application.llm.gateway.request import (
     ModelRequest,
     StructuredModelRequest,
 )
-from forgecli.application.llm.gateway.response import (
+from forgecli.application.llm.gateway.streaming import ModelStreamChunk
+from forgecli.domain.model.response import (
     ModelResponse,
     StructuredModelResponse,
 )
-from forgecli.application.llm.gateway.streaming import ModelStreamChunk
 
 
 class LlmGateway(ABC):

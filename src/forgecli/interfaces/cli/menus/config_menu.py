@@ -12,12 +12,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from forgecli.application.config import config_keys as keys
 from forgecli.application.config.config_service import ConfigService
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.overrides_service import ModelOverridesService
 from forgecli.application.menu import Choice, Menu
+from forgecli.domain.config import config_keys as keys
 from forgecli.interfaces.cli.menus.gateway_config_menu import GatewayConfigMenu
 from forgecli.interfaces.cli.menus.llm_menu import LlmMenu
 from forgecli.interfaces.cli.menus.overrides_menu import OverridesMenu

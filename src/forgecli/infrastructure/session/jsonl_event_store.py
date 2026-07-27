@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 from forgecli.application.session.event_store import EventStore
-from forgecli.application.session.events import SessionEvent
+from forgecli.domain.session.events import SessionEvent
 
 
 class JsonlEventStore(EventStore):

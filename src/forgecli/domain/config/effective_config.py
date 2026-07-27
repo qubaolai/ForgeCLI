@@ -15,8 +15,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from forgecli.application.config import config_keys
-from forgecli.application.llm.model_ref import ModelRef
+from forgecli.domain.config import config_keys
+from forgecli.domain.model.model_ref import ModelRef
 
 _DEFAULTS: dict[str, str] = {key.name: key.default for key in config_keys.SCHEMA}
 

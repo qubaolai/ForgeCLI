@@ -23,15 +23,15 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from forgecli.application.llm.gateway.errors import ModelCancelledError
-from forgecli.application.llm.gateway.messages import ToolCall
 from forgecli.application.llm.gateway.provider import (
     ModelProvider,
     ProviderCapabilities,
     ProviderRequest,
     ProviderResponse,
 )
-from forgecli.application.llm.gateway.response import FinishReason, ModelUsage
 from forgecli.application.llm.gateway.streaming import ProviderStreamChunk
+from forgecli.domain.model.response import FinishReason, ModelUsage
+from forgecli.domain.tool.tool_call import ToolCall
 
 
 class FakeModelProvider(ModelProvider):

@@ -17,17 +17,17 @@ from forgecli.application.llm.gateway.catalog import ModelCatalogService
 from forgecli.application.llm.gateway.default_selection_resolver import (
     DefaultModelSelectionResolver,
 )
-from forgecli.application.llm.gateway.origin import RequestOrigin
-from forgecli.application.llm.gateway.selection import ModelSelection
 from forgecli.application.llm.gateway.selection_resolver import (
     ModelSelectionResolver,
     ResolvedModel,
 )
-from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.llm.thinking_runtime import (
     ThinkingOverlayCatalog,
     ThinkingRuntimeState,
 )
+from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.selection import ModelSelection
 
 
 class ConfigBackedSelectionResolver(ModelSelectionResolver):

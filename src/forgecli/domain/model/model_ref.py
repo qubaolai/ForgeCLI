@@ -3,13 +3,23 @@
 ModelRef 只表示运行时默认模型指向哪个已配置模型。供应商和模型参数仍由
 application/llm/config 读取 .forge/llm.toml；默认引用由 application/config
 读取 .forge/config.toml。
+
+InvalidModelRef 与 ModelRef 同住: 它守的就是本类的构造不变量, 且全仓只有这里抛。
+它继承 shared.errors 的 ConfigValidationError —— domain 依赖 shared 是允许的,
+shared 自身零依赖, 不会形成环。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from forgecli.application.llm.errors import InvalidModelRef
+from forgecli.shared.errors import ConfigValidationError
+
+__all__ = ["InvalidModelRef", "ModelRef"]
+
+
+class InvalidModelRef(ConfigValidationError):
+    """模型引用非法（provider / name 为空等）。"""
 
 
 @dataclass(frozen=True)

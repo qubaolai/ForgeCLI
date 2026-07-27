@@ -23,8 +23,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from forgecli.application.llm.errors import ConfigValidationError
-from forgecli.application.llm.gateway.origin import RequestOrigin
-from forgecli.application.llm.thinking import (
+from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.thinking import (
     ModelThinkingCapabilities,
     ModelThinkingSettings,
     ThinkingEffortName,

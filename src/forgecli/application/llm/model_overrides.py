@@ -13,8 +13,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from forgecli.application.llm.gateway.errors import ModelBadRequestError
-from forgecli.application.llm.gateway.origin import RequestOrigin
-from forgecli.application.llm.model_ref import ModelRef
+from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.origin import RequestOrigin
 
 
 def build_model_overrides(

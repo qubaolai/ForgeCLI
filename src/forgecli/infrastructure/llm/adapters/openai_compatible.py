@@ -30,24 +30,20 @@ from forgecli.application.llm.gateway.errors import (
     ModelTimeoutError,
     ModelUnavailableError,
 )
-from forgecli.application.llm.gateway.messages import (
-    ChatMessage,
-    TextBlock,
-    ToolCall,
-    ToolResultBlock,
-)
 from forgecli.application.llm.gateway.provider import (
     ModelProvider,
     ProviderCapabilities,
     ProviderRequest,
     ProviderResponse,
 )
-from forgecli.application.llm.gateway.response import FinishReason, ModelUsage
 from forgecli.application.llm.gateway.streaming import (
     ProviderStreamChunk,
     ToolCallDelta,
 )
 from forgecli.application.llm.providers import ThinkingDialect
+from forgecli.domain.conversation.message import ChatMessage, TextBlock, ToolResultBlock
+from forgecli.domain.model.response import FinishReason, ModelUsage
+from forgecli.domain.tool.tool_call import ToolCall
 
 _FINISH_REASONS: dict[str, FinishReason] = {
     "stop": FinishReason.STOP,

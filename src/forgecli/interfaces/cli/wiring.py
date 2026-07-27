@@ -78,26 +78,28 @@ def build_registry(
         JsonlEventStore(sessions_dir),
     )
 
-    # 模式切换归一为普通斜杠命令：三条共用 ModeCommand，靠构造参数区分目标模式。
+    # 模式切换归一为普通斜杠命令: 四条共用 ModeCommand, 靠构造参数区分目标模式.
+    # 命令名用连字符 (/accept-edits), 与其它多词命令 (/add-dir) 一致; 模式取值本身
+    # 仍是下划线 (accept_edits), 因为它要落盘进 state.json.
     mode_specs = [
         CommandSpec(
-            "accept_edits",
-            "切换到ACCEPT_EDITS",
+            "accept-edits",
+            "切换到 accept_edits 模式",
             handler=ModeCommand(SessionMode.ACCEPT_EDITS, session_service, output),
         ),
         CommandSpec(
             "plan",
-            "切换到PLAN",
+            "切换到 plan 模式",
             handler=ModeCommand(SessionMode.PLAN, session_service, output),
         ),
         CommandSpec(
             "auto",
-            "切换到AUTO",
+            "切换到 auto 模式",
             handler=ModeCommand(SessionMode.AUTO, session_service, output),
         ),
         CommandSpec(
-            "full_access",
-            "切换到FULL_ACCESS",
+            "full-access",
+            "切换到 full_access 模式",
             handler=ModeCommand(SessionMode.FULL_ACCESS, session_service, output),
         ),
     ]

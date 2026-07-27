@@ -18,7 +18,7 @@ from forgecli.application.llm.gateway.token_estimator import (
     ApproximateTokenEstimator,
     TokenEstimator,
 )
-from forgecli.application.llm.model_ref import ModelRef
+from forgecli.domain.model.model_ref import ModelRef
 
 
 class TokenizerRegistry:

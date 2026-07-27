@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forgecli.application.session.snapshot import SessionSnapshot
 from forgecli.application.session.state_store import StateStore
+from forgecli.domain.session.snapshot import SessionSnapshot
 from forgecli.infrastructure.session.json_io import read_json, write_json_atomic
 
 

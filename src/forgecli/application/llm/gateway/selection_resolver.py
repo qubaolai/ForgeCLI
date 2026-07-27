@@ -20,9 +20,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
-from forgecli.application.llm.gateway.origin import RequestOrigin
-from forgecli.application.llm.gateway.selection import ModelSelection
-from forgecli.application.llm.model_ref import ModelRef
+from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.selection import ModelSelection
 
 
 @dataclass(frozen=True)

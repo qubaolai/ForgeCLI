@@ -23,12 +23,11 @@ from rich.panel import Panel
 
 from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
 from forgecli.application.agent_turn.cancellation import TurnCancelSource
-from forgecli.application.agent_turn.turn import AssistantResponse
 from forgecli.application.intent_router import IntentRouter
 from forgecli.application.llm.gateway.request import CancelToken
 from forgecli.application.session import SessionService
 from forgecli.application.slash_commands import CommandRegistry
-from forgecli.domain.conversation import TurnStatus
+from forgecli.domain.conversation.turn import AssistantResponse, TurnStatus
 from forgecli.domain.intents import (
     SlashCommand,
     UnknownCommand,

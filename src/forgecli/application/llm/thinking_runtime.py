@@ -13,8 +13,8 @@ from forgecli.application.llm.gateway.catalog import (
     ModelCatalogEntry,
     ModelCatalogService,
 )
-from forgecli.application.llm.model_ref import ModelRef
-from forgecli.application.llm.thinking import (
+from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.thinking import (
     ModelThinkingSettings,
     ThinkingEffortName,
     ThinkingMode,

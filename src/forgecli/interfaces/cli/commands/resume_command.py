@@ -12,10 +12,11 @@ from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
 from forgecli.application.interaction_ports import MenuPresenter, UserOutput
 from forgecli.application.menu import Choice, Menu
 from forgecli.application.project import ProjectContext
-from forgecli.application.session import SessionService, SessionSnapshot
+from forgecli.application.session import SessionService
 from forgecli.application.session.resume_service import ResumeService
 from forgecli.application.slash_commands import CommandHandler
 from forgecli.domain.intents import SlashCommand
+from forgecli.domain.session.snapshot import SessionSnapshot
 
 _NO_TITLE = "（无标题）"
 

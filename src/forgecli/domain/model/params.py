@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from forgecli.application.llm.thinking import ThinkingEffortName
+from forgecli.domain.model.thinking import ThinkingEffortName
 
 
 @dataclass(frozen=True)

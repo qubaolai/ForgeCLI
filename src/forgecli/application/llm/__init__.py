@@ -22,7 +22,6 @@ from forgecli.application.llm.errors import (
     ConfigValidationError,
     UnknownProvider,
 )
-from forgecli.application.llm.model_ref import ModelRef
 from forgecli.application.llm.providers import (
     REGISTRY,
     ProviderSpec,
@@ -35,7 +34,6 @@ __all__ = [
     "ProviderConfig",
     "ModelSpec",
     "ModelParams",
-    "ModelRef",
     "LlmConfigService",
     "LlmConfigStore",
     "ProviderSpec",
