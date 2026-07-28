@@ -1,8 +1,7 @@
-"""扩展机制之二：LoopEvent 与最小 LoopEventBus（ADR-0010 §7.2）。
+"""扩展机制之二：LoopEvent 的订阅端口与最小 LoopEventBus（ADR-0010 §7.2）。
 
-LoopEvent 是只读通知，不允许改变控制流；供日志、CLI 渲染、usage meter、tracing
-订阅。与可影响控制流的 LoopHook（§7.1）分层：需要改变循环方向必须实现 hook，不能用
-event subscriber。
+事件本身的词汇（LoopEventKind / LoopEvent）住在 domain.agent.events；这里只放
+"怎么把它分发出去"——订阅端口与一个进程内总线，都是编排设施。
 
 约束（§7.2）：
     - subscriber 不返回控制信号。
@@ -15,35 +14,10 @@ event subscriber。
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-from enum import Enum
-from types import MappingProxyType
 
+from forgecli.domain.agent.events import LoopEvent
 
-class LoopEventKind(Enum):
-    """循环观察事件类型（§7.2）。值即落盘 / 序列化字符串。"""
-
-    LOOP_STARTED = "loop_started"
-    STEP_STARTED = "step_started"
-    MODEL_REQUESTED = "model_requested"
-    MODEL_COMPLETED = "model_completed"
-    ACTION_REQUESTED = "action_requested"
-    ACTION_COMPLETED = "action_completed"
-    LOOP_STOPPED = "loop_stopped"
-
-
-@dataclass(frozen=True)
-class LoopEvent:
-    """只读循环通知。payload 只含安全摘要，不含 raw CoT 或凭证。"""
-
-    kind: LoopEventKind
-    turn_id: str
-    payload: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
-
-    def __post_init__(self) -> None:
-        if not self.turn_id.strip():
-            raise ValueError("LoopEvent.turn_id 不能为空")
+__all__ = ["LoopEventBus", "LoopEventSubscriber"]
 
 
 class LoopEventSubscriber(ABC):

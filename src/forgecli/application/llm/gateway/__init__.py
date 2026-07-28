@@ -16,12 +16,8 @@ from forgecli.application.llm.gateway.cache import (
     NoopLlmCacheController,
     structured_schema_digest,
 )
-from forgecli.application.llm.gateway.catalog import (
-    ModelCatalogEntry,
-    ModelCatalogService,
-)
+from forgecli.application.llm.gateway.catalog import ModelCatalogService
 from forgecli.application.llm.gateway.credentials import (
-    Credential,
     CredentialPool,
     CredentialResolver,
 )
@@ -69,24 +65,9 @@ from forgecli.application.llm.gateway.provider_settings import (
     ProviderRuntimeSettings,
     ProviderSettingsSource,
 )
-from forgecli.application.llm.gateway.request import (
-    BudgetSnapshot,
-    CacheHint,
-    CancelToken,
-    ModelRequest,
-    StructuredModelRequest,
-)
 from forgecli.application.llm.gateway.schema_validation import validate_json_schema
-from forgecli.application.llm.gateway.selection_resolver import (
-    ModelSelectionResolver,
-    ResolvedModel,
-)
-from forgecli.application.llm.gateway.streaming import (
-    ModelStreamChunk,
-    ProviderStreamChunk,
-    StreamAccumulator,
-    ToolCallDelta,
-)
+from forgecli.application.llm.gateway.selection_resolver import ModelSelectionResolver
+from forgecli.application.llm.gateway.streaming import StreamAccumulator
 from forgecli.application.llm.gateway.token_estimator import (
     ApproximateTokenEstimator,
     TokenEstimator,
@@ -98,11 +79,21 @@ from forgecli.domain.conversation.message import (
     TextBlock,
     ToolResultBlock,
 )
+from forgecli.domain.model.catalog import ModelCatalogEntry
+from forgecli.domain.model.credentials import Credential
 from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.params import (
     ModelParams,
     ThinkingConfig,
 )
+from forgecli.domain.model.request import (
+    BudgetSnapshot,
+    CacheHint,
+    CancelToken,
+    ModelRequest,
+    StructuredModelRequest,
+)
+from forgecli.domain.model.resolved import ResolvedModel
 from forgecli.domain.model.response import (
     FinishReason,
     ModelResponse,
@@ -114,6 +105,11 @@ from forgecli.domain.model.selection import (
     ExplicitModelSelection,
     ModelSelection,
     SelectionKind,
+)
+from forgecli.domain.model.streaming import (
+    ModelStreamChunk,
+    ProviderStreamChunk,
+    ToolCallDelta,
 )
 from forgecli.domain.model.thinking import ThinkingEffortName, ThinkingMode
 from forgecli.domain.tool.tool_call import ToolCall, ToolSpec

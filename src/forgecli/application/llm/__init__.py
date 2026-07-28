@@ -24,10 +24,10 @@ from forgecli.application.llm.errors import (
 )
 from forgecli.application.llm.providers import (
     REGISTRY,
-    ProviderSpec,
     is_known_provider,
     require_known_provider,
 )
+from forgecli.domain.model.provider_spec import ProviderSpec
 
 __all__ = [
     "LlmConfig",

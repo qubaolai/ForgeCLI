@@ -29,8 +29,8 @@ from forgecli.application.llm.gateway.provider import (
     ProviderRequest,
     ProviderResponse,
 )
-from forgecli.application.llm.gateway.streaming import ProviderStreamChunk
 from forgecli.domain.model.response import FinishReason, ModelUsage
+from forgecli.domain.model.streaming import ProviderStreamChunk
 from forgecli.domain.tool.tool_call import ToolCall
 
 

@@ -14,11 +14,11 @@ from pathlib import Path
 
 import tomlkit
 
-from forgecli.application.project.project import IndexEntry, ProjectConfig
 from forgecli.application.project.project_store import (
     ProjectConfigStore,
     ProjectIndexStore,
 )
+from forgecli.domain.workspace.project import IndexEntry, ProjectConfig
 from forgecli.infrastructure.toml_io import read_document, write_document
 
 _TRUSTED_ROOTS = "trusted_roots"

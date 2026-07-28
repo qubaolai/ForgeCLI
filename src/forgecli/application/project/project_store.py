@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from forgecli.application.project.project import IndexEntry, ProjectConfig
+from forgecli.domain.workspace.project import IndexEntry, ProjectConfig
 
 
 class ProjectIndexStore(ABC):

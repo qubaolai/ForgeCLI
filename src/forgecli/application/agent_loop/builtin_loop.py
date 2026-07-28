@@ -16,11 +16,7 @@ import uuid
 from collections.abc import Callable
 from types import MappingProxyType
 
-from forgecli.application.agent_loop.events import (
-    LoopEvent,
-    LoopEventBus,
-    LoopEventKind,
-)
+from forgecli.application.agent_loop.events import LoopEventBus
 from forgecli.application.agent_loop.loop import AgentLoop
 from forgecli.application.llm.error_hints import actionable_message
 from forgecli.application.llm.gateway.errors import (
@@ -29,12 +25,8 @@ from forgecli.application.llm.gateway.errors import (
     ModelGatewayError,
 )
 from forgecli.application.llm.gateway.gateway import LlmGateway
-from forgecli.application.llm.gateway.request import CancelToken, ModelRequest
-from forgecli.application.llm.gateway.streaming import (
-    ModelStreamChunk,
-    StreamAccumulator,
-)
-from forgecli.application.llm.metering import UsageMeter, UsageRecordDraft
+from forgecli.application.llm.gateway.streaming import StreamAccumulator
+from forgecli.application.llm.metering import UsageMeter
 from forgecli.domain.agent.actions import (
     AnswerAction,
     LoopDecision,
@@ -42,15 +34,19 @@ from forgecli.domain.agent.actions import (
     LoopStepResult,
     LoopStop,
 )
+from forgecli.domain.agent.events import LoopEvent, LoopEventKind
 from forgecli.domain.agent.state import LoopInput
 from forgecli.domain.agent.stop import LoopStopReason
 from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.params import ModelParams
+from forgecli.domain.model.request import CancelToken, ModelRequest
 from forgecli.domain.model.response import (
     FinishReason,
     ModelResponse,
 )
 from forgecli.domain.model.selection import CurrentModelSelection
+from forgecli.domain.model.streaming import ModelStreamChunk
+from forgecli.domain.model.usage import UsageRecordDraft
 
 
 def _new_request_id() -> str:

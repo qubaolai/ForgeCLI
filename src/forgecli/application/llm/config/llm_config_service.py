@@ -36,7 +36,7 @@ from forgecli.application.llm.config.llm_config import (
 )
 from forgecli.application.llm.config.llm_config_store import LlmConfigStore
 from forgecli.application.llm.errors import ConfigValidationError
-from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
+from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.thinking import (

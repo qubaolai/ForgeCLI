@@ -26,11 +26,11 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 
-from forgecli.application.llm.gateway.request import ModelRequest
 from forgecli.domain.conversation.message import ChatMessage, TextBlock, ToolResultBlock
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.params import ThinkingConfig
+from forgecli.domain.model.request import ModelRequest
 from forgecli.domain.model.response import ModelResponse, ModelUsage
 
 # 响应缓存永远不适用的 origin（§14：主 Agent 对话不走响应缓存）。

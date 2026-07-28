@@ -7,10 +7,10 @@ from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import ConfigError, ConfigValidationError
-from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
 from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.application.slash_commands import CommandHandler
 from forgecli.domain.intents import SlashCommand
+from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.thinking import ThinkingEffortName, ThinkingMode
 

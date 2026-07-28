@@ -1,32 +1,23 @@
-"""当前进程内的 thinking 覆盖。
+"""thinking 的进程内运行时状态与目录覆盖层（ADR-0011 §7）。
 
-``llm.toml`` 保存模型默认值；``/thinking`` 只修改当前 Forge 进程中的覆盖，
-不会改变应用级配置，也不会进入 ``ModelRequest``。覆盖按 ModelRef 隔离，
-因此切换模型时自动读取新模型默认值，切回模型时仍可恢复本次进程内的修改。
+覆盖值 ThinkingOverride 住在 domain.model.thinking_override；这里两个类都是运行时
+构件：ThinkingRuntimeState 持有可变的进程内字典（/thinking 改了不落盘），
+ThinkingOverlayCatalog 是套在目录读端口外的装饰器。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
-from forgecli.application.llm.gateway.catalog import (
-    ModelCatalogEntry,
-    ModelCatalogService,
-)
+from forgecli.application.llm.gateway.catalog import ModelCatalogService
+from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.thinking import (
     ModelThinkingSettings,
     ThinkingEffortName,
     ThinkingMode,
 )
-
-
-@dataclass(frozen=True)
-class ThinkingOverride:
-    """一个模型的进程内部分覆盖；None 表示沿用 llm.toml 默认值。"""
-
-    mode: ThinkingMode | None = None
-    effort: ThinkingEffortName | None = None
+from forgecli.domain.model.thinking_override import ThinkingOverride
 
 
 class ThinkingRuntimeState:

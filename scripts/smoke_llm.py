@@ -60,7 +60,9 @@
 # def _build_gateway() -> DefaultLlmGateway:
 #     registry = ProviderRegistry()
 #     registry.register(
-#         OpenAICompatibleProvider(provider_id=_PROVIDER, base_url=_SPEC.default_api_base)
+#         OpenAICompatibleProvider(
+#             provider_id=_PROVIDER, base_url=_SPEC.default_api_base
+#         )
 #     )
 #     catalog = InMemoryModelCatalog(
 #         (

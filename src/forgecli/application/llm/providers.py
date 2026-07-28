@@ -1,51 +1,14 @@
-"""供应商封闭注册表（代码侧，唯一权威）。
+"""内置供应商注册表（ADR-0011 §5）。
 
-「只有供应商是定死的」就落在这里：每家供应商需要单独的 adapter 实现（不一定符合
-OpenAI 规范），所以供应商集合由代码决定，用户无法在配置文件里新增供应商。
-模型则完全由配置文件驱动——本文件不保存任何模型清单。
-
-这是 LLM 领域里配置切片与调用切片*共享*的身份/能力核心：
-    - 配置切片：用它校验配置文件里的供应商段是否合法。
-    - 调用切片：用 provider id 作为分发键，经 ProviderRegistry 路由到对应 adapter。
-（adapter 实例需运行时配置，其绑定放在运行时 ProviderRegistry（组合根 / 测试构造），
-不挂到本静态 ProviderSpec 上，避免退化为可变全局单例。）
-
-凭证不入文件：api_key_env 只是「该供应商默认从哪个环境变量取 key」的提示，
-真正的 key 始终从环境变量读取（CredentialResolver 把凭证引用当环境变量名解析）。
+描述词汇（ProviderSpec / ThinkingDialect）住在 domain.model.provider_spec；
+这里是封闭的注册表本身：具体几家、各自的 base url 与 API key 环境变量名。
+这些是部署事实而非领域概念，改一家供应商的地址不该惊动领域层。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
-
 from forgecli.application.llm.errors import UnknownProvider
-
-
-class ThinkingDialect(Enum):
-    """provider 的 thinking 协议方言。
-
-    EFFORT 将模型声明的 effort 名称原样发送；
-    BUDGET 通过 adapter 的已知映射转换为 token budget；
-    NONE 表示该 provider 协议没有可发送的 thinking 字段。
-    """
-
-    EFFORT = "effort"
-    BUDGET = "budget"
-    NONE = "none"
-
-
-@dataclass(frozen=True)
-class ProviderSpec:
-    """一家供应商的代码侧定义。"""
-
-    id: str
-    label: str  # 默认展示名（配置可覆盖 name）
-    default_api_base: str  # 配置未给 api_base 时的回落
-    api_key_env: str  # 默认凭证环境变量名
-    # thinking 方言声明（ADR-0012 §4）：wiring 据此实例化 adapter。
-    thinking_dialect: ThinkingDialect = ThinkingDialect.EFFORT
-
+from forgecli.domain.model.provider_spec import ProviderSpec
 
 REGISTRY: dict[str, ProviderSpec] = {
     "deepseek": ProviderSpec(

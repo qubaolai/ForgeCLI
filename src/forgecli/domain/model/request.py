@@ -1,18 +1,11 @@
-"""统一请求结构 ModelRequest / StructuredModelRequest（ADR-0011 §3.3 / §3.7）。
+"""统一模型请求的值对象（ADR-0011 §3.3）。
 
-冻结日一次冻全 ModelRequest 字段位（含本阶段 no-op 的 budget_snapshot / cancel_token），
-避免后续预算、取消、流式接入时再改动「已冻结」DTO。ADR §3.3 的字段顺序如下（dataclass
-要求有默认值的字段在后，故源码顺序与 ADR 列举顺序不同，但*字段集合*与之一致）：
+所有模型调用共用同一请求结构: 非流式 / 流式 / 结构化都走它。换掉供应商适配器不改变
+这个形状, 故属领域。
 
-    request_id, session_id, turn_id, loop_step_id?, origin, model_selection,
-    required_capabilities[], min_context_window?, messages[], system_prompt?,
-    tools[], params, timeout_seconds?, budget_snapshot?, cancel_token?, metadata
-
-关键边界：
-    - ModelRequest *不带* stream 标志；是否流式由调用 complete / stream 决定（§3.3）。
-    - metadata 只放安全摘要（mode、command 等），不得含 secret——构造期即校验。
-    - budget_snapshot 由 AgentTurnService 注入，BudgetGuard 只读裁决（MVP no-op）。
-    - cancel_token 承载取消信号，运行时接线在 07-07，今日只冻字段位。
+CancelToken 也在这里, 而且是本模块唯一可变的类型。它按身份比较 (eq=False), 表达的是
+"这一次在途调用被叫停了"这件事本身 —— 在 DDD 术语里这是**实体**而非值对象, 可变是
+它的本质不是妥协。ModelRequest 直接持有它, 分居两层就会让 domain 反向依赖 application。
 """
 
 from __future__ import annotations

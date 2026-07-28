@@ -19,15 +19,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 
-from forgecli.application.llm.gateway.request import (
-    ModelRequest,
-    StructuredModelRequest,
-)
-from forgecli.application.llm.gateway.streaming import ModelStreamChunk
+from forgecli.domain.model.request import ModelRequest, StructuredModelRequest
 from forgecli.domain.model.response import (
     ModelResponse,
     StructuredModelResponse,
 )
+from forgecli.domain.model.streaming import ModelStreamChunk
 
 
 class LlmGateway(ABC):

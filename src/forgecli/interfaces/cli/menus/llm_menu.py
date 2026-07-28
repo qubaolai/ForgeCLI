@@ -20,8 +20,8 @@ from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config import STANDARD_FIELDS, StandardField
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import ConfigError
-from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
 from forgecli.application.menu import Choice, Menu
+from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.thinking import ThinkingMode
 

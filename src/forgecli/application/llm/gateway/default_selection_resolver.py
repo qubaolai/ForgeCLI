@@ -22,20 +22,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from types import MappingProxyType
 
-from forgecli.application.llm.gateway.catalog import (
-    ModelCatalogEntry,
-    ModelCatalogService,
-)
+from forgecli.application.llm.gateway.catalog import ModelCatalogService
 from forgecli.application.llm.gateway.errors import (
     ModelBadRequestError,
     ModelContextOverflowError,
 )
-from forgecli.application.llm.gateway.selection_resolver import (
-    ModelSelectionResolver,
-    ResolvedModel,
-)
+from forgecli.application.llm.gateway.selection_resolver import ModelSelectionResolver
+from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.resolved import ResolvedModel
 from forgecli.domain.model.selection import (
     ExplicitModelSelection,
     ModelSelection,

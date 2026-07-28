@@ -12,28 +12,27 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from forgecli.application.interaction_ports import TrustPrompter
-from forgecli.application.project.project import (
+from forgecli.application.project.project_store import (
+    ProjectConfigStore,
+    ProjectIndexStore,
+)
+from forgecli.domain.workspace.boundary import is_within
+from forgecli.domain.workspace.project import (
     IndexEntry,
     ProjectConfig,
     WorkspaceError,
     generate_project_id,
 )
-from forgecli.application.project.project_store import (
-    ProjectConfigStore,
-    ProjectIndexStore,
-)
 from forgecli.shared.utils import now_iso
 
 
 def canonical_path(path: Path) -> Path:
-    """规范化为绝对路径（展开 ~、resolve 符号链接与 ..）。"""
+    """规范化为绝对路径（展开 ~、resolve 符号链接与 ..）。
+
+    **不进 domain**: resolve() 会读文件系统解 symlink, 是 IO。纯粹的边界比较在
+    domain.workspace.boundary.is_within, 那里只按路径段比, 不碰磁盘。
+    """
     return path.expanduser().resolve()
-
-
-def _is_self_or_ancestor(root: str, target: Path) -> bool:
-    """root 是否为 target 自身或其祖先——用路径边界判断，非字符串前缀。"""
-    root_path = Path(root)
-    return root_path == target or root_path in target.parents
 
 
 class ProjectService:
@@ -59,7 +58,7 @@ class ProjectService:
         matches = [
             entry
             for entry in self._index.load().values()
-            if entry.trusted and _is_self_or_ancestor(entry.root, target)
+            if entry.trusted and is_within(target, entry.root)
         ]
         if not matches:
             return None

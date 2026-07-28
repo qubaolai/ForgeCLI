@@ -1,13 +1,8 @@
-"""统一流式 chunk 与合并器（ADR-0011 §9）。
+"""流式增量的累积器（ADR-0011 §9）。
 
-CLI 渲染只消费 gateway 输出的 `ModelStreamChunk`；provider adapter 负责把供应商
-私有 SSE/event 转成 `ProviderStreamChunk`。规则（§9）：
-
-    - 最后一块必须包含或触发完整 ModelResponse 汇总（usage_delta + finish_reason）。
-    - tool_call_delta 先进入内存 accumulator；只有参数完整且 JSON 解析通过后，
-      才生成 ForgeCLI 归一化后的 ToolCall。
-    - stream 中断 / 取消时，gateway 产出 interrupted=True 的收尾 chunk，
-      finish_reason=user_cancelled（用户取消时），usage 为估算值。
+chunk 值对象（ToolCallDelta / ProviderStreamChunk / ModelStreamChunk）住在
+domain.model.streaming；这里只留 StreamAccumulator——它持有可变的累积状态、解析
+JSON、在参数不完整时抛 ModelResponseParseError，是运行时机制。
 """
 
 from __future__ import annotations
@@ -17,64 +12,8 @@ from dataclasses import dataclass, field
 
 from forgecli.application.llm.gateway.errors import ModelResponseParseError
 from forgecli.domain.model.response import FinishReason, ModelUsage
+from forgecli.domain.model.streaming import ModelStreamChunk, ToolCallDelta
 from forgecli.domain.tool.tool_call import ToolCall
-
-
-@dataclass(frozen=True)
-class ToolCallDelta:
-    """一段工具调用增量（供应商流式返回的 tool call 片段）。
-
-    index 标识同一响应内的第几个工具调用；tool_call_id / name 只在首个片段出现，
-    arguments_delta 为 JSON 文本增量，累积完整后才解析。
-    """
-
-    index: int
-    tool_call_id: str | None = None
-    name: str | None = None
-    arguments_delta: str = ""
-
-    def __post_init__(self) -> None:
-        if self.index < 0:
-            raise ValueError("ToolCallDelta.index 不能为负")
-
-
-@dataclass(frozen=True)
-class ProviderStreamChunk:
-    """adapter 归一化后的供应商流式片段；gateway 再补 request_id / 序号。"""
-
-    delta_text: str | None = None
-    tool_call_delta: ToolCallDelta | None = None
-    usage: ModelUsage | None = None
-    finish_reason: FinishReason | None = None
-
-
-@dataclass(frozen=True)
-class ModelStreamChunk:
-    """gateway 输出的统一流式片段（§9）。sequence 从 0 递增。
-
-    provider/model 为 gateway 已解析的模型身份：每块统一携带，收尾块因此
-    自足构成完整 ModelResponse 汇总（§9），消费方（如 usage 计量）无需回查选择器。
-    """
-
-    request_id: str
-    sequence: int
-    provider: str
-    model: str
-    delta_text: str | None = None
-    tool_call_delta: ToolCallDelta | None = None
-    usage_delta: ModelUsage | None = None
-    finish_reason: FinishReason | None = None
-    interrupted: bool = False
-
-    def __post_init__(self) -> None:
-        if not self.request_id.strip():
-            raise ValueError("ModelStreamChunk.request_id 不能为空")
-        if self.sequence < 0:
-            raise ValueError("ModelStreamChunk.sequence 不能为负")
-        if not self.provider.strip():
-            raise ValueError("ModelStreamChunk.provider 不能为空")
-        if not self.model.strip():
-            raise ValueError("ModelStreamChunk.model 不能为空")
 
 
 @dataclass

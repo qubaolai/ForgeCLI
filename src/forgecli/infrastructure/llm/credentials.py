@@ -17,11 +17,11 @@ import time
 from collections.abc import Callable
 
 from forgecli.application.llm.gateway.credentials import (
-    Credential,
     CredentialPool,
     CredentialResolver,
 )
 from forgecli.application.llm.gateway.errors import ModelAuthError
+from forgecli.domain.model.credentials import Credential
 
 # mark_failed 未给 retry_after 时的默认冷却秒数。
 _DEFAULT_COOLDOWN_SECONDS = 30.0

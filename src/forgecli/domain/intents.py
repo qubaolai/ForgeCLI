@@ -12,26 +12,17 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass
-from enum import Enum, auto
+from enum import Enum
 
 __all__ = [
-    "IntentKind",
     "SessionMode",
     "UserIntent",
     "UserMessage",
     "SlashCommand",
     "UnknownCommand",
 ]
-
-
-class IntentKind(Enum):
-    """意图判别枚举，便于日志、测试断言与序列化。"""
-
-    USER_MESSAGE = auto()
-    SLASH_COMMAND = auto()
-    UNKNOWN_COMMAND = auto()
 
 
 class SessionMode(Enum):
@@ -72,18 +63,10 @@ class UserIntent(ABC):
         if not self.raw_text or not self.raw_text.strip():
             raise ValueError("raw_text 不能为空")
 
-    @property
-    @abstractmethod
-    def kind(self) -> IntentKind: ...
-
 
 @dataclass(frozen=True)
 class UserMessage(UserIntent):
     """自然语言输入，原样交给后续对话流程。"""
-
-    @property
-    def kind(self) -> IntentKind:
-        return IntentKind.USER_MESSAGE
 
     @property
     def text(self) -> str:
@@ -106,10 +89,6 @@ class SlashCommand(UserIntent):
         if not self.command or not self.command.strip():
             raise ValueError("command 不能为空")
 
-    @property
-    def kind(self) -> IntentKind:
-        return IntentKind.SLASH_COMMAND
-
 
 @dataclass(frozen=True)
 class UnknownCommand(UserIntent):
@@ -124,7 +103,3 @@ class UnknownCommand(UserIntent):
             raise ValueError("command 不能为空")
         if not self.error_message or not self.error_message.strip():
             raise ValueError("error_message 不能为空")
-
-    @property
-    def kind(self) -> IntentKind:
-        return IntentKind.UNKNOWN_COMMAND

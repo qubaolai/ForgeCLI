@@ -36,13 +36,10 @@ from forgecli.application.llm.gateway.provider import (
     ProviderRequest,
     ProviderResponse,
 )
-from forgecli.application.llm.gateway.streaming import (
-    ProviderStreamChunk,
-    ToolCallDelta,
-)
-from forgecli.application.llm.providers import ThinkingDialect
 from forgecli.domain.conversation.message import ChatMessage, TextBlock, ToolResultBlock
+from forgecli.domain.model.provider_spec import ThinkingDialect
 from forgecli.domain.model.response import FinishReason, ModelUsage
+from forgecli.domain.model.streaming import ProviderStreamChunk, ToolCallDelta
 from forgecli.domain.tool.tool_call import ToolCall
 
 _FINISH_REASONS: dict[str, FinishReason] = {

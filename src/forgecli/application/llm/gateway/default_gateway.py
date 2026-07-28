@@ -43,8 +43,7 @@ from forgecli.application.llm.gateway.cache import (
     NoopLlmCacheController,
     structured_schema_digest,
 )
-from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
-from forgecli.application.llm.gateway.credentials import Credential, CredentialPool
+from forgecli.application.llm.gateway.credentials import CredentialPool
 from forgecli.application.llm.gateway.errors import (
     ModelAuthError,
     ModelBadRequestError,
@@ -79,32 +78,28 @@ from forgecli.application.llm.gateway.provider_settings import (
     ProviderRuntimeSettings,
     ProviderSettingsSource,
 )
-from forgecli.application.llm.gateway.request import (
-    ModelRequest,
-    StructuredModelRequest,
-)
 from forgecli.application.llm.gateway.schema_validation import validate_json_schema
 from forgecli.application.llm.gateway.selection_resolver import ModelSelectionResolver
-from forgecli.application.llm.gateway.streaming import (
-    ModelStreamChunk,
-    ProviderStreamChunk,
-)
 from forgecli.application.llm.gateway.token_estimator import (
     ApproximateTokenEstimator,
     TokenEstimator,
 )
 from forgecli.application.llm.gateway.tokenizer_registry import TokenizerRegistry
+from forgecli.domain.model.catalog import ModelCatalogEntry
+from forgecli.domain.model.credentials import Credential
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.params import (
     ModelParams,
     ThinkingConfig,
 )
+from forgecli.domain.model.request import ModelRequest, StructuredModelRequest
 from forgecli.domain.model.response import (
     FinishReason,
     ModelResponse,
     ModelUsage,
     StructuredModelResponse,
 )
+from forgecli.domain.model.streaming import ModelStreamChunk, ProviderStreamChunk
 from forgecli.domain.model.thinking import ThinkingMode
 
 # settings_source 未注入时的 provider 默认（与配置切片默认一致）。

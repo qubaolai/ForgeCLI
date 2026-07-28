@@ -17,7 +17,12 @@ from forgecli.application.slash_commands.base import CommandHandler
 
 @dataclass(frozen=True)
 class CommandSpec:
-    """一条斜杠命令的注册信息，描述路由与分派所需的最小元数据。"""
+    """一条斜杠命令的注册信息，描述路由与分派所需的最小元数据。
+
+    形状上是 frozen 值对象, 但**留在 application**: handler 字段的类型 CommandHandler
+    是 UI 执行器端口, 把 spec 搬进 domain 会连带把那个端口一起拖进去。它描述的本来也是
+    「这条命令怎么被执行」, 属编排, 不是领域概念。
+    """
 
     name: str  # 规范的命令名（小写）
     summary: str = ""  # 供 /help 命令展示使用

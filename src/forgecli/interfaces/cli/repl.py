@@ -24,7 +24,6 @@ from rich.panel import Panel
 from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
 from forgecli.application.agent_turn.cancellation import TurnCancelSource
 from forgecli.application.intent_router import IntentRouter
-from forgecli.application.llm.gateway.request import CancelToken
 from forgecli.application.session import SessionService
 from forgecli.application.slash_commands import CommandRegistry
 from forgecli.domain.conversation.turn import AssistantResponse, TurnStatus
@@ -34,6 +33,7 @@ from forgecli.domain.intents import (
     UserIntent,
     UserMessage,
 )
+from forgecli.domain.model.request import CancelToken
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.prompt_loop import ForgePrompt, QuitSignal
 from forgecli.interfaces.cli.stream_render import StreamingTranscript

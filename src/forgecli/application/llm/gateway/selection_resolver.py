@@ -1,36 +1,16 @@
-"""模型选择解析器 ModelSelectionResolver 契约（ADR-0011 §2 / §3.4）。
+"""模型选择的解析端口（ADR-0011 §3.1）。
 
-ModelSelectionResolver 负责把「当前模型」或「显式模型选择」解析为具体 provider/model；
-按用途的显式覆盖在这里读取。解析结果始终经 ModelCatalogService 的存在性与能力校验。
-
-依赖方向（§2）：
-
-    LlmGateway -> ModelSelectionResolver -> ModelCatalogService   （均只读）
-
-语义约束：
-    - 未被显式覆盖的用途一律走当前主模型；origin 只作用途标签，不选择模型。
-    - current_model 与 explicit_model 都不做模型 fallback，只允许同一 provider/model 的
-      凭证级重试；LLM 不能提出模型升级或切换。
-
+结果值对象 ResolvedModel 住在 domain.model.resolved；这里只留端口，具体解析策略
+（读配置 / 校验能力 / 不做模型 fallback）在 application 实现。
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 
-from forgecli.application.llm.gateway.catalog import ModelCatalogEntry
-from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.resolved import ResolvedModel
 from forgecli.domain.model.selection import ModelSelection
-
-
-@dataclass(frozen=True)
-class ResolvedModel:
-    """解析输出：已解析的 provider/model 及其目录条目。"""
-
-    ref: ModelRef
-    entry: ModelCatalogEntry
 
 
 class ModelSelectionResolver(ABC):

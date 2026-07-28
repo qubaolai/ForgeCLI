@@ -12,11 +12,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from forgecli.application.llm.gateway.catalog import (
-    ModelCatalogEntry,
-    ModelCatalogService,
-)
+from forgecli.application.llm.gateway.catalog import ModelCatalogService
 from forgecli.application.llm.gateway.errors import ModelBadRequestError
+from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 
 
