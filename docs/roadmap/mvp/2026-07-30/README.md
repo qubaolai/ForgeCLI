@@ -1,41 +1,39 @@
-# 2026-07-30：ToolRuntime + 只读工具 + 工具请求闭环
+# 2026-07-30：冻结 Shell 安全调用边界与 plan mode 能力门
 
 ## 今日目标
 
-按 ADR-0004 与 ADR-0010 §13(6-7) 落地 `ToolRuntime` / `ToolRegistry` 与只读工具
-（read_file / glob / grep），并开放 `AgentLoop` 的 tool request 输出：loop 产出
-`LoopAction.request_tool` → `ActionDispatcher` 经裁决执行 → observation 回填 loop。
+按 ADR-0013 冻结 Agent Shell 安全执行的应用层边界：`plan` mode 只向 LLM 暴露 `PlanTool` 和只读工具，
+Shell 请求必须先进入统一安全协调器，`ShellTool` 只负责执行已批准请求。
 
-## 开发指导
+## 今日范围
 
-- `ToolRegistry`：代码级注册内置工具，每个工具带 `ToolSpec`（name / description / JSON schema）。
-- `ToolRuntime` / `ActionDispatcher`：执行 `LoopAction.request_tool`，工具结果归一化为
-  `LoopObservation` 回填；工具失败转 observation，不破坏 session。
-- 只读工具 read_file / glob / grep 进只读 allow 集，经能力门进 `tool_catalog`（所有模式可见）。
-- `BuiltinAgentLoop` 开放 tool request：answer / request_tool 两类出口 + observe 回到 reason。
-- 工具事件按 append-only 落盘（tool_requested / tool_completed，带 invocation_id）；长 stdout 落
-  artifact、事件只存摘要与路径（ADR-0010 §10）。
+- 定义 `PlanTool` 的最小接口：创建、更新和记录计划，不执行外部副作用。
+- 定义 `ToolCatalog` 的 mode 过滤结果，至少覆盖 `plan`、`accept_edits`、`auto`、`full_access`。
+- 定义 `ToolRequestCoordinator` 和 `CommandSecurityService` 的调用契约。
+- 定义 `ShellTool` 的薄执行接口和结构化执行结果。
+- 定义 `tool_unavailable_in_mode`、`policy_denied` 和 `tool_result` observation。
+- 保证 AgentLoop、slash command、resume 等入口不能绕过统一协调器。
 
 ## 非目标
 
-- 不接写/编辑工具（留 07-31）与 shell 工具（留 08-03）。
-- 不接沙箱；只读工具本就无副作用。
+- 不重构通用 Tool Registry、MCP 或所有内置工具。
+- 不实现 Shell Parser、规则匹配和沙箱 Provider；这些在后续日期完成。
 
 ## 最终产物
 
-- `tools/` 下 `ToolRegistry` / `ToolRuntime` / `ActionDispatcher` + read_file / glob / grep。
-- `BuiltinAgentLoop` 的 tool request → observe 闭环。
-- 工具请求-执行-回填的集成测试（fake provider 驱动 loop 请求只读工具）。
+- `PlanTool` 和只读工具的能力目录测试。
+- `ToolRequestCoordinator` / `CommandSecurityService` 的接口和 fake 实现。
+- `ShellTool` 只执行已批准请求的边界测试。
+- plan mode 下 ShellTool 不进入模型工具目录；绕过请求返回结构化错误。
 
-## 验收重点
+## 验收标准
 
-- Agent 可经 loop 读文件、glob、grep；工具结果回填后 loop 能继续或收尾。
-- 工具请求必须是 `ToolRequest`，不能携带可执行匿名代码块绕过 registry。
-- 工具事件带 turn_id / invocation_id；副作用只经 `AgentTurnService` 落盘。
-- `AgentLoop` 只产出 tool request，不自己执行工具。
+- plan mode 工具目录只包含 PlanTool 和只读工具。
+- ShellTool 内没有安全裁决和 LLM 调用逻辑。
+- Shell 请求在调用 ShellTool 前经过统一协调器。
+- 安全拒绝能以 observation 回填给 LLM。
+- 运行相关单元测试并执行 `make ci`。
 
-## 验收命令
+## 关联决策
 
-```bash
-make ci
-```
+- ADR-0013 §1–§2。

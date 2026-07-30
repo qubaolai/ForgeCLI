@@ -1,38 +1,40 @@
-# 2026-07-31：写/编辑工具 + 工作区边界强制
+# 2026-07-31：Shell AST、复合命令和脚本能力提取
 
 ## 今日目标
 
-按 ADR-0009 §5/§11 落地 write / edit 工具与文件工作区边界强制，并让 `accept_edits` 自动放行
-区内文件编辑与文件操作命令集。本日把「改文件」这条路径按四模式跑通。
+按 ADR-0013 完成原始 Shell 的解析和规范化，把复合命令转换为可审计的 AST / `CommandPlan`，并提取
+路径、网络、子进程、动态执行和 `EXECUTE_SCRIPT` 等能力事实。
 
-## 开发指导
+## 今日范围
 
-- write / edit 工具：结构化文件写入，进 `edit` 动作类别。
-- 工作区边界强制（结构化文件工具，可强制）：`realpath` 后检查是否落在工作区前缀内，防 `..`
-  拼接、symlink 指向外部、hardlink 三种逃逸。`--add-dir` / `/add-dir` 目录等同工作区内。
-- `accept_edits` 预设：区内文件编辑 + 文件操作命令集（mkdir/touch/rm/mv/cp/sed，非受保护路径）
-  自动放行；区外编辑、python/其他 shell、git 写仍 ask。命中高危 deny（如 `rm -rf ~`）仍被拦。
-- 文件操作命令的路径落在受保护路径（`.git`、`.npmrc`、`~/.ssh` 等，决策 8.2）时拒绝。
+- 支持 `&&`、`||`、`;`、换行、`|` 和 `|&`。
+- 支持输入、输出、追加重定向、heredoc 和 here-string。
+- 扫描命令替换、子 Shell、进程替换、`sh -c`、`bash -c`、`eval`、`xargs`、`find -exec`。
+- 识别 `python3 test.py`、`pytest`、`npm test`、`bash verify.sh` 和 Python heredoc 为 `EXECUTE_SCRIPT`。
+- 规范化 cwd、home、相对路径和工作区边界。
+- 解析失败或不支持语法返回 `PARSE_ERROR` / `UNSUPPORTED`，不自动放行。
 
 ## 非目标
 
-- 不接 shell 工具（留 08-03）；文件操作命令集是「效果等同文件编辑」的那一小组，不是任意 shell。
-- 不接沙箱；边界靠文件工具的 realpath 强制。
+- 不在 Parser 内执行命令。
+- 不实现所有 Shell 方言；未支持语法必须安全降级为 ASK。
+- 不按测试框架穷举白名单。
 
 ## 最终产物
 
-- write / edit 工具 + 工作区边界强制（含逃逸防护）。
-- `accept_edits` 文件编辑与文件操作命令自动放行的裁决接线。
-- 边界与逃逸的单元测试（`..`、symlink、hardlink、受保护路径）。
+- Shell AST / `CommandPlan` 数据结构。
+- 命令单元和能力事实提取器。
+- 复合命令整体预检接口。
+- 绕过语料测试：命令替换、包装器、重定向、heredoc、路径逃逸和动态执行。
 
-## 验收重点
+## 验收标准
 
-- `accept_edits` 下区内文件编辑自动，区外编辑 ask，受保护路径拒。
-- 文件工具无法经 `..`/symlink/hardlink 写出工作区。
-- 文件操作命令集自动放行仅限区内非受保护，命中高危 deny 仍拦。
+- `cat a.txt | grep b && rm -rf /` 在任何子进程启动前整体拒绝。
+- `python3 - <<'PY'` 能提取 heredoc 脚本内容并标记 `EXECUTE_SCRIPT`。
+- Shell Parser 不把分析单元错误地拆成多次执行。
+- 解析失败默认进入 ASK，不进入 ALLOW。
+- 运行 Parser 单测并执行 `make ci`。
 
-## 验收命令
+## 关联决策
 
-```bash
-make ci
-```
+- ADR-0013 §3–§7。

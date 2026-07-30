@@ -1,43 +1,47 @@
-# 2026-08-04：glob 规则配置语法 + 出区读写裁决
+# 2026-08-04：沙箱能力探测、实例生命周期与 /add-dir
 
 ## 今日目标
 
-按 ADR-0009 §10/§11 实现 glob 规则配置语法（Bash 模式 + gitignore 式路径锚定）与出工作区
-读/写的裁决，并支持种子 allow 探测。本日让用户能用 `Read(~/.ssh/**)`、`Bash(npm run *)` 一类
-规则精确追加 allow/ask/deny。
+按 ADR-0014 完成 Forge 启动时的沙箱能力探测、Shell 执行时的临时沙箱实例，以及命令式目录授权。
 
-## 开发指导
+## 今日范围
 
-- Bash 模式：`Bash(npm run *)` 前缀、`Bash(git * main)` 跨参数、`:*` 尾部通配、空格前 `*` 强制
-  词边界（`Bash(ls *)` 不匹配 `lsof`）。匹配前先经 07-28 规范化，须匹配每个子命令。
-- 文件路径模式（gitignore 语义，`*` 单段 / `**` 跨目录）：`//path`（fs 根）、`~/path`（主目录）、
-  `/path`（设置源相对，非 fs 根）、`path`/`./path`（cwd 相对）；裸文件名任意深度匹配；symlink
-  检查链接与目标两条路径。
-- 规则进 `deny → ask → allow` 引擎，deny 恒压过 allow；`always` 学习授权落成此语法的 allow。
-- 出区读裁决：区外读（含 Grep/Glob/`@file`）默认 ask，防自由读 `~/.ssh/id_rsa` 喂进上下文；
-  可由 `Read(...)` allow 精确放宽。
-- 种子 allow：从 `pyproject.toml` / `package.json` / `Makefile` 探测 test/lint/build 脚本预填
-  allow（预填项，不是闸门）。
+- 实现 `SandboxManager` 和 `ExecutionEnvironmentProfile`。
+- 能区分 `STRONG_SANDBOX`、`PARTIAL_SANDBOX` 和 `NO_SANDBOX`。
+- 接入 macOS Seatbelt、Linux bubblewrap 和 WSL2 Linux 执行环境的 Provider 边界；无法使用时进入
+  NoSandboxProvider。
+- 每次 Shell 执行按当前 `SandboxPolicy` 创建实例并在完成后销毁。
+- 脚本优先使用只读工作区 + 临时可写层或等效策略。
+- 实现 `/add-dir <path>`、`/add-dir <path> --write`、`--list` 和 `--remove`。
+- `/add-dir` 默认只读，只能由用户显式发起；策略变化递增 `policy_version`。
+- 新目录只对后续创建的实例生效，旧实例不动态扩大权限。
+- 持久 Shell 策略变化时保存并恢复允许的 cwd 和环境变量。
 
 ## 非目标
 
-- 不实现 WebFetch 域规则 / PowerShell / 托管设置（无对应工具，按同语法留待引入）。
-- 不接沙箱。
+- 不实现完整虚拟机隔离。
+- 不允许沙箱内进程自行扩大宿主机目录访问。
+- 不在当前实例中动态注入新的宿主路径。
 
 ## 最终产物
 
-- glob 规则匹配器（Bash 模式 + gitignore 路径锚定）+ 出区读写裁决 + 种子 allow 探测。
-- 规则语法与路径锚定的单元测试（`//`/`~/`/`/`/`./`、`*` vs `**`、词边界、symlink 双路径）。
+- 沙箱能力探测和自测 fake。
+- SandboxProvider / NoSandboxProvider 接口。
+- SandboxPolicy、policy version 和实例生命周期测试。
+- `/add-dir` 解析、路径保护、读写授权和撤销测试。
 
-## 验收重点
+## 验收标准
 
-- `Bash(npm run *)` allow、`Read(~/.ssh/**)` deny、`Read(src/**)` allow 按语义匹配；
-  `Bash(ls *)` 不匹配 `lsof`。
-- 出工作区读默认 ask，可由 `Read(...)` allow 放宽；区内读免提示。
-- `always` 授权落成 glob allow 规则并复用同一匹配器。
+- Forge 启动时生成执行环境档案。
+- ShellTool 通过当前 Provider 创建执行实例。
+- 新增目录只在下一次执行中可见。
+- 写权限需要显式确认。
+- 旧实例和运行中命令不会自动获得新目录权限。
+- WSL2 执行环境使用 Linux Provider，并有 Windows 主机路径挂载边界测试。
+- 持久 Shell 会话在策略变更后能恢复允许的 cwd 和环境变量。
+- 沙箱创建失败时安全降级，不假设沙箱仍然有效。
+- 运行沙箱单测并执行 `make ci`。
 
-## 验收命令
+## 关联决策
 
-```bash
-make ci
-```
+- ADR-0014 §1–§10。

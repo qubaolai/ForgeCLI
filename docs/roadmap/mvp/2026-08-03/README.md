@@ -1,42 +1,43 @@
-# 2026-08-03：shell 工具 + ApprovalService + 学习式授权
+# 2026-08-03：规则决策、四种 mode 与脚本风险评估
 
 ## 今日目标
 
-按 ADR-0009 §9 接入 shell 工具（经规则引擎裁决）与 `ApprovalService`，落地学习式授权
-（once / always / session / deny）。本日把「跑命令」这条路径按四模式跑通，并让 `accept_edits`
-的命令询问可累积成 allow。
+完成 `allow / deny / ask` 决策、Hard Deny、四种 mode 的能力预算，并接入无沙箱 auto 所需的
+Background Safety Classifier 接口和脚本分析缓存。
 
-## 开发指导
+## 今日范围
 
-- shell 工具：命令先经 07-28 解析器规范化，再经 07-29 引擎裁决（deny/ask/allow），本地执行
-  （沙箱留切片 2）。
-- `ApprovalService`：ask 命中时向用户询问，四档结果——`once`（仅本次）、`always`（写项目级
-  配置成 `Bash(...)` allow 规则）、`session`（本会话内存不落盘）、`deny`（拒绝转 observation）。
-- 学习式授权归一化键 = `可执行文件 + 第一个子命令`（`npm test`、`git status`）；参数不进键但仍
-  过 deny；复合命令为每个需批准子命令各存一条。
-- `approval_resolved` 事件记录 scope，供审计与 resume。
-- `auto` 预设：命令执行（含 git 写）自动放行，动区外仍 ask；`full_access`：再放行动区外。
+- 实现规则优先级：`Hard Deny > Ask > Allow`。
+- 实现语义 Allow，不允许仅按可执行文件名放行。
+- 实现 `plan`、`accept_edits`、`auto`、`full_access` 的能力矩阵。
+- 实现 `EXECUTE_SCRIPT` 的环境感知策略：强沙箱 auto、无沙箱 auto、accept_edits。
+- 定义分类器结构化输入、输出、置信度和 fail-safe 行为。
+- 使用脚本内容、配置、依赖、策略和执行环境哈希缓存风险分析。
+- 产生 `policy_denied`、`approval_required` 和分类结果审计事件。
 
 ## 非目标
 
-- 不做静态命令白名单闸门（学习式授权替代）；种子 allow 探测留 08-04。
-- 不接沙箱；命令本地执行，安全靠规则引擎 + OS 非 root。
-- 不实现 auto 的无人值守超时转 observation 完整策略（留 08-05 集成时补齐最小版）。
+- 不让 LLM 覆盖 Hard Deny。
+- 不让分类器直接调用 ShellTool 或修改权限策略。
+- 不实现真实跨平台沙箱；沙箱生命周期在 8/4 完成。
 
 ## 最终产物
 
-- shell 工具 + `ApprovalService` + 学习式授权（四档 scope）。
-- `always` 落项目级配置为 allow 规则；`session` 只存内存。
-- 四模式命令裁决与授权累积的集成测试。
+- `CommandPolicy`、`Decision`、mode capability 和 Hard Deny 规则。
+- `SafetyClassifier` port、fake classifier 和结构化结果校验。
+- 通过现有 LLM Gateway 调用分类器的最小 adapter；默认测试使用 fake classifier。
+- 脚本风险缓存及失效规则。
+- 四种 mode × 脚本类型的单元测试。
 
-## 验收重点
+## 验收标准
 
-- `accept_edits` 下每条命令都确认，`auto` 下命令直接跑、git 写不特殊拦、动区外仍 ask。
-- 新命令（如 `tree`）首次询问，选 `always` 后不再问；`session` 不写配置文件。
-- 经 shell 的 `git push` 与经 git 工具的 `git push` 得到相同裁决。
+- accept_edits 下脚本执行默认 ASK。
+- 强沙箱 auto 可在执行环境允许时自动执行脚本。
+- 无沙箱 auto 对新脚本、变更脚本或未知脚本调用分类器。
+- 分类器超时、异常、非法输出或低置信度进入 ASK。
+- Hard Deny 在所有 mode 下均不可覆盖。
+- 运行策略单测并执行 `make ci`。
 
-## 验收命令
+## 关联决策
 
-```bash
-make ci
-```
+- ADR-0013 §4、§8–§11。

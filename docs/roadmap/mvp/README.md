@@ -3,14 +3,15 @@
 ## 1. 周期
 
 - 起始日期：2026-06-17
-- 当前滚动切片：**2026-07-23 至 2026-08-05（Agent 主循环 + 权限引擎，共 10 个工作日）**，详见 §8。
+- 当前滚动切片：**2026-07-30 至 2026-08-05（Agent Shell 执行安全机制，共 5 个工作日）**，详见 §9。
 - 上一滚动切片：2026-06-29 至 2026-07-10（LLM 网关 MVP 闭环，§2–§7）。
-- 当前阶段目标：按 ADR-0010 / ADR-0009 把 ForgeCLI 从「`AgentTurnService` 直连 gateway 的 stub
-  回复」演进为「真实 ReAct 主循环 + 规则引擎裁决下的工具执行」。
+- 当前阶段目标：按 ADR-0013 / ADR-0014 完成 Agent Shell 执行安全闭环；在不重做通用工具系统的前提下，
+  为已有 Agent/ToolRuntime 提供最小安全接入。
 
 本目录采用滚动排期。已完成日期保留历史记录。历史切片（06-17 至 07-20）聚焦 CLI 骨架、会话存储与
-LLM 网关；当前切片（07-23 起）聚焦 Agent 主循环与权限引擎。Bash 沙箱、MCP、Skills、Sub-Agent、
-上下文压缩、完整预算治理与企业治理继续留到后续 MVP 切片或 backlog。
+LLM 网关；07-23 至 07-29 的 Agent 主循环与权限引擎计划保留为前置历史记录。当前切片（07-30 起）
+聚焦 Agent Shell 执行安全机制。MCP、Skills、Sub-Agent、上下文压缩、完整预算治理与企业治理继续留到
+后续 MVP 切片或 backlog；本切片只实现 Shell 执行安全所需的沙箱最小闭环。
 
 ## 2. 当前实现基线
 
@@ -132,7 +133,10 @@ LLM 网关；当前切片（07-23 起）聚焦 Agent 主循环与权限引擎。
   `llm.toml`，状态栏和网关请求必须立即使用新 mode/effort。
 - ADR-0011、ADR-0012、详细设计、实现与离线测试使用同一配置归属和字段口径。
 
-## 8. 2026-07-23 起：Agent 主循环 + 权限引擎滚动切片（切片 1）
+## 8. 历史切片：2026-07-23 至 2026-07-29
+
+本节保留 7/23–7/29 的历史开发记录。原计划中 7/30 之后的排期已由 §9 的
+ADR-0013/ADR-0014 计划替代，不再作为当前开发或验收依据。
 
 ### 8.1 周期与目标
 
@@ -141,8 +145,8 @@ LLM 网关；当前切片（07-23 起）聚焦 Agent 主循环与权限引擎。
   ForgeCLI 从「`AgentTurnService` 直连 gateway 的 stub 回复」演进为「真实 ReAct 主循环 +
   可裁决的工具执行」。里程碑：四个权限模式下，Agent 能经能力门 / 裁决门安全地读文件、改文件、
   跑命令，所有副作用经 `AgentTurnService` 落盘。
-- **本切片不含 Bash 沙箱**——沙箱是纵深防御的加固层，`rule-engine-only` 本就是无沙箱平台的
-  合法回退态（ADR-0009 决策 14），故切片 1 以 rule-engine-only 交付，沙箱放切片 2。
+- **历史切片当时不含 Bash 沙箱**——沙箱是纵深防御的加固层，`rule-engine-only` 曾作为无沙箱平台的
+  合法回退态；该阶段取舍已由当前 §9 和 ADR-0014 的沙箱计划替代。
 
 ### 8.2 前置清理（切片开工前）
 
@@ -165,13 +169,15 @@ LLM 网关；当前切片（07-23 起）聚焦 Agent 主循环与权限引擎。
 - ADR-0004：`ToolRuntime` + `ToolRegistry` + 内置工具（read_file / glob / grep / write / edit /
   shell）+ 文件工作区边界强制（realpath 防 `..`/symlink/hardlink 逃逸）+ `ActionDispatcher`。
 
-### 8.4 切片范围（不包含，留切片 2 或 backlog）
+### 8.4 历史阶段范围（当时不包含，现已由 §9 覆盖）
 
-- **Bash 沙箱**（Seatbelt / bwrap + 探测回退 + escalation）→ 切片 2。
+- **Bash 沙箱**（Seatbelt / bwrap + 探测回退 + escalation）当时留到后续切片；当前由 §9 的
+  2026-08-04 计划覆盖。
 - MCP、Skills、Sub-Agent、上下文压缩与记忆 → 后续 MVP 切片。
-- 分类器式 auto 审查、`RateLimiter` / `BudgetGuard` 真裁决、可观测性聚合 → backlog。
+- 分类器式 auto 审查当时留后续切片；当前由 §9 的 2026-08-03 计划覆盖。
+- `RateLimiter` / `BudgetGuard` 真裁决、可观测性聚合 → backlog。
 
-### 8.5 每日拆分
+### 8.5 历史每日拆分
 
 | 日期 | 目标 | 主要 ADR |
 | --- | --- | --- |
@@ -180,11 +186,7 @@ LLM 网关；当前切片（07-23 起）聚焦 Agent 主循环与权限引擎。
 | 2026-07-27 | `SessionMode` 改四模式（默认 accept_edits，纯运行时状态不落盘）+ `Tab`/`Shift+Tab` 切档 + mode/status/menu 同步；root 启动校验 | 0009 §2/§6 |
 | 2026-07-28 | 命令规范化解析器：复合拆解 + 包装器剥离 + 替换扫描 + 只读集 / 文件操作集 / 危险目标识别（纯函数，重绕过用例测试） | 0009 §4/§5 |
 | 2026-07-29 | 规则引擎 `deny→ask→allow` + 内置高危 deny（命令 + 目录黑名单）+ 能力门/裁决门 + 执行流水线骨架 | 0009 §3/§7/§8/§14 |
-| 2026-07-30 | `ToolRuntime` + `ToolRegistry` + 只读工具（read_file/glob/grep）经能力门进 `tool_catalog`；`AgentLoop` 开放 tool request，`ActionDispatcher` 执行、observation 回填 | 0004 / 0010 §13(6-7) |
-| 2026-07-31 | 写/编辑工具（write/edit）+ 文件工作区边界强制（realpath 防逃逸）+ accept_edits 文件编辑与文件操作命令自动放行 | 0009 §5/§11 |
-| 2026-08-03 | shell 工具经规则引擎裁决 + `ApprovalService`（once/always/session/deny）+ 学习式授权落项目配置 | 0009 §9 |
-| 2026-08-04 | glob 规则配置语法（Bash 模式 + gitignore `//`/`~/`/`/`/`./` 锚定）+ 出区读写裁决 + 种子 allow 探测 | 0009 §10 |
-| 2026-08-05 | 集成验收矩阵（四模式 × 各类动作）+ 安全边界测试（复合/替换/包装器绕过用例）+ ADR/详细设计/路线图/backlog 收口 | 全部 |
+| 2026-07-30 至 2026-08-05 | 原权限设计排期，已废弃 | 不作为当前计划或验收依据 |
 
 ### 8.6 每日验收格式
 
@@ -196,14 +198,12 @@ LLM 网关；当前切片（07-23 起）聚焦 Agent 主循环与权限引擎。
 - 高危 deny 在进入执行前拦下（`rm -rf ./*`、写 `.git/hooks` 等），四模式含 `full_access` 均拒。
 - 副本先行：当日实现先在 `claude_test` 副本完成并 `make ci` 转绿，再列改动文件。
 
-### 8.7 切片 2 草案（2026-08-06 起，Bash 沙箱）
+### 8.7 历史切片 2 草案（已由 §9 取代）
 
-待切片 1 收口后细化。范围：沙箱 adapter（macOS Seatbelt profile / Linux bwrap bind 参数）+
-启动探测与 `rule-engine-only` 回退 + 执行流水线接沙箱（deny → 沙箱执行 → 越界 escalation）+
-`full_access` 越界预授权 + 沙箱边界与 `Read`/`Edit` 路径规则合并 + 跨平台测试。口径见 ADR-0009
-决策 14。
+原计划将 Bash 沙箱排到 2026-08-06 之后；该计划已废弃。当前沙箱能力探测、实例生命周期、
+Provider 和 `/add-dir` 以 §9 和 ADR-0014 为准。
 
-### 8.8 日期目录（切片 1）
+### 8.8 历史日期目录
 
 - [2026-07-23](2026-07-23/README.md)
 - [2026-07-24](2026-07-24/README.md)
@@ -215,3 +215,89 @@ LLM 网关；当前切片（07-23 起）聚焦 Agent 主循环与权限引擎。
 - [2026-08-03](2026-08-03/README.md)
 - [2026-08-04](2026-08-04/README.md)
 - [2026-08-05](2026-08-05/README.md)
+
+**<font color="red">0723-0729实现内容为废弃adr0009部分实现, 已经作为留存 暂时在开发分支清除</font>**
+
+## 9. 2026-07-30 至 2026-08-05：Agent Shell 执行安全机制
+
+### 9.1 周期与目标
+
+- 周期：2026-07-30 至 2026-08-05，共 5 个工作日，跳过周末。
+- 目标：完成 ADR-0013 与 ADR-0014 定义的 Agent Shell 执行安全闭环。
+- 交付结果：Agent 能在四种 mode 下通过能力门、命令安全决策和执行环境约束安全执行或拒绝 Shell 请求。
+- 计划边界：本切片不重做通用 Tool Registry、MCP、Skills 或 Agent 主循环；只为已有工具调用链提供
+  `PlanTool`、`ShellTool` 和安全协调器所需的最小接入。
+
+旧 §8.5 中 2026-07-30 至 2026-08-05 的排期属于前一套权限设计的历史草案；从本节开始，以 ADR-0013、
+ADR-0014 和本节计划为准。
+
+### 9.2 必须交付
+
+- `plan` mode 的能力门：模型只看见 `PlanTool` 和只读工具。
+- `ToolRequestCoordinator` / `CommandSecurityService` 的最小安全调用链。
+- 只负责执行的薄 `ShellTool`，不得在工具内部重复实现策略裁决。
+- 原始 Shell Parser、AST / `CommandPlan` 和整体预检。
+- `allow`、`deny`、`ask` 和 Hard Deny 规则决策。
+- `EXECUTE_SCRIPT` 能力识别，覆盖 Python、Shell、Node、测试命令和 heredoc。
+- 强沙箱能力探测、临时实例创建和无沙箱降级档案。
+- 无沙箱 `auto` 的 Background Safety Classifier 接口、结构化输出和缓存。
+- 通过现有 LLM Gateway 调用分类器的最小 adapter；默认测试使用 fake classifier。
+- `/add-dir <path> [--write]`、`--list`、`--remove` 和策略版本更新。
+- WSL2 Linux Provider 边界，以及持久 Shell 策略变化后的 cwd/环境变量恢复。
+- 四种 mode、平台能力和脚本类型的集成验收矩阵。
+
+### 9.3 非目标
+
+- 完整重构通用 Tool Registry 或 MCP Tool Registry。
+- 新增 Skills、Sub-Agent、Multi-Agent 和上下文压缩能力。
+- 实现所有 Shell 语法；不支持的语法必须安全地进入 `ASK`。
+- 在本切片内实现生产级虚拟机隔离。
+- 让 LLM 覆盖 Hard Deny 或直接拥有执行授权权。
+- 让 LLM 自行调用 `/add-dir` 扩大宿主机访问范围。
+
+### 9.4 每日拆分
+
+| 日期 | 目标 | 主要产物 | 验收重点 |
+|---|---|---|---|
+| 2026-07-30 | 冻结调用边界和能力门 | `PlanTool`、`ToolCatalog` mode 过滤、`ToolRequestCoordinator`、`ShellTool` 薄接口 | `plan` 只暴露计划和只读工具；Shell 请求先经过安全协调器；拒绝结果可结构化回填 LLM |
+| 2026-07-31 | 完成 Shell 解析和命令事实提取 | AST / `CommandPlan`、复合命令拆解、管道、重定向、命令替换、heredoc、路径和能力提取 | `cat a.txt | grep b && rm -rf /` 整体预检并拒绝；`python3 - <<'PY'` 识别为 `EXECUTE_SCRIPT` |
+| 2026-08-03 | 完成规则决策和脚本风险路径 | `allow/deny/ask`、Hard Deny、四种 mode、脚本风险接口、无沙箱分类器 adapter、哈希缓存 | `accept_edits` 下脚本默认 ASK；强沙箱 auto 可按策略执行；无沙箱 auto 对新/变更/未知脚本调用分类器 |
+| 2026-08-04 | 完成沙箱生命周期和资源授权 | `SandboxManager`、能力探测、Provider/NoSandboxProvider、临时实例、`SandboxPolicy`、`/add-dir`、持久 Shell 状态恢复 | 启动生成环境档案；执行时创建实例；新增目录只对新实例生效；旧实例不自动获得新权限；WSL2 与 cwd/环境恢复有测试 |
+| 2026-08-05 | 完成端到端验收和文档收口 | 四 mode × 平台 × 脚本矩阵、审计事件、错误回填、回归测试、ADR/设计同步 | `make ci` 通过；Hard Deny、分类器失败、解析失败、沙箱不可用和 `/add-dir` 变更均有明确结果 |
+
+### 9.5 每日验收要求
+
+沿用 §5 的每日验收格式，并额外记录：
+
+- 当日实现是否保持 `ShellTool` 只执行、不负责安全判断。
+- `plan` mode 的工具目录快照及不可用工具兜底错误。
+- Shell 解析失败、分类器异常和沙箱不可用时的 fail-safe 结果。
+- 每个脚本自动执行结论对应的环境等级、策略版本和缓存键。
+- `/add-dir` 的用户来源、访问模式、策略版本和后续实例可见性。
+- 新脚本、变更脚本和未知脚本的分类器触发条件与缓存失效原因。
+- 持久 Shell 策略重建后的 cwd/环境变量恢复和 WSL2 主机路径边界。
+- 不修改通用 Tool Registry、MCP 或旧权限设计的边界说明。
+
+### 9.6 里程碑验收
+
+五日切片完成的最低标准：
+
+```text
+LLM 请求 Shell
+  ↓
+plan/模式能力门
+  ↓
+Shell AST / CommandPlan
+  ↓
+allow / deny / ask + Hard Deny
+  ↓
+必要时 LLM 风险评估
+  ↓
+ShellTool
+  ↓
+SandboxProvider / SandboxInstance 或 NoSandboxProvider
+  ↓
+执行、审计、结果回填
+```
+
+任一环节绕过统一入口、Hard Deny 可被覆盖、无沙箱分类器失败仍自动放行，均不得视为本切片完成。
