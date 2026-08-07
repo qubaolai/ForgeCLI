@@ -24,10 +24,10 @@ from types import MappingProxyType
 from forgecli.domain.conversation.message import ChatMessage
 from forgecli.domain.model.credentials import Credential
 from forgecli.domain.model.params import ModelParams, ThinkingConfig
-from forgecli.domain.model.request import CancelToken
 from forgecli.domain.model.response import FinishReason, ModelUsage
 from forgecli.domain.model.streaming import ProviderStreamChunk
-from forgecli.domain.tool.tool_call import ToolCall, ToolSpec
+from forgecli.domain.tool.tool_call import ToolCall, ToolSchema
+from forgecli.shared.cancellation import CancelToken
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ class ProviderRequest:
     # gateway 根据最终解析出的具体模型配置生成；ModelRequest 不可显式指定。
     thinking: ThinkingConfig | None = None
     system_prompt: str | None = None
-    tools: tuple[ToolSpec, ...] = ()
+    tools: tuple[ToolSchema, ...] = ()
     timeout_seconds: float | None = None
     cancel_token: CancelToken | None = None
     credential: Credential | None = None

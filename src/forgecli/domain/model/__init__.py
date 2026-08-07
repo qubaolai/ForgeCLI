@@ -10,7 +10,6 @@ from forgecli.domain.model.provider_spec import ProviderSpec, ThinkingDialect
 from forgecli.domain.model.request import (
     BudgetSnapshot,
     CacheHint,
-    CancelToken,
     ModelRequest,
     StructuredModelRequest,
 )
@@ -44,7 +43,6 @@ from forgecli.domain.model.usage import UnitPrices, UsageRecordDraft
 __all__ = [
     "BudgetSnapshot",
     "CacheHint",
-    "CancelToken",
     "Credential",
     "CurrentModelSelection",
     "ExplicitModelSelection",

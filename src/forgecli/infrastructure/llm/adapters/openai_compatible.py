@@ -366,26 +366,38 @@ class OpenAICompatibleProvider(ModelProvider):
             raw_finish = choice.get("finish_reason")
             if raw_finish:
                 finish = _FINISH_REASONS.get(str(raw_finish), FinishReason.STOP)
-        tool_call_delta = self._parse_tool_call_delta(delta.get("tool_calls") or [])
         return ProviderStreamChunk(
             delta_text=delta.get("content") or None,
-            tool_call_delta=tool_call_delta,
+            tool_call_deltas=self._parse_tool_call_deltas(
+                delta.get("tool_calls") or []
+            ),
             usage=self._parse_usage(body.get("usage")),
             finish_reason=finish,
         )
 
     @staticmethod
-    def _parse_tool_call_delta(raw_calls: list[Any]) -> ToolCallDelta | None:
-        if not raw_calls:
-            return None
-        raw = raw_calls[0]
-        function = raw.get("function") or {}
-        return ToolCallDelta(
-            index=int(raw.get("index") or 0),
-            tool_call_id=str(raw["id"]) if raw.get("id") else None,
-            name=str(function["name"]) if function.get("name") else None,
-            arguments_delta=str(function.get("arguments") or ""),
-        )
+    def _parse_tool_call_deltas(raw_calls: list[Any]) -> tuple[ToolCallDelta, ...]:
+        """delta.tool_calls 的每一项都要保留
+        
+        模型一次响应里请求多个工具时, 供应商可以把他们的片段塞进同一个 chunk, 只取首相
+        会让其余调用连同他们的 index 一起消失, 而累加器是按 index 聚合的; 丢的调用
+        不会执行, 模型却以为自己调用了
+        """
+        deltas: list[ToolCallDelta] = []
+        for position, raw in enumerate(raw_calls):
+            function = raw.get("function") or {}
+            # index 缺省退回到在数组里的位置, 而不是恒为 0: 后者会让同一 chunk 的多个
+            # 调用在累积器里互相覆盖成一个.
+            raw_index = raw.get("index")
+            deltas.append(
+                ToolCallDelta(
+                    index=int(raw_index) if raw_index is not None else position,
+                    tool_call_id=str(raw["id"]) if raw.get("id") else None,
+                    name=str(function["name"]) if function.get("name") else None,
+                    arguments_delta=str(function.get("arguments") or "")
+                )
+            )
+        return tuple(deltas)
 
     # ---- 错误映射（§12）----
 

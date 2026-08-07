@@ -78,7 +78,7 @@ from forgecli.application.llm.gateway.provider_settings import (
     ProviderRuntimeSettings,
     ProviderSettingsSource,
 )
-from forgecli.application.llm.gateway.schema_validation import validate_json_schema
+from forgecli.shared.json_schema import validate_json_schema
 from forgecli.application.llm.gateway.selection_resolver import ModelSelectionResolver
 from forgecli.application.llm.gateway.token_estimator import (
     ApproximateTokenEstimator,
@@ -545,7 +545,7 @@ class DefaultLlmGateway(LlmGateway):
                 provider=ref.provider,
                 model=ref.model,
                 delta_text=provider_chunk.delta_text,
-                tool_call_delta=provider_chunk.tool_call_delta,
+                tool_call_deltas=provider_chunk.tool_call_deltas,
                 usage_delta=provider_chunk.usage,
                 finish_reason=provider_chunk.finish_reason,
             )

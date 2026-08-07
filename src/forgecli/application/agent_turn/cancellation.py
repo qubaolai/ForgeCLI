@@ -7,7 +7,7 @@ CancelToken，不感知信号/终端细节。
 
 from __future__ import annotations
 
-from forgecli.domain.model.request import CancelToken
+from forgecli.shared.cancellation import CancelToken
 
 
 class TurnCancelSource:

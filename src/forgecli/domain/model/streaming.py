@@ -31,10 +31,13 @@ class ToolCallDelta:
 
 @dataclass(frozen=True)
 class ProviderStreamChunk:
-    """adapter 归一化后的供应商流式片段；gateway 再补 request_id / 序号。"""
+    """adapter 归一化后的供应商流式片段；gateway 再补 request_id / 序号。
+    
+    tool_call_details 是列表: 一个供应商chunk 可以同时携带多个工具调用的片段
+    """
 
     delta_text: str | None = None
-    tool_call_delta: ToolCallDelta | None = None
+    tool_call_deltas: tuple[ToolCallDelta, ...] = ()
     usage: ModelUsage | None = None
     finish_reason: FinishReason | None = None
 
@@ -52,7 +55,7 @@ class ModelStreamChunk:
     provider: str
     model: str
     delta_text: str | None = None
-    tool_call_delta: ToolCallDelta | None = None
+    tool_call_deltas: tuple[ToolCallDelta, ...] = ()
     usage_delta: ModelUsage | None = None
     finish_reason: FinishReason | None = None
     interrupted: bool = False

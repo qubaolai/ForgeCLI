@@ -33,7 +33,6 @@ from forgecli.domain.intents import (
     UserIntent,
     UserMessage,
 )
-from forgecli.domain.model.request import CancelToken
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.prompt_loop import ForgePrompt, QuitSignal
 from forgecli.interfaces.cli.stream_render import StreamingTranscript
@@ -43,6 +42,7 @@ from forgecli.interfaces.cli.transcript import (
     render_user_turn,
 )
 from forgecli.interfaces.cli.tty.tty import stdin_is_tty
+from forgecli.shared.cancellation import CancelToken
 
 
 class Repl:

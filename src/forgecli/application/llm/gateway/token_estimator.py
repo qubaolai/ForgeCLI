@@ -18,7 +18,7 @@ import json
 from abc import ABC, abstractmethod
 
 from forgecli.domain.conversation.message import ChatMessage, ContentBlock, TextBlock
-from forgecli.domain.tool.tool_call import ToolSpec
+from forgecli.domain.tool.tool_call import ToolSchema
 
 # 经验近似：平均约 4 个字符折 1 token（对中英文混排偏保守）。
 _CHARS_PER_TOKEN = 4
@@ -35,7 +35,7 @@ class TokenEstimator(ABC):
         *,
         messages: tuple[ChatMessage, ...],
         system_prompt: str | None = None,
-        tools: tuple[ToolSpec, ...] = (),
+        tools: tuple[ToolSchema, ...] = (),
     ) -> int:
         """估算一次请求的输入 token（messages + system prompt + tools schema）。"""
 
@@ -52,7 +52,7 @@ class ApproximateTokenEstimator(TokenEstimator):
         *,
         messages: tuple[ChatMessage, ...],
         system_prompt: str | None = None,
-        tools: tuple[ToolSpec, ...] = (),
+        tools: tuple[ToolSchema, ...] = (),
     ) -> int:
         total = 0
         if system_prompt:

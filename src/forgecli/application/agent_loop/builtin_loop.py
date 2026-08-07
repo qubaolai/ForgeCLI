@@ -39,7 +39,7 @@ from forgecli.domain.agent.state import LoopInput
 from forgecli.domain.agent.stop import LoopStopReason
 from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.params import ModelParams
-from forgecli.domain.model.request import CancelToken, ModelRequest
+from forgecli.domain.model.request import ModelRequest
 from forgecli.domain.model.response import (
     FinishReason,
     ModelResponse,
@@ -47,6 +47,7 @@ from forgecli.domain.model.response import (
 from forgecli.domain.model.selection import CurrentModelSelection
 from forgecli.domain.model.streaming import ModelStreamChunk
 from forgecli.domain.model.usage import UsageRecordDraft
+from forgecli.shared.cancellation import CancelToken
 
 
 def _new_request_id() -> str:

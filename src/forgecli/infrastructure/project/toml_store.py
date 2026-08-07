@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import tomlkit
+from tomlkit.items import Table
 
 from forgecli.application.project.project_store import (
     ProjectConfigStore,
@@ -50,7 +51,7 @@ class TomlProjectIndexStore(ProjectIndexStore):
     def upsert(self, entry: IndexEntry) -> None:
         doc = read_document(self._path)
         roots = doc.get(_TRUSTED_ROOTS)
-        if not isinstance(roots, tomlkit.items.Table):
+        if not isinstance(roots, Table):
             roots = tomlkit.table()
             doc[_TRUSTED_ROOTS] = roots
         body = tomlkit.table()

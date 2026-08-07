@@ -65,7 +65,6 @@ from forgecli.application.llm.gateway.provider_settings import (
     ProviderRuntimeSettings,
     ProviderSettingsSource,
 )
-from forgecli.application.llm.gateway.schema_validation import validate_json_schema
 from forgecli.application.llm.gateway.selection_resolver import ModelSelectionResolver
 from forgecli.application.llm.gateway.streaming import StreamAccumulator
 from forgecli.application.llm.gateway.token_estimator import (
@@ -89,7 +88,6 @@ from forgecli.domain.model.params import (
 from forgecli.domain.model.request import (
     BudgetSnapshot,
     CacheHint,
-    CancelToken,
     ModelRequest,
     StructuredModelRequest,
 )
@@ -112,7 +110,7 @@ from forgecli.domain.model.streaming import (
     ToolCallDelta,
 )
 from forgecli.domain.model.thinking import ThinkingEffortName, ThinkingMode
-from forgecli.domain.tool.tool_call import ToolCall, ToolSpec
+from forgecli.domain.tool.tool_call import ToolCall, ToolSchema
 
 __all__ = [
     # 端口
@@ -128,7 +126,6 @@ __all__ = [
     "ModelRequest",
     "StructuredModelRequest",
     "BudgetSnapshot",
-    "CancelToken",
     "CacheHint",
     # 用途 / 选择
     "RequestOrigin",
@@ -164,7 +161,7 @@ __all__ = [
     "ContentBlock",
     "TextBlock",
     "ToolResultBlock",
-    "ToolSpec",
+    "ToolSchema",
     "ToolCall",
     # 流式（§9）
     "ModelStreamChunk",
@@ -193,8 +190,6 @@ __all__ = [
     "GatewayCallSample",
     "InProcessGatewayMetrics",
     "NoopGatewayObserver",
-    # 结构化输出校验
-    "validate_json_schema",
     # 错误类型
     "ModelGatewayError",
     "ModelUnavailableError",
