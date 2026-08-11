@@ -118,6 +118,8 @@ LLM 网关；07-23 至 07-29 的 Agent 主循环与权限引擎计划保留为�
 - [2026-07-08](2026-07-08/README.md)
 - [2026-07-09](2026-07-09/README.md)
 - [2026-07-10](2026-07-10/README.md)
+- [2026-08-07](2026-08-07/README.md)
+- [2026-08-10](2026-08-10/README.md)
 
 ## 7. 2026-07-20 ADR-0012 配置与 CLI 收口
 
@@ -234,15 +236,22 @@ ADR-0014 和本节计划为准。
 ### 9.2 必须交付
 
 - `plan` mode 的能力门：模型只看见 `PlanTool` 和只读工具。
-- `ToolRequestCoordinator` / `CommandSecurityService` 的最小安全调用链。
+- `ToolRequestCoordinator` / `ToolAuthorizationService` 的最小安全调用链；Shell 请求按
+  `EXECUTE_SHELL` 能力分派给 `ShellCapabilityAnalyzer`。
 - 只负责执行的薄 `ShellTool`，不得在工具内部重复实现策略裁决。
 - 原始 Shell Parser、AST / `CommandPlan` 和整体预检。
 - `allow`、`deny`、`ask` 和 Hard Deny 规则决策。
 - `EXECUTE_SCRIPT` 能力识别，覆盖 Python、Shell、Node、测试命令和 heredoc。
+- 临时脚本、heredoc、`-c` 内联代码和可发现入口依赖的确定性 `ScriptAnalyzer`。
+- POSIX、`cmd.exe` 和 PowerShell 核心方言解析及嵌套解释器处理。
 - 强沙箱能力探测、临时实例创建和无沙箱降级档案。
+- 复用 SRT 的 Provider 边界、`/sandbox` 用户开关、平台安装指引和自测降级。
+- 跨平台 `ProtectedPathPolicy`，覆盖 Forge 应用根目录、敏感目录和路径别名。
 - 无沙箱 `auto` 的 Background Safety Classifier 接口、结构化输出和缓存。
 - 通过现有 LLM Gateway 调用分类器的最小 adapter；默认测试使用 fake classifier。
 - `/add-dir <path> [--write]`、`--list`、`--remove` 和策略版本更新。
+- 阻塞式 `ASK`、分类器 fail-safe 和受限的 once/session/workspace/always 学习式授权。
+- 人类批准后的全量绑定重验；计划、目标、策略或执行环境变化时旧批准失效并重新裁决。
 - WSL2 Linux Provider 边界，以及持久 Shell 策略变化后的 cwd/环境变量恢复。
 - 四种 mode、平台能力和脚本类型的集成验收矩阵。
 
@@ -260,10 +269,10 @@ ADR-0014 和本节计划为准。
 | 日期 | 目标 | 主要产物 | 验收重点 |
 |---|---|---|---|
 | 2026-07-30 | 冻结调用边界和能力门 | `PlanTool`、`ToolCatalog` mode 过滤、`ToolRequestCoordinator`、`ShellTool` 薄接口 | `plan` 只暴露计划和只读工具；Shell 请求先经过安全协调器；拒绝结果可结构化回填 LLM |
-| 2026-07-31 | 完成 Shell 解析和命令事实提取 | AST / `CommandPlan`、复合命令拆解、管道、重定向、命令替换、heredoc、路径和能力提取 | `cat a.txt | grep b && rm -rf /` 整体预检并拒绝；`python3 - <<'PY'` 识别为 `EXECUTE_SCRIPT` |
-| 2026-08-03 | 完成规则决策和脚本风险路径 | `allow/deny/ask`、Hard Deny、四种 mode、脚本风险接口、无沙箱分类器 adapter、哈希缓存 | `accept_edits` 下脚本默认 ASK；强沙箱 auto 可按策略执行；无沙箱 auto 对新/变更/未知脚本调用分类器 |
-| 2026-08-04 | 完成沙箱生命周期和资源授权 | `SandboxManager`、能力探测、Provider/NoSandboxProvider、临时实例、`SandboxPolicy`、`/add-dir`、持久 Shell 状态恢复 | 启动生成环境档案；执行时创建实例；新增目录只对新实例生效；旧实例不自动获得新权限；WSL2 与 cwd/环境恢复有测试 |
-| 2026-08-05 | 完成端到端验收和文档收口 | 四 mode × 平台 × 脚本矩阵、审计事件、错误回填、回归测试、ADR/设计同步 | `make ci` 通过；Hard Deny、分类器失败、解析失败、沙箱不可用和 `/add-dir` 变更均有明确结果 |
+| 2026-07-31 | 完成 Shell 解析和命令事实提取 | 方言 AST / `CommandPlan`、POSIX/cmd/PowerShell 复合命令、嵌套解释器、heredoc、路径和能力提取 | `cat a.txt | grep b && rm -rf /` 整体预检并拒绝；Windows 连接符、变量、编码命令和包装器不绕过解析 |
+| 2026-08-03 | 完成规则决策和脚本风险路径 | `allow/deny/ask`、Hard Deny、四种 mode、`ScriptAnalyzer`、阻塞式 ASK、学习式授权、无沙箱分类器 adapter、哈希缓存 | `ASK` 未经人类确认不调用 ShellTool；分类器失败仍阻塞；always 规则不泛化；无沙箱 auto 对未确定脚本仍调用分类器 |
+| 2026-08-04 | 完成沙箱生命周期和资源授权 | `SandboxManager`、SRT Provider 探测、能力自测、`ProtectedPathPolicy`、临时实例、`SandboxPolicy`、`/sandbox`、`/add-dir`、持久 Shell 状态恢复 | 默认不启用且不静默安装；Forge 根目录和平台敏感路径不能通过别名或授权绕过；启用后按实例创建；WSL2 与 cwd/环境恢复有测试 |
+| 2026-08-05 | 完成端到端验收和文档收口 | 四 mode × 平台 × 脚本矩阵、红蓝对抗、静态分析、审计事件、错误回填、回归测试、ADR/设计同步 | `make ci` 通过；红蓝 P0/P1 用例、Hard Deny、ASK 阻塞、分类器失败、解析失败、沙箱不可用和 `/add-dir` 变更均有明确结果 |
 
 ### 9.5 每日验收要求
 
@@ -275,6 +284,9 @@ ADR-0014 和本节计划为准。
 - 每个脚本自动执行结论对应的环境等级、策略版本和缓存键。
 - `/add-dir` 的用户来源、访问模式、策略版本和后续实例可见性。
 - 新脚本、变更脚本和未知脚本的分类器触发条件与缓存失效原因。
+- 脚本内容快照、内容哈希、依赖发现和静态分析不完整时的降级行为。
+- `/sandbox` 的用户来源、Provider 版本、成熟度、自测结果及启停对后续实例的影响。
+- 红蓝对抗用例的攻击输入、预期裁决、ShellTool 调用计数、canary 影响和审计证据。
 - 持久 Shell 策略重建后的 cwd/环境变量恢复和 WSL2 主机路径边界。
 - 不修改通用 Tool Registry、MCP 或旧权限设计的边界说明。
 
@@ -291,6 +303,8 @@ Shell AST / CommandPlan
   ↓
 allow / deny / ask + Hard Deny
   ↓
+确定性脚本分析（适用时）
+  ↓
 必要时 LLM 风险评估
   ↓
 ShellTool
@@ -301,3 +315,40 @@ SandboxProvider / SandboxInstance 或 NoSandboxProvider
 ```
 
 任一环节绕过统一入口、Hard Deny 可被覆盖、无沙箱分类器失败仍自动放行，均不得视为本切片完成。
+
+## 10. 2026-07-31 实际实现: 按架构层次而非日切片交付
+
+§9 的 07-30 至 08-05 日切片没有按日执行. 实际实现在 2026-07-31 一次完成, 并且范围与
+§9 不同 —— 按 ADR-0004 (2026-07-31 细化修订) 与 ADR-0015 (新增) 一并落地, 沙箱层缓期.
+
+### 10.1 与 §9 计划的差异
+
+| 项 | §9 计划 | 实际 |
+|---|---|---|
+| 排期 | 五个工作日, 按日切片 | 一次交付, 按架构层次分七个阶段 |
+| 范围 | ADR-0013 + ADR-0014 | ADR-0004 + ADR-0013 + ADR-0015 全部, ADR-0014 只做非沙箱条款 |
+| 沙箱 | SRT Provider, `/sandbox`, 实例生命周期 | **不实现**, 后续可能不再依赖 SRT |
+| 工具系统 | "不重做通用 Tool Registry" | 按 ADR-0004 细化版重做了契约, 注册表与运行时 |
+
+### 10.2 七个实现阶段
+
+1. ADR-0004 契约冻结: 能力闭集词汇, `ToolSpec` / `ToolPlan` / 授权信封 / 结果归一化,
+   `ToolRegistry`, 协调器骨架, mode 能力门, 依赖方向静态检查并入 `make ci`.
+2. 执行机制: `ToolRuntime` 强制授权前置, `ResourceGovernor`, `CommandExecutor`,
+   执行画像与环境净化, 五个只读内置工具.
+3. Shell 解析: POSIX / cmd / PowerShell 三方言, 包装器递归, heredoc, 受控目标展开.
+4. 规则引擎: Hard Deny 与预扫描, mode 能力矩阵, 可执行文件身份, 受保护路径,
+   受限学习规则, `/add-dir` 读写分级.
+5. 脚本分析与分类器: 确定性 `ScriptAnalyzer`, `SafetyClassifier` 与 fail-safe,
+   内容哈希缓存, 经现有 LLM 网关的分类器 adapter.
+6. 恢复层: 首次破坏性写入屏障, 内容寻址 RecoveryStore, 冲突检查, 崩溃恢复.
+7. 端到端接线: 协调器串起三层, 审计事件, 红蓝语料, CLI 命令.
+
+### 10.3 缓期项
+
+- 沙箱层整体 (ADR-0014 的 SRT Provider, `/sandbox`, 实例生命周期, 临时可写层).
+- ADR-0015 的 `OVERLAY` 快照策略 (依赖沙箱的临时写层).
+- ADR-0013 §9 中 `STRONG_SANDBOX` / `PARTIAL_SANDBOX` 的 `auto` 分支.
+- MCP 工具接入 (契约已按 ADR-0004 §11 预留: MCP 必须声明 untrusted + opaque).
+- `BuiltinAgentLoop` 尚未从模型 tool_calls 产出 `ToolRequestAction`; 分发路径已经打通,
+  接上 gateway 的 tool calling 即可.

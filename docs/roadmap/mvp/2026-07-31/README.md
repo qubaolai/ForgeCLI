@@ -8,10 +8,13 @@
 ## 今日范围
 
 - 支持 `&&`、`||`、`;`、换行、`|` 和 `|&`。
+- 按方言支持 POSIX Shell、`cmd.exe` 和 PowerShell 的核心连接符、重定向、变量和脚本块。
 - 支持输入、输出、追加重定向、heredoc 和 here-string。
-- 扫描命令替换、子 Shell、进程替换、`sh -c`、`bash -c`、`eval`、`xargs`、`find -exec`。
+- 扫描命令替换、子 Shell、进程替换、`sh -c`、`bash -c`、`cmd /c`、`powershell -Command`、
+  `-EncodedCommand`、`eval`、`xargs`、`find -exec`。
 - 识别 `python3 test.py`、`pytest`、`npm test`、`bash verify.sh` 和 Python heredoc 为 `EXECUTE_SCRIPT`。
 - 规范化 cwd、home、相对路径和工作区边界。
+- 递归解析嵌套解释器；解析不支持的结构标记为 `OPAQUE`，不得自动 Allow。
 - 解析失败或不支持语法返回 `PARSE_ERROR` / `UNSUPPORTED`，不自动放行。
 
 ## 非目标
@@ -30,6 +33,7 @@
 ## 验收标准
 
 - `cat a.txt | grep b && rm -rf /` 在任何子进程启动前整体拒绝。
+- Windows cmd 和 PowerShell 核心方言的控制运算符、包装器和编码命令不能绕过整体预检。
 - `python3 - <<'PY'` 能提取 heredoc 脚本内容并标记 `EXECUTE_SCRIPT`。
 - Shell Parser 不把分析单元错误地拆成多次执行。
 - 解析失败默认进入 ASK，不进入 ALLOW。
