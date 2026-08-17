@@ -1,0 +1,19 @@
+"""工具请求的装配层: 工具机制, 安全策略与恢复保障在这里, 且只在这里, 被串起来.
+
+工具模块与安全模块互不 import; 它们之间的所有交互都经过本包的协调器和
+domain/tool 里的契约.
+"""
+
+from forgecli.application.tool_request.catalog_predicates import catalog_query_for_mode
+from forgecli.application.tool_request.coordinator import ToolRequestCoordinator
+from forgecli.application.tool_request.observations import (
+    ObservationKind,
+    ToolObservation,
+)
+
+__all__ = [
+    "ObservationKind",
+    "ToolObservation",
+    "ToolRequestCoordinator",
+    "catalog_query_for_mode",
+]
