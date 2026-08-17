@@ -1,0 +1,164 @@
+"""依赖方向静态检查 (ADR-0002 轻量 DDD, ADR-0004 §13, ADR-0016 §2).
+
+为什么要一个脚本而不是靠自觉: 分层违规都是"能跑通"的 —— import 一个下层模块永远不会
+报错, 只会在半年后变成一团解不开的环. 把方向写成可执行断言, 违规在 `make ci` 就停下.
+
+三类规则:
+
+1. **层间方向**: domain 不认识任何人; application 只认识 domain; infrastructure 与
+   interfaces 可以向下, 但 infrastructure 不认识 interfaces.
+2. **框架隔离**: domain 与 application 不得 import Rich, prompt_toolkit 或任何供应商
+   SDK / HTTP 客户端. 终端与协议细节留在 interfaces / infrastructure.
+3. **工具与安全互不相识** (ADR-0004 §2): application/tools 不 import
+   application/security, 反之亦然; 唯一装配点是 application/tool_request.
+"""
+
+from __future__ import annotations
+
+import ast
+import sys
+from pathlib import Path
+
+SRC = Path(__file__).resolve().parent.parent / "src" / "forgecli"
+ROOT = "forgecli"
+
+# 每一层不允许 import 的层.
+LAYER_BANS: dict[str, tuple[str, ...]] = {
+    "domain": ("application", "infrastructure", "interfaces"),
+    "application": ("infrastructure", "interfaces"),
+    "infrastructure": ("interfaces",),
+    "interfaces": (),
+}
+
+# domain 与 application 不得碰的第三方: 终端渲染, 交互输入, HTTP 与供应商 SDK.
+BANNED_THIRD_PARTY: tuple[str, ...] = (
+    "rich",
+    "prompt_toolkit",
+    "httpx",
+    "requests",
+    "openai",
+    "anthropic",
+)
+THIRD_PARTY_FREE_LAYERS = ("domain", "application")
+
+# 模块级互斥: (包前缀, 不得 import 的包前缀, 说明).
+SIBLING_BANS: tuple[tuple[str, str, str], ...] = (
+    (
+        "application.tools",
+        "application.security",
+        "工具是机制层, 不做安全决策 (ADR-0004 §2)",
+    ),
+    (
+        "application.security",
+        "application.tools",
+        "安全是策略层, 不认识任何具体工具实现 (ADR-0004 §2)",
+    ),
+    # 人工 Shell 是独立信任通道. 两条路径互相能看见, 就一定会有人把它们接起来:
+    # "人工 Shell 顺便记一条 learned allow rule" 看着贴心, 实际是让用户手敲的命令
+    # 替 Agent 拿到授权 (ADR-0017 §2).
+    (
+        "application.manual_shell",
+        "application.tool_request",
+        "人工 Shell 不经过工具管线 (ADR-0017 §2)",
+    ),
+    (
+        "application.manual_shell",
+        "application.tools",
+        "人工 Shell 不是工具, 也不注册进 ToolCatalog (ADR-0017 §2)",
+    ),
+    (
+        "application.manual_shell",
+        "application.security",
+        "人工 Shell 只受 OS 用户权限约束, 不走策略裁决 (ADR-0017 决策 2)",
+    ),
+    (
+        "application.manual_shell",
+        "application.agent_loop",
+        "人工 Shell 跳过 LLM 与 AgentLoop (ADR-0017 决策 2)",
+    ),
+    (
+        "application.tools",
+        "application.manual_shell",
+        "ShellTool 不得以「需要交互」为由转发到人工 Shell (ADR-0017 §2)",
+    ),
+    (
+        "application.agent_loop",
+        "application.manual_shell",
+        "AgentLoop 不得构造 ManualShellIntent (ADR-0017 §2)",
+    ),
+)
+
+
+def _imported_modules(tree: ast.AST) -> list[tuple[str, int]]:
+    """收集本文件 import 的模块名与行号. `from . import x` 这类相对导入跳过."""
+    found: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.extend((alias.name, node.lineno) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            found.append((node.module, node.lineno))
+    return found
+
+
+def _layer_of(relative: Path) -> str:
+    return relative.parts[0]
+
+
+def _package_path(relative: Path) -> str:
+    """`application/tools/builtin/x.py` -> `application.tools.builtin.x`."""
+    return ".".join(relative.with_suffix("").parts)
+
+
+def _check_file(path: Path) -> list[str]:
+    relative = path.relative_to(SRC)
+    layer = _layer_of(relative)
+    if layer not in LAYER_BANS:
+        return []
+    package = _package_path(relative)
+    problems: list[str] = []
+
+    for module, lineno in _imported_modules(ast.parse(path.read_text("utf-8"), path)):
+        location = f"{relative}:{lineno}"
+
+        if module.startswith(f"{ROOT}."):
+            target_layer = module.split(".")[1]
+            if target_layer in LAYER_BANS[layer]:
+                problems.append(
+                    f"{location} {layer} 不能依赖 {target_layer}: import {module}"
+                )
+            target_package = module[len(ROOT) + 1 :]
+            for source_prefix, banned_prefix, why in SIBLING_BANS:
+                if package.startswith(source_prefix) and target_package.startswith(
+                    banned_prefix
+                ):
+                    problems.append(f"{location} {why}: import {module}")
+            continue
+
+        if layer in THIRD_PARTY_FREE_LAYERS:
+            top = module.split(".")[0]
+            if top in BANNED_THIRD_PARTY:
+                problems.append(
+                    f"{location} {layer} 不能依赖第三方 {top}: import {module}"
+                )
+
+    return problems
+
+
+def main() -> int:
+    problems: list[str] = []
+    for path in sorted(SRC.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        problems.extend(_check_file(path))
+
+    if problems:
+        print("依赖方向检查未通过:", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        return 1
+    print("依赖方向检查通过.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
