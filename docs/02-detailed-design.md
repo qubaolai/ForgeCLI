@@ -289,8 +289,10 @@ AutoGen 更适合 V2 的完整 Multi-Agent 能力，不进入 MVP。
 - `current_mode`
 - `status`: active / paused / completed / failed
 - `state_version`
-- `active_plan_id`
 - `summary`
+
+> 2026-08-17 按 ADR-0022 §6.1 移除 `active_plan_id`: 计划是项目级状态, 活动指针归
+> `~/.forge/projects/<project_id>/plans/index.toml`, 不随会话走.
 
 ### 3.2 Message
 
@@ -319,29 +321,65 @@ AutoGen 更适合 V2 的完整 Multi-Agent 能力，不进入 MVP。
 - `output_message_id`
 - `status`
 
-### 3.4 Plan
+### 3.4 Plan 与 TodoList
 
-`Plan` 是可选对象，只在复杂任务、`plan` 模式或需要连续执行时产生。
+> 2026-08-17 按 ADR-0022 修订. 原设计把方向与执行状态放在同一个 `PlanStep` 上, 实践中
+> 无法回答"以谁为准", 因此拆成两个概念.
 
-字段：
+`Plan` 是可选对象, 只在复杂任务, `plan` 模式或需要连续执行时产生; `TodoList` 是执行期的
+防漂移清单, 可以脱离 `Plan` 独立存在. 两者都是**项目级持久化状态**, 落在
+`~/.forge/projects/<project_id>/plans/`, 跨会话存活.
+
+| | `Plan` | `TodoList` |
+| --- | --- | --- |
+| 回答 | 整个大方向 | 当前该做哪一步 |
+| 谁裁决 | 人 (ADR-0023 的四选一评审) | 无需裁决 |
+| 批准后 | 不再变动, 要变就是新 revision | 允许随时纠正 |
+
+`PlanDocument` 字段:
 
 - `plan_id`
+- `revision`
 - `title`
 - `goal`
+- `context`
+- `approach`
 - `steps`
-- `assumptions`
 - `risks`
-- `acceptance_criteria`
-- `status`
+- `acceptance`
+- `status`: proposed / approved / rejected / superseded
+- `template_version`
 
-`PlanStep` 字段：
+`PlanStep` 字段:
 
-- `step_id`
-- `description`
-- `status`: pending / in_progress / completed / blocked / skipped
-- `requires_approval`
-- `expected_output`
-- `evidence`
+- `title`
+- `detail`
+
+**`PlanStep` 不带 `status`, `requires_approval`, `expected_output`, `evidence`.**
+状态跟踪整体归 `TodoList`; 审批是逐次工具调用的事 (ADR-0004 §6.1), 不是计划步骤的属性
+——一条计划步骤可能展开成十次工具调用, 每次各自裁决.
+
+`TodoList` 字段:
+
+- `todo_id`
+- `plan_id` (可空: 待办不必绑定计划)
+- `items`
+- `revision`
+- `updated_at`
+
+`TodoItem` 字段:
+
+- `title`
+- `status`: pending / in_progress / done / dropped
+
+不变量:**同一时刻至多一条 `in_progress`**, 在领域层强制. 允许多条并行等于没有"当前
+步骤", 而"当前步骤"正是这份清单存在的理由.
+
+计划的正文格式由固定模板渲染, 模型只填结构化字段, 不产出 Markdown. 计划的"步骤"小节就是
+待办清单的骨架: 批准一份计划等于用它的步骤播种待办.
+
+活动指针 `active_plan_id` 归项目级 `plans/index.toml`,**不在 `Session` 上**——计划跨
+会话, 指针应当跟着项目走而不是跟着会话走.
 
 ### 3.5 ModePolicy
 
@@ -475,7 +513,8 @@ AutoGen 更适合 V2 的完整 Multi-Agent 能力，不进入 MVP。
 - `user_message`
 - `assistant_message`
 - `plan_created`
-- `plan_updated`
+- `plan_reviewed`
+- `todo_updated`
 - `tool_requested`
 - `approval_requested`
 - `approval_resolved`
@@ -520,7 +559,6 @@ AutoGen 更适合 V2 的完整 Multi-Agent 能力，不进入 MVP。
   "workspace_root": "/repo",
   "current_mode": "act",
   "status": "active",
-  "active_plan_id": "plan_01",
   "summary_path": "summary.md",
   "last_event_id": "evt_120",
   "context": {
