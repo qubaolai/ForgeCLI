@@ -1,21 +1,22 @@
-"""工具的能力上界与机制参数(ADR-0004 §3)
+"""ToolSpec: 工具的能力上界与机制参数 (ADR-0004 §3).
 
-必须遵守的条款:
-1. spec 声明的是上界, 不是放行证明. 例如: spec中写了 WORKSPACE_READ 不构成本次调用的安全证据
-   本次调用的事实以 ToolPlan为准. 上界只用户目录过滤和完整性校验
-2. 没有 requires_authorization 是否需要授权不由工具作者, MCP server 或配置决定;
+三条必须记住的口径:
+
+1. **spec 声明的是上界, 不是放行证明.** "spec 里只写了 WORKSPACE_READ"不构成本次调用
+   安全的证据 —— 本次调用的事实以 ToolPlan 为准. 上界只用于目录过滤和完整性校验.
+2. **没有 requires_authorization.** 是否需要授权不由工具作者, MCP server 或配置决定;
    所有执行统一走 ToolRuntime 的强制授权前置. 真正不需要裁决的纯函数不该注册为工具.
-3. 不引入静态的风险等级, 静态风险等级表达不了"同一个工具读工作区文件与读凭证文件"的
+3. **没有 risk_level.** 静态风险等级表达不了"同一个工具读工作区文件与读凭证文件"的
    差异, 留着它会诱导安全模块按等级而不是按事实裁决.
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-import re
 from types import MappingProxyType
-from typing import Mapping
 
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.hashing import digest
@@ -33,12 +34,13 @@ _NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$")
 
 
 class TargetDeclarationAbility(Enum):
-    """该工具能否在 prepare 里封闭目标集合(ADR-0004 §4)
+    """该工具能否在 prepare 里封闭目标集合 (ADR-0004 §4).
 
-    这是 `ToolPlan.target_resolution` 的上界: 声明 STATIC 等于承诺"我每次都能从入参
+    这是 `ToolPlan.target_resolution` 的**上界**: 声明 STATIC 等于承诺"我每次都能从入参
     直接算出确定的目标集合". 承诺兑现不了时必须挡下 —— 一个声明 STATIC 却返回 UNKNOWN
     的工具, 会让下游按"目标已封闭"去做快速裁决, 而实际上根本没封闭.
     """
+
     STATIC = "static"
     EXPANDABLE = "expandable"
     OPAQUE = "opaque"

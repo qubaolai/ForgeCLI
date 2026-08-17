@@ -1,37 +1,40 @@
-"""工具系统与安全模块之间的唯一桥梁
+"""ToolPlan: 工具系统与安全模块之间唯一的事实载体 (ADR-0004 §4).
 
-两条口径决定这些字段如何读取:
+两条口径决定了这些字段怎么读:
 
-1. 声明只能缩小信任, 不能证明安全; effects 为空或 declaration_confidence=OPAQUE 不等于安全,
-   只表示工具无法自证, 按 ADR-0013 的 UNKNOWN / OPAQUE 路径处理.
-2. 谁能证明目标集合, 谁就负责冻结它. fs.* 在prepare 里给出 STATIC / FORGE_EXPANDED 
-   和 target_set_hash; shell.run 给 UNKNOWN 加 analysis_subject, 由安全侧
-   的 Shell 分析器冻结后经 effective_plan 回写. 两条路径产出同构证据, 下游不区分冻结
-   发生在哪一侧.
+- **声明只能缩小信任, 不能证明安全.** effects 为空或 declaration_confidence=OPAQUE 不
+  等于无副作用, 只表示工具无法自证, 按 ADR-0013 的 UNKNOWN / OPAQUE 路径处理.
+- **谁能证明目标集合, 谁就负责冻结它.** fs.* 在 prepare 里给出 STATIC /
+  FORGE_EXPANDED 和 target_set_hash; shell.run 给 UNKNOWN 加 analysis_subject, 由安全侧
+  的 Shell 分析器冻结后经 effective_plan 回写. 两条路径产出同构证据, 下游不区分冻结
+  发生在哪一侧.
 
-
+与 ADR 字段表的一处合并: ADR 同时列了 expansion_context 与 execution_context_ref, 但
+§4 又要求"prepare 的展开必须与执行使用同一份 ExecutionContext". 两者恒等, 拆成两个
+字段只会让"展开上下文与执行上下文不一致"这种非法状态变得可表达, 故合并为
+execution_context 一个字段.
 """
 
 from __future__ import annotations
-from abc import ABC
+
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from turtle import st
 from types import MappingProxyType
 
-from forgecli.domain.tool import spec
-from forgecli.domain.tool.capability import CAPABILITY_VOCABULARY_VERSION, Capability
+from forgecli.domain.tool.capability import (
+    CAPABILITY_VOCABULARY_VERSION,
+    Capability,
+)
 from forgecli.domain.tool.hashing import digest
 
 __all__ = [
     "AnalysisSubject",
     "DeclarationConfidence",
     "ExecutionContextRef",
+    "ContentPreview",
     "MovePair",
-    "NetworkSubject",
     "PlanEffects",
-    "ScriptSubject",
     "ShellSubject",
     "TargetResolution",
     "ToolPlan",
@@ -39,22 +42,23 @@ __all__ = [
     "empty_input",
 ]
 
-class TargetResolution(Enum):
-    """目标集合的封闭程度 (ADR-0013 §6.2)"""
 
-    STATIC = "static"
-    FORGE_EXPANDED = "forge_expanded"
-    DYNAMIC = "dynamic"
-    UNKNOWN = "unknown"
+class TargetResolution(Enum):
+    """目标集合的封闭程度 (口径与 ADR-0013 §6.2 完全一致)."""
+
+    STATIC = "static"  # 目标可从结构化请求直接确定
+    FORGE_EXPANDED = "forge_expanded"  # 按固定上下文展开并固定目标集合
+    DYNAMIC = "dynamic"  # 目标由 Shell、管道输入或子进程在运行时产生
+    UNKNOWN = "unknown"  # 无法可靠推导完整目标集合
 
     @property
     def closed(self) -> bool:
-        """目标集合是否已封闭, 只有封闭的木匾才能获得普通 ALLOW 直接写真是工作区"""
+        """目标集合是否已封闭 —— 只有封闭的目标才可能获得普通 ALLOW 直写真实工作区."""
         return self in (TargetResolution.STATIC, TargetResolution.FORGE_EXPANDED)
 
 
 class DeclarationConfidence(Enum):
-    """effects 的来源可信度"""
+    """effects 的来源可信度."""
 
     DECLARED = "declared"  # 工具按参数语义直接给出
     DERIVED = "derived"  # 由分析器从原始材料推导
@@ -68,7 +72,7 @@ class WorkspaceScope(Enum):
     ADDED_DIR = "added_dir"
     OUTSIDE = "outside"
 
-# TODO 应该可删除
+
 @dataclass(frozen=True)
 class MovePair:
     """一次移动 / 重命名的源与目标 (恢复层要同时校验两端)."""
@@ -78,12 +82,29 @@ class MovePair:
 
 
 @dataclass(frozen=True)
-class PlanEffects:
-    """本次调用生命活着推导出的内容, 路径一路为规范化后的绝对路径"""
+class ContentPreview:
+    """某个写入目标**将会变成什么**, 供审批界面逐字展示.
 
-    read_path: tuple[str, ...] = ()
-    write_path: tuple[str, ...] = ()
-    delete_path: tuple[str, ...] = ()
+    为什么要有这个字段: 审批界面只列路径是不够的. "写入 README.md" 这句话里没有任何
+    让人能做判断的信息 —— 用户要看的是内容. 而工具层不能依赖安全模块 (ADR-0004 §13),
+    所以内容要经一个中立结构从 ToolPlan 交出来, 不能由审批层去猜 normalized_input 的键.
+
+    它是 normalized_input 的**投影**, 不参与 plan_hash: 内容的绑定已经由
+    normalized_input 完成, 这里再算一遍只是重复.
+    """
+
+    path: str
+    content: str
+    truncated: bool = False
+
+
+@dataclass(frozen=True)
+class PlanEffects:
+    """本次调用声明或推导出的副作用事实. 路径一律为规范化后的绝对路径."""
+
+    read_paths: tuple[str, ...] = ()
+    write_paths: tuple[str, ...] = ()
+    delete_paths: tuple[str, ...] = ()
     move_pairs: tuple[MovePair, ...] = ()
     network_targets: tuple[str, ...] = ()
     external_effects: tuple[str, ...] = ()
@@ -92,21 +113,21 @@ class PlanEffects:
 
     @property
     def mutating_targets(self) -> tuple[str, ...]:
-        """会被修改的目标集合: 写 | 删除 | 移动 | 冲突域 | target_set_hash 都用它"""
+        """会被改写的目标集合: 写 + 删 + 移动两端. 冲突域与 target_set_hash 都用它."""
         moved = tuple(p for pair in self.move_pairs for p in (pair.source, pair.target))
-        return tuple(sorted({*self.write_path, *self.delete_path, *moved}))
+        return tuple(sorted({*self.write_paths, *self.delete_paths, *moved}))
 
     @property
     def target_set_hash(self) -> str:
-        """已封闭目标集合的哈希. 目标身份变化即代表旧的裁决与审批失效"""
+        """已封闭目标集合的哈希. 目标身份变化即旧裁决与审批失效."""
         return digest(self.mutating_targets)
 
 
 @dataclass(frozen=True)
-class AnalysisSubject(ABC):
-    """供能力分析器深入分析的基类.
+class AnalysisSubject:
+    """供能力分析器深入分析的原始材料 (密封基类).
 
-    结构由能力决定而不是由工具决定: 任何声明 EXECUTE_SHELL 的工具都交出
+    结构由**能力**决定而不是由工具决定: 任何声明 EXECUTE_SHELL 的工具都交出
     ShellSubject, 安全模块因此不必认识工具类型.
     """
 
@@ -120,37 +141,27 @@ class ShellSubject(AnalysisSubject):
 
 
 @dataclass(frozen=True)
-class ScriptSubject(AnalysisSubject):
-    language: str
-    script_source: str | None = None
-    script_path: str | None = None
-    entry_config_refs: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        if self.script_source is None and self.script_path is None:
-            raise ValueError("ScriptSubject 必须给出 script_source 或 script_path")
-
-
-@dataclass(frozen=True)
-class NetworkSubject(AnalysisSubject):
-    url_or_host: str
-    method: str = "post"
-    credential_scope_ref: str | None = None
-
-
-@dataclass(frozen=True)
 class ExecutionContextRef:
-    """固定的执行上下文引用: prepare 的展开与真实执行时必须使用同一个上下文"""
+    """冻结的执行上下文引用: prepare 的展开与真实执行必须用同一份.
+
+    `filesystem_view_version` 标成 compare=False 且**不进 plan_hash**. 它是每次调用
+    新建的视图版本 (`fs-{time_ns}`), 因此每次都不同; 把它算进 plan 身份的后果是
+    plan_hash 永远不重复 —— 而 plan_hash 正是学习规则与风险缓存的匹配键, 于是
+    "以后遇到相同命令直接允许"从来没有生效过, 用户每次都会被重新询问.
+
+    它仍然保留在这里: 一次调用内部, prepare 与执行必须是同一份视图, 而这个字段是那件事
+    的凭据. 只是它属于"这一次调用的环境", 不属于"这次调用是什么".
+    """
 
     cwd: str
     environment_hash: str
-    filesystem_view_version: str
+    filesystem_view_version: str = field(default="", compare=False)
     toolchain_id: str = "default"
 
 
 @dataclass(frozen=True)
 class ToolPlan:
-    """一次工具调用的结构化信息. plan_hash 绑定裁决对象与执行对象, 消除TOCTOU"""
+    """一次调用的结构化事实. plan_hash 绑定裁决对象与执行对象, 消除 TOCTOU."""
 
     plan_id: str
     tool_name: str
@@ -164,7 +175,10 @@ class ToolPlan:
     declaration_confidence: DeclarationConfidence = DeclarationConfidence.DECLARED
     analysis_subject: AnalysisSubject | None = None
     capability_vocabulary_version: str = CAPABILITY_VOCABULARY_VERSION
-    # 派生字段
+    # 写入内容的展示投影. compare=False: 内容本身已由 normalized_input 绑定, 这里只是
+    # 为了让审批界面拿得到它而不必去猜每个工具的入参键名.
+    content_previews: tuple[ContentPreview, ...] = field(default=(), compare=False)
+    # 派生字段.
     target_set_hash: str = field(default="", compare=False)
     plan_hash: str = field(default="", compare=False)
 
@@ -176,16 +190,21 @@ class ToolPlan:
         object.__setattr__(self, "target_set_hash", self.effects.target_set_hash)
         object.__setattr__(self, "plan_hash", digest(self._hash_source()))
 
-
     @property
     def mutates_workspace(self) -> bool:
-        """本次调用是否会真是改写工作区"""
+        """本次调用是否会真实改写工作区 (恢复层据此决定是否建立屏障).
+
+        判据是声明的**写能力**, 不是"有没有推导出写入目标". 差别要紧: `npm test` 与
+        `java -jar x.jar` 推不出目标, 但它们能写 —— 分析器要为这种情形声明
+        WORKSPACE_WRITE, 恢复层才看得到它们. 反过来也要成立: `ls` 声明了 EXECUTE_SHELL
+        却确定不写, 不该因此触发一次全工作区快照, 所以这里不看 EXECUTE_SHELL.
+        """
         return bool(self.effects.mutating_targets) or bool(
             self.capabilities
             & {
                 Capability.WORKSPACE_WRITE,
                 Capability.WORKSPACE_DELETE,
-                Capability.PATH_MOVE
+                Capability.PATH_MOVE,
             }
         )
 

@@ -1,21 +1,22 @@
-"""执行环境的净化规则(ADR-0014 §4.2)
+"""执行环境的净化规则 (ADR-0014 §4.2).
 
-普通Allow不得继承未约束的登录shell环境 原因: 一个能写工作区的 agent 
-只要往 .envrc, PYTHONPATH 或 node_modules/.bin 里面放点东西, 下一条看起来安全的命令
-就会执行它写进去的代码. 授权时看到的python3 与 真正跑起来的python3 必须是同一个东西
+普通 Allow 不得继承未约束的登录 Shell 环境. 原因很具体: 一个能写工作区的 Agent 只要
+往 `.envrc`, `PYTHONPATH` 或 `node_modules/.bin` 里放点东西, 下一条"看起来安全"的命令
+就会执行它写进去的代码. 授权时看到的 `python3` 与真正跑起来的 `python3` 必须是同一个.
 
 所以这里做三件事:
-1. PATH 由 Forge按平台和现实工具链配置构造 不含. 不含工作区 不含临时目录
-2. 能注入代码, 改变命令查找或者加载项目配置的环境变量一律清楚, 保留项用显示的 allowlist
-3. shell 以非交互 非登录 不加载 profile/rc 的方式启动
+
+1. `PATH` 由 Forge 按平台和显式工具链配置构造, **不含 `.`**, 不含工作区, 不含临时目录.
+2. 能注入代码, 改变命令查找或加载项目配置的环境变量一律清除, 保留项用显式 allowlist.
+3. Shell 以非交互, 非登录, 不加载 profile/rc 的方式启动.
+
+纯函数, 不读 os.environ, 不认识当前平台 —— 那些是探测器 (infrastructure) 的事.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-
-from tomlkit import value
 
 __all__ = [
     "DEFAULT_ENV_ALLOWLIST",
@@ -95,7 +96,7 @@ DEFAULT_ENV_ALLOWLIST: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class ShellLaunch:
-    """shell的非交互式启动, 进execution_profile, 变了方式 所有旧的授权都失效"""
+    """Shell 的非交互启动方式. 进 execution_profile, 变了旧授权就失效."""
 
     program: str
     args: tuple[str, ...]
@@ -112,10 +113,10 @@ def sanitize_environment(
     trusted_path: Sequence[str],
     allowlist: Sequence[str] = DEFAULT_ENV_ALLOWLIST,
 ) -> dict[str, str]:
-    """按 allowlist 过滤环境, 并把 PATh 换成 forge 构造的受控的 PATH
-    
-    allowlist 之外的变量一律不带入, 因此新出现的注入默认被挡住, 而如果用黑名单反过来做
-    每出一个新的变量就要人为补一条
+    """按 allowlist 过滤环境, 并把 PATH 换成 Forge 构造的受控 PATH.
+
+    allowlist 之外的变量一律不带入, 因此新出现的注入向量默认被挡住 —— 用黑名单反过来
+    做, 每出一个新变量都要等有人想起来补一条.
     """
     allowed = {name.upper() for name in allowlist}
     result = {
@@ -126,15 +127,18 @@ def sanitize_environment(
     result["PATH"] = _join_path(trusted_path)
     return result
 
+
 def sanitized_names(raw: Mapping[str, str]) -> tuple[str, ...]:
     """列出被清除的注入类变量名, 供审计展示 (只记名字, 不记取值)."""
     return tuple(sorted(name for name in raw if _is_injection(name)))
+
 
 def _is_injection(name: str) -> bool:
     upper = name.upper()
     if upper in {item.upper() for item in INJECTION_VARIABLES}:
         return True
     return any(upper.startswith(prefix) for prefix in INJECTION_VARIABLE_PREFIXES)
+
 
 def _join_path(entries: Sequence[str]) -> str:
     # 分隔符按 POSIX 与 Windows 区分由探测器决定; 这里保持传入顺序不做重排.
