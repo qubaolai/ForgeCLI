@@ -80,14 +80,18 @@ class TomlProjectConfigStore(ProjectConfigStore):
         if not path.exists():
             return None
         data = read_document(path).unwrap()
-        if not data.get("project_id"):
+        # project_id 或主工作区根缺失: 这份配置修不好 (缺的正是身份本身), 当作没有,
+        # 让启动流程重新走一遍首启信任, 而不是造一个半残的 ProjectConfig 出来.
+        if not data.get("project_id") or not data.get("primary_workspace_root"):
             return None
         raw_roots = data.get("workspace_roots", [])
         roots = tuple(str(r) for r in raw_roots) if isinstance(raw_roots, list) else ()
+        # roots 缺失或不含主根时由 ProjectConfig.__post_init__ 补齐 —— 早于该字段的
+        # forge.toml 因此能被直接读起来, 不需要迁移脚本.
         return ProjectConfig(
             project_id=str(data["project_id"]),
             trusted=bool(data.get("trusted", False)),
-            primary_workspace_root=str(data.get("primary_workspace_root", "")),
+            primary_workspace_root=str(data["primary_workspace_root"]),
             workspace_roots=roots,
         )
 

@@ -157,6 +157,23 @@ class SessionService:
         """
         return self._append(EventType.USAGE_RECORDED, {"turn_id": turn_id, **payload})
 
+    def record_tool_event(
+        self,
+        event_type: EventType,
+        payload: Mapping[str, object],
+        *,
+        turn_id: str = "",
+    ) -> SessionEvent:
+        """记录一条工具 / 安全 / 恢复审计事件.
+
+        与 record_usage 同样的边界: 写入只经这一个门面, 协调器不持有 EventStore.
+        payload 由调用方保证只含安全摘要.
+        """
+        body: dict[str, object] = dict(payload)
+        if turn_id:
+            body["turn_id"] = turn_id
+        return self._append(event_type, body)
+
     def set_mode(self, mode: SessionMode) -> SessionSnapshot:
         """把当前会话切到某个模式：纯内存推进，不写事件、也不触发落盘。
 

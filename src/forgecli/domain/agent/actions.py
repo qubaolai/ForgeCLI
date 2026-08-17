@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from types import MappingProxyType
 
 from forgecli.domain.agent.stop import LoopStopReason
@@ -40,36 +41,41 @@ class ToolRequest:
             raise ValueError("ToolRequest.name 不能为空")
 
 
-@dataclass(frozen=True)
-class ApprovalRequest:
-    """审批请求（§4.3）。必须能映射到用户可理解的风险说明。
+class ObservationSource(Enum):
+    """观察来源. 用枚举而不是自由文本: 审计与测试要能稳定断言它."""
 
-    action_summary 说明「要做什么」，risk_summary 说明「风险在哪」，二者都只含安全摘要；
-    tool_request 为触发审批的工具请求（若来自工具）。
+    TOOL = "tool"
+    USER = "user"
+    ERROR = "error"
+    SECURITY = "security"
+    CONTEXT = "context"
+
+
+class ObservationDisposition(Enum):
+    """这条观察对**后续工具调用**意味着什么.
+
+    它与 is_error 是两件事: 一次读文件失败是错误但可以重试, 一次人类拒绝不是错误却
+    必须停下. 循环靠这个字段分流, 而不是去读 content 里的文字.
     """
 
-    action_summary: str
-    risk_summary: str
-    tool_request: ToolRequest | None = None
-
-    def __post_init__(self) -> None:
-        if not self.action_summary.strip():
-            raise ValueError("ApprovalRequest.action_summary 不能为空")
-        if not self.risk_summary.strip():
-            raise ValueError("ApprovalRequest.risk_summary 不能为空")
+    CONTINUE = "continue"
+    # 这条路不通, 换条路是合理的 (策略拒绝, 需要重新审批). 计入本轮拒绝预算.
+    BLOCKED = "blocked"
+    # 本轮不该再派工具了 (人类明确拒绝, 或根本无人可裁决).
+    HALT = "halt"
 
 
 @dataclass(frozen=True)
 class LoopObservation:
     """喂回循环的观察（§4.2）。只保存工具结果、用户反馈、错误、安全摘要或 context 信息。
 
-    source 标注观察来源（tool / user / error / context 等，自由文本摘要）；is_error 标记
-    工具失败一类的错误观察。不保存 raw chain-of-thought。
+    is_error 标记工具失败一类的错误观察。不保存 raw chain-of-thought。
     """
 
     content: str
-    source: str = ""
+    source: ObservationSource = ObservationSource.CONTEXT
     is_error: bool = False
+    disposition: ObservationDisposition = ObservationDisposition.CONTINUE
 
 
 @dataclass(frozen=True)
@@ -89,31 +95,6 @@ class ToolRequestAction(LoopAction):
     """请求执行一个工具（由 AgentTurnService 裁决并分发）。"""
 
     request: ToolRequest
-
-
-@dataclass(frozen=True)
-class AskUserAction(LoopAction):
-    """请求用户补充信息。"""
-
-    prompt: str
-
-    def __post_init__(self) -> None:
-        if not self.prompt.strip():
-            raise ValueError("AskUserAction.prompt 不能为空")
-
-
-@dataclass(frozen=True)
-class ApprovalRequestAction(LoopAction):
-    """请求对某动作进行人类审批。"""
-
-    request: ApprovalRequest
-
-
-@dataclass(frozen=True)
-class CompactionRequestAction(LoopAction):
-    """请求先做上下文压缩，再恢复执行。"""
-
-    reason: str = ""
 
 
 @dataclass(frozen=True)

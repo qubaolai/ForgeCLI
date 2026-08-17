@@ -11,19 +11,19 @@ FINAL_ANSWER）。
 
 循环的词汇 (动作 / 状态 / 停止原因) 住在 domain.agent, 本包只暴露编排侧的实现与
 扩展点, 不转手再导出领域类型。
+
+事件总线不在本包: 观察事件的范围已从"循环生命周期"扩到整个 turn (ADR-0016), 由
+application.agent_run 承载, 循环只是它的发布者之一。
 """
 
 from __future__ import annotations
 
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
-from forgecli.application.agent_loop.events import LoopEventBus, LoopEventSubscriber
 from forgecli.application.agent_loop.hooks import LoopHook
 from forgecli.application.agent_loop.loop import AgentLoop
 
 __all__ = [
     "AgentLoop",
     "BuiltinAgentLoop",
-    "LoopEventBus",
-    "LoopEventSubscriber",
     "LoopHook",
 ]

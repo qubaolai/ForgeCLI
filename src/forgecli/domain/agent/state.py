@@ -1,12 +1,13 @@
 """循环输入域状态: LoopInput / LoopState 及其协作值对象（ADR-0010 §4.1 / §4.2 / §12）。
 
-字段一次冻全。协作类型中 ModePolicy / ContextPackage / LoopBudgets 在本切片先给最小占位
-形状（字段位冻结、内容后续充实）：ModePolicy 的 allow/ask/deny 能力边界在权限引擎切片
-（ADR-0009）落地，ContextPackage 的上下文组装与 compact 在上下文切片落地。
-
 关键约束（§4.2）：LoopState 可由实现重建或裁剪，**不能替代 events.jsonl + state.json**；
 不保存 raw chain-of-thought；observations 只保存工具结果 / 用户反馈 / 错误 / 安全摘要 /
 context 信息。
+
+原 ModePolicy 已删除: 它是废弃的 ADR-0009 留下的占位, 里面只包了一个 mode, 却让
+LoopInput 多出一条"mode 与 mode_policy.mode 必须一致"的自洽校验。能力边界现在由两件
+东西表达 —— 模型可见的工具集是 ToolCatalog (ADR-0004 §7 的目录谓词算出), 裁决口径是
+安全模块的 mode 能力矩阵 (ADR-0013 §9)。循环本身不需要第三份副本。
 """
 
 from __future__ import annotations
@@ -16,33 +17,30 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from forgecli.domain.agent.actions import LoopAction, LoopObservation
+from forgecli.domain.agent.prompt import PromptSnapshot
 from forgecli.domain.conversation.message import ChatMessage
 from forgecli.domain.intents import SessionMode, UserIntent
-from forgecli.domain.tool.tool_call import ToolSpec
-
-
-@dataclass(frozen=True)
-class ModePolicy:
-    """当前模式的能力边界(占位)
-
-    本切片只冻字段位. 权限引擎切片（ADR-0009：deny→ask→allow 规则引擎、能力门、
-    高危拦截）落地后，本类承载解析出的 allow/ask/deny 裁决入口与工具暴露边界。
-    现仅携带 mode，供循环与裁决共享单一真相。
-    """
-
-    mode: SessionMode
+from forgecli.domain.tool.catalog import ToolCatalog
 
 
 @dataclass(frozen=True)
 class ContextPackage:
-    """本轮模型上下文（占位最小形状）。
+    """本轮模型上下文 (ADR-0018 §3.2).
 
-    system_prompt + 归一化对话消息。上下文组装、压缩与记忆注入在后续切片充实；本切片
-    只需承载「喂给 gateway 的一轮上下文」这一最小职责。
+    归一化对话消息 + 本轮冻结的系统提示词. 上下文压缩与记忆注入还没有产出方, 因此不在
+    这里预留字段.
+
+    prompt 是**必填**而不是可选: 缺提示词时主模型调用必须被阻止 (ADR-0018 §11), 而
+    "可选字段 + 运行期检查"意味着漏传的后果是一次静默降级 —— 模型照常回答, 只是没有
+    身份, 没有工具契约, 也不知道自己在什么平台上. 那正是接入提示词之前的状态, 不该
+    还能被无意中退回去.
+
+    system prompt 不伪装成 MessageRole.SYSTEM 的对话消息, 不进 transcript, 也不作为
+    历史消息重放.
     """
 
+    prompt: PromptSnapshot
     messages: tuple[ChatMessage, ...] = ()
-    system_prompt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,7 +80,8 @@ class LoopState:
     turn_id: str
     step_index: int = 0
     mode: SessionMode = SessionMode.ACCEPT_EDITS
-    context_package: ContextPackage = field(default_factory=ContextPackage)
+    # 可空而不是 default_factory: ContextPackage 现在必须带提示词, 造不出空实例了.
+    context_package: ContextPackage | None = None
     observations: tuple[LoopObservation, ...] = ()
     pending_actions: tuple[LoopAction, ...] = ()
     budgets: LoopBudgets = field(default_factory=LoopBudgets)
@@ -108,9 +107,9 @@ class LoopInput:
     session_id: str
     user_intent: UserIntent
     mode: SessionMode
-    mode_policy: ModePolicy
-    context_package: ContextPackage = field(default_factory=ContextPackage)
-    tool_catalog: tuple[ToolSpec, ...] = ()
+    # 必填: 一轮没有上下文包等于没有提示词, 而那必须在类型层面就不可表达.
+    context_package: ContextPackage
+    tool_catalog: ToolCatalog | None = None
     budgets: LoopBudgets = field(default_factory=LoopBudgets)
     resume_state: LoopState | None = None
 
@@ -119,5 +118,3 @@ class LoopInput:
             raise ValueError("LoopInput.turn_id 不能为空")
         if not self.session_id.strip():
             raise ValueError("LoopInput.session_id 不能为空")
-        if self.mode_policy.mode is not self.mode:
-            raise ValueError("LoopInput.mode 与 mode_policy.mode 必须一致")

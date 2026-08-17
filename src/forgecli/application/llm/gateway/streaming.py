@@ -39,8 +39,8 @@ class StreamAccumulator:
     def add(self, chunk: ModelStreamChunk) -> None:
         if chunk.delta_text:
             self._text_parts.append(chunk.delta_text)
-        if chunk.tool_call_delta is not None:
-            self._add_tool_delta(chunk.tool_call_delta)
+        for delta in chunk.tool_call_deltas:
+            self._add_tool_delta(delta)
         if chunk.usage_delta is not None:
             self._usage = chunk.usage_delta
         if chunk.finish_reason is not None:

@@ -111,6 +111,8 @@ from forgecli.domain.model.streaming import (
 )
 from forgecli.domain.model.thinking import ThinkingEffortName, ThinkingMode
 from forgecli.domain.tool.tool_call import ToolCall, ToolSchema
+from forgecli.shared.cancellation import CancelToken
+from forgecli.shared.json_schema import validate_json_schema
 
 __all__ = [
     # 端口
@@ -126,6 +128,7 @@ __all__ = [
     "ModelRequest",
     "StructuredModelRequest",
     "BudgetSnapshot",
+    "CancelToken",
     "CacheHint",
     # 用途 / 选择
     "RequestOrigin",
@@ -190,6 +193,8 @@ __all__ = [
     "GatewayCallSample",
     "InProcessGatewayMetrics",
     "NoopGatewayObserver",
+    # 结构化输出校验
+    "validate_json_schema",
     # 错误类型
     "ModelGatewayError",
     "ModelUnavailableError",

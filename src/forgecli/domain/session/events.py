@@ -24,6 +24,25 @@ class EventType(Enum):
     # payload 为 UsageRecordDraft.to_payload() 的安全摘要，不含凭证 / 原文。
     USAGE_RECORDED = "usage_recorded"
 
+    # -- 工具执行与安全裁决 (ADR-0004 §9 / §15, ADR-0013 §15) --
+    #
+    # TOOL_REQUESTED 是**写前事件**: 执行之前就要落盘. resume 时有 requested 无
+    # completed 的调用结果未知, non_idempotent 的标 outcome_unknown 且不自动重放.
+    TOOL_REQUESTED = "tool_requested"
+    TOOL_COMPLETED = "tool_completed"
+    POLICY_DECISION = "policy_decision"
+    APPROVAL_REQUESTED = "approval_requested"
+    APPROVAL_RESOLVED = "approval_resolved"
+    CLASSIFIER_INVOKED = "classifier_invoked"
+
+    # -- 工作区恢复 (ADR-0015 §14) --
+    CHECKPOINT_CREATED = "checkpoint_created"
+    MUTATION_RECORDED = "mutation_recorded"
+    RECOVERY_PERFORMED = "recovery_performed"
+
+    # -- 目录授权 (ADR-0014 §7) --
+    DIR_GRANT_CHANGED = "dir_grant_changed"
+
 
 @dataclass(frozen=True)
 class SessionEvent:

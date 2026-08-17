@@ -3,9 +3,8 @@
 所有模型调用共用同一请求结构: 非流式 / 流式 / 结构化都走它。换掉供应商适配器不改变
 这个形状, 故属领域。
 
-CancelToken 也在这里, 而且是本模块唯一可变的类型。它按身份比较 (eq=False), 表达的是
-"这一次在途调用被叫停了"这件事本身 —— 在 DDD 术语里这是**实体**而非值对象, 可变是
-它的本质不是妥协。ModelRequest 直接持有它, 分居两层就会让 domain 反向依赖 application。
+CancelToken 已上移到 shared.cancellation: 它与"模型请求"无关, 工具执行 (ADR-0004 §10)
+同样要用它, 留在这里会让工具系统反向 import domain.model。
 """
 
 from __future__ import annotations

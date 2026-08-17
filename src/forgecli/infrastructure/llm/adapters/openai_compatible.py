@@ -377,11 +377,11 @@ class OpenAICompatibleProvider(ModelProvider):
 
     @staticmethod
     def _parse_tool_call_deltas(raw_calls: list[Any]) -> tuple[ToolCallDelta, ...]:
-        """delta.tool_calls 的每一项都要保留
-        
-        模型一次响应里请求多个工具时, 供应商可以把他们的片段塞进同一个 chunk, 只取首相
-        会让其余调用连同他们的 index 一起消失, 而累加器是按 index 聚合的; 丢的调用
-        不会执行, 模型却以为自己调用了
+        """`delta.tool_calls` 的每一项都要保留.
+
+        模型一次响应里请求多个工具时, 供应商可以把它们的片段塞进同一个 chunk. 只取
+        首项会让其余调用连同它们的 index 一起消失, 而累积器是按 index 聚合的 ——
+        丢掉的调用不会执行, 模型却以为自己请求过.
         """
         deltas: list[ToolCallDelta] = []
         for position, raw in enumerate(raw_calls):
@@ -394,7 +394,7 @@ class OpenAICompatibleProvider(ModelProvider):
                     index=int(raw_index) if raw_index is not None else position,
                     tool_call_id=str(raw["id"]) if raw.get("id") else None,
                     name=str(function["name"]) if function.get("name") else None,
-                    arguments_delta=str(function.get("arguments") or "")
+                    arguments_delta=str(function.get("arguments") or ""),
                 )
             )
         return tuple(deltas)

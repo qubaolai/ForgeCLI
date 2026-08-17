@@ -22,18 +22,38 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from forgecli.application.agent_loop import AgentLoop
+from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
+from forgecli.application.prompt.project_instruction_reader import (
+    ProjectInstructionReader,
+)
+from forgecli.application.prompt.runtime_facts import RuntimeFacts
+from forgecli.application.prompt.system_prompt_builder import (
+    PromptBuildInput,
+    SystemPromptBuilder,
+    ToolBrief,
+)
 from forgecli.application.session import SessionService
-from forgecli.domain.agent.actions import AnswerAction, LoopObservation, LoopStop
-from forgecli.domain.agent.state import ContextPackage, LoopInput, ModePolicy
+from forgecli.application.tool_request.dispatcher import ToolDispatcher
+from forgecli.domain.agent.actions import (
+    AnswerAction,
+    LoopObservation,
+    LoopStop,
+    ObservationSource,
+    ToolRequestAction,
+)
+from forgecli.domain.agent.prompt import PromptSnapshot
+from forgecli.domain.agent.state import ContextPackage, LoopInput
 from forgecli.domain.agent.stop import LoopStopReason
 from forgecli.domain.conversation.message import ChatMessage, TextBlock
 from forgecli.domain.conversation.turn import AssistantResponse, MessageRole, TurnStatus
 from forgecli.domain.intents import SessionMode, UserMessage
 from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.session.events import EventType, SessionEvent
+from forgecli.domain.tool.catalog import ToolCatalog
 
-# 单轮驱动的安全步数上限：本切片只需 start + observe 两步，上限防御失控实现。
-_MAX_LOOP_STEPS = 8
+# 单轮驱动的安全步数上限. 工具调用开放后一轮会跑很多步 (每次工具调用都是一次
+# observe), 因此按 LoopBudgets 给的预算走, 这个常量只是兜底.
+_DEFAULT_MAX_LOOP_STEPS = 99999
 
 _CANCEL_NOTICE = "（本轮回复已被用户取消）"
 
@@ -56,10 +76,30 @@ class AgentTurnService:
         session: SessionService,
         *,
         loop_factory: Callable[[], AgentLoop],
+        # 提示词三件套是**必填**: 缺提示词的主 Agent 不知道自己是谁, 有哪些工具, 也不
+        # 知道自己在什么平台上 (ADR-0018 §11). 给个默认值就等于允许静默降级回接入之前
+        # 的状态, 而那种降级不会报错, 只会让模型开始猜.
+        prompt_builder: SystemPromptBuilder,
+        runtime_facts: Callable[[], RuntimeFacts],
+        instructions: ProjectInstructionReader,
+        tools: ToolDispatcher | None = None,
+        barrier: ManualMutationBarrier | None = None,
+        max_steps: int = _DEFAULT_MAX_LOOP_STEPS,
     ) -> None:
         self._session = session
+        self._prompt_builder = prompt_builder
+        # 每轮现取: 用户可能刚 /add-dir 加过根, 上一轮的事实不作数.
+        self._runtime_facts = runtime_facts
+        self._instructions = instructions
         # 每 turn 经工厂取新 loop 实例（BuiltinAgentLoop 持有 per-turn 状态）。
         self._loop_factory = loop_factory
+        # 工具分发器缺省为 None: 没接工具时循环产出 ToolRequestAction 会得到一条明确的
+        # "工具不可用" observation, 而不是被静默忽略.
+        self._tools = tools
+        # 人工 Shell 的失效屏障 (ADR-0017 §10). 缺省新建一个空屏障: 没接人工 Shell 时
+        # 它永远不 trip, 也就永远不阻塞。
+        self._barrier = barrier or ManualMutationBarrier()
+        self._max_steps = max_steps
         self._turns = 0
         self._history: list[ChatMessage] = []
 
@@ -72,6 +112,18 @@ class AgentTurnService:
     def handle_user_message(self, text: str) -> AssistantResponse:
         self._turns += 1
         turn_id = f"turn_{self._turns:04d}"
+        if self._barrier.blocked:
+            # 人工 Shell 回来后清缓存失败 (ADR-0017 §12). 清不掉就无法证明后续裁决基于
+            # 当前事实, 而"基于过期事实的 Allow"正是这套机制要防的 —— 宁可让用户重启。
+            # 仍然成对落盘: 这一轮确实发生过, 只是被拒绝了。
+            self._session.record_user_message(text, turn_id=turn_id)
+            refusal = self._barrier.block_reason
+            self._session.record_assistant_message(
+                refusal, turn_id=turn_id, status=TurnStatus.FAILED
+            )
+            return AssistantResponse(
+                turn_id=turn_id, text=refusal, status=TurnStatus.FAILED
+            )
         self._session.record_user_message(text, turn_id=turn_id)
         # mode 从 session 快照读，单一真相（不再依赖 REPL 内存态）。
         mode = self._session.current().mode
@@ -90,6 +142,34 @@ class AgentTurnService:
             turn_id=turn_id, text=outcome.text, status=outcome.status
         )
 
+    # ---- 提示词 ----
+
+    def _compile_prompt(
+        self, mode: SessionMode, catalog: ToolCatalog | None
+    ) -> PromptSnapshot:
+        """每轮开始时编译一次, 本轮不再重编 (ADR-0018 §6.1).
+
+        任一步都不调模型也不执行工具: 提示词必须在第一次模型调用之前就已经定死.
+        """
+        facts = self._runtime_facts()
+        return self._prompt_builder.build(
+            PromptBuildInput(
+                mode=mode,
+                facts=facts,
+                # 用途取工具自己的 title, 不在提示词层另写一份 —— 两份一定会漂.
+                available_tools=(
+                    ()
+                    if catalog is None
+                    else tuple(
+                        ToolBrief(name=spec.name, title=spec.title)
+                        for spec in catalog.entries
+                    )
+                ),
+                # 本轮读一次. 工具在本轮改了 FORGE.md, 新内容从下一轮生效 (§6.2).
+                project_instructions=self._instructions.read(facts.workspace_roots),
+            )
+        )
+
     # ---- 内部 ----
 
     def _obtain_outcome(
@@ -103,40 +183,53 @@ class AgentTurnService:
 
     def _run_loop(self, text: str, mode: SessionMode, turn_id: str) -> _TurnOutcome:
         loop = self._loop_factory()
+        # 目录按**当前**模式现算: 用户可能刚用 Tab 切过档, 上一轮的目录不作数.
+        # 没装工具时为 None, 循环因此不会给模型任何可调用的工具.
+        #
+        # 只算一次并同时交给 builder 与 LoopInput (ADR-0018 §2.1): catalog_for 每次调用
+        # 都会新建一个 ExecutionContext, 算两次可能得到两份不同的快照, 于是提示词里写的
+        # 工具与真正发给供应商的 schema 就对不上了.
+        catalog = None if self._tools is None else self._tools.catalog_for(mode)
         step = loop.start(
             LoopInput(
                 turn_id=turn_id,
                 session_id=self._session.current().session_id,
                 user_intent=UserMessage(raw_text=text),
                 mode=mode,
-                mode_policy=ModePolicy(mode=mode),
                 context_package=ContextPackage(
+                    prompt=self._compile_prompt(mode, catalog),
                     messages=(
                         *self._history,
                         ChatMessage(role=MessageRole.USER, content=(TextBlock(text),)),
-                    )
+                    ),
                 ),
+                tool_catalog=catalog,
             )
         )
         answer: str | None = None
-        for _ in range(_MAX_LOOP_STEPS):
+        for _ in range(self._max_steps):
             if isinstance(step, LoopStop):
                 return self._outcome_from_stop(step, answer, loop)
             action = step.next_action
             if isinstance(action, AnswerAction):
                 answer = action.text
                 step = loop.observe(
-                    LoopObservation(content="answer_delivered", source="turn_service")
+                    LoopObservation(
+                        content="answer_delivered",
+                        source=ObservationSource.CONTEXT,
+                    )
                 )
+            elif isinstance(action, ToolRequestAction):
+                step = loop.observe(self._run_tool(action, text, mode, turn_id))
             elif action is None:
                 # 纯反思步：无动作可执行，直接回喂空观察继续。
                 step = loop.observe(
-                    LoopObservation(content="noop", source="turn_service")
+                    LoopObservation(content="noop", source=ObservationSource.CONTEXT)
                 )
             else:
-                # tool / ask_user / approval / compaction 属后续切片（07-30 起）。
+                # ask_user / approval / compaction 属后续切片.
                 return _TurnOutcome(
-                    text="该动作类型尚未支持（工具与审批属后续切片）。",
+                    text="该动作类型尚未支持。",
                     status=TurnStatus.FAILED,
                     usage_drafts=_drafts_of(loop),
                 )
@@ -145,6 +238,33 @@ class AgentTurnService:
             status=TurnStatus.FAILED,
             usage_drafts=_drafts_of(loop),
         )
+
+    def _run_tool(
+        self,
+        action: ToolRequestAction,
+        user_text: str,
+        mode: SessionMode,
+        turn_id: str,
+    ) -> LoopObservation:
+        """把工具请求交给安全管线, 把结论作为 observation 回填.
+
+        这是 AgentLoop 触达真实世界的**唯一**路径: 服务本身不认识 ToolRegistry, 也
+        拿不到 ToolRuntime, 所以不存在"绕过协调器直接执行"这条分支.
+        """
+        if self._tools is None:
+            return LoopObservation(
+                content="[tool_unavailable] 当前会话未装配工具系统",
+                source=ObservationSource.ERROR,
+                is_error=True,
+            )
+        observation = self._tools.dispatch(
+            action.request,
+            mode=mode,
+            session_id=self._session.current().session_id,
+            turn_id=turn_id,
+            user_intent_summary=user_text,
+        )
+        return observation.to_loop_observation()
 
     def _outcome_from_stop(
         self, stop: LoopStop, answer: str | None, loop: AgentLoop

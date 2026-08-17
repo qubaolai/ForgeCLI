@@ -78,7 +78,6 @@ from forgecli.application.llm.gateway.provider_settings import (
     ProviderRuntimeSettings,
     ProviderSettingsSource,
 )
-from forgecli.shared.json_schema import validate_json_schema
 from forgecli.application.llm.gateway.selection_resolver import ModelSelectionResolver
 from forgecli.application.llm.gateway.token_estimator import (
     ApproximateTokenEstimator,
@@ -101,6 +100,7 @@ from forgecli.domain.model.response import (
 )
 from forgecli.domain.model.streaming import ModelStreamChunk, ProviderStreamChunk
 from forgecli.domain.model.thinking import ThinkingMode
+from forgecli.shared.json_schema import validate_json_schema
 
 # settings_source 未注入时的 provider 默认（与配置切片默认一致）。
 _FALLBACK_TIMEOUT_SECONDS = 60.0

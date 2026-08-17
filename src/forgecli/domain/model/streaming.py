@@ -32,8 +32,10 @@ class ToolCallDelta:
 @dataclass(frozen=True)
 class ProviderStreamChunk:
     """adapter 归一化后的供应商流式片段；gateway 再补 request_id / 序号。
-    
-    tool_call_details 是列表: 一个供应商chunk 可以同时携带多个工具调用的片段
+
+    tool_call_deltas 是**列表**: 一个供应商 chunk 可以同时携带多个工具调用的片段
+    (OpenAI 兼容协议的 `delta.tool_calls` 本身就是数组). 只保留首项会让并行工具调用
+    整体消失, 模型随后收到残缺的结果集 —— 那是执行正确性问题, 不是展示问题.
     """
 
     delta_text: str | None = None
