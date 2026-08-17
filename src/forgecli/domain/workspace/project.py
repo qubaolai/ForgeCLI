@@ -30,8 +30,26 @@ class ProjectConfig:
     project_id: str
     trusted: bool
     primary_workspace_root: str
-    # 始终至少包含 primary_workspace_root，且其为首元素。
-    workspace_roots: tuple[str, ...]
+    # 始终至少包含 primary_workspace_root, 且其为首元素. 由 __post_init__ 保证.
+    workspace_roots: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """把 workspace_roots 归一到不变量, 而不是指望每个构造方自觉.
+
+        这条不变量原先只写在注释里. 后果是: 早于 workspace_roots 字段的 forge.toml
+        (以及手改过的文件) 载入后 roots 为空, 而下游拿 roots[0] 当主工作区根用 —— 一直
+        没人真的依赖它, 直到工具链装配时才炸在启动路径上.
+
+        修在这里而不是在读取端: 构造 ProjectConfig 的地方有三处 (trust / load /
+        add_dir), 每处各判一次早晚会漏.
+        """
+        if not self.primary_workspace_root:
+            raise ValueError("ProjectConfig.primary_workspace_root 不能为空")
+        roots = tuple(
+            dict.fromkeys((self.primary_workspace_root, *self.workspace_roots))
+        )
+        if roots != self.workspace_roots:
+            object.__setattr__(self, "workspace_roots", roots)
 
 
 @dataclass(frozen=True)
