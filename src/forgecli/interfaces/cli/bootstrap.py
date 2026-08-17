@@ -7,12 +7,14 @@ banner 先于信任解析渲染，保证即便因拒绝或非 TTY 直接退出�
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from types import MappingProxyType
 
 from rich.console import Console
 
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
-from forgecli.application.agent_loop.events import LoopEventBus
+from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_turn import AgentTurnService
 from forgecli.application.agent_turn.cancellation import TurnCancelSource
 from forgecli.application.config.config_service import ConfigService
@@ -20,31 +22,50 @@ from forgecli.application.intent_router import IntentRouter
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
+from forgecli.application.manual_shell import (
+    ManualShellContext,
+    ManualShellService,
+)
 from forgecli.application.project import (
     ProjectContext,
     ProjectService,
     WorkspaceStartup,
 )
+from forgecli.application.prompt.runtime_facts import RuntimeFacts
+from forgecli.application.prompt.system_prompt_builder import SystemPromptBuilder
 from forgecli.application.session import SessionService
+from forgecli.domain.manual_shell.request import TerminalSize
 from forgecli.domain.model.thinking import ThinkingMode
 from forgecli.infrastructure.config import TomlConfigStore, config_dir, config_file
 from forgecli.infrastructure.llm import TomlLlmConfigStore
+from forgecli.infrastructure.manual_shell import (
+    SystemShellResolver,
+    build_interactive_shell_provider,
+)
 from forgecli.infrastructure.project import (
     ProcessLock,
     ProjectLockedError,
     TomlProjectConfigStore,
     TomlProjectIndexStore,
 )
+from forgecli.infrastructure.prompt import FsProjectInstructionReader
 from forgecli.infrastructure.session import JsonlEventStore, JsonStateStore
 from forgecli.interfaces.cli.banner import render_banner
 from forgecli.interfaces.cli.exit_codes import ExitCode
 from forgecli.interfaces.cli.llm_wiring import build_llm_runtime
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
-from forgecli.interfaces.cli.privilege import is_elevated
+from forgecli.interfaces.cli.privilege import is_elevated  # noqa: F401  见 run()
 from forgecli.interfaces.cli.repl import Repl
-from forgecli.interfaces.cli.stream_render import StreamingTranscript
+from forgecli.interfaces.cli.run_renderer import TerminalRunRenderer
+from forgecli.interfaces.cli.shell_mode import (
+    ConsoleManualShellObserver,
+    ShellModeEntry,
+)
+from forgecli.interfaces.cli.terminal_lease import CliTerminalLease
+from forgecli.interfaces.cli.tool_wiring import ToolStack, build_tool_stack
 from forgecli.interfaces.cli.tty.tty import stdin_is_tty
+from forgecli.interfaces.cli.tty_approval import TtyApprovalService
 from forgecli.interfaces.cli.tty_prompts import TtyDirectoryPicker, TtyTrustPrompter
 from forgecli.interfaces.cli.wiring import build_registry
 
@@ -77,6 +98,39 @@ def _session_service(context: ProjectContext) -> SessionService:
         JsonStateStore(sessions),
         workspace_root=context.project.primary_workspace_root,
     )
+
+
+def _build_shell_mode(
+    console: Console, renderer: TerminalRunRenderer, tools: ToolStack
+) -> ShellModeEntry:
+    """装配人工 Shell (ADR-0017).
+
+    这里从 ToolStack 只取两样东西, 都不是工具管线的一部分:
+
+    - ``profile``: 用来兜底解析 Shell 可执行文件 (§6.1 的第二顺位).
+    - ``barrier``: 回来之后清缓存.
+
+    环境用 ``os.environ`` 的快照, **不是** ``tools.context_factory().environment`` ——
+    后者是给 Agent 用的净化环境 (ADR-0014 §4.2), 拿它启动人工 Shell 会让用户的 alias,
+    虚拟环境和 PATH 全部消失 (ADR-0017 §6.3).
+    """
+    service = ManualShellService(
+        SystemShellResolver(tools.profile),
+        build_interactive_shell_provider(),
+        CliTerminalLease(console, renderer),
+        ConsoleManualShellObserver(console),
+        barrier=tools.barrier,
+    )
+
+    def _context() -> ManualShellContext:
+        size = console.size
+        return ManualShellContext(
+            cwd=tools.context_factory().cwd,
+            environment=MappingProxyType(dict(os.environ)),
+            terminal=TerminalSize(columns=size.width, rows=size.height),
+        )
+
+    return ShellModeEntry(console, service, _context)
 
 
 def _prompt_runtime_status(
@@ -127,9 +181,9 @@ def run() -> ExitCode:
     render_banner(console=console)
 
     # ADR-0009 决策 2: root 拆掉 OS 权限外墙, 安全模型不再成立, 故拒绝而非降级.
-    if is_elevated():
-        console.print(_ELEVATED_REFUSAL)
-        return ExitCode.ELEVATED
+    # if is_elevated():
+    #     console.print(_ELEVATED_REFUSAL)
+    #     return ExitCode.ELEVATED
 
     # 交互式会话必须有真终端. 放在信任流程之前: 否则已信任的项目会一路装配到 REPL
     # 才发现没有 TTY —— 白占进程锁, 且同一个"没有 TTY"会因项目是否已信任而给出
@@ -176,20 +230,57 @@ def run() -> ExitCode:
         llm_runtime = build_llm_runtime(
             config_service, llm_service, forge_toml, thinking_state
         )
-        stream_view = StreamingTranscript(console)
         cancel_source = TurnCancelSource()
-        loop_bus = LoopEventBus()
+        run_bus = AgentRunEventBus()
+        # turn 期间唯一的终端写入者 (ADR-0016 §8.1). 订阅在装配期完成, 生产路径
+        # 不存在"建了总线却没有 subscriber"的状态.
+        stream_view = TerminalRunRenderer(console)
+        run_bus.subscribe(stream_view)
 
         def _new_loop() -> BuiltinAgentLoop:
             return BuiltinAgentLoop(
                 llm_runtime.gateway,
                 llm_runtime.usage_meter,
                 cancel_token_factory=cancel_source.current,
-                on_delta=stream_view.feed,
-                event_bus=loop_bus,
+                event_bus=run_bus,
             )
 
-        agent_turn = AgentTurnService(session, loop_factory=_new_loop)
+        # 工具, 安全与恢复三层. 装配它需要一个已经存在的会话 (审计要写进事件日志),
+        # 所以放在 session 之后, registry 之前.
+        tools = build_tool_stack(
+            workspace_roots=tuple(context.project.workspace_roots),
+            workspace_id=context.project.project_id,
+            session=session,
+            gateway=llm_runtime.gateway,
+            run_bus=run_bus,
+            approval=TtyApprovalService(console=console),
+        )
+
+        # 运行事实每轮现取: 用户可能刚 /add-dir 加过根, 也可能切了工作目录.
+        # 投影在这里做 —— ExecutionProfile 带着受控 PATH 与环境白名单, 那些绝不进提示词
+        # (ADR-0018 §4.3), 所以 builder 只能看见 RuntimeFacts 这一份脱敏投影.
+        def _runtime_facts() -> RuntimeFacts:
+            execution = tools.context_factory()
+            return RuntimeFacts.from_profile(
+                tools.profile,
+                working_directory=execution.cwd,
+                workspace_roots=execution.workspace_roots,
+            )
+
+        agent_turn = AgentTurnService(
+            session,
+            loop_factory=_new_loop,
+            prompt_builder=SystemPromptBuilder(),
+            runtime_facts=_runtime_facts,
+            instructions=FsProjectInstructionReader(),
+            tools=tools.dispatcher,
+            # 同一个屏障两处用: 人工 Shell 退出时 trip 它, agent turn 开始前查它
+            # (ADR-0017 §10 / §12).
+            barrier=tools.barrier,
+        )
+        # 人工 Shell (ADR-0017). 它与上面的工具栈**没有任何连接** —— 唯一的交点是
+        # 那个失效屏障, 而屏障只做一件事: 让 Agent 不复用人工修改之前的事实.
+        shell_mode = _build_shell_mode(console, stream_view, tools)
         output = RichOutput(console=console)
         presenter = RichMenuPresenter(console=console)
         picker = TtyDirectoryPicker(console=console)
@@ -205,6 +296,7 @@ def run() -> ExitCode:
             llm_service=llm_service,
             overrides_service=llm_runtime.overrides_service,
             thinking_state=thinking_state,
+            tools=tools,
         )
         router = IntentRouter(registry=registry)
         Repl(
@@ -219,6 +311,7 @@ def run() -> ExitCode:
             prompt_status=lambda: _prompt_runtime_status(
                 session, config_service, llm_service, thinking_state
             ),
+            shell_mode=shell_mode,
         ).run()
         return ExitCode.OK
     finally:

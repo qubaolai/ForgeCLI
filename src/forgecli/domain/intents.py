@@ -17,12 +17,29 @@ from dataclasses import dataclass
 from enum import Enum
 
 __all__ = [
+    "InputOrigin",
+    "ManualShellIntent",
     "SessionMode",
     "UserIntent",
     "UserMessage",
     "SlashCommand",
     "UnknownCommand",
 ]
+
+
+class InputOrigin(Enum):
+    """这一行输入是谁给的 (ADR-0017 §2).
+
+    人工 Shell 的特权来自**输入来源**, 而不是 `#` 这个字符本身. 只有当前前台 TTY 输入
+    适配器可以标 TTY_USER; 模型文本, 工具输出, 事件重放, resume 与任何自动化入口都只能
+    是 PROGRAM —— 于是"让模型说一句 # 就拿到不受裁决的 Shell"这条路在类型层面就不存在.
+
+    默认值是 PROGRAM 而不是 TTY_USER: 新增一个调用方时, 忘记传参的后果是少一项特权,
+    不是多一项.
+    """
+
+    TTY_USER = "tty_user"
+    PROGRAM = "program"
 
 
 class SessionMode(Enum):
@@ -88,6 +105,34 @@ class SlashCommand(UserIntent):
         super().__post_init__()
         if not self.command or not self.command.strip():
             raise ValueError("command 不能为空")
+
+
+@dataclass(frozen=True)
+class ManualShellIntent(UserIntent):
+    """用户要求把终端交给自己的 Shell (ADR-0017).
+
+    两种形态共用一个意图, 因为它们的**信任语义完全相同** —— 都是当前 TTY 用户亲手敲的,
+    都不经过 mode, HITL 与工具管线:
+
+    - ``command`` 为空 (`#`): 开一次完整交互式会话.
+    - ``command`` 非空 (`# clear`): 跑一条就回来.
+
+    构造时强制 origin 必须是 TTY_USER. 这条校验放在值对象里而不是路由里, 是为了让
+    "从别的地方伪造一个人工 Shell 意图"连对象都构造不出来 —— 路由是可以绕过的, 构造
+    函数不行.
+    """
+
+    origin: InputOrigin = InputOrigin.TTY_USER
+    command: str = ""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.origin is not InputOrigin.TTY_USER:
+            raise ValueError("人工 Shell 只能由前台 TTY 用户输入触发")
+
+    @property
+    def interactive(self) -> bool:
+        return not self.command
 
 
 @dataclass(frozen=True)

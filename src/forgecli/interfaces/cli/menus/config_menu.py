@@ -30,11 +30,6 @@ class MenuOption:
     key: str  # 对应 keys.SCHEMA 中的配置键名
 
 
-TELEMETRY = MenuOption("启用使用统计", keys.TELEMETRY_ENABLED)
-THEME = MenuOption("输出主题", keys.OUTPUT_THEME)
-LOG_LEVEL = MenuOption("日志级别", keys.LOGGING_LEVEL)
-
-
 class ConfigMenu:
     def __init__(
         self,
@@ -56,21 +51,6 @@ class ConfigMenu:
 
     def root_menu(self) -> Menu:
         rows: list[Choice] = [
-            Choice(
-                "启用使用统计",
-                preview=self._shown(TELEMETRY),
-                on_cycle=self._cycle_bool(TELEMETRY),
-            ),
-            Choice(
-                "输出主题",
-                preview=self._shown(THEME),
-                on_cycle=self._cycle_choice(THEME),
-            ),
-            Choice(
-                "日志级别",
-                preview=self._shown(LOG_LEVEL),
-                on_cycle=self._cycle_choice(LOG_LEVEL),
-            ),
             Choice("供应商配置", submenu=self._llm_menu.providers_menu),
             Choice("模型配置", submenu=self._llm_menu.models_menu),
             Choice("网关运行时配置", submenu=self._gateway_menu.root_menu),

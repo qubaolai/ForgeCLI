@@ -28,14 +28,18 @@ from forgecli.application.session import SessionService
 from forgecli.application.slash_commands import CommandRegistry
 from forgecli.domain.conversation.turn import AssistantResponse, TurnStatus
 from forgecli.domain.intents import (
+    InputOrigin,
+    ManualShellIntent,
     SlashCommand,
     UnknownCommand,
     UserIntent,
     UserMessage,
 )
 from forgecli.interfaces.cli.output import RichOutput
-from forgecli.interfaces.cli.prompt_loop import ForgePrompt, QuitSignal
-from forgecli.interfaces.cli.stream_render import StreamingTranscript
+from forgecli.interfaces.cli.prompt_loop import ForgePrompt
+from forgecli.interfaces.cli.run_renderer import TerminalRunRenderer
+from forgecli.interfaces.cli.session_exit import SessionExit
+from forgecli.interfaces.cli.shell_mode import ShellModeEntry
 from forgecli.interfaces.cli.transcript import (
     assistant_notice,
     render_assistant_turn,
@@ -55,9 +59,10 @@ class Repl:
         session: SessionService,
         agent_turn: AgentTurnService,
         *,
-        stream_view: StreamingTranscript,
+        stream_view: TerminalRunRenderer,
         cancel_source: TurnCancelSource,
         prompt_status: Callable[[], str] | None = None,
+        shell_mode: ShellModeEntry | None = None,
     ) -> None:
         self._console = console
         self._router = router
@@ -68,6 +73,7 @@ class Repl:
         self._stream_view = stream_view
         self._cancel_source = cancel_source
         self._prompt_status = prompt_status
+        self._shell_mode = shell_mode
 
     def run(self) -> None:
         # banner 由 bootstrap 在信任解析前渲染；这里只给进入会话的提示。
@@ -75,7 +81,7 @@ class Repl:
             Panel.fit(
                 "进入 Forge 交互式会话。\n"
                 "输入 [bold]/help[/] 查看命令，"
-                "空行连按两次 [bold]Ctrl-C[/] 退出。",
+                "[bold]/exit[/] 或空行连按两次 [bold]Ctrl-C[/] 退出。",
                 border_style="cyan",
             )
         )
@@ -96,16 +102,18 @@ class Repl:
         )
         while True:
             try:
-                line = prompt.read()
-            except QuitSignal:
+                # 读取与分派共用一个 except: SessionExit 有两个抛出点——输入框的
+                # Ctrl-C×2 和 /exit 命令——两者都要退出这同一个循环。
+                self._process_line(prompt.read())
+            except SessionExit:
                 # 主动退出，不向终端暴露 traceback。
                 break
             except EOFError:
                 # 输入流结束（stdin 被关闭等）：已经读不到下一行，安全收尾。
                 # 空行 Ctrl-D 不走这里——prompt 的 c-d 绑定消费掉了它（退出只认
-                # Ctrl-C×2，ADR-0007），所以这里不是退出快捷键，只是流末尾兜底。
+                # Ctrl-C×2 或 /exit，ADR-0007），所以这里不是退出快捷键，
+                # 只是流末尾兜底。
                 break
-            self._process_line(line)
 
     def _step_mode(self, step: int) -> None:
         """shift+tab 回调: 切到下一档模式并落 mode_changed 事件.
@@ -119,14 +127,21 @@ class Repl:
             self._session.set_mode(target)
 
     def _process_line(self, line: str) -> None:
-        """清洗一行输入并分派：空行忽略、退出词退出、其余交给 IntentRouter。"""
+        """清洗一行输入并分派：空行忽略、退出词退出、其余交给 IntentRouter。
+
+        `origin=TTY_USER` **只在这里**标注，而这里是 Forge 里唯一从前台真终端读到这一行
+        的地方（run() 开头已拒绝非 TTY）。人工 Shell 的特权来自这个来源标记，不是 `#`
+        这个字符（ADR-0017 §2）——模型文本、工具输出、事件重放都走不到这一行。
+        """
         text = line.strip()
         if not text:
             return
-        self._dispatch(self._router.route(text))
+        self._dispatch(self._router.route(text, origin=InputOrigin.TTY_USER))
 
     def _dispatch(self, intent: UserIntent) -> None:
         match intent:
+            case ManualShellIntent():
+                self._enter_shell_mode(intent)
             case UserMessage():
                 # 同屏显示一轮对话：先回显用户输入(绿)，再给助手输出(青绿)。
                 # 处理期间流式正文 append-only 逐行提交；收尾按终态追加提示。
@@ -139,6 +154,17 @@ class Repl:
                 self._output.print(intent.error_message)
             case _:
                 self._output.print("无法处理的输入。")
+
+    def _enter_shell_mode(self, intent: ManualShellIntent) -> None:
+        """把终端交给用户自己的 Shell。
+
+        没装配 shell_mode 时给一条明确说明而不是静默把 `#` 当自然语言发给模型：后者会
+        让用户以为 Forge 没听懂，然后再敲一次。
+        """
+        if self._shell_mode is None:
+            self._output.print("当前未装配人工 Shell 模式，`#` 暂不可用。")
+            return
+        self._shell_mode.enter(intent)
 
     def _run_turn(self, text: str) -> AssistantResponse:
         """跑一轮 agent turn：挂取消 token + SIGINT 接线 + 流式渲染。

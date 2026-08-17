@@ -26,14 +26,24 @@ from forgecli.infrastructure.session import (
 )
 from forgecli.interfaces.cli.commands.add_dir_command import AddDirCommand
 from forgecli.interfaces.cli.commands.config_command import ConfigCommand
+from forgecli.interfaces.cli.commands.exit_command import ExitCommand
 from forgecli.interfaces.cli.commands.help_command import HelpCommand
-from forgecli.interfaces.cli.commands.mode_command import ModeCommand
+from forgecli.interfaces.cli.commands.mode_command import ModeCommand, ModeSelectCommand
 from forgecli.interfaces.cli.commands.model_command import ModelsCommand
+from forgecli.interfaces.cli.commands.recovery_command import (
+    CheckpointsCommand,
+    RecoveryStatusCommand,
+    RestoreCommand,
+    UndoCommand,
+)
 from forgecli.interfaces.cli.commands.resume_command import ResumeCommand
+from forgecli.interfaces.cli.commands.rules_command import RulesCommand
 from forgecli.interfaces.cli.commands.status_command import StatusCommand
 from forgecli.interfaces.cli.commands.thinking_command import ThinkingCommand
+from forgecli.interfaces.cli.commands.tools_command import ToolsCommand
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
+from forgecli.interfaces.cli.tool_wiring import ToolStack
 
 
 def build_registry(
@@ -49,6 +59,7 @@ def build_registry(
     llm_service: LlmConfigService | None = None,
     overrides_service: ModelOverridesService | None = None,
     thinking_state: ThinkingRuntimeState | None = None,
+    tools: ToolStack | None = None,
 ) -> CommandRegistry:
     registry = CommandRegistry()
     # ConfigService 按 level 路由落盘：应用级 config.toml，项目级当前项目的 forge.toml。
@@ -82,6 +93,11 @@ def build_registry(
     # 命令名用连字符 (/accept-edits), 与其它多词命令 (/add-dir) 一致; 模式取值本身
     # 仍是下划线 (accept_edits), 因为它要落盘进 state.json.
     mode_specs = [
+        CommandSpec(
+            "mode",
+            "查看当前模式并打开模式选择面板",
+            handler=ModeSelectCommand(session_service, presenter, output),
+        ),
         CommandSpec(
             "accept-edits",
             "切换到 accept_edits 模式",
@@ -137,11 +153,70 @@ def build_registry(
                 config_service, llm_service, output, thinking_state
             ),
         ),
-        CommandSpec(
-            "add-dir",
-            "添加可操作工作区目录",
-            handler=AddDirCommand(context, project_service, picker, output),
-        ),
+    ]
+    # /exit 与 Ctrl-C×2 是同一条退出路径 (都抛 SessionExit), 不是两套收尾逻辑.
+    exit_spec = CommandSpec("exit", "退出会话", handler=ExitCommand(output))
+    # 工具链相关的命令只有在装配了 ToolStack 时才注册: 没有目录授权与恢复层的时候,
+    # 提供一个"看起来能用"的 /undo 比不提供更糟.
+    if tools is not None:
+        slash_specs.extend(
+            (
+                CommandSpec(
+                    "add-dir",
+                    "授权额外目录 (默认只读, --write 读写, --list/--remove)",
+                    handler=AddDirCommand(
+                        context, project_service, tools.grants, output
+                    ),
+                ),
+                CommandSpec(
+                    "tools",
+                    "查看当前模式下模型可见的工具与能力上界",
+                    handler=ToolsCommand(tools.registry, session_service, output),
+                ),
+                CommandSpec(
+                    "rules",
+                    "查看 / 撤销 always 学习规则 (--revoke <id>, --prune)",
+                    handler=RulesCommand(
+                        tools.learned, tools.profile, tools.workspace_id, output
+                    ),
+                ),
+                CommandSpec(
+                    "checkpoints",
+                    "列出工作区恢复点",
+                    handler=CheckpointsCommand(
+                        tools.recovery, tools.workspace_id, output
+                    ),
+                ),
+                CommandSpec(
+                    "undo",
+                    "撤销最近一次工具调用 (--preview 只看不动)",
+                    handler=UndoCommand(
+                        tools.recovery,
+                        tools.workspace_id,
+                        tools.context_factory,
+                        output,
+                    ),
+                ),
+                CommandSpec(
+                    "restore",
+                    "回到指定恢复点 (<checkpoint_id> [--preview])",
+                    handler=RestoreCommand(
+                        tools.recovery,
+                        tools.workspace_id,
+                        tools.context_factory,
+                        output,
+                    ),
+                ),
+                CommandSpec(
+                    "recovery",
+                    "查看恢复层状态与未收尾事务",
+                    handler=RecoveryStatusCommand(
+                        tools.recovery, tools.workspace_id, output
+                    ),
+                ),
+            )
+        )
+    trailing_specs = [
         CommandSpec(
             "resume",
             "查看 / 恢复历史会话",
@@ -155,5 +230,5 @@ def build_registry(
             ),
         ),
     ]
-    registry.register_all([*mode_specs, *slash_specs])
+    registry.register_all([*mode_specs, *slash_specs, *trailing_specs, exit_spec])
     return registry

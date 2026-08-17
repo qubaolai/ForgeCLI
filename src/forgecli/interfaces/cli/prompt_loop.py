@@ -23,7 +23,7 @@
 退出逻辑：
     - 输入框有内容时按 Ctrl-C → 清空内容（不退出）；
     - 空行第一次 Ctrl-C → 提示行变为"再按一次 Ctrl-C 退出"，并起一个退出窗口定时器；
-    - 空行在退出窗口内再次 Ctrl-C → 抛出 QuitSignal 退出；
+    - 空行在退出窗口内再次 Ctrl-C → 抛出 SessionExit 退出；
     - 超过 500ms 没有第二次 → 定时器复位"待退出"并重绘，提示行还原（第二次需重新计时）；
     - Ctrl-D 不退出会话：有内容时删除字符，空行时仅取消待退出状态；
     - 一旦开始打字，"待退出"状态立即解除。
@@ -57,6 +57,8 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.styles import Style
 
+from forgecli.interfaces.cli.session_exit import SessionExit
+
 # 命令菜单最多显示的行数；命令很多时只显示前若干行（当前命令数远小于它）。
 _MENU_MAX_ROWS = 12
 
@@ -82,14 +84,6 @@ _STYLE = Style.from_dict(
         "menu-meta-current": "#cdd6f4",  # 选中行：说明（提亮）
     }
 )
-
-
-class QuitSignal(Exception):
-    """用户在空行连按两次 Ctrl-C，要求退出会话。
-
-    用"抛异常"而非返回特殊字符串来表达退出，能和正常的一行输入彻底区分开：
-    调用方 except 捕获它即可，不会和用户真的输入了某段文本混淆。
-    """
 
 
 class _SlashCompleter(Completer):
@@ -161,8 +155,8 @@ class ForgePrompt:
         """弹出输入框，返回用户输入的一行。
 
         - 正常回车：返回该行文本；
-        - 空行连按两次 Ctrl-C：抛出 QuitSignal；
-        调用方负责捕获 QuitSignal 并据此退出。
+        - 空行连按两次 Ctrl-C：抛出 SessionExit；
+        调用方负责捕获 SessionExit 并据此退出。
         """
         self._disarm_exit()
         self._buffer.reset()  # 清掉上一轮可能残留的内容
@@ -396,7 +390,7 @@ class ForgePrompt:
             elif self._exit_armed:
                 # 情况3：空行 + 窗口内的第二次 → 真正退出。
                 self._disarm_exit()
-                event.app.exit(exception=QuitSignal())
+                event.app.exit(exception=SessionExit())
             else:
                 # 情况2：空行 + 首次（或上次已超时复位）→ 待退出 + 起退出窗口定时器。
                 self._arm_exit(event.app)
