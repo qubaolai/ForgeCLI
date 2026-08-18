@@ -15,14 +15,15 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from forgecli.application.security.executable_resolver import EXECUTABLE_RESOLUTION_VERSION
+from forgecli.application.security.executable_resolver import (
+    EXECUTABLE_RESOLUTION_VERSION,
+)
 from forgecli.domain.execution.environment import (
     DEFAULT_ENV_ALLOWLIST,
     ShellLaunch,
     sanitize_environment,
 )
 from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
-
 
 __all__ = ["build_execution_environment", "probe_execution_profile"]
 

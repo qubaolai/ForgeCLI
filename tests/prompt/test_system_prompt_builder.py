@@ -82,7 +82,7 @@ def test_the_builtin_profile_is_pinned_by_fingerprint() -> None:
 
     assert MAIN_AGENT_PROMPT_VERSION == 1
     assert snapshot.fingerprint == (
-        "sha256:efb41281d7bee9bf35f934c45f015e5122b49203de7e0a13cbfb3918f577e8f9"
+        "sha256:de6746ff9f0257f11147745e3bc570c37c2d693d261a09b442b80193f87016d3"
     )
 
 
@@ -323,7 +323,10 @@ def test_the_contract_forbids_claiming_unexecuted_work() -> None:
 
 def test_additional_workspace_roots_are_all_rendered() -> None:
     facts = RuntimeFacts.from_profile(
-        PROFILE, working_directory="/ws", workspace_roots=("/ws", "/extra"), git_repository=False
+        PROFILE,
+        working_directory="/ws",
+        workspace_roots=("/ws", "/extra"),
+        git_repository=False,
     )
     body = _body(_build(facts=facts), PromptBlockId.RUNTIME_FACTS)
 
@@ -333,4 +336,6 @@ def test_additional_workspace_roots_are_all_rendered() -> None:
 
 def test_runtime_facts_reject_an_empty_root_list() -> None:
     with pytest.raises(ValueError, match="workspace_roots"):
-        RuntimeFacts.from_profile(PROFILE, working_directory="/ws", workspace_roots=(), git_repository=False)
+        RuntimeFacts.from_profile(
+            PROFILE, working_directory="/ws", workspace_roots=(), git_repository=False
+        )

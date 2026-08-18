@@ -128,6 +128,7 @@ def test_a_stale_rule_says_why_it_stopped_working() -> None:
         shell_launch=PROFILE.shell_launch,
         environment_allowlist=PROFILE.environment_allowlist,
         protected_roots_hash=PROFILE.protected_roots_hash,
+        executable_resolution_version=PROFILE.executable_resolution_version,
     )
 
     text = _run(service, profile=changed)

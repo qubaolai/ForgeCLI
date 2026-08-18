@@ -27,8 +27,8 @@ from forgecli.application.security.approval_service import ApprovalService
 from forgecli.application.security.authorization_service import ToolAuthorizationService
 from forgecli.application.security.classifier import (
     FailSafeClassifier,
+    LlmSafetyClassifier,
 )
-from forgecli.application.security.classifier import LlmSafetyClassifier
 from forgecli.application.security.learned_rules import LearnedRuleService
 from forgecli.application.security.policy_engine import PolicyEngine
 from forgecli.application.security.risk_cache import RiskCache

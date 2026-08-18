@@ -257,7 +257,10 @@ def run() -> ExitCode:
         )
 
         def _is_git_repo(path: str) -> bool:
-            """.git 可能是目录 (普通仓库), 也可能是文件 (worktree / submodule), 所以用 exists."""
+            """向上找 .git.
+
+            它可能是目录 (普通仓库), 也可能是文件 (worktree / submodule).
+            """
             return (Path(path) / ".git").exists()
 
         # 运行事实每轮现取: 用户可能刚 /add-dir 加过根, 也可能切了工作目录.

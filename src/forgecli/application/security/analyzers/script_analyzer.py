@@ -25,9 +25,9 @@ from forgecli.application.security.analyzers.registry import (
     ScriptSnapshot,
 )
 from forgecli.application.security.classifier import (
+    CLASSIFIER_PROFILE_VERSION,
     ClassifierRequest,
     FailSafeClassifier,
-    CLASSIFIER_PROFILE_VERSION
 )
 from forgecli.application.security.risk_cache import RiskCache
 from forgecli.application.workspace.execution_context import ExecutionContext
@@ -37,7 +37,7 @@ from forgecli.domain.security.risk import RiskReport, risk_cache_key
 from forgecli.domain.security.script_facts import ScriptFacts
 from forgecli.domain.security.script_patterns import analyze_script_source
 from forgecli.domain.security.shell.command_plan import ScriptPayload, ShellKind
-from forgecli.domain.security.shell.parser import parse_command, PARSER_VERSION
+from forgecli.domain.security.shell.parser import PARSER_VERSION, parse_command
 from forgecli.domain.security.vocabulary import DecisionReason
 from forgecli.domain.tool.capability import Capability, normalize_capability
 from forgecli.domain.tool.plan import ShellSubject, ToolPlan

@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from unicodedata import east_asian_width
 
 from forgecli.application.prompt.project_instruction_reader import ProjectInstruction
 from forgecli.application.prompt.runtime_facts import RuntimeFacts
@@ -194,11 +193,11 @@ def _runtime_facts(build_input: PromptBuildInput) -> PromptBlock:
         ("path", "受控且窄, 只含系统目录; 不继承你熟悉的用户 PATH"),
         ("working_directory", facts.working_directory),
         ("workspace_roots", facts.workspace_roots[0]),
-        ("is a git repository", f"{'yes' if facts.git_repository else 'no'}"),
+        ("git_repository", "yes" if facts.git_repository else "no"),
     ]
     lines = [f"{name}: {value}" for name, value in rows]
     lines.extend(f"额外工作目录: {extra}" for extra in facts.workspace_roots[1:])
-    lines.append(f"tools {len(build_input.available_tools)} 个")
+    lines.append(f"tools: {len(build_input.available_tools)} 个")
     return PromptBlock(
         block_id=PromptBlockId.RUNTIME_FACTS,
         heading="当前运行事实",
@@ -221,8 +220,10 @@ def _capability_names(allowed: frozenset[Capability]) -> str:
 
 # ---- 渲染工具 ----
 
+
 def _tool_table(tools: tuple[ToolBrief, ...]) -> str:
     return "\n".join(f"  {tool.title}{tool.name}" for tool in tools)
+
 
 def _wrap_instruction(instruction: ProjectInstruction) -> str:
     """按信任标注包一份项目指令 (ADR-0018 §5.3)."""

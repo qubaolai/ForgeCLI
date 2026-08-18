@@ -18,12 +18,13 @@ from forgecli.domain.execution.environment import (
     ENVIRONMENT_SANITIZATION_VERSION,
     ShellLaunch,
 )
-from forgecli.domain.workspace.boundary import PATH_NORMALIZATION_VERSION
 from forgecli.domain.tool.hashing import digest
+from forgecli.domain.workspace.boundary import PATH_NORMALIZATION_VERSION
 
 __all__ = ["ExecutionProfile", "IsolationLevel"]
 
 PROFILE_VERSION = "1"
+
 
 class IsolationLevel(Enum):
     """获准进程实际能被限制到什么程度."""

@@ -32,7 +32,7 @@ from forgecli.domain.security.protected_paths import ProtectedPathPolicy
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.domain.tool.result import ToolResult
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
-from support.fakes import PROFILE
+from support.fakes import PROFILE, unavailable_classifier
 
 
 class RecordingAudit(ToolAuditSink):
@@ -79,7 +79,11 @@ def _build(
         registry,
         ToolRuntime(registry),
         ToolAuthorizationService(
-            build_analyzer_registry(ProtectedPathPolicy(roots=())), PolicyEngine()
+            build_analyzer_registry(
+                ProtectedPathPolicy(roots=()),
+                classifier=unavailable_classifier(),
+            ),
+            PolicyEngine(),
         ),
         audit=audit,
         workspace_id="ws-audit",

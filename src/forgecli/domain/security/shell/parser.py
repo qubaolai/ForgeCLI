@@ -54,6 +54,7 @@ def parse_command(
         return CommandPlan(
             shell_kind=shell_kind,
             raw_command=raw_command,
+            parser_version=PARSER_VERSION,
             units=tuple(units),
             status=ParseStatus.PARSE_ERROR,
             opaque_constructs=tuple(dict.fromkeys(opaque)),
@@ -66,6 +67,7 @@ def parse_command(
     return CommandPlan(
         shell_kind=shell_kind,
         raw_command=raw_command,
+        parser_version=PARSER_VERSION,
         units=tuple(units),
         status=status,
         opaque_constructs=tuple(dict.fromkeys(opaque)),
