@@ -194,10 +194,11 @@ def _runtime_facts(build_input: PromptBuildInput) -> PromptBlock:
         ("path", "受控且窄, 只含系统目录; 不继承你熟悉的用户 PATH"),
         ("working_directory", facts.working_directory),
         ("workspace_roots", facts.workspace_roots[0]),
+        ("is a git repository", f"{'yes' if facts.git_repository else 'no'}"),
     ]
-    lines = [f"{_pad(name, 18)}{value}" for name, value in rows]
-    lines.extend(f"{_pad('', 18)}{extra}" for extra in facts.workspace_roots[1:])
-    lines.append(f"{_pad('tools', 18)}{len(build_input.available_tools)} 个")
+    lines = [f"{name}: {value}" for name, value in rows]
+    lines.extend(f"额外工作目录: {extra}" for extra in facts.workspace_roots[1:])
+    lines.append(f"tools {len(build_input.available_tools)} 个")
     return PromptBlock(
         block_id=PromptBlockId.RUNTIME_FACTS,
         heading="当前运行事实",
@@ -220,24 +221,8 @@ def _capability_names(allowed: frozenset[Capability]) -> str:
 
 # ---- 渲染工具 ----
 
-
 def _tool_table(tools: tuple[ToolBrief, ...]) -> str:
-    width = max((_display_width(tool.title) for tool in tools), default=0) + 2
-    return "\n".join(f"  {_pad(tool.title, width)}{tool.name}" for tool in tools)
-
-
-def _display_width(text: str) -> int:
-    """按终端列宽算宽度: 中日韩字符占两列.
-
-    直接用 f-string 的 `:<12` 是按**字符数**补的, 于是 "读取文件" (4 字符 8 列) 和
-    "精确替换文件片段" (8 字符 16 列) 会排得参差不齐.
-    """
-    return sum(2 if east_asian_width(char) in "WF" else 1 for char in text)
-
-
-def _pad(text: str, width: int) -> str:
-    return text + " " * max(1, width - _display_width(text))
-
+    return "\n".join(f"  {tool.title}{tool.name}" for tool in tools)
 
 def _wrap_instruction(instruction: ProjectInstruction) -> str:
     """按信任标注包一份项目指令 (ADR-0018 §5.3)."""

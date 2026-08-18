@@ -36,9 +36,10 @@ from forgecli.domain.security.shell.wrappers import (
     strip_prefix,
 )
 
-__all__ = ["MAX_WRAPPER_DEPTH", "parse_command"]
+__all__ = ["MAX_WRAPPER_DEPTH", "PARSER_VERSION", "parse_command"]
 
 MAX_WRAPPER_DEPTH = 6
+PARSER_VERSION = "1"
 
 
 def parse_command(

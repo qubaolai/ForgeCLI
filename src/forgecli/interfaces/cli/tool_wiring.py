@@ -26,10 +26,9 @@ from forgecli.application.recovery.recovery_service import RecoveryService
 from forgecli.application.security.approval_service import ApprovalService
 from forgecli.application.security.authorization_service import ToolAuthorizationService
 from forgecli.application.security.classifier import (
-    SafeClassifierGateway,
-    UnavailableSafetyClassifier,
+    FailSafeClassifier,
 )
-from forgecli.application.security.gateway_classifier import GatewaySafetyClassifier
+from forgecli.application.security.classifier import LlmSafetyClassifier
 from forgecli.application.security.learned_rules import LearnedRuleService
 from forgecli.application.security.policy_engine import PolicyEngine
 from forgecli.application.security.risk_cache import RiskCache
@@ -110,7 +109,7 @@ def build_tool_stack(
     workspace_roots: tuple[str, ...],
     workspace_id: str,
     session: SessionService,
-    gateway: LlmGateway | None = None,
+    gateway: LlmGateway,
     approval: ApprovalService | None = None,
     artifacts: ArtifactStore | None = None,
     run_bus: AgentRunEventBus | None = None,
@@ -172,12 +171,10 @@ def build_tool_stack(
     #
     #    session id 用 lambda 延迟取: 这个函数跑在组合根里, 那时 REPL 还没
     #    session.start(), 组合期读 current() 会直接抛 SessionStateError.
-    classifier = SafeClassifierGateway(
-        GatewaySafetyClassifier(
-            gateway, session_id=lambda: session.current().session_id
+    classifier = FailSafeClassifier(
+        LlmSafetyClassifier(
+            gateway=gateway, session_id=lambda: session.current().session_id
         )
-        if gateway is not None
-        else UnavailableSafetyClassifier()
     )
     #    风险缓存显式持有: 人工 Shell 回来后必须清掉它 —— 缓存键里有脚本内容哈希,
     #    但用户可能改的是脚本**依赖**的文件, 那不在键里 (ADR-0017 §10).

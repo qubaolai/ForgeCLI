@@ -21,8 +21,7 @@ from forgecli.application.security.analyzers.workspace_analyzer import (
     WorkspacePathAnalyzer,
 )
 from forgecli.application.security.classifier import (
-    SafeClassifierGateway,
-    UnavailableSafetyClassifier,
+    FailSafeClassifier,
 )
 from forgecli.application.security.executable_resolver import ExecutableResolver
 from forgecli.application.security.risk_cache import RiskCache
@@ -35,7 +34,7 @@ def build_analyzer_registry(
     protected_paths: ProtectedPathPolicy,
     *,
     resolver: ExecutableResolver | None = None,
-    classifier: SafeClassifierGateway | None = None,
+    classifier: FailSafeClassifier,
     cache: RiskCache | None = None,
 ) -> CapabilityAnalyzerRegistry:
     """装配全部分析器.
@@ -49,7 +48,7 @@ def build_analyzer_registry(
         (
             ShellCapabilityAnalyzer(resolver or ExecutableResolver(), protected_paths),
             ScriptExecutionAnalyzer(
-                classifier or SafeClassifierGateway(UnavailableSafetyClassifier()),
+                classifier,
                 cache=cache,
             ),
             WorkspacePathAnalyzer(protected_paths),

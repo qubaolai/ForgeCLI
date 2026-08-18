@@ -21,8 +21,9 @@ from forgecli.domain.security.executable_identity import ExecutableIdentity, Tru
 from forgecli.domain.tool.hashing import digest_text
 from forgecli.domain.workspace.boundary import is_within
 
-__all__ = ["ExecutableResolver"]
+__all__ = ["EXECUTABLE_RESOLUTION_VERSION", "ExecutableResolver"]
 
+EXECUTABLE_RESOLUTION_VERSION = "1"
 _MAX_HASH_BYTES = 4 * 1024 * 1024
 _SHEBANG_MAX = 256
 _TEMP_ROOTS = ("/tmp", "/private/tmp", "/var/tmp", "/dev/shm")

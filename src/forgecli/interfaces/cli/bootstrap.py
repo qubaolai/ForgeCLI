@@ -256,6 +256,10 @@ def run() -> ExitCode:
             approval=TtyApprovalService(console=console),
         )
 
+        def _is_git_repo(path: str) -> bool:
+            """.git 可能是目录 (普通仓库), 也可能是文件 (worktree / submodule), 所以用 exists."""
+            return (Path(path) / ".git").exists()
+
         # 运行事实每轮现取: 用户可能刚 /add-dir 加过根, 也可能切了工作目录.
         # 投影在这里做 —— ExecutionProfile 带着受控 PATH 与环境白名单, 那些绝不进提示词
         # (ADR-0018 §4.3), 所以 builder 只能看见 RuntimeFacts 这一份脱敏投影.
@@ -265,6 +269,8 @@ def run() -> ExitCode:
                 tools.profile,
                 working_directory=execution.cwd,
                 workspace_roots=execution.workspace_roots,
+                # 判断是否是git仓库
+                git_repository=_is_git_repo(execution.cwd),
             )
 
         agent_turn = AgentTurnService(

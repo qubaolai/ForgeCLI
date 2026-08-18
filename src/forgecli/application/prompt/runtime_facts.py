@@ -34,6 +34,7 @@ class RuntimeFacts:
     isolation_level: IsolationLevel
     working_directory: str
     workspace_roots: tuple[str, ...]
+    git_repository: bool
 
     def __post_init__(self) -> None:
         if not self.workspace_roots:
@@ -50,6 +51,7 @@ class RuntimeFacts:
         *,
         working_directory: str,
         workspace_roots: tuple[str, ...],
+        git_repository: bool,
     ) -> RuntimeFacts:
         """从执行画像投影. 只取三个字段, 其余一律不带出来."""
         return cls(
@@ -58,4 +60,5 @@ class RuntimeFacts:
             isolation_level=profile.isolation_level,
             working_directory=working_directory,
             workspace_roots=workspace_roots,
+            git_repository=git_repository,
         )

@@ -12,8 +12,9 @@ from __future__ import annotations
 
 from pathlib import PurePath
 
-__all__ = ["is_within"]
+__all__ = ["PATH_NORMALIZATION_VERSION", "is_within"]
 
+PATH_NORMALIZATION_VERSION = "1"
 
 def is_within(target: str | PurePath, root: str | PurePath) -> bool:
     """target 是否落在 root 之内（含 target 就是 root 自身）。"""

@@ -26,7 +26,8 @@ from forgecli.application.security.analyzers.registry import (
 )
 from forgecli.application.security.classifier import (
     ClassifierRequest,
-    SafeClassifierGateway,
+    FailSafeClassifier,
+    CLASSIFIER_PROFILE_VERSION
 )
 from forgecli.application.security.risk_cache import RiskCache
 from forgecli.application.workspace.execution_context import ExecutionContext
@@ -36,7 +37,7 @@ from forgecli.domain.security.risk import RiskReport, risk_cache_key
 from forgecli.domain.security.script_facts import ScriptFacts
 from forgecli.domain.security.script_patterns import analyze_script_source
 from forgecli.domain.security.shell.command_plan import ScriptPayload, ShellKind
-from forgecli.domain.security.shell.parser import parse_command
+from forgecli.domain.security.shell.parser import parse_command, PARSER_VERSION
 from forgecli.domain.security.vocabulary import DecisionReason
 from forgecli.domain.tool.capability import Capability, normalize_capability
 from forgecli.domain.tool.plan import ShellSubject, ToolPlan
@@ -50,7 +51,7 @@ _MAX_SCRIPT_BYTES = 512 * 1024
 class ScriptExecutionAnalyzer(CapabilityAnalyzer):
     def __init__(
         self,
-        classifier: SafeClassifierGateway,
+        classifier: FailSafeClassifier,
         *,
         cache: RiskCache | None = None,
     ) -> None:
@@ -228,9 +229,9 @@ class ScriptExecutionAnalyzer(CapabilityAnalyzer):
             policy_version=policy.policy_version,
             execution_profile_hash=policy.execution_profile_hash,
             shell_kind=context.profile.shell_launch.kind,
-            parser_version="1",
             analyzer_version=ANALYZER_VERSION,
-            classifier_profile_version="1",
+            parser_version=PARSER_VERSION,
+            classifier_profile_version=CLASSIFIER_PROFILE_VERSION,
             intent_scope_hash=policy.intent_scope_hash,
         )
         cached = self._cache.get(key)

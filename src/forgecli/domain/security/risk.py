@@ -41,9 +41,6 @@ class ClassifierFailure(Enum):
     LOW_CONFIDENCE = "low_confidence"
     CONTEXT_TRUNCATED = "context_truncated"
     RETRY_EXHAUSTED = "retry_exhausted"
-    # 这套部署根本没接分类器. 与"接了但这次失败"分开记: 前者是装配问题, 运维要看到它,
-    # 而两者的裁决后果相同 —— ASK.
-    NOT_CONFIGURED = "not_configured"
 
 
 @dataclass(frozen=True)
@@ -58,7 +55,6 @@ class RiskReport:
     opaque_regions: tuple[str, ...] = ()
     recommendation: str = "ask"
     failure: ClassifierFailure | None = None
-    classifier_version: str = "fake-1"
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
@@ -126,7 +122,7 @@ def classifier_output_schema() -> dict[str, object]:
     }
 
 
-def parse_risk_report(payload: object, *, version: str) -> RiskReport:
+def parse_risk_report(payload: object) -> RiskReport:
     """把分类器返回的 JSON 变成 RiskReport. 任何不合法都归 INVALID_OUTPUT."""
     if not isinstance(payload, dict):
         return RiskReport.unavailable(ClassifierFailure.INVALID_OUTPUT, "输出不是对象")
@@ -149,7 +145,6 @@ def parse_risk_report(payload: object, *, version: str) -> RiskReport:
         capabilities=_strings(payload.get("capabilities")),
         opaque_regions=_strings(payload.get("opaque_regions")),
         recommendation=str(payload.get("recommendation", "ask")),
-        classifier_version=version,
     )
 
 
@@ -167,8 +162,8 @@ def risk_cache_key(
     policy_version: str,
     execution_profile_hash: str,
     shell_kind: str,
-    parser_version: str,
     analyzer_version: str,
+    parser_version: str,
     classifier_profile_version: str,
     intent_scope_hash: str,
 ) -> str:
@@ -185,8 +180,8 @@ def risk_cache_key(
             "policy_version": policy_version,
             "execution_profile_hash": execution_profile_hash,
             "shell_kind": shell_kind,
-            "parser_version": parser_version,
             "script_analyzer_version": analyzer_version,
+            "parser_version": parser_version,
             "classifier_profile_version": classifier_profile_version,
             "intent_scope_hash": intent_scope_hash,
         }

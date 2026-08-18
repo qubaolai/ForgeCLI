@@ -18,10 +18,12 @@ from forgecli.domain.execution.environment import (
     ENVIRONMENT_SANITIZATION_VERSION,
     ShellLaunch,
 )
+from forgecli.domain.workspace.boundary import PATH_NORMALIZATION_VERSION
 from forgecli.domain.tool.hashing import digest
 
 __all__ = ["ExecutionProfile", "IsolationLevel"]
 
+PROFILE_VERSION = "1"
 
 class IsolationLevel(Enum):
     """获准进程实际能被限制到什么程度."""
@@ -45,10 +47,10 @@ class ExecutionProfile:
     shell_launch: ShellLaunch
     environment_allowlist: tuple[str, ...]
     protected_roots_hash: str
-    path_normalization_version: str = "1"
-    executable_resolution_version: str = "1"
+    executable_resolution_version: str
+    path_normalization_version: str = PATH_NORMALIZATION_VERSION
     environment_sanitization_version: str = ENVIRONMENT_SANITIZATION_VERSION
-    profile_version: str = "1"
+    profile_version: str = PROFILE_VERSION
 
     def __post_init__(self) -> None:
         if not self.trusted_path:

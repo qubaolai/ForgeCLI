@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from forgecli.domain.tool.hashing import digest, digest_text
+from forgecli.domain.security.shell.parser import PARSER_VERSION
 
 __all__ = [
     "CommandPlan",
@@ -197,7 +198,7 @@ class CommandPlan:
     status: ParseStatus = ParseStatus.OK
     opaque_constructs: tuple[str, ...] = ()
     parse_error: str | None = None
-    parser_version: str = "1"
+    parser_version: str = PARSER_VERSION
     cwd: str = ""
     _hash: str = field(default="", compare=False)
 

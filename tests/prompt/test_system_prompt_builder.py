@@ -323,7 +323,7 @@ def test_the_contract_forbids_claiming_unexecuted_work() -> None:
 
 def test_additional_workspace_roots_are_all_rendered() -> None:
     facts = RuntimeFacts.from_profile(
-        PROFILE, working_directory="/ws", workspace_roots=("/ws", "/extra")
+        PROFILE, working_directory="/ws", workspace_roots=("/ws", "/extra"), git_repository=False
     )
     body = _body(_build(facts=facts), PromptBlockId.RUNTIME_FACTS)
 
@@ -333,4 +333,4 @@ def test_additional_workspace_roots_are_all_rendered() -> None:
 
 def test_runtime_facts_reject_an_empty_root_list() -> None:
     with pytest.raises(ValueError, match="workspace_roots"):
-        RuntimeFacts.from_profile(PROFILE, working_directory="/ws", workspace_roots=())
+        RuntimeFacts.from_profile(PROFILE, working_directory="/ws", workspace_roots=(), git_repository=False)

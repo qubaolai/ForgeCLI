@@ -6,7 +6,7 @@
 # 注意：发布名可以使用短横线，但 Python import 包名通常使用下划线。
 name = "forgecli"
 # 项目版本号。遵循语义化版本: MAJOR.MINOR.PATCH。
-version = "0.1.0"
+version = "0.0.1"
 # 项目描述。
 description = "支持长任务的 code-cli"
 
