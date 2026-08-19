@@ -25,6 +25,9 @@ __all__ = ["ObservationKind", "ToolObservation"]
 
 class ObservationKind(Enum):
     TOOL_RESULT = "tool_result"
+    # 工具成功了, 但它声明这次输出需要人裁决 (ADR-0023). 仍然是一次成功的调用 ——
+    # 分成独立的 kind 只是为了让循环按字段分流, 不去读 content 里的文字.
+    PLAN_REVIEW_REQUIRED = "plan_review_required"
     POLICY_DENIED = "policy_denied"
     # 需要重新审批 (批准后事实变化). 重试有意义.
     APPROVAL_REQUIRED = "approval_required"
@@ -48,6 +51,8 @@ class ObservationKind(Enum):
         做的决定, 审批提示就成了摆设. 而策略拒绝说的是"这条路不通", 换条合法的路正是
         我们希望它做的 —— 所以两者分流, 判据是**谁说的不行**, 不是 mode.
         """
+        if self is ObservationKind.PLAN_REVIEW_REQUIRED:
+            return ObservationDisposition.AWAIT_USER_DECISION
         if self in _HALTING_KINDS:
             return ObservationDisposition.HALT
         if self in _BLOCKING_KINDS:
@@ -56,7 +61,10 @@ class ObservationKind(Enum):
 
     @property
     def source(self) -> ObservationSource:
-        if self is ObservationKind.TOOL_RESULT:
+        if self in (
+            ObservationKind.TOOL_RESULT,
+            ObservationKind.PLAN_REVIEW_REQUIRED,
+        ):
             return ObservationSource.TOOL
         if self in _SECURITY_KINDS:
             return ObservationSource.SECURITY
@@ -112,7 +120,10 @@ class ToolObservation:
 
     @property
     def is_error(self) -> bool:
-        if self.kind is ObservationKind.TOOL_RESULT:
+        if self.kind in (
+            ObservationKind.TOOL_RESULT,
+            ObservationKind.PLAN_REVIEW_REQUIRED,
+        ):
             return self.result is not None and self.result.error is not None
         return True
 
@@ -126,7 +137,11 @@ class ToolObservation:
 
     def render(self) -> str:
         """给模型看的文本. 工具结果直接给内容, 其余给结构化拒绝说明."""
-        if self.kind is ObservationKind.TOOL_RESULT and self.result is not None:
+        if (
+            self.kind
+            in (ObservationKind.TOOL_RESULT, ObservationKind.PLAN_REVIEW_REQUIRED)
+            and self.result is not None
+        ):
             return self.result.text
         lines = [f"[{self.kind.value}] {self.message}"]
         if self.reason_code:

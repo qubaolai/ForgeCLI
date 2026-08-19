@@ -63,6 +63,12 @@ class ObservationDisposition(Enum):
     BLOCKED = "blocked"
     # 本轮不该再派工具了 (人类明确拒绝, 或根本无人可裁决).
     HALT = "halt"
+    # 工具产出了需要人裁决的东西, 本轮到此为止, 由 CLI 驱动交互 (ADR-0023).
+    #
+    # 与 HALT 的区别是**为什么停**: HALT 是"人已经说了不", 这里是"该轮到人说话了".
+    # 两者都不再派工具, 但 HALT 之后模型要解释自己原本想做什么, 而这里模型已经把要说的
+    # 说完了 —— 它交出了一份计划, 正等着回话.
+    AWAIT_USER_DECISION = "await_user_decision"
 
 
 @dataclass(frozen=True)

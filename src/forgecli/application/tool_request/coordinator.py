@@ -73,7 +73,7 @@ from forgecli.domain.tool.plan import (
     ShellSubject,
     ToolPlan,
 )
-from forgecli.domain.tool.result import ToolResult, ToolResultStatus
+from forgecli.domain.tool.result import ToolResult, ToolResultStatus, TurnDisposition
 from forgecli.shared.cancellation import CancelToken
 
 __all__ = ["ToolRequestCoordinator"]
@@ -493,7 +493,13 @@ class ToolRequestCoordinator:
             elapsed_ms=(self._clock() - started) * 1000.0,
         )
         return ToolObservation(
-            kind=ObservationKind.TOOL_RESULT,
+            # 按**字段**置 kind, 不按工具名 (ADR-0023 决策 1). 协调器因此不需要认识
+            # plan.write, 而机制对将来的 ask_user 一类工具同样成立.
+            kind=(
+                ObservationKind.PLAN_REVIEW_REQUIRED
+                if result.turn_disposition is TurnDisposition.AWAIT_USER_DECISION
+                else ObservationKind.TOOL_RESULT
+            ),
             message=result.status.value,
             invocation_id=invocation_id,
             tool_name=result.tool_name,

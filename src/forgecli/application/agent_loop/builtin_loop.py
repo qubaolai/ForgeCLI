@@ -184,6 +184,8 @@ _MALFORMED_NOTICE = (
 
 _MALFORMED_STOP_MESSAGE = "模型连续 {count} 次产出无法使用的工具调用，本轮中止。"
 
+_REVIEW_ABANDON_NOTICE = "未执行: 本轮已停下等待用户对上一步产出做决定."
+
 _BARREN_NOTICE = (
     "刚才连续 {count} 次工具调用没有带回新信息: 要么是空结果, 要么与上一次完全相同. "
     "换个写法再试一次多半还是这个结果. "
@@ -526,6 +528,19 @@ class BuiltinAgentLoop(AgentLoop):
         # 是否产生了副作用). 循环只拿到一段回填文本, 用它冒充执行结论会让终端显示的
         # "完成"与真正发生的事脱节.
         self._track_progress(observation)
+        if observation.disposition is ObservationDisposition.AWAIT_USER_DECISION:
+            # 工具交出了需要人裁决的东西, 本轮到此为止 (ADR-0023 决策 1).
+            #
+            # 不走 _close_tools: 那条路是"工具没了但你继续说", 而这里模型已经把要说
+            # 的说完了 —— 它交出了一份计划, 正等着回话. 再逼它说一段话, 只会在评审
+            # 界面上方多出一段没人读的文字.
+            #
+            # 排队中的调用仍然补上配对的 tool result. 本轮的 transcript 到此为止,
+            # 但它仍然是这一轮的完整记录, 而一份缺了配对结果的记录在任何后续消费者
+            # 眼里都是残缺的.
+            self._abandon_pending(_REVIEW_ABANDON_NOTICE)
+            self._pending_calls = []
+            return self._stop(LoopStopReason.WAIT_PLAN_REVIEW, None)
         halt = self._weigh(observation)
         if halt is not None:
             return self._close_tools(halt)

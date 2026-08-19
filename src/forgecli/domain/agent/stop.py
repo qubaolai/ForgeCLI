@@ -18,6 +18,9 @@ class LoopStopReason(Enum):
     FINAL_ANSWER = "final_answer"
     WAIT_USER_INPUT = "wait_user_input"
     WAIT_APPROVAL = "wait_approval"
+    # 工具声明本次输出需要人裁决 (ADR-0023). 与 WAIT_APPROVAL 分开: 那是"这次调用
+    # 许不许可", 这是"这个方向对不对" —— 前者产生 ExecutionAuthorization, 后者不产生.
+    WAIT_PLAN_REVIEW = "wait_plan_review"
     USER_CANCELLED = "user_cancelled"
     BUDGET_EXHAUSTED = "budget_exhausted"
     POLICY_DENIED = "policy_denied"
@@ -60,6 +63,7 @@ _CLASSIFICATION: dict[LoopStopReason, StopClassification] = {
     LoopStopReason.FINAL_ANSWER: StopClassification.NORMAL,
     LoopStopReason.WAIT_USER_INPUT: StopClassification.RESUMABLE_PAUSE,
     LoopStopReason.WAIT_APPROVAL: StopClassification.RESUMABLE_PAUSE,
+    LoopStopReason.WAIT_PLAN_REVIEW: StopClassification.RESUMABLE_PAUSE,
     LoopStopReason.CONTEXT_COMPACTION_REQUIRED: StopClassification.RESUMABLE_PAUSE,
     LoopStopReason.SESSION_INTERRUPTED: StopClassification.RESUMABLE_PAUSE,
     LoopStopReason.USER_CANCELLED: StopClassification.BLOCKING,
