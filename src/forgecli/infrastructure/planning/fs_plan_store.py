@@ -1,0 +1,308 @@
+"""计划与待办的落盘 (ADR-0022 §2).
+
+目录布局:
+
+    <plans_root>/
+      index.toml                  活动指针与摘要
+      <plan_id>/
+        r1.toml                   结构化正文, 权威
+        r1.md                     按模板渲染, 人读, 派生
+      todo/
+        current.toml
+        archive/<todo_id>-r<n>.toml
+
+**读失败一律降级成空值, 不抛.** 计划坏了不该让人开不了工 (§10). 写失败抛 PlanStoreError
+—— 那必须让调用方知道, 因为模型以为自己存下来了.
+
+**不设文件锁.** 项目级 ProcessLock 已保证同一项目同时只有一个 Forge 进程 (§2.3). 写入
+仍然原子 (write_document 先写临时文件再 rename), 防的是崩溃, 不是并发.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from pathlib import Path
+
+import tomlkit
+from tomlkit import TOMLDocument
+
+from forgecli.application.planning.plan_store import PlanStore, PlanStoreError
+from forgecli.domain.planning import (
+    PlanDocument,
+    PlanIndex,
+    PlanStatus,
+    PlanStep,
+    PlanSummary,
+    TodoItem,
+    TodoList,
+    TodoStatus,
+)
+from forgecli.infrastructure.toml_io import read_document, write_document
+from forgecli.shared.errors import ConfigReadError
+
+__all__ = ["FsPlanStore"]
+
+_INDEX_SCHEMA_VERSION = 1
+
+
+class FsPlanStore(PlanStore):
+    def __init__(self, plans_root: Path) -> None:
+        self._root = plans_root
+
+    # ---- 索引 ----
+
+    def load_index(self) -> PlanIndex:
+        document = self._read(self._root / "index.toml")
+        if document is None:
+            return PlanIndex()
+        plans: list[PlanSummary] = []
+        for raw in _table_list(document, "plans"):
+            summary = _summary_of(raw)
+            if summary is not None:
+                plans.append(summary)
+        return PlanIndex(
+            active_plan_id=_text(document.get("active_plan_id")),
+            active_todo_id=_text(document.get("active_todo_id")),
+            plans=tuple(plans),
+        )
+
+    def save_index(self, index: PlanIndex) -> None:
+        document = tomlkit.document()
+        document["schema_version"] = _INDEX_SCHEMA_VERSION
+        document["active_plan_id"] = index.active_plan_id
+        document["active_todo_id"] = index.active_todo_id
+        entries = tomlkit.aot()
+        for summary in index.plans:
+            table = tomlkit.table()
+            table["plan_id"] = summary.plan_id
+            table["revision"] = summary.revision
+            table["status"] = summary.status.value
+            table["title"] = summary.title
+            table["template_version"] = summary.template_version
+            table["created_at"] = summary.created_at
+            table["updated_at"] = summary.updated_at
+            entries.append(table)
+        document["plans"] = entries
+        self._write(self._root / "index.toml", document)
+
+    # ---- 计划 ----
+
+    def load_plan(
+        self, plan_id: str, revision: int | None = None
+    ) -> PlanDocument | None:
+        directory = self._root / plan_id
+        target = (
+            directory / f"r{revision}.toml"
+            if revision is not None
+            else _latest_revision(directory)
+        )
+        if target is None:
+            return None
+        document = self._read(target)
+        if document is None:
+            return None
+        try:
+            return _plan_of(plan_id, document)
+        except (ValueError, TypeError):
+            # 文件在, 但内容不满足不变量 (手改坏了, 或旧版本写的). 按读不到处理.
+            return None
+
+    def save_plan(self, plan: PlanDocument, rendered: str) -> None:
+        directory = self._root / plan.plan_id
+        document = tomlkit.document()
+        document["plan_id"] = plan.plan_id
+        document["revision"] = plan.revision
+        document["template_version"] = plan.template_version
+        document["status"] = plan.status.value
+        document["title"] = plan.title
+        document["goal"] = plan.goal
+        document["context"] = plan.context
+        document["approach"] = plan.approach
+        document["risks"] = list(plan.risks)
+        document["acceptance"] = list(plan.acceptance)
+        document["created_at"] = plan.created_at
+        document["updated_at"] = plan.updated_at
+        steps = tomlkit.aot()
+        for step in plan.steps:
+            table = tomlkit.table()
+            table["title"] = step.title
+            table["detail"] = step.detail
+            steps.append(table)
+        document["steps"] = steps
+        self._write(directory / f"r{plan.revision}.toml", document)
+        self._write_text(directory / f"r{plan.revision}.md", rendered)
+
+    # ---- 待办 ----
+
+    def load_todo(self) -> TodoList | None:
+        document = self._read(self._root / "todo" / "current.toml")
+        if document is None:
+            return None
+        try:
+            return _todo_of(document)
+        except (ValueError, TypeError):
+            return None
+
+    def save_todo(self, todo: TodoList) -> None:
+        self._write(self._root / "todo" / "current.toml", _todo_document(todo))
+
+    def archive_todo(self, todo: TodoList) -> None:
+        target = (
+            self._root / "todo" / "archive" / f"{todo.todo_id}-r{todo.revision}.toml"
+        )
+        self._write(target, _todo_document(todo))
+
+    # ---- IO ----
+
+    def _read(self, path: Path) -> TOMLDocument | None:
+        """读不到就是没有. 语法坏了也是没有 —— 但那要留下痕迹, 由调用方打诊断."""
+        try:
+            document = read_document(path)
+        except ConfigReadError:
+            return None
+        return document if document else None
+
+    def _write(self, path: Path, document: TOMLDocument) -> None:
+        try:
+            write_document(path, document)
+        except OSError as exc:
+            raise PlanStoreError(f"写入失败: {path}\n  原因: {exc}") from exc
+
+    def _write_text(self, path: Path, body: str) -> None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp = path.with_name(path.name + ".tmp")
+            temp.write_text(body, encoding="utf-8")
+            temp.replace(path)
+        except OSError as exc:
+            raise PlanStoreError(f"写入失败: {path}\n  原因: {exc}") from exc
+
+
+# ---- 解码 ----
+
+
+def _latest_revision(directory: Path) -> Path | None:
+    try:
+        candidates = [
+            item
+            for item in directory.iterdir()
+            if item.suffix == ".toml" and item.stem.startswith("r")
+        ]
+    except OSError:
+        return None
+    numbered = [(number, item) for item in candidates if (number := _revision_of(item))]
+    if not numbered:
+        return None
+    return max(numbered, key=lambda pair: pair[0])[1]
+
+
+def _revision_of(path: Path) -> int:
+    try:
+        return int(path.stem[1:])
+    except ValueError:
+        return 0
+
+
+def _plan_of(plan_id: str, document: TOMLDocument) -> PlanDocument:
+    return PlanDocument(
+        plan_id=plan_id,
+        revision=_number(document.get("revision"), default=1),
+        title=_text(document.get("title")),
+        goal=_text(document.get("goal")),
+        context=_text(document.get("context")),
+        approach=_text(document.get("approach")),
+        steps=tuple(
+            PlanStep(title=_text(raw.get("title")), detail=_text(raw.get("detail")))
+            for raw in _table_list(document, "steps")
+        ),
+        risks=_strings(document.get("risks")),
+        acceptance=_strings(document.get("acceptance")),
+        status=_status(_text(document.get("status"))),
+        template_version=_number(document.get("template_version"), default=1),
+        created_at=_text(document.get("created_at")),
+        updated_at=_text(document.get("updated_at")),
+    )
+
+
+def _todo_document(todo: TodoList) -> TOMLDocument:
+    document = tomlkit.document()
+    document["todo_id"] = todo.todo_id
+    document["plan_id"] = todo.plan_id
+    document["revision"] = todo.revision
+    document["updated_at"] = todo.updated_at
+    items = tomlkit.aot()
+    for item in todo.items:
+        table = tomlkit.table()
+        table["title"] = item.title
+        table["status"] = item.status.value
+        items.append(table)
+    document["items"] = items
+    return document
+
+
+def _todo_of(document: TOMLDocument) -> TodoList:
+    return TodoList(
+        todo_id=_text(document.get("todo_id")),
+        items=tuple(
+            TodoItem(
+                title=_text(raw.get("title")),
+                status=_todo_status(_text(raw.get("status"))),
+            )
+            for raw in _table_list(document, "items")
+        ),
+        plan_id=_text(document.get("plan_id")),
+        revision=_number(document.get("revision"), default=1),
+        updated_at=_text(document.get("updated_at")),
+    )
+
+
+def _summary_of(raw: Mapping[str, object]) -> PlanSummary | None:
+    plan_id = _text(raw.get("plan_id"))
+    if not plan_id:
+        return None
+    return PlanSummary(
+        plan_id=plan_id,
+        revision=_number(raw.get("revision"), default=1),
+        status=_status(_text(raw.get("status"))),
+        title=_text(raw.get("title")),
+        template_version=_number(raw.get("template_version"), default=1),
+        created_at=_text(raw.get("created_at")),
+        updated_at=_text(raw.get("updated_at")),
+    )
+
+
+def _table_list(source: Mapping[str, object], key: str) -> list[Mapping[str, object]]:
+    """TOML 的 array-of-tables. tomlkit 的元素是 Mapping 的实现, 按接口取值即可."""
+    raw = source.get(key)
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, Mapping)]
+
+
+def _text(value: object) -> str:
+    return str(value) if isinstance(value, str) else ""
+
+
+def _number(value: object, *, default: int) -> int:
+    return int(value) if isinstance(value, int) else default
+
+
+def _strings(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(item) for item in value if isinstance(item, str))
+
+
+def _status(raw: str) -> PlanStatus:
+    """认不出的状态按 proposed 处理: 那是唯一还需要人裁决的档, 方向朝保守."""
+    try:
+        return PlanStatus(raw)
+    except ValueError:
+        return PlanStatus.PROPOSED
+
+
+def _todo_status(raw: str) -> TodoStatus:
+    try:
+        return TodoStatus(raw)
+    except ValueError:
+        return TodoStatus.PENDING
