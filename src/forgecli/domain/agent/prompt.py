@@ -23,17 +23,21 @@ __all__ = ["PromptBlock", "PromptBlockId", "PromptSnapshot"]
 
 
 class PromptBlockId(Enum):
-    """块标识. 值进诊断输出, 不可随意改.
-
-    枚举里**没有** todo_state 与 plan_state: 那两块随 ADR-0022 落地时再加 (ADR-0018
-    §14 阶段 5). 提前建空块会让"这块为什么永远不渲染"变成一个要去翻提交历史的问题.
-    """
+    """块标识. 值进诊断输出, 不可随意改."""
 
     CORE_IDENTITY = "core_identity"
     TOOL_CONTRACT = "tool_contract"
     ANSWER_CONTRACT = "answer_contract"
     WORKSPACE_INSTRUCTIONS = "workspace_instructions"
     RUNTIME_FACTS = "runtime_facts"
+    # 计划与待办 (ADR-0022 §5.4). 两块都是条件性的, 都在缓存断点之后 —— 它们每轮都可能
+    # 变, 进稳定前缀就等于前缀不再稳定.
+    #
+    # 分成两块而不是一块, 是因为**通道不同**: 待办清单小且每轮都要对齐, 所以正文进块;
+    # 计划正文大且按需查阅, 所以这里只放一行引用, 正文由模型用 plan.read 取
+    # (ADR-0018 §4.4 的两条判据).
+    PLAN_STATE = "plan_state"
+    TODO_STATE = "todo_state"
 
 
 @dataclass(frozen=True)

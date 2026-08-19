@@ -26,6 +26,7 @@ from forgecli.application.manual_shell import (
     ManualShellContext,
     ManualShellService,
 )
+from forgecli.application.planning import ActivePlanning
 from forgecli.application.project import (
     ProjectContext,
     ProjectService,
@@ -276,12 +277,17 @@ def run() -> ExitCode:
                 git_repository=_is_git_repo(execution.cwd),
             )
 
+        # 活动计划与待办 (ADR-0022 §5.3). 加载是只读的, 打开会话不会推进任何状态;
+        # 读失败也不阻塞启动, 只打一行诊断.
+        _render_planning_line(console, tools.planning.load())
+
         agent_turn = AgentTurnService(
             session,
             loop_factory=_new_loop,
             prompt_builder=SystemPromptBuilder(),
             runtime_facts=_runtime_facts,
             instructions=FsProjectInstructionReader(),
+            planning=tools.planning,
             tools=tools.dispatcher,
             # 同一个屏障两处用: 人工 Shell 退出时 trip 它, agent turn 开始前查它
             # (ADR-0017 §10 / §12).
@@ -326,3 +332,22 @@ def run() -> ExitCode:
     finally:
         # 正常退出 / 异常 / Ctrl-C 都释放（flock 在 kill -9 时也由 OS 释放）。
         lock.release()
+
+
+def _render_planning_line(console: Console, active: ActivePlanning) -> None:
+    """启动横幅之下的一行. 没有内容时整行不显示.
+
+    诊断单独一行且措辞要说清后果: "计划读不到"与"计划没有"对用户是两件事, 前者可能意味着
+    有一份计划正躺在磁盘上而他以为自己没提过.
+    """
+    for line in active.diagnostics:
+        console.print(f"计划加载: {line}")
+    parts: list[str] = []
+    if active.plan is not None:
+        plan = active.plan
+        parts.append(f"计划: {plan.title} ({plan.status.value}, {plan.step_count} 步)")
+    if active.todo is not None and active.todo.items:
+        todo = active.todo
+        parts.append(f"待办: {todo.done_count}/{todo.total_count} 完成")
+    if parts:
+        console.print("  |  ".join(parts))

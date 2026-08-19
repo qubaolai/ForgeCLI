@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from forgecli.application.planning import ActivePlanning
 from forgecli.application.prompt.project_instruction_reader import ProjectInstruction
 from forgecli.application.prompt.runtime_facts import RuntimeFacts
 from forgecli.application.prompt.system_prompt_builder import (
@@ -19,6 +20,14 @@ from forgecli.application.prompt.system_prompt_builder import (
 )
 from forgecli.domain.agent.prompt import PromptBlockId, PromptSnapshot
 from forgecli.domain.intents import SessionMode
+from forgecli.domain.planning import (
+    PlanDocument,
+    PlanStatus,
+    PlanStep,
+    TodoItem,
+    TodoList,
+    TodoStatus,
+)
 from forgecli.domain.security.modes import auto_allowed_capabilities
 from forgecli.domain.tool.capability import Capability
 from support.fakes import FACTS, PROFILE, prompt
@@ -80,9 +89,9 @@ def test_the_builtin_profile_is_pinned_by_fingerprint() -> None:
         ),
     )
 
-    assert MAIN_AGENT_PROMPT_VERSION == 2
+    assert MAIN_AGENT_PROMPT_VERSION == 3
     assert snapshot.fingerprint == (
-        "sha256:57460128973911f68a2a631898be92313f3cd40d118db9612a0f7a277f62c6fd"
+        "sha256:22df49cf71b5a2fc7c82988695421e819840a2d8dee6dbf7b72a9b972dbe5343"
     )
 
 
@@ -437,3 +446,96 @@ def test_the_answer_contract_stays_in_the_cacheable_prefix() -> None:
     )
 
     assert block.cacheable is True
+
+
+# ---- 计划与待办 (ADR-0022 §5.4) ----
+
+
+def _planning(**overrides: object) -> ActivePlanning:
+    return ActivePlanning(**overrides)  # type: ignore[arg-type]
+
+
+def _a_plan() -> PlanDocument:
+    return PlanDocument(
+        plan_id="pl_abc",
+        revision=1,
+        title="拆分值域对象",
+        goal="把混在一起的领域概念分开",
+        steps=(PlanStep(title="读现状"), PlanStep(title="切分")),
+        status=PlanStatus.APPROVED,
+    )
+
+
+def _a_todo() -> TodoList:
+    return TodoList(
+        todo_id="td_abc",
+        items=(
+            TodoItem(title="读现状", status=TodoStatus.DONE),
+            TodoItem(title="切分", status=TodoStatus.IN_PROGRESS),
+        ),
+    )
+
+
+def test_no_plan_no_block() -> None:
+    """空的是常态, 不是错误. 不留一个写着 (无) 的空标题."""
+    ids = _ids(_build())
+
+    assert PromptBlockId.PLAN_STATE not in ids
+    assert PromptBlockId.TODO_STATE not in ids
+
+
+def test_the_plan_block_carries_a_reference_not_the_body() -> None:
+    """计划正文大且按需查阅, 所以走工具; 每轮重述一遍是浪费 (ADR-0018 §4.4)."""
+    snapshot = _build(planning=_planning(plan=_a_plan()))
+    body = _body(snapshot, PromptBlockId.PLAN_STATE)
+
+    assert "pl_abc" in body
+    assert "plan.read" in body
+    # 正文里的小节标题一个都不该出现在块里.
+    assert "## 目标" not in body
+
+
+def test_the_todo_block_carries_the_whole_list() -> None:
+    """清单小, 而且每轮都要对齐 —— "当前该做哪一步"被稀释正是执行漂移的根因."""
+    body = _body(_build(planning=_planning(todo=_a_todo())), PromptBlockId.TODO_STATE)
+
+    assert "0. [x] 读现状" in body
+    assert "1. [>] 切分" in body
+    assert "进度 1/2" in body
+
+
+def test_the_todo_block_says_how_to_correct_it() -> None:
+    """光给清单不给纠正手段, 模型发现拆错了也只能将就着往下走."""
+    body = _body(_build(planning=_planning(todo=_a_todo())), PromptBlockId.TODO_STATE)
+
+    assert "todo.write" in body
+    assert "todo.set_status" in body
+
+
+def test_an_empty_todo_list_renders_nothing() -> None:
+    """空清单不产生噪音."""
+    snapshot = _build(planning=_planning(todo=TodoList(todo_id="td_1")))
+
+    assert PromptBlockId.TODO_STATE not in _ids(snapshot)
+
+
+def test_both_blocks_sit_after_the_cache_breakpoint() -> None:
+    """它们每轮都可能变. 进稳定前缀就等于前缀不再稳定."""
+    snapshot = _build(planning=_planning(plan=_a_plan(), todo=_a_todo()))
+
+    for block in snapshot.blocks:
+        if block.block_id in (PromptBlockId.PLAN_STATE, PromptBlockId.TODO_STATE):
+            assert block.cacheable is False
+
+
+def test_block_order_stays_fixed_with_planning() -> None:
+    snapshot = _build(planning=_planning(plan=_a_plan(), todo=_a_todo()))
+
+    assert _ids(snapshot) == [
+        PromptBlockId.CORE_IDENTITY,
+        PromptBlockId.TOOL_CONTRACT,
+        PromptBlockId.ANSWER_CONTRACT,
+        PromptBlockId.RUNTIME_FACTS,
+        PromptBlockId.PLAN_STATE,
+        PromptBlockId.TODO_STATE,
+    ]

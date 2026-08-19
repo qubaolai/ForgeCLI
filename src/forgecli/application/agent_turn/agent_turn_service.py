@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 from forgecli.application.agent_loop import AgentLoop
 from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
+from forgecli.application.planning import ActivePlanning, PlanningService
 from forgecli.application.prompt.project_instruction_reader import (
     ProjectInstructionReader,
 )
@@ -86,6 +87,7 @@ class AgentTurnService:
         prompt_builder: SystemPromptBuilder,
         runtime_facts: Callable[[], RuntimeFacts],
         instructions: ProjectInstructionReader,
+        planning: PlanningService | None = None,
         tools: ToolDispatcher | None = None,
         barrier: ManualMutationBarrier | None = None,
         max_steps: int = _DEFAULT_MAX_LOOP_STEPS,
@@ -95,6 +97,8 @@ class AgentTurnService:
         # 每轮现取: 用户可能刚 /add-dir 加过根, 上一轮的事实不作数.
         self._runtime_facts = runtime_facts
         self._instructions = instructions
+        # 计划与待办缺省为 None: 没接时两个提示词块整块不渲染, 链路照常工作.
+        self._planning = planning
         # 每 turn 经工厂取新 loop 实例（BuiltinAgentLoop 持有 per-turn 状态）。
         self._loop_factory = loop_factory
         # 工具分发器缺省为 None: 没接工具时循环产出 ToolRequestAction 会得到一条明确的
@@ -172,6 +176,13 @@ class AgentTurnService:
                 ),
                 # 本轮读一次. 工具在本轮改了 FORGE.md, 新内容从下一轮生效 (§6.2).
                 project_instructions=self._instructions.read(facts.workspace_roots),
+                # 同样每轮现读: 待办的全部价值就在于它反映**此刻**的执行状态, 而模型
+                # 上一轮刚用 todo.set_status 打过勾.
+                planning=(
+                    ActivePlanning()
+                    if self._planning is None
+                    else self._planning.load()
+                ),
             )
         )
 

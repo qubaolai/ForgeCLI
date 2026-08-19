@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from forgecli.application.planning import ActivePlanning
 from forgecli.application.prompt.project_instruction_reader import ProjectInstruction
 from forgecli.application.prompt.runtime_facts import RuntimeFacts
 from forgecli.domain.agent.prompt import PromptBlock, PromptBlockId, PromptSnapshot
@@ -33,7 +34,7 @@ __all__ = [
     "ToolBrief",
 ]
 
-MAIN_AGENT_PROMPT_VERSION = 2
+MAIN_AGENT_PROMPT_VERSION = 3
 
 _SHELL_TOOL = "shell.run"
 _BEGIN_SENTINEL = "--- BEGIN WORKSPACE INSTRUCTIONS ---"
@@ -133,6 +134,8 @@ class PromptBuildInput:
     facts: RuntimeFacts
     available_tools: tuple[ToolBrief, ...] = ()
     project_instructions: tuple[ProjectInstruction, ...] = field(default_factory=tuple)
+    # 当前活动的计划与待办 (ADR-0022 §5.4). 空的是常态, 不是错误.
+    planning: ActivePlanning = field(default_factory=ActivePlanning)
 
 
 class SystemPromptBuilder:
@@ -149,6 +152,13 @@ class SystemPromptBuilder:
         if instructions is not None:
             blocks.append(instructions)
         blocks.append(_runtime_facts(build_input))
+        # 计划与待办排在运行事实之后, 与它同属易变尾部. 顺序固定, 不因某块缺席而改变.
+        plan_state = _plan_state(build_input)
+        if plan_state is not None:
+            blocks.append(plan_state)
+        todo_state = _todo_state(build_input)
+        if todo_state is not None:
+            blocks.append(todo_state)
         return PromptSnapshot(version=MAIN_AGENT_PROMPT_VERSION, blocks=tuple(blocks))
 
 
@@ -246,6 +256,51 @@ def _runtime_facts(build_input: PromptBuildInput) -> PromptBlock:
         heading="当前运行事实",
         body="\n".join(lines),
         # 每轮都可能变: 按一次 Tab 就换档. 它进稳定前缀就等于前缀不再稳定.
+        cacheable=False,
+    )
+
+
+def _plan_state(build_input: PromptBuildInput) -> PromptBlock | None:
+    """只放一行引用, 不放正文.
+
+    计划正文可能很长而模型只在部分轮次需要它 —— ADR-0018 §4.4 的两条判据各命中一条,
+    所以它走工具 (`plan.read`) 而不是每轮重述一遍.
+    """
+    plan = build_input.planning.plan
+    if plan is None:
+        return None
+    return PromptBlock(
+        block_id=PromptBlockId.PLAN_STATE,
+        heading="当前计划",
+        body=(
+            f"plan_id: {plan.plan_id}\n"
+            f"标题: {plan.title}\n"
+            f"状态: {plan.status.value}\n"
+            f"步骤: {plan.step_count} 条\n"
+            "正文没有放在这里. 需要看的时候用 plan.read 取."
+        ),
+        cacheable=False,
+    )
+
+
+def _todo_state(build_input: PromptBuildInput) -> PromptBlock | None:
+    """待办正文每轮都给.
+
+    它小, 而且**每轮都要对齐** —— "当前该做哪一步"这件事只存在于对话历史里的话, 越往后
+    越容易被稀释, 而那正是执行漂移的根因.
+    """
+    todo = build_input.planning.todo
+    if todo is None or not todo.items:
+        return None
+    return PromptBlock(
+        block_id=PromptBlockId.TODO_STATE,
+        heading="当前待办",
+        body=(
+            f"{todo.render()}\n\n"
+            f"进度 {todo.done_count}/{todo.total_count}. "
+            "这份清单与实际不符时, 用 todo.write 重写整表; "
+            "只是推进状态用 todo.set_status."
+        ),
         cacheable=False,
     )
 
