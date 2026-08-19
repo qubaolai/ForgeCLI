@@ -80,9 +80,9 @@ def test_the_builtin_profile_is_pinned_by_fingerprint() -> None:
         ),
     )
 
-    assert MAIN_AGENT_PROMPT_VERSION == 1
+    assert MAIN_AGENT_PROMPT_VERSION == 2
     assert snapshot.fingerprint == (
-        "sha256:de6746ff9f0257f11147745e3bc570c37c2d693d261a09b442b80193f87016d3"
+        "sha256:57460128973911f68a2a631898be92313f3cd40d118db9612a0f7a277f62c6fd"
     )
 
 
@@ -90,6 +90,7 @@ def test_block_order_is_fixed() -> None:
     assert _ids(_build()) == [
         PromptBlockId.CORE_IDENTITY,
         PromptBlockId.TOOL_CONTRACT,
+        PromptBlockId.ANSWER_CONTRACT,
         PromptBlockId.RUNTIME_FACTS,
     ]
 
@@ -104,6 +105,7 @@ def test_project_instructions_sit_before_the_cache_breakpoint() -> None:
     assert _ids(snapshot) == [
         PromptBlockId.CORE_IDENTITY,
         PromptBlockId.TOOL_CONTRACT,
+        PromptBlockId.ANSWER_CONTRACT,
         PromptBlockId.WORKSPACE_INSTRUCTIONS,
         PromptBlockId.RUNTIME_FACTS,
     ]
@@ -339,3 +341,99 @@ def test_runtime_facts_reject_an_empty_root_list() -> None:
         RuntimeFacts.from_profile(
             PROFILE, working_directory="/ws", workspace_roots=(), git_repository=False
         )
+
+
+# ---- 工具表的可读性 ----
+
+
+def test_the_tool_table_separates_name_from_title() -> None:
+    """名字与标题之间必须有分隔符.
+
+    分隔符曾经在一次重构里丢过, 渲染出来的是 `读取文件fs.read_file`. 这类缺陷不会让任何
+    测试失败 —— 提示词照常渲染, 指纹照常稳定, 只是模型读到的工具表是一坨. 所以只能这样
+    正面钉住.
+    """
+    body = _body(_build(), PromptBlockId.TOOL_CONTRACT)
+
+    assert "  fs.read_file: 读取文件" in body
+    assert "读取文件fs.read_file" not in body
+
+
+def test_the_tool_name_comes_first() -> None:
+    """模型要用名字发起调用, 名字左对齐才好扫."""
+    body = _body(_build(), PromptBlockId.TOOL_CONTRACT)
+    line = next(row for row in body.splitlines() if "fs.write_patch" in row)
+
+    assert line.strip().startswith("fs.write_patch")
+
+
+# ---- 检索顺序 ----
+
+
+def test_the_search_strategy_is_stated() -> None:
+    """47 次工具调用里 22 次在逐层列目录, 22 次在反复 grep, 读文件只有 3 次.
+
+    工具能力早就够了 (递归 glob 一直可用), 缺的是"先检索定位再读文件"这条顺序.
+    """
+    body = _body(_build(), PromptBlockId.TOOL_CONTRACT)
+
+    assert "检索顺序" in body
+    assert "不要逐层列目录" in body
+
+
+def test_the_search_strategy_names_no_tool() -> None:
+    """按动作写, 不按工具名写.
+
+    哪个工具承担哪个动作由上面那张表回答. 在策略里再点一次名, 就有了第二份会漂的真相 ——
+    删掉一个工具时表会跟着变, 而这段散文不会.
+    """
+    body = _body(_build(), PromptBlockId.TOOL_CONTRACT)
+    strategy = body[body.index("## 检索顺序") :]
+
+    for tool in _TOOLS:
+        assert tool.name not in strategy
+
+
+def test_no_search_strategy_without_a_tool_catalog() -> None:
+    """一个工具都没有的时候谈"先检索再读文件"是空话."""
+    body = _body(_build(available_tools=()), PromptBlockId.TOOL_CONTRACT)
+
+    assert "检索顺序" not in body
+
+
+# ---- 回答契约 ----
+
+
+def test_the_answer_contract_separates_read_from_inferred() -> None:
+    """同一次任务的最终答案里出现了从未读到过的配置路径.
+
+    而全程 8 次检索真正证明的事实是"本地配置里没有这个键", 那条最有价值的结论一个字
+    没提. 模型不是不知道, 是没有任何约束要求它区分"我读到的"与"我推断的".
+    """
+    body = _body(_build(), PromptBlockId.ANSWER_CONTRACT)
+
+    assert "推断" in body
+    assert "没有读过的文件" in body
+
+
+def test_the_answer_contract_makes_an_empty_search_a_conclusion() -> None:
+    body = _body(_build(), PromptBlockId.ANSWER_CONTRACT)
+
+    assert "检索没有结果本身就是结论" in body
+
+
+def test_the_answer_contract_is_always_present() -> None:
+    """它与工具目录无关: 没有工具的一轮同样要交付一个诚实的回答."""
+    assert PromptBlockId.ANSWER_CONTRACT in _ids(_build(available_tools=()))
+
+
+def test_the_answer_contract_stays_in_the_cacheable_prefix() -> None:
+    """它每轮都一样, 落进易变尾部等于白白让缓存前缀短一截."""
+    snapshot = _build()
+    block = next(
+        item
+        for item in snapshot.blocks
+        if item.block_id is PromptBlockId.ANSWER_CONTRACT
+    )
+
+    assert block.cacheable is True

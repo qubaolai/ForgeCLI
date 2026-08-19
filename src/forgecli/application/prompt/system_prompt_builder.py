@@ -33,7 +33,7 @@ __all__ = [
     "ToolBrief",
 ]
 
-MAIN_AGENT_PROMPT_VERSION = 1
+MAIN_AGENT_PROMPT_VERSION = 2
 
 _SHELL_TOOL = "shell.run"
 _BEGIN_SENTINEL = "--- BEGIN WORKSPACE INSTRUCTIONS ---"
@@ -58,6 +58,33 @@ _TOOL_CONTRACT = """\
 _SHELL_BOUNDARY = """\
 shell.run 用于运行测试, 构建, 包管理, 以及上表未覆盖的命令. 用它做读取与搜索, 会把一次
 只读操作变成需要人类确认的 shell 调用."""
+
+# 检索顺序. 这里**按动作写, 不按工具名写** —— 哪个工具承担哪个动作由上面那张表回答,
+# 在这里再点一次名就是第二份会漂的真相.
+#
+# 促成这段的是一次真实任务: 47 次工具调用里 22 次在逐层列目录 (13 次只为走完一条 Java
+# 包路径), 22 次在用 shell 反复 grep 同一个词, 读文件只有 3 次. 模型把列目录当 cd 用,
+# 而它要找的东西一次递归检索就能定位.
+_SEARCH_STRATEGY = """\
+在陌生代码库里定位东西, 按这个顺序:
+
+1. 先用关键词检索定位, 不要逐层列目录往下走.
+2. 需要看目录全貌时用一次递归 glob 拿到, 不要一层一层地列.
+3. 命中之后直接读那几个关键文件, 而不是继续换写法检索.
+4. 读到定义之后, 搜的应该是它的**引用**, 不是同一个词再搜一遍.
+5. 同一个关键词连续两次检索都没有结果, 这本身就是结论, 停下来并如实说出来."""
+
+# 收尾契约. 工具契约管到"执行", 这一段管"交付" —— 两处的失败方式完全不同.
+#
+# 同一次任务的最终答案里出现了从未读到过的配置路径, 而全程 8 次检索真正证明的事实是
+# "本地配置里没有这个键", 那条最有价值的结论一个字没提. 模型不是不知道, 是没有任何
+# 约束要求它区分"我读到的"与"我推断的".
+_ANSWER_CONTRACT = """\
+- 只陈述工具结果证实过的事实. 推断可以给, 但要明说那是推断, 不与读到的内容混排.
+- 没有读过的文件, 不描述它的内容.
+- 检索没有结果本身就是结论, 要如实报告, 不用推测出来的例子填补空白.
+- 举例说明时标明那是示例, 不要让它看起来像是这个项目里已有的配置或代码.
+- 结论先行, 不铺垫. 不用 emoji 小标题, 标点用半角."""
 
 # 能力的人类可读名. 这是全文件唯一一处枚举硬编码, 它值得: 能力词汇是闭集, 改动要走 ADR
 # 并升 CAPABILITY_VOCABULARY_VERSION (ADR-0004 §5), 因此这张表不会悄悄漂. 而按模式各写
@@ -115,6 +142,7 @@ class SystemPromptBuilder:
         blocks: list[PromptBlock] = [
             _core_identity(),
             _tool_contract(build_input),
+            _answer_contract(),
         ]
         # 条件性块: 没有项目指令就整块不渲染, 不留一个写着 "(无)" 的空标题.
         instructions = _workspace_instructions(build_input)
@@ -152,10 +180,25 @@ def _tool_contract(build_input: PromptBuildInput) -> PromptBlock:
         sections.append(f"## 工具选择\n\n{lead}\n\n{table}")
     if has_shell:
         sections.append(_SHELL_BOUNDARY)
+    if table:
+        # 检索顺序跟着目录走: 一个工具都没有的时候谈"先检索再读文件"是空话.
+        sections.append(f"## 检索顺序\n\n{_SEARCH_STRATEGY}")
     return PromptBlock(
         block_id=PromptBlockId.TOOL_CONTRACT,
         heading="工具与交互契约",
         body="\n\n".join(sections),
+        cacheable=True,
+    )
+
+
+def _answer_contract() -> PromptBlock:
+    """怎么交付一个回答. 与工具契约分块而不是并进去: 两者的适用时机不同, 一个管每次
+    工具调用, 一个只管最后那段文字, 混在一起会让"什么时候该守哪条"变模糊.
+    """
+    return PromptBlock(
+        block_id=PromptBlockId.ANSWER_CONTRACT,
+        heading="回答契约",
+        body=_ANSWER_CONTRACT,
         cacheable=True,
     )
 
@@ -222,7 +265,16 @@ def _capability_names(allowed: frozenset[Capability]) -> str:
 
 
 def _tool_table(tools: tuple[ToolBrief, ...]) -> str:
-    return "\n".join(f"  {tool.title}{tool.name}" for tool in tools)
+    """一行一个工具, 名字在前.
+
+    名字在前是因为模型要用它发起调用; 而且左对齐的一列名字比左对齐的一列中文标题更好扫.
+    与"当前运行事实"那一块的 `name: value` 同一种形状, 不另立一种.
+
+    分隔符曾经在一次重构里丢过, 于是渲染出来的是 `读取文件fs.read_file` 这样粘在一起的
+    一行. 它不会让任何测试失败 —— 提示词照常渲染, 指纹照常稳定, 只是模型读到的工具表
+    是一坨. 这正是提示词类缺陷的典型形态: 没有任何一层会说话.
+    """
+    return "\n".join(f"  {tool.name}: {tool.title}" for tool in tools)
 
 
 def _wrap_instruction(instruction: ProjectInstruction) -> str:

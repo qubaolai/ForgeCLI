@@ -31,6 +31,7 @@ class PromptBlockId(Enum):
 
     CORE_IDENTITY = "core_identity"
     TOOL_CONTRACT = "tool_contract"
+    ANSWER_CONTRACT = "answer_contract"
     WORKSPACE_INSTRUCTIONS = "workspace_instructions"
     RUNTIME_FACTS = "runtime_facts"
 
