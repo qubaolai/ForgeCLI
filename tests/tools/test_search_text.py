@@ -117,3 +117,62 @@ def test_a_pattern_matching_nothing_blames_the_pattern(workspace: Path) -> None:
     output = _run(workspace, query="login", pattern="**/*.rs")
     assert "没有文件被扫描" in output
     assert "不是搜索词" in output
+
+
+# ---- 生成目录的过滤 ----
+#
+# 与 fs.list_files 共用 base.filter_globbed. 两份实现一定会走偏, 而走偏的后果是同一个
+# 仓库在两个工具眼里有不同的形状.
+
+
+@pytest.fixture
+def workspace_with_build_output(workspace: Path) -> Path:
+    """一个 Maven 项目的形状: 源码在 src, 编译产物在 target."""
+    generated = workspace / "target" / "classes"
+    generated.mkdir(parents=True)
+    (generated / "Auth.java").write_text("def login(user):", encoding="utf-8")
+    (workspace / "node_modules").mkdir()
+    (workspace / "node_modules" / "x.js").write_text(
+        "def login(user):", encoding="utf-8"
+    )
+    return workspace
+
+
+def test_generated_directories_are_skipped(workspace_with_build_output: Path) -> None:
+    """target/ 与 node_modules/ 里的同名命中不该出现.
+
+    这不只是噪音问题: 扫描有 2000 个文件的上限, 一个 Maven 项目的 target/ 就能把额度
+    吃光, 于是"这个词不在代码里"这个结论建立在压根没扫到源码上 —— 一个假的空结果比
+    没有结果危险得多.
+    """
+    output = _run(workspace_with_build_output, query="def login")
+    assert "auth.py" in output
+    assert "target" not in output
+    assert "node_modules" not in output
+
+
+def test_include_ignored_brings_them_back(workspace_with_build_output: Path) -> None:
+    output = _run(workspace_with_build_output, query="def login", include_ignored=True)
+    assert "target" in output
+    assert "node_modules" in output
+
+
+def test_pointing_path_at_a_generated_directory_still_works(
+    workspace_with_build_output: Path,
+) -> None:
+    """段的起点是 path 本身, 所以显式指到 target/ 里仍然搜得到.
+
+    这是 include_ignored 之外的另一条逃生通道: 想搜编译产物的人往往知道自己在搜哪儿.
+    """
+    output = _run(
+        workspace_with_build_output,
+        query="def login",
+        path=str(workspace_with_build_output / "target"),
+    )
+    assert "Auth.java" in output
+
+
+def test_the_empty_message_mentions_the_filter(workspace: Path) -> None:
+    """空结果要说清"可能是被过滤掉了", 否则模型只会换个 pattern 再搜一次."""
+    output = _run(workspace, query="def login", pattern="**/*.kt")
+    assert "include_ignored" in output

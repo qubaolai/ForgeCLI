@@ -104,3 +104,36 @@ def test_the_filtered_paths_never_reach_the_plan_targets(workspace: Path) -> Non
     )
     assert isinstance(plan, ToolPlan)
     assert not [path for path in plan.effects.read_paths if "node_modules" in path]
+
+
+# ---- description 承诺的两条写法 ----
+#
+# description 是模型唯一能看到的工具说明. 它写下的每个例子都是承诺, 承诺失效时没有任何
+# 东西会报错 —— 提示词照常渲染, 模型照常按它去调, 只是拿不到东西, 然后退回 shell.run.
+
+
+def test_the_default_pattern_lists_only_one_level(workspace: Path) -> None:
+    """默认 '*' 只列当前一层. 这条要钉住, 因为它是逐层遍历的成因.
+
+    与 search.text 相反 (那个默认 '**/*' 递归), 两个默认值不一致本身就是陷阱, 所以
+    两边的 description 都必须写明自己的默认值.
+    """
+    entries = _entries(workspace, pattern="*")
+    assert "a.py" in entries
+    assert "src" in entries
+    assert "src/b.py" not in entries
+
+
+def test_a_suffix_glob_reaches_the_whole_tree(workspace: Path) -> None:
+    """description 里 '**/*.java' 那个例子的等价形式. 一次调用拿到整棵树的同类文件."""
+    entries = _entries(workspace, pattern="**/*.py")
+    assert entries == ["a.py", "src/b.py", "src/deep/c.py", "src/deep/deeper/d.py"]
+
+
+def test_a_name_glob_finds_files_by_name(workspace: Path) -> None:
+    """description 里 '**/application*.yml' 那个例子的等价形式.
+
+    这是全仓找文件名的唯一一条专用工具通道; 它不成立的话, 模型只剩 shell.run 的 find.
+    """
+    entries = _entries(workspace, pattern="**/d*.py")
+    assert entries == ["src/deep/deeper/d.py"]

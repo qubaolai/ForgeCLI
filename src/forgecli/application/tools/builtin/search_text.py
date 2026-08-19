@@ -14,6 +14,7 @@ from types import MappingProxyType
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.builtin.base import (
     emit_text,
+    filter_globbed,
     joined,
     read_capability,
     resolve_target,
@@ -45,12 +46,16 @@ _MAX_FILE_BYTES = 1024 * 1024
 
 _SPEC = ToolSpec(
     name="search.text",
-    version="2",
+    version="3",
     title="搜索文本",
     description=(
-        "在工作区文件中搜索, 按文件分组返回 行号:内容. "
+        "在文件内容里搜索, 按文件分组返回 行号:内容. "
+        "默认递归扫描 path 下的整棵树 (pattern 默认 '**/*'), 不需要先列目录. "
+        "pattern 是文件名 glob, 用来把扫描范围缩窄, 例如 pattern='**/*.java'. "
         "默认按子串匹配, 传 regex=true 时 query 作为 Python 正则. "
-        "context_lines 给出每个命中的前后文行数."
+        "context_lines 给出每个命中的前后文行数. "
+        "默认跳过 .git, node_modules, target 一类生成目录, "
+        "需要它们时传 include_ignored=true."
     ),
     input_schema={
         "type": "object",
@@ -60,6 +65,7 @@ _SPEC = ToolSpec(
             "pattern": {"type": "string"},
             "regex": {"type": "boolean"},
             "context_lines": {"type": "integer", "minimum": 0, "maximum": 10},
+            "include_ignored": {"type": "boolean"},
         },
         "required": ["query"],
         "additionalProperties": False,
@@ -114,7 +120,9 @@ def _empty_message(plan: ToolPlan, scanned: int) -> str:
     if scanned == 0:
         return (
             f"没有文件被扫描: {root} 下没有匹配 {pattern} 的文件. "
-            "问题出在 pattern 或 path 上, 不是搜索词."
+            "问题出在 pattern 或 path 上, 不是搜索词. "
+            "注意 .git, node_modules, target 一类生成目录默认被跳过, "
+            "需要它们时传 include_ignored=true."
         )
     return (
         f"在 {root} 下扫描了 {scanned} 个文件 (pattern={pattern}), "
@@ -167,9 +175,14 @@ class SearchTextTool(Tool):
             return target
         _, facts = target
         pattern = str(request.arguments.get("pattern", "**/*"))
-        files = context.filesystem.expand_glob(pattern, root=facts.realpath)[
-            :_MAX_FILES
-        ]
+        include_ignored = bool(request.arguments.get("include_ignored", False))
+        # 先过滤再截断, 顺序不能换: 反过来的话 target/ 下的几千个 class 文件会先把
+        # _MAX_FILES 的额度吃光, 于是"这个词不在代码里"这个结论建立在没扫到源码上.
+        files = filter_globbed(
+            context.filesystem.expand_glob(pattern, root=facts.realpath),
+            root=facts.realpath,
+            include_ignored=include_ignored,
+        )[:_MAX_FILES]
         scope = context.scope_of_all((facts.realpath, *files))
         return ToolPlan(
             plan_id=request.invocation_id,
@@ -182,6 +195,7 @@ class SearchTextTool(Tool):
                     "pattern": pattern,
                     "regex": use_regex,
                     "context_lines": _context_lines(request.arguments),
+                    "include_ignored": include_ignored,
                     "files": list(files),
                 }
             ),

@@ -21,7 +21,9 @@ from forgecli.domain.tool.spec import ToolSpec
 from forgecli.shared.json_schema import validate_json_schema
 
 __all__ = [
+    "IGNORED_SEGMENTS",
     "emit_text",
+    "filter_globbed",
     "new_plan_id",
     "read_capability",
     "resolve_executable",
@@ -32,6 +34,68 @@ __all__ = [
 
 def new_plan_id() -> str:
     return f"plan_{uuid.uuid4().hex[:12]}"
+
+
+# 默认忽略的目录段. 它们的共同点是: 内容由工具生成, 数量大, 且模型几乎从不需要读.
+#
+# 不过滤的话, 一次 `**/*` 就能吐出几万条 node_modules 路径, 把上下文冲光 —— 而这正是
+# "反复调用 fs.list_files" 的一个诱因: 模型看到一堆噪音, 只好换个 pattern 再列一次.
+# 对 search.text 更要命: 它有 2000 个文件的扫描上限, 一个 Maven 项目的 target/ 就能
+# 把额度吃光, 于是"这个词不在代码里"这个结论是假的.
+IGNORED_SEGMENTS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".idea",
+        ".vscode",
+        "dist",
+        "build",
+        ".DS_Store",
+        ".tox",
+        ".next",
+        "target",
+    }
+)
+
+
+def filter_globbed(
+    matches: Sequence[str],
+    *,
+    root: str,
+    depth: int | None = None,
+    include_ignored: bool = False,
+) -> tuple[str, ...]:
+    """按深度与忽略规则收窄 glob 展开结果.
+
+    过滤放在 prepare 而不是 perform: 目标集合要在裁决之前就封闭, 被过滤掉的路径根本
+    不该出现在 read_paths 里 —— 否则安全侧会为一堆我们压根不打算读的文件做判断.
+
+    列目录与搜索共用同一份规则. 两份实现一定会走偏, 而走偏的后果是同一个仓库在两个
+    工具眼里有不同的形状, 模型据此得出的结论互相矛盾.
+
+    判据是**路径段**而不是子串: `target` 作为段要滤掉, 而 `src/targeting.py` 不该被
+    误伤. 段的起点是 root, 所以把 path 直接指到 `<repo>/target` 仍然搜得到 —— 这是
+    include_ignored 之外的另一条逃生通道.
+    """
+    kept: list[str] = []
+    prefix = root.rstrip("/") + "/"
+    for path in matches:
+        relative = path[len(prefix) :] if path.startswith(prefix) else path
+        segments = relative.split("/")
+        if depth is not None and len(segments) > depth:
+            continue
+        if not include_ignored and any(part in IGNORED_SEGMENTS for part in segments):
+            continue
+        kept.append(path)
+    return tuple(kept)
 
 
 def validate_arguments(

@@ -14,6 +14,7 @@ from types import MappingProxyType
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.builtin.base import (
     emit_text,
+    filter_globbed,
     joined,
     read_capability,
     resolve_target,
@@ -44,9 +45,17 @@ _MAX_ENTRIES = 2000
 
 _SPEC = ToolSpec(
     name="fs.list_files",
-    version="1",
+    version="2",
     title="列出文件",
-    description="按 glob 列出目录下的文件. pattern 默认 '*', 相对给定目录展开.",
+    description=(
+        "列出目录下的文件与子目录. pattern 是 glob, 相对给定目录展开. "
+        "默认 '*' 只列当前一层; 加 '**/' 前缀递归整棵树, "
+        "例如 pattern='**/*.java' 列出所有 Java 文件, "
+        "pattern='**/application*.yml' 按文件名找文件. "
+        "depth 可再限制层数. "
+        "默认跳过 .git, node_modules, target 一类生成目录, "
+        "需要它们时传 include_ignored=true."
+    ),
     input_schema={
         "type": "object",
         "properties": {
@@ -62,54 +71,6 @@ _SPEC = ToolSpec(
     target_declaration_ability=TargetDeclarationAbility.EXPANDABLE,
     default_timeout_seconds=15.0,
 )
-
-
-# 默认忽略的目录段. 它们的共同点是: 内容由工具生成, 数量大, 且模型几乎从不需要读.
-# 不过滤的话, 一次 `**/*` 就能吐出几万条 node_modules 路径, 把上下文冲光 —— 而这正是
-# "反复调用 fs.list_files" 的一个诱因: 模型看到一堆噪音, 只好换个 pattern 再列一次.
-_IGNORED_SEGMENTS = frozenset(
-    {
-        ".git",
-        ".hg",
-        ".svn",
-        ".venv",
-        "venv",
-        "node_modules",
-        "__pycache__",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".idea",
-        ".vscode",
-        "dist",
-        "build",
-        ".DS_Store",
-        ".tox",
-        ".next",
-        "target",
-    }
-)
-
-
-def _filtered(
-    matches: tuple[str, ...], root: str, depth: int | None, include_ignored: bool
-) -> tuple[str, ...]:
-    """按深度与忽略规则收窄展开结果.
-
-    过滤放在 prepare 而不是 perform: 目标集合要在裁决之前就封闭, 被过滤掉的路径根本
-    不该出现在 read_paths 里 —— 否则安全侧会为一堆我们压根不打算读的文件做判断.
-    """
-    kept: list[str] = []
-    prefix = root.rstrip("/") + "/"
-    for path in matches:
-        relative = path[len(prefix) :] if path.startswith(prefix) else path
-        segments = relative.split("/")
-        if depth is not None and len(segments) > depth:
-            continue
-        if not include_ignored and any(part in _IGNORED_SEGMENTS for part in segments):
-            continue
-        kept.append(path)
-    return tuple(kept)
 
 
 def _empty_message(root: str, pattern: str) -> str:
@@ -154,11 +115,11 @@ class ListFilesTool(Tool):
         raw_depth = request.arguments.get("depth")
         depth = raw_depth if isinstance(raw_depth, int) and raw_depth > 0 else None
         include_ignored = bool(request.arguments.get("include_ignored", False))
-        matches = _filtered(
+        matches = filter_globbed(
             context.filesystem.expand_glob(pattern, root=facts.realpath),
-            facts.realpath,
-            depth,
-            include_ignored,
+            root=facts.realpath,
+            depth=depth,
+            include_ignored=include_ignored,
         )[:_MAX_ENTRIES]
         scope = context.scope_of_all((facts.realpath, *matches))
         return ToolPlan(
