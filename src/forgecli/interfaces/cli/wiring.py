@@ -30,6 +30,10 @@ from forgecli.interfaces.cli.commands.exit_command import ExitCommand
 from forgecli.interfaces.cli.commands.help_command import HelpCommand
 from forgecli.interfaces.cli.commands.mode_command import ModeCommand, ModeSelectCommand
 from forgecli.interfaces.cli.commands.model_command import ModelsCommand
+from forgecli.interfaces.cli.commands.planning_command import (
+    PlanCommand,
+    TodoCommand,
+)
 from forgecli.interfaces.cli.commands.recovery_command import (
     CheckpointsCommand,
     RecoveryStatusCommand,
@@ -172,6 +176,18 @@ def build_registry(
                     "tools",
                     "查看当前模式下模型可见的工具与能力上界",
                     handler=ToolsCommand(tools.registry, session_service, output),
+                ),
+                # /plan 裸命令仍然是切档 (mode_specs 里那条). 这里挂的是它的子命令,
+                # 由 CommandRegistry 按参数分派.
+                CommandSpec(
+                    "plan-doc",
+                    "查看与切换计划: /plan show | list | use <id>",
+                    handler=PlanCommand(tools.planning, output),
+                ),
+                CommandSpec(
+                    "todo",
+                    "查看当前待办清单",
+                    handler=TodoCommand(tools.planning, output),
                 ),
                 CommandSpec(
                     "rules",

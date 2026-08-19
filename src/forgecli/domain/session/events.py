@@ -43,6 +43,18 @@ class EventType(Enum):
     # -- 目录授权 (ADR-0014 §7) --
     DIR_GRANT_CHANGED = "dir_grant_changed"
 
+    # -- 计划与待办 (ADR-0022 §6) --
+    #
+    # 这三条是**审计, 不是重建依据**: 计划与待办的内容真相源是 plans/ 下的文件, payload
+    # 只记摘要与引用. 复制一份正文进事件流就有了两个会漂移的副本, 而事件流是 append-only
+    # 的, 漂移之后无法修正.
+    #
+    # 同一 plan_id 的新 revision 也写 PLAN_CREATED 而不是 PLAN_UPDATED: PlanDocument 是
+    # frozen 的, 每个 revision 都是一份新文档.
+    PLAN_CREATED = "plan_created"
+    PLAN_REVIEWED = "plan_reviewed"
+    TODO_UPDATED = "todo_updated"
+
 
 @dataclass(frozen=True)
 class SessionEvent:

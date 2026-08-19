@@ -112,6 +112,20 @@ class PlanningService:
         todo = self._store.load_todo()
         return ActivePlanning(plan=plan, todo=todo, diagnostics=tuple(diagnostics))
 
+    def load_index(self) -> PlanIndex:
+        """给 /plan list 用. 索引里只有摘要, 正文各在各的文件里."""
+        return self._store.load_index()
+
+    def set_active_plan(self, plan_id: str) -> bool:
+        """切换活动计划. 计划不存在时返回 False —— 指针指向一份读不到的计划, 下次会话
+        开头就会打一条"读不到"的诊断, 而用户根本不知道自己指错了."""
+        if self._store.load_plan(plan_id) is None:
+            return False
+        self._store.save_index(
+            replace(self._store.load_index(), active_plan_id=plan_id)
+        )
+        return True
+
     # ---- 计划 ----
 
     def read_plan(self, plan_id: str = "") -> str | None:

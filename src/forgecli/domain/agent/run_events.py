@@ -29,6 +29,8 @@ __all__ = [
     "ApprovalResolvedPayload",
     "DecisionSummaryPayload",
     "ModelCompletedPayload",
+    "PlanProposedPayload",
+    "TodoUpdatedPayload",
     "ModelFailedPayload",
     "ModelStartedPayload",
     "ModelUsagePayload",
@@ -66,6 +68,10 @@ class AgentRunEventKind(Enum):
     MODEL_COMPLETED = "model_completed"
     MODEL_USAGE = "model_usage"
     MODEL_FAILED = "model_failed"
+
+    # -- 计划与待办 (ADR-0022 §7) --
+    PLAN_PROPOSED = "plan_proposed"
+    TODO_UPDATED = "todo_updated"
 
     # -- 工具, 安全与审批 (§4.3) --
     TOOL_QUEUED = "tool_queued"
@@ -198,6 +204,36 @@ class ModelFailedPayload(RunEventPayload):
     error_kind: str
     message: str
     retryable: bool = False
+
+
+# ---- 计划与待办 ----
+
+
+@dataclass(frozen=True)
+class PlanProposedPayload(RunEventPayload):
+    """模型提交了一份计划.
+
+    只带摘要: 正文由 PlanReviewPrompt 现取现打. 让事件也带一份正文, 终端就有两个来源,
+    而它们迟早会不一致.
+    """
+
+    plan_id: str
+    title: str
+    revision: int = 1
+    step_count: int = 0
+
+
+@dataclass(frozen=True)
+class TodoUpdatedPayload(RunEventPayload):
+    """待办被改了.
+
+    带 current 是因为终端要显示的正是"现在该做哪一步" —— 那一行比 3/5 这个比例更有用.
+    """
+
+    todo_id: str
+    done: int = 0
+    total: int = 0
+    current: str = ""
 
 
 # ---- 工具, 安全与审批 ----

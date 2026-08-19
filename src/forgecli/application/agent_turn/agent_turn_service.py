@@ -23,6 +23,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from forgecli.application.agent_loop import AgentLoop
+from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
 from forgecli.application.planning import ActivePlanning, PlanningService
 from forgecli.application.prompt.project_instruction_reader import (
@@ -44,6 +45,12 @@ from forgecli.domain.agent.actions import (
     ToolRequestAction,
 )
 from forgecli.domain.agent.prompt import PromptSnapshot
+from forgecli.domain.agent.run_events import (
+    AgentRunEventKind,
+    PlanProposedPayload,
+    RunEventPayload,
+    TodoUpdatedPayload,
+)
 from forgecli.domain.agent.state import ContextPackage, LoopInput
 from forgecli.domain.agent.stop import LoopStopReason
 from forgecli.domain.conversation.message import ChatMessage, TextBlock
@@ -97,6 +104,7 @@ class AgentTurnService:
         runtime_facts: Callable[[], RuntimeFacts],
         instructions: ProjectInstructionReader,
         planning: PlanningService | None = None,
+        run_bus: AgentRunEventBus | None = None,
         tools: ToolDispatcher | None = None,
         barrier: ManualMutationBarrier | None = None,
         max_steps: int = _DEFAULT_MAX_LOOP_STEPS,
@@ -108,6 +116,9 @@ class AgentTurnService:
         self._instructions = instructions
         # 计划与待办缺省为 None: 没接时两个提示词块整块不渲染, 链路照常工作.
         self._planning = planning
+        # 计划与待办的运行事件发在这里 (ADR-0022 §7): 服务独家持有 turn_id 且是唯一的
+        # 驱动方. 换成协调器发, 就得让协调器认识"plan.write 这个名字意味着要发事件".
+        self._run_bus = run_bus
         # 每 turn 经工厂取新 loop 实例（BuiltinAgentLoop 持有 per-turn 状态）。
         self._loop_factory = loop_factory
         # 工具分发器缺省为 None: 没接工具时循环产出 ToolRequestAction 会得到一条明确的
@@ -262,7 +273,9 @@ class AgentTurnService:
                     )
                 )
             elif isinstance(action, ToolRequestAction):
-                step = loop.observe(self._run_tool(action, text, mode, turn_id))
+                step = loop.observe(
+                    self._run_tool_and_watch_planning(action, text, mode, turn_id)
+                )
             elif action is None:
                 # 纯反思步：无动作可执行，直接回喂空观察继续。
                 step = loop.observe(
@@ -280,6 +293,115 @@ class AgentTurnService:
             status=TurnStatus.FAILED,
             usage_drafts=_drafts_of(loop),
         )
+
+    def _run_tool_and_watch_planning(
+        self,
+        action: ToolRequestAction,
+        user_text: str,
+        mode: SessionMode,
+        turn_id: str,
+    ) -> LoopObservation:
+        """跑一次工具, 顺带比对计划与待办的 revision, 变了就发事件.
+
+        **按 revision 比对, 不按工具名判断** (ADR-0022 §7). 换成"看到 plan.write 就发
+        PLAN_CREATED"的话, 这一层就认识了工具名, 而将来任何一条别的路径改了计划 (斜杠
+        命令, 恢复, 将来的子 Agent) 都不会有事件.
+
+        服务本来就独家持有 turn_id 且是唯一的驱动方, 所以事件发在这里而不是协调器.
+        """
+        before = self._planning_revisions()
+        observation = self._run_tool(action, user_text, mode, turn_id)
+        self._emit_planning_changes(before, turn_id)
+        return observation
+
+    def _planning_revisions(
+        self,
+    ) -> tuple[tuple[str, int] | None, tuple[str, int] | None]:
+        """(计划身份, 待办身份).
+
+        身份用 (id, revision): 换一份计划和改一份计划都要算作变化.
+        """
+        if self._planning is None:
+            return (None, None)
+        active = self._planning.load()
+        plan = (
+            None if active.plan is None else (active.plan.plan_id, active.plan.revision)
+        )
+        todo = (
+            None if active.todo is None else (active.todo.todo_id, active.todo.revision)
+        )
+        return (plan, todo)
+
+    def _emit_planning_changes(
+        self,
+        before: tuple[tuple[str, int] | None, tuple[str, int] | None],
+        turn_id: str,
+    ) -> None:
+        if self._planning is None:
+            return
+        active = self._planning.load()
+        previous_plan, previous_todo = before
+        if active.plan is not None:
+            current = (active.plan.plan_id, active.plan.revision)
+            if current != previous_plan:
+                plan = active.plan
+                # payload 只记摘要与引用. 正文的真相源是 plans/ 下的文件, 复制一份进
+                # 事件流就有了两个会漂移的副本, 而事件流 append-only, 漂了改不回来.
+                self._session.record_tool_event(
+                    EventType.PLAN_CREATED,
+                    {
+                        "plan_id": plan.plan_id,
+                        "revision": plan.revision,
+                        "template_version": plan.template_version,
+                        "title": plan.title,
+                        "step_count": plan.step_count,
+                        "file": f"{plan.plan_id}/r{plan.revision}.toml",
+                    },
+                    turn_id=turn_id,
+                )
+                self._publish_run(
+                    AgentRunEventKind.PLAN_PROPOSED,
+                    PlanProposedPayload(
+                        plan_id=plan.plan_id,
+                        title=plan.title,
+                        revision=plan.revision,
+                        step_count=plan.step_count,
+                    ),
+                    turn_id,
+                )
+        if active.todo is not None:
+            current_todo = (active.todo.todo_id, active.todo.revision)
+            if current_todo != previous_todo:
+                todo = active.todo
+                self._session.record_tool_event(
+                    EventType.TODO_UPDATED,
+                    {
+                        "todo_id": todo.todo_id,
+                        "plan_id": todo.plan_id,
+                        "revision": todo.revision,
+                        "done": todo.done_count,
+                        "total": todo.total_count,
+                    },
+                    turn_id=turn_id,
+                )
+                self._publish_run(
+                    AgentRunEventKind.TODO_UPDATED,
+                    TodoUpdatedPayload(
+                        todo_id=todo.todo_id,
+                        done=todo.done_count,
+                        total=todo.total_count,
+                        current="" if todo.current is None else todo.current.title,
+                    ),
+                    turn_id,
+                )
+
+    def _publish_run(
+        self, kind: AgentRunEventKind, payload: RunEventPayload, turn_id: str
+    ) -> None:
+        """没接总线就是没人看. 展示缺席不影响状态推进 (ADR-0016 §4.3)."""
+        if self._run_bus is None:
+            return
+        self._run_bus.publish(kind, turn_id=turn_id, payload=payload)
 
     def _run_tool(
         self,

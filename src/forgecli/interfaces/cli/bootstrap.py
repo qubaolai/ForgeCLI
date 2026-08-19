@@ -289,6 +289,7 @@ def run() -> ExitCode:
             runtime_facts=_runtime_facts,
             instructions=FsProjectInstructionReader(),
             planning=tools.planning,
+            run_bus=run_bus,
             tools=tools.dispatcher,
             # 同一个屏障两处用: 人工 Shell 退出时 trip 它, agent turn 开始前查它
             # (ADR-0017 §10 / §12).
