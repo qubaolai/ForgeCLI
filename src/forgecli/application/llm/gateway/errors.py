@@ -76,6 +76,20 @@ class ModelResponseParseError(ModelGatewayError):
     """结构化输出 schema 校验失败 / 响应无法解析。"""
 
 
+class MalformedToolCallError(ModelResponseParseError):
+    """模型产出的工具调用本身不可用：参数不是完整 JSON，或混进了工具调用 markup。
+
+    与父类分家是因为**责任方不同**，而责任方决定该怎么收场：
+
+    - ModelResponseParseError 还覆盖「provider 的 HTTP 响应压根不是 JSON」这种传输层
+      故障。那种情况告诉模型「你的输出格式坏了」是在冤枉它，重发同一条请求也不会好转。
+    - 这一条是模型自己的输出坏了。它改得了，前提是有人告诉它坏在哪 —— 所以调用方可以
+      追加一条纠错消息重试，而不是直接判本轮死刑。
+
+    「不替模型补参数」和「不告诉模型它错了」是两件事，这个类型让上层能只做前一件。
+    """
+
+
 class ModelBudgetExceededError(ModelGatewayError):
     """请求前预算快照校验超限；BudgetGuard 据此拒发，不发起 provider 调用（§11.3）。"""
 

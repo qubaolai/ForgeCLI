@@ -26,6 +26,7 @@ from forgecli.application.llm.gateway.default_selection_resolver import (
     DefaultModelSelectionResolver,
 )
 from forgecli.application.llm.gateway.errors import (
+    MalformedToolCallError,
     ModelAuthError,
     ModelBadRequestError,
     ModelBudgetExceededError,
@@ -204,6 +205,7 @@ __all__ = [
     "ModelContextOverflowError",
     "ModelBadRequestError",
     "ModelProviderInternalError",
+    "MalformedToolCallError",
     "ModelResponseParseError",
     "ModelBudgetExceededError",
     "ModelCancelledError",

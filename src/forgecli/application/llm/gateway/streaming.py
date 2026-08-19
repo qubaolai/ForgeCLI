@@ -2,7 +2,7 @@
 
 chunk 值对象（ToolCallDelta / ProviderStreamChunk / ModelStreamChunk）住在
 domain.model.streaming；这里只留 StreamAccumulator——它持有可变的累积状态、解析
-JSON、在参数不完整时抛 ModelResponseParseError，是运行时机制。
+JSON、在参数不完整时抛 MalformedToolCallError，是运行时机制。
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from forgecli.application.llm.gateway.errors import ModelResponseParseError
+from forgecli.application.llm.gateway.errors import MalformedToolCallError
 from forgecli.domain.model.response import FinishReason, ModelUsage
 from forgecli.domain.model.streaming import ModelStreamChunk, ToolCallDelta
 from forgecli.domain.tool.tool_call import ToolCall
@@ -76,11 +76,11 @@ class StreamAccumulator:
             try:
                 arguments = json.loads(raw_arguments)
             except json.JSONDecodeError as exc:
-                raise ModelResponseParseError(
+                raise MalformedToolCallError(
                     f"工具调用 {pending.name or index} 的参数不是完整合法 JSON：{exc}"
                 ) from None
             if not isinstance(arguments, dict):
-                raise ModelResponseParseError(
+                raise MalformedToolCallError(
                     f"工具调用 {pending.name or index} 的参数必须是 JSON 对象"
                 )
             calls.append(

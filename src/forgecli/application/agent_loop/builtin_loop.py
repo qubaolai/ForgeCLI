@@ -36,6 +36,7 @@ from forgecli.application.agent_loop.loop import AgentLoop
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.llm.error_hints import actionable_message
 from forgecli.application.llm.gateway.errors import (
+    MalformedToolCallError,
     ModelBadRequestError,
     ModelCancelledError,
     ModelGatewayError,
@@ -117,6 +118,21 @@ _MAX_IDENTICAL_CALLS = 2
 # `find build -delete` 是两个签名不同的调用, 它放行. 这里拦的正是这种换着花样撞墙.
 _MAX_BLOCKED_CALLS = 3
 
+# 本轮累计收到多少次不可用的工具调用之后放弃.
+#
+# "不可用"指模型自己的输出坏了: 参数不是完整 JSON, 或参数里混进了工具调用 markup.
+# 见过一次真实任务里 search.text 的唯一一次调用就这么被打掉, 而模型收不到任何反馈,
+# 从此再没碰过这个工具, 全程改用 shell.run —— 一次静默的格式失败足以让一个工具从模型
+# 的选项里永久消失.
+#
+# 与另外两道闸的分工: _MAX_IDENTICAL_CALLS 拦"同一件事重复做", _MAX_BLOCKED_CALLS 拦
+# "换着花样撞安全策略", 这一道拦的是"话都说不利索". 前两道的输入是合法调用, 这一道的
+# 输入根本不是.
+#
+# 数**累计**不数连续, 理由同 _MAX_BLOCKED_CALLS: 中间夹一次成功调用就重置的话, 一个
+# 每隔一步坏一次的模型能把整轮预算烧光而永远撞不到上限.
+_MAX_MALFORMED_RESPONSES = 2
+
 # 停止原因分类 -> turn 终态事件. 可恢复暂停 (等审批 / 等输入) 也算"这一轮结束了",
 # 终端要收掉活动区; 它与失败的区别由 TurnFinishedPayload.status 表达.
 _TURN_END_KINDS: dict[StopClassification, AgentRunEventKind] = {
@@ -144,6 +160,45 @@ _BLOCKED_NOTICE = (
     "继续换写法只会继续被拒. 请说明你想达成什么, 以及被挡住的是哪一步, "
     "然后等待用户指示."
 )
+
+_MALFORMED_NOTICE = (
+    "上一次回复里的工具调用无法使用: {detail}. "
+    "工具调用只能走结构化的 tool_calls 字段, 不要把 <tool_call>, <arg_key>, "
+    "</think> 一类标记写进正文或参数值里. 请重新给出这次调用."
+)
+
+_MALFORMED_STOP_MESSAGE = "模型连续 {count} 次产出无法使用的工具调用，本轮中止。"
+
+# 模型侧工具调用 markup. 它出现在**参数值或工具名**里, 说明供应商没能把模型的工具调用
+# 解析干净, 把标记连同内容一起塞进了参数.
+#
+# 这类调用不能当正常参数派发下去: 它会一路走到安全裁决, 拿回 executable_not_found 之类
+# 的结论, 而那个结论会把模型引向"我命令写错了" —— 真正坏掉的是它的输出格式, 照着错误
+# 的结论改只会一直错下去.
+_PROTOCOL_MARKUP = (
+    "<tool_call>",
+    "</tool_call>",
+    "<arg_key>",
+    "<arg_value>",
+    "<think>",
+    "</think>",
+)
+
+
+def _protocol_markup_in(call: ToolCall) -> str | None:
+    """调用里混进的第一个 markup 标记; 干净则返回 None.
+
+    只看工具名与**字符串**参数值: 结构化的嵌套值不会承载这类泄漏, 而把整个参数字典
+    序列化去搜会把正常的代码内容误判成 markup —— 模型完全可能在写一段含 `<think>`
+    的 HTML.
+    """
+    for marker in _PROTOCOL_MARKUP:
+        if marker in call.name:
+            return marker
+        for value in call.arguments.values():
+            if isinstance(value, str) and marker in value:
+                return marker
+    return None
 
 
 def _labelled(call: ToolCall, content: str) -> str:
@@ -219,6 +274,7 @@ class BuiltinAgentLoop(AgentLoop):
         # (工具名 + 参数) -> 本轮已派发次数, 用于挡住原地打转.
         self._call_counts: dict[str, int] = {}
         self._blocked_calls = 0
+        self._malformed_responses = 0
         self._tools_closed = False
         self._model_calls = 0
         self._tool_calls = 0
@@ -300,8 +356,15 @@ class BuiltinAgentLoop(AgentLoop):
             outcome = self._call_model(request)
         except ModelCancelledError as exc:
             return self._stop(LoopStopReason.USER_CANCELLED, actionable_message(exc))
+        except MalformedToolCallError as exc:
+            # 绝不猜一个参数补上去, 那等于替模型编参数.
+            #
+            # 但"不替它补"和"不告诉它"是两件事. 只中止的话, 模型这一轮什么反馈都拿不到,
+            # 下次还会原样再来一次; 告诉它坏在哪, 它自己能改. 这里只做后者.
+            return self._retry_malformed(str(exc))
         except ModelResponseParseError as exc:
-            # 工具调用参数不是完整合法 JSON: 绝不猜一个补上去, 那等于替模型编参数.
+            # 父类留给 provider 的响应压根不是 JSON 这类传输层故障: 那不是模型的错,
+            # 追加纠错消息是在冤枉它, 重发同一条请求也不会好转.
             return self._stop(LoopStopReason.MODEL_ERROR_BLOCKING, str(exc))
         except ModelGatewayError as exc:
             return self._stop(
@@ -315,6 +378,14 @@ class BuiltinAgentLoop(AgentLoop):
             return self._stop(
                 LoopStopReason.MODEL_ERROR_BLOCKING, "模型既没有回复也没有请求工具。"
             )
+
+        # markup 检查必须在 _remember_assistant 之前: 这批调用一个都不会派发, 把带
+        # tool_calls 的 assistant 消息写进 transcript 就欠下一堆永远等不到的
+        # tool result, 下一次请求会因此残缺 (§10).
+        for call in outcome.tool_calls:
+            marker = _protocol_markup_in(call)
+            if marker is not None:
+                return self._retry_malformed(f"{call.name} 的内容里混进了 {marker}")
 
         if self._tools_closed and outcome.tool_calls:
             # 目录已经收掉了, 模型还在要工具. 靠"没给你看你就不会要"不算强制 —— 真正
@@ -469,6 +540,33 @@ class BuiltinAgentLoop(AgentLoop):
         self._publish(
             AgentRunEventKind.DECISION_SUMMARY,
             DecisionSummaryPayload(reason_summary=notice),
+        )
+        return self._advance()
+
+    def _retry_malformed(self, detail: str) -> LoopStepResult:
+        """模型产出了不可用的工具调用: 告诉它坏在哪, 再给一次机会.
+
+        与 _close_tools 的形状一致 (往 transcript 追加一条 USER 通知再 _advance), 但
+        **不收工具目录** —— 模型没有做错事, 只是话没说利索, 收掉目录等于因为口吃罚它
+        闭嘴.
+
+        这里不写 assistant 消息: 那次回复里没有一条可用的 tool call, 记下来只会在
+        transcript 里留一批配不上 tool result 的 tool_calls.
+        """
+        self._malformed_responses += 1
+        if self._malformed_responses > _MAX_MALFORMED_RESPONSES:
+            return self._stop(
+                LoopStopReason.MODEL_ERROR_BLOCKING,
+                _MALFORMED_STOP_MESSAGE.format(count=self._malformed_responses),
+            )
+        notice = _MALFORMED_NOTICE.format(detail=detail)
+        self._messages = (
+            *self._messages,
+            ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)),
+        )
+        self._publish(
+            AgentRunEventKind.DECISION_SUMMARY,
+            DecisionSummaryPayload(reason_summary=f"工具调用格式损坏, 重试: {detail}"),
         )
         return self._advance()
 
@@ -627,13 +725,12 @@ class BuiltinAgentLoop(AgentLoop):
             )
         if accumulator.has_partial_tool_calls():
             # 半截的 tool call delta: 流没断但参数不完整, 补全它等于替模型编参数.
-            self._fail_model_call(
-                request, "partial_tool_call", "工具调用参数不完整，本轮中止。"
-            )
-            return LoopStop.of(
-                LoopStopReason.MODEL_ERROR_BLOCKING,
-                message="工具调用参数不完整，本轮中止。",
-            )
+            #
+            # 这次模型调用确实失败了, 所以照常 _fail_model_call 收尾; 但本轮不一定要
+            # 结束, 所以抛而不是 return —— 由 _advance 的统一处理决定重试还是中止,
+            # 与非流式路径走同一条判断.
+            self._fail_model_call(request, "partial_tool_call", "工具调用参数不完整。")
+            raise MalformedToolCallError("工具调用参数不完整")
         tool_calls = accumulator.tool_calls()
         self._finish_model_call(
             request,
