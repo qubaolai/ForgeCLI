@@ -21,7 +21,7 @@ from forgecli.domain.security.vocabulary import ApprovalScope
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.domain.tool.result import ToolResult
 
-__all__ = ["NullToolRunObserver", "ToolRunObserver"]
+__all__ = ["ToolRunObserver"]
 
 
 class ToolRunObserver(ABC):
@@ -68,48 +68,3 @@ class ToolRunObserver(ABC):
     def tool_cancelled(
         self, tool_name: str, *, invocation_id: str, side_effect_unknown: bool
     ) -> None: ...
-
-
-class NullToolRunObserver(ToolRunObserver):
-    """不观察. 单元测试与无终端场景用它 —— 展示缺席不影响裁决与执行."""
-
-    def bind_turn(self, turn_id: str) -> None:
-        return None
-
-    def tool_prepared(
-        self, plan: ToolPlan, *, invocation_id: str, arguments: Mapping[str, object]
-    ) -> None:
-        return None
-
-    def policy_resolved(
-        self, decision: AuthorizationDecision, *, invocation_id: str
-    ) -> None:
-        return None
-
-    def approval_requested(
-        self, tool_name: str, *, invocation_id: str, mandatory: bool, target_count: int
-    ) -> None:
-        return None
-
-    def approval_resolved(
-        self,
-        tool_name: str,
-        *,
-        invocation_id: str,
-        outcome: str,
-        scope: ApprovalScope | None = None,
-    ) -> None:
-        return None
-
-    def tool_started(self, tool_name: str, *, invocation_id: str) -> None:
-        return None
-
-    def tool_completed(
-        self, result: ToolResult, *, invocation_id: str, elapsed_ms: float
-    ) -> None:
-        return None
-
-    def tool_cancelled(
-        self, tool_name: str, *, invocation_id: str, side_effect_unknown: bool
-    ) -> None:
-        return None

@@ -41,7 +41,6 @@ from forgecli.application.tool_request.observations import (
     ToolObservation,
 )
 from forgecli.application.tool_request.run_observer import (
-    NullToolRunObserver,
     ToolRunObserver,
 )
 from forgecli.application.tools.registry import ToolRegistry
@@ -134,7 +133,7 @@ class ToolRequestCoordinator:
         approval: ApprovalService | None = None,
         mutations: WorkspaceMutationCoordinator | None = None,
         audit: ToolAuditSink | None = None,
-        observer: ToolRunObserver | None = None,
+        observer: ToolRunObserver,
         learned: LearnedRuleService | None = None,
         workspace_id: str = "workspace",
         invocation_id_factory: Callable[[], str] = _new_invocation_id,
@@ -152,7 +151,7 @@ class ToolRequestCoordinator:
         self._audit = audit or NullToolAudit()
         # 运行观察与审计分开: 前者给人看, 后者是恢复与追溯依据. 终端显示"开始执行"
         # 不等于写前审计已落盘 (ADR-0016 §4.3).
-        self._observer = observer or NullToolRunObserver()
+        self._observer = observer
         # 与 ToolAuthorizationService 共用同一个实例: 一边写规则一边查规则.
         self._learned = learned
         self._workspace_id = workspace_id

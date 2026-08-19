@@ -24,6 +24,7 @@ from forgecli.application.security.classifier import (
 from forgecli.application.security.executable_resolver import (
     EXECUTABLE_RESOLUTION_VERSION,
 )
+from forgecli.application.tool_request.run_observer import ToolRunObserver
 from forgecli.domain.agent.prompt import PromptSnapshot
 from forgecli.domain.execution.environment import (
     DEFAULT_ENV_ALLOWLIST,
@@ -121,3 +122,35 @@ def unavailable_classifier() -> FailSafeClassifier:
     方向与生产一致 —— 拿不到结论时落 ASK, 而不是放行.
     """
     return FailSafeClassifier(StubSafetyClassifier(raises=TimeoutError("stub")))
+
+
+class SilentToolRunObserver(ToolRunObserver):
+    """什么都不发的运行观察者.
+
+    只在测试里存在. 生产的组合根总是装 EventBusToolRunObserver —— 给协调器留一个
+    "默认不观察"会让"忘了接终端"变成一个没人发现的静默降级.
+    """
+
+    def bind_turn(self, turn_id: str) -> None:
+        return None
+
+    def tool_prepared(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def policy_resolved(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def approval_requested(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def approval_resolved(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def tool_started(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def tool_completed(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def tool_cancelled(self, *args: object, **kwargs: object) -> None:
+        return None

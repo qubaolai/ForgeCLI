@@ -37,7 +37,6 @@ from forgecli.application.security.workspace_grants import WorkspaceGrants
 from forgecli.application.session import SessionService
 from forgecli.application.tool_request.coordinator import ToolRequestCoordinator
 from forgecli.application.tool_request.dispatcher import CoordinatorToolDispatcher
-from forgecli.application.tool_request.run_observer import NullToolRunObserver
 from forgecli.application.tool_request.session_audit import SessionToolAudit
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.builtin import (
@@ -112,7 +111,7 @@ def build_tool_stack(
     gateway: LlmGateway,
     approval: ApprovalService | None = None,
     artifacts: ArtifactStore | None = None,
-    run_bus: AgentRunEventBus | None = None,
+    run_bus: AgentRunEventBus,
 ) -> ToolStack:
     """按依赖顺序装配三层."""
     # 0. 工作区根先 resolve. macOS 上 /var 与 /tmp 都是指向 /private/... 的软链接,
@@ -216,13 +215,9 @@ def build_tool_stack(
         mutations=mutations,
         audit=SessionToolAudit(session),
         learned=learned,
-        # 展示与审计走两条独立出口: 没有 run_bus 时链路照常裁决与执行, 只是终端看不到
-        # 中间过程 (ADR-0016 §4.3).
-        observer=(
-            NullToolRunObserver()
-            if run_bus is None
-            else EventBusToolRunObserver(run_bus)
-        ),
+        # 展示与审计走两条独立出口 (ADR-0016 §4.3): 观察者只发运行事件, 审计另有
+        # SessionToolAudit. 订阅者抛异常被总线隔离, 因此终端出问题不会影响裁决与执行.
+        observer=EventBusToolRunObserver(run_bus),
         workspace_id=workspace_id,
     )
     return ToolStack(
