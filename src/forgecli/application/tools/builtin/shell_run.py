@@ -32,7 +32,11 @@ from types import MappingProxyType
 
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.builtin.base import emit_text, validate_arguments
-from forgecli.application.tools.command_executor import CommandExecutor, CommandRequest
+from forgecli.application.tools.command_executor import (
+    CommandExecutor,
+    CommandOutcome,
+    CommandRequest,
+)
 from forgecli.application.tools.resource_governor import ResourceGovernor
 from forgecli.application.tools.tool import Tool, ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
@@ -188,7 +192,7 @@ class ShellRunTool(Tool):
             ),
             cancel,
         )
-        text = _render(outcome.stdout, outcome.stderr)
+        text = _render(outcome)
         parts, artifacts = emit_text(
             text,
             invocation_id=plan.plan_id,
@@ -202,7 +206,13 @@ class ShellRunTool(Tool):
             bytes_out=len(text.encode("utf-8")),
             child_process_count=outcome.child_process_count,
         )
-        if outcome.succeeded:
+        if _completed(outcome):
+            # 非零退出**不是**工具错误, 是这条命令的结果.
+            #
+            # grep 无匹配退出 1, diff 有差异退出 1, test 判假退出 1 —— 都是正常结论.
+            # 把它们标成 tool_error, 模型就得想办法绕过工具契约: 见过它给每条命令加
+            # `|| echo "No matches found"`, 三轮模型调用花在跟工具斗, 后续命令还更难
+            # 解析. 退出码由 _render 写进正文, 由模型自己判断这次算成功还是失败.
             return ToolResult(
                 invocation_id=plan.plan_id,
                 tool_name=_SPEC.name,
@@ -211,6 +221,7 @@ class ShellRunTool(Tool):
                 artifacts=artifacts,
                 metrics=metrics,
             )
+        # 剩下的才是工具真的没跑成: 超时, 取消, 子进程起不来.
         return ToolResult(
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
@@ -220,7 +231,7 @@ class ShellRunTool(Tool):
             metrics=metrics,
             error=ToolError(
                 code="shell_failed",
-                message=outcome.failure or f"命令以 {outcome.exit_code} 退出",
+                message=outcome.failure or "命令没有执行完成",
             ),
         )
 
@@ -251,10 +262,37 @@ def _timeout_of(plan: ToolPlan) -> float | None:
     return float(raw) if isinstance(raw, int | float) else None
 
 
-def _render(stdout: str, stderr: str) -> str:
-    if stdout and stderr:
-        return f"{stdout}\n[stderr]\n{stderr}"
-    return stdout or stderr
+def _completed(outcome: CommandOutcome) -> bool:
+    """子进程是否跑到了自然结束. 与 CommandOutcome.succeeded 的区别只有一条: 不看退出码.
+
+    succeeded 回答的是"这条命令干成了吗", 那是模型该判断的事; 这里回答的是"工具正常
+    工作了吗", 那才是 ToolResultStatus 该表达的.
+    """
+    return (
+        not outcome.timed_out
+        and not outcome.cancelled
+        and outcome.failure is None
+        and outcome.exit_code is not None
+    )
+
+
+def _render(outcome: CommandOutcome) -> str:
+    """给模型看的正文: 命令输出, 外加非零退出码.
+
+    **退出码必须进正文.** 模型看不到 ToolMetrics —— 回填给它的只有 content_parts
+    (ToolObservation.render 直接取 ToolResult.text). `grep` 无匹配时退出 1 且没有任何
+    输出, 于是模型收到一个空字符串加一个 is_error 标记, 分不清"确实没找到"和"命令挂了".
+    """
+    body = outcome.stdout
+    if outcome.stderr:
+        body = f"{body}\n[stderr]\n{outcome.stderr}" if body else outcome.stderr
+    if outcome.exit_code in (0, None):
+        return body
+    note = f"[退出码 {outcome.exit_code}]"
+    if body:
+        return f"{body}\n{note}"
+    # 空输出 + 非零退出是最容易被误读的一种: 说清它是"跑完了没输出", 不是"没跑成".
+    return f"{note} 命令已执行完毕, 没有任何输出."
 
 
 def _status_of(timed_out: bool, cancelled: bool) -> ToolResultStatus:
