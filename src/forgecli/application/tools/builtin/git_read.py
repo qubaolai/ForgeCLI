@@ -356,7 +356,7 @@ class GitReadTool(Tool):
         text = (
             outcome.stdout if outcome.succeeded else f"{outcome.stdout}{outcome.stderr}"
         )
-        parts, artifacts = emit_text(
+        emitted = emit_text(
             text,
             invocation_id=plan.plan_id,
             limits=limits,
@@ -366,7 +366,7 @@ class GitReadTool(Tool):
         metrics = ToolMetrics(
             duration_seconds=outcome.duration_seconds,
             exit_code=outcome.exit_code,
-            bytes_out=len(text.encode("utf-8")),
+            bytes_out=emitted.bytes_out,
             child_process_count=outcome.child_process_count,
         )
         if outcome.succeeded:
@@ -374,16 +374,16 @@ class GitReadTool(Tool):
                 invocation_id=plan.plan_id,
                 tool_name=_SPEC.name,
                 status=ToolResultStatus.OK,
-                content_parts=parts,
-                artifacts=artifacts,
+                content_parts=emitted.parts,
+                artifacts=emitted.artifacts,
                 metrics=metrics,
             )
         return ToolResult(
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=_status_of(outcome.timed_out, outcome.cancelled),
-            content_parts=parts,
-            artifacts=artifacts,
+            content_parts=emitted.parts,
+            artifacts=emitted.artifacts,
             metrics=metrics,
             error=ToolError(
                 code="git_failed",

@@ -31,7 +31,11 @@ from forgecli.domain.tool.plan import (
     TargetResolution,
     ToolPlan,
 )
-from forgecli.domain.tool.result import ToolResult, ToolResultStatus
+from forgecli.domain.tool.result import (
+    ToolMetrics,
+    ToolResult,
+    ToolResultStatus,
+)
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
     ToolSpec,
@@ -237,7 +241,7 @@ class SearchTextTool(Tool):
             matches.append(f"{path}  ({len(numbers)} 处)")
             matches.extend(_render_hits(lines, numbers, around))
         limits = self._governor.limits_for(_SPEC)
-        parts, artifacts = emit_text(
+        emitted = emit_text(
             joined(matches) or _empty_message(plan, len(files)),
             invocation_id=plan.plan_id,
             limits=limits,
@@ -248,6 +252,7 @@ class SearchTextTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=ToolResultStatus.OK,
-            content_parts=parts,
-            artifacts=artifacts,
+            content_parts=emitted.parts,
+            artifacts=emitted.artifacts,
+            metrics=ToolMetrics(bytes_out=emitted.bytes_out),
         )

@@ -32,7 +32,11 @@ from forgecli.domain.tool.plan import (
     TargetResolution,
     ToolPlan,
 )
-from forgecli.domain.tool.result import ToolResult, ToolResultStatus
+from forgecli.domain.tool.result import (
+    ToolMetrics,
+    ToolResult,
+    ToolResultStatus,
+)
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
     ToolSpec,
@@ -155,7 +159,7 @@ class ListFilesTool(Tool):
         root = str(plan.normalized_input["path"])
         pattern = str(plan.normalized_input["pattern"])
         limits = self._governor.limits_for(_SPEC)
-        parts, artifacts = emit_text(
+        emitted = emit_text(
             # 空结果要说清"确实没有"而不是只回一句"(无匹配)": 后者与"参数写错了"
             # 长得一样, 模型只能换个写法再试一次, 而目录真空时换多少次都一样.
             joined(listed) or _empty_message(root, pattern),
@@ -168,6 +172,7 @@ class ListFilesTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=ToolResultStatus.OK,
-            content_parts=parts,
-            artifacts=artifacts,
+            content_parts=emitted.parts,
+            artifacts=emitted.artifacts,
+            metrics=ToolMetrics(bytes_out=emitted.bytes_out),
         )

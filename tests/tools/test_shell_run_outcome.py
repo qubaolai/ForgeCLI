@@ -176,3 +176,23 @@ def test_metrics_keep_the_exit_code_for_the_terminal(workspace: Path) -> None:
     result = _result(workspace, CommandOutcome(exit_code=1))
 
     assert result.metrics.exit_code == 1
+
+
+# ---- 字节数报的是截断前的量 ----
+
+
+def test_bytes_out_counts_the_full_output_not_the_inlined_slice(
+    workspace: Path,
+) -> None:
+    """输出被截断时, bytes_out 仍然是完整产出的字节数.
+
+    两个数回答两个问题: bytes_out 说"这条命令产出了多少", content_parts 只是我们塞进
+    上下文的那一段. 报截断后的量, 用户就看不出这次输出到底有多大, 而那恰恰是他判断
+    "要不要去翻 artifact"的依据.
+    """
+    huge = "x" * (200 * 1024)
+    result = _result(workspace, CommandOutcome(exit_code=0, stdout=huge))
+
+    assert result.metrics.bytes_out == len(huge.encode("utf-8"))
+    assert len(result.text.encode("utf-8")) < result.metrics.bytes_out
+    assert any(part.truncated for part in result.content_parts)

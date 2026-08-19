@@ -193,7 +193,7 @@ class ShellRunTool(Tool):
             cancel,
         )
         text = _render(outcome)
-        parts, artifacts = emit_text(
+        emitted = emit_text(
             text,
             invocation_id=plan.plan_id,
             limits=limits,
@@ -203,7 +203,7 @@ class ShellRunTool(Tool):
         metrics = ToolMetrics(
             duration_seconds=outcome.duration_seconds,
             exit_code=outcome.exit_code,
-            bytes_out=len(text.encode("utf-8")),
+            bytes_out=emitted.bytes_out,
             child_process_count=outcome.child_process_count,
         )
         if _completed(outcome):
@@ -217,8 +217,8 @@ class ShellRunTool(Tool):
                 invocation_id=plan.plan_id,
                 tool_name=_SPEC.name,
                 status=ToolResultStatus.OK,
-                content_parts=parts,
-                artifacts=artifacts,
+                content_parts=emitted.parts,
+                artifacts=emitted.artifacts,
                 metrics=metrics,
             )
         # 剩下的才是工具真的没跑成: 超时, 取消, 子进程起不来.
@@ -226,8 +226,8 @@ class ShellRunTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=_status_of(outcome.timed_out, outcome.cancelled),
-            content_parts=parts,
-            artifacts=artifacts,
+            content_parts=emitted.parts,
+            artifacts=emitted.artifacts,
             metrics=metrics,
             error=ToolError(
                 code="shell_failed",

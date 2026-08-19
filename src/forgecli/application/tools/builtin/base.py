@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping, Sequence
+from typing import NamedTuple
 
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.resource_governor import ResourceLimits
@@ -22,6 +23,7 @@ from forgecli.shared.json_schema import validate_json_schema
 
 __all__ = [
     "IGNORED_SEGMENTS",
+    "EmittedText",
     "emit_text",
     "filter_globbed",
     "new_plan_id",
@@ -169,6 +171,22 @@ def resolve_executable(name: str, context: ExecutionContext) -> str | None:
     return None
 
 
+class EmittedText(NamedTuple):
+    """emit_text 的产出.
+
+    三项一起返回而不是让调用方各算各的: bytes_out 漏填的后果是终端进度行上每个工具都
+    显示 `0 字节`, 而这条线正是用户判断"工具到底有没有拿回内容"的唯一依据. 见过
+    fs.read_file 读完一个 Java 文件显示 0 字节, 模型却在回答里引用了里面的代码.
+
+    bytes_out 是**截断前**的完整字节数, 不是 parts 里那一段. 前者回答"这次产出了多少",
+    后者只是塞进上下文的部分 —— 溢写进 artifact 的内容不该因此从计数里消失.
+    """
+
+    parts: tuple[ContentPart, ...]
+    artifacts: tuple[ArtifactRef, ...]
+    bytes_out: int
+
+
 def emit_text(
     text: str,
     *,
@@ -177,28 +195,37 @@ def emit_text(
     artifacts: ArtifactStore | None,
     artifact_name: str = "output",
     media_type: str = "text/plain",
-) -> tuple[tuple[ContentPart, ...], tuple[ArtifactRef, ...]]:
+) -> EmittedText:
     """回填模型的内容片段 + 溢写产物.
 
     超过阈值时**不静默截断**: 回填部分带显式截断标记与产物 id, 完整内容落 artifact.
     """
     encoded = text.encode("utf-8")
-    if len(encoded) <= limits.max_inline_bytes:
-        return (ContentPart(text=text, media_type=media_type),), ()
+    total = len(encoded)
+    if total <= limits.max_inline_bytes:
+        return EmittedText((ContentPart(text=text, media_type=media_type),), (), total)
 
     inline = encoded[: limits.max_inline_bytes].decode("utf-8", errors="ignore")
     if artifacts is None:
-        return (ContentPart(text=inline, media_type=media_type, truncated=True),), ()
+        return EmittedText(
+            (ContentPart(text=inline, media_type=media_type, truncated=True),),
+            (),
+            total,
+        )
     stored = text[: limits.max_artifact_bytes]
     ref = artifacts.write(invocation_id=invocation_id, name=artifact_name, data=stored)
-    return (
-        ContentPart(
-            text=inline,
-            media_type=media_type,
-            truncated=True,
-            artifact_id=ref.artifact_id,
+    return EmittedText(
+        (
+            ContentPart(
+                text=inline,
+                media_type=media_type,
+                truncated=True,
+                artifact_id=ref.artifact_id,
+            ),
         ),
-    ), (ref,)
+        (ref,),
+        total,
+    )
 
 
 def joined(lines: Sequence[str]) -> str:

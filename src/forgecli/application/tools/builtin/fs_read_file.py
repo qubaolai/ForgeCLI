@@ -29,7 +29,11 @@ from forgecli.domain.tool.plan import (
     TargetResolution,
     ToolPlan,
 )
-from forgecli.domain.tool.result import ToolResult, ToolResultStatus
+from forgecli.domain.tool.result import (
+    ToolMetrics,
+    ToolResult,
+    ToolResultStatus,
+)
 from forgecli.domain.tool.spec import (
     ArtifactPolicy,
     TargetDeclarationAbility,
@@ -121,7 +125,7 @@ class ReadFileTool(Tool):
         limits = self._governor.limits_for(_SPEC)
         path = str(plan.normalized_input["path"])
         text = context.filesystem.read_text(path, max_bytes=limits.max_artifact_bytes)
-        parts, artifacts = emit_text(
+        emitted = emit_text(
             text,
             invocation_id=plan.plan_id,
             limits=limits,
@@ -132,6 +136,7 @@ class ReadFileTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=ToolResultStatus.OK,
-            content_parts=parts,
-            artifacts=artifacts,
+            content_parts=emitted.parts,
+            artifacts=emitted.artifacts,
+            metrics=ToolMetrics(bytes_out=emitted.bytes_out),
         )

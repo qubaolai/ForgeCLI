@@ -176,3 +176,40 @@ def test_the_empty_message_mentions_the_filter(workspace: Path) -> None:
     """空结果要说清"可能是被过滤掉了", 否则模型只会换个 pattern 再搜一次."""
     output = _run(workspace, query="def login", pattern="**/*.kt")
     assert "include_ignored" in output
+
+
+# ---- 进度行的字节数 ----
+
+
+def _run_result(workspace: Path, **arguments: object) -> object:
+    tool = SearchTextTool(ResourceGovernor(), NullArtifactStore())
+    context = ExecutionContext(
+        cwd=str(workspace),
+        workspace_roots=(str(workspace),),
+        environment={"PATH": "/usr/bin:/bin"},
+        filesystem=OsFileSystemView(),
+        profile=PROFILE,
+    )
+    plan = tool.prepare(
+        ToolInvocationRequest(
+            invocation_id="inv-1",
+            tool_name="search.text",
+            arguments=arguments,
+            tool_call_id="c1",
+        ),
+        context,
+    )
+    assert isinstance(plan, ToolPlan), plan
+    return tool.perform(plan, context)
+
+
+def test_the_result_reports_how_many_bytes_it_produced(workspace: Path) -> None:
+    """终端进度行读 metrics.bytes_out; 不填就是每个工具都显示 `0 字节`.
+
+    那条线是用户判断"工具到底有没有拿回内容"的唯一依据 —— 见过 fs.read_file 读完一个
+    Java 文件显示 0 字节, 而模型在回答里引用了里面的代码.
+    """
+    result = _run_result(workspace, query="def login")
+
+    assert result.metrics.bytes_out > 0  # type: ignore[attr-defined]
+    assert result.metrics.bytes_out == len(result.text.encode("utf-8"))  # type: ignore[attr-defined]
