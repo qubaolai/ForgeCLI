@@ -26,7 +26,11 @@ from forgecli.application.agent_turn.cancellation import TurnCancelSource
 from forgecli.application.intent_router import IntentRouter
 from forgecli.application.session import SessionService
 from forgecli.application.slash_commands import CommandRegistry
-from forgecli.domain.conversation.turn import AssistantResponse, TurnStatus
+from forgecli.domain.conversation.turn import (
+    AssistantResponse,
+    TurnPause,
+    TurnStatus,
+)
 from forgecli.domain.intents import (
     InputOrigin,
     ManualShellIntent,
@@ -36,6 +40,7 @@ from forgecli.domain.intents import (
     UserMessage,
 )
 from forgecli.interfaces.cli.output import RichOutput
+from forgecli.interfaces.cli.plan_review_prompt import PlanReviewPrompt
 from forgecli.interfaces.cli.prompt_loop import ForgePrompt
 from forgecli.interfaces.cli.run_renderer import TerminalRunRenderer
 from forgecli.interfaces.cli.session_exit import SessionExit
@@ -47,6 +52,10 @@ from forgecli.interfaces.cli.transcript import (
 )
 from forgecli.interfaces.cli.tty.tty import stdin_is_tty
 from forgecli.shared.cancellation import CancelToken
+
+# 一次评审最多起一轮后续 turn, 而那一轮可能又停在评审. 没有上限的话, 一个每轮都提
+# 计划的模型能造出一个无人输入的死循环 (ADR-0023 决策 6).
+_MAX_REVIEW_CHAIN = 3
 
 
 class Repl:
@@ -63,6 +72,7 @@ class Repl:
         cancel_source: TurnCancelSource,
         prompt_status: Callable[[], str] | None = None,
         shell_mode: ShellModeEntry | None = None,
+        plan_review: PlanReviewPrompt | None = None,
     ) -> None:
         self._console = console
         self._router = router
@@ -74,6 +84,8 @@ class Repl:
         self._cancel_source = cancel_source
         self._prompt_status = prompt_status
         self._shell_mode = shell_mode
+        # 缺省 None: 没装配评审界面时计划照常落盘并保持 proposed, 链路不断.
+        self._plan_review = plan_review
 
     def run(self) -> None:
         # banner 由 bootstrap 在信任解析前渲染；这里只给进入会话的提示。
@@ -146,14 +158,54 @@ class Repl:
                 # 同屏显示一轮对话：先回显用户输入(绿)，再给助手输出(青绿)。
                 # 处理期间流式正文 append-only 逐行提交；收尾按终态追加提示。
                 render_user_turn(self._console, intent.text)
-                response = self._run_turn(intent.text)
-                self._finish_render(response)
+                self._run_conversation(intent.text)
             case SlashCommand():
                 self._handle_slash(intent)
             case UnknownCommand():
                 self._output.print(intent.error_message)
             case _:
                 self._output.print("无法处理的输入。")
+
+    def _run_conversation(self, text: str) -> None:
+        """跑一轮, 渲染, 必要时驱动评审并以合成文本再跑一轮 (ADR-0023).
+
+        再入**不经过 _process_line**: 那里会把文本按 TTY 用户输入解析, 于是一段以 `#`
+        开头的补充意见就会变成一次不受裁决的 Shell. 合成文本必须直接进 agent turn,
+        它天然带 InputOrigin.PROGRAM.
+
+        链上限存在的理由: 一次评审最多起一轮后续 turn, 而那一轮可能又停在评审. 一个每轮
+        都提计划的模型能造出无人输入的死循环.
+        """
+        for _ in range(_MAX_REVIEW_CHAIN):
+            response = self._run_turn(text)
+            self._finish_render(response)
+            if response.pause is not TurnPause.PLAN_REVIEW:
+                return
+            follow_up = self._review_plan()
+            if not follow_up:
+                return
+            text = follow_up
+        self._output.print(
+            "连续多轮都停在计划评审, 已回到提示符. 直接说你想怎么做会更快."
+        )
+
+    def _review_plan(self) -> str:
+        """驱动一次评审, 返回要再跑一轮的文本 (空表示到此为止).
+
+        必须在 _run_turn 之后调用: 那里的 Rich Live 已经退出, 而同一个 console 上两个
+        Live 会打架.
+        """
+        if self._plan_review is None:
+            self._output.print("计划已保存, 但当前未装配评审界面.")
+            return ""
+        mode = self._session.current().mode
+        outcome = self._plan_review.run(mode)
+        if outcome is None:
+            return ""
+        if outcome.upgraded_mode is not None:
+            # 等价于用户手敲 /accept-edits, 经 SessionService.set_mode, 不新增旁路.
+            self._session.set_mode(outcome.upgraded_mode)
+        return outcome.follow_up
 
     def _enter_shell_mode(self, intent: ManualShellIntent) -> None:
         """把终端交给用户自己的 Shell。

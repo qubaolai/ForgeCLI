@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-__all__ = ["AssistantResponse", "MessageRole", "TurnStatus"]
+__all__ = ["AssistantResponse", "MessageRole", "TurnPause", "TurnStatus"]
 
 
 class MessageRole(Enum):
@@ -31,6 +31,16 @@ class TurnStatus(Enum):
     FAILED = "failed"
 
 
+class TurnPause(Enum):
+    """本轮停在了哪种需要人参与的地方. CLI 据此决定驱动哪种交互.
+
+    与 LoopStopReason 分开: 那是"循环为什么停", 这是"该请人做什么". 多个停止原因可能
+    映到同一种交互, 而 CLI 不该认识循环的全部停止词汇 —— 它只需要知道该弹哪个界面.
+    """
+
+    PLAN_REVIEW = "plan_review"
+
+
 @dataclass(frozen=True)
 class AssistantResponse:
     """一轮对话的助手结果：turn 标识 + 文本 + 终态。
@@ -42,3 +52,5 @@ class AssistantResponse:
     turn_id: str
     text: str
     status: TurnStatus
+    # 本轮停下来等人做什么. None 表示不需要人参与, 那是绝大多数轮次.
+    pause: TurnPause | None = None

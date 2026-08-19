@@ -26,7 +26,7 @@ from forgecli.application.manual_shell import (
     ManualShellContext,
     ManualShellService,
 )
-from forgecli.application.planning import ActivePlanning
+from forgecli.application.planning import ActivePlanning, PlanReviewService
 from forgecli.application.project import (
     ProjectContext,
     ProjectService,
@@ -56,6 +56,7 @@ from forgecli.interfaces.cli.exit_codes import ExitCode
 from forgecli.interfaces.cli.llm_wiring import build_llm_runtime
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
+from forgecli.interfaces.cli.plan_review_prompt import PlanReviewPrompt
 from forgecli.interfaces.cli.privilege import is_elevated  # noqa: F401  见 run()
 from forgecli.interfaces.cli.repl import Repl
 from forgecli.interfaces.cli.run_renderer import TerminalRunRenderer
@@ -327,6 +328,9 @@ def run() -> ExitCode:
                 session, config_service, llm_service, thinking_state
             ),
             shell_mode=shell_mode,
+            plan_review=PlanReviewPrompt(
+                console, tools.planning, PlanReviewService(tools.planning)
+            ),
         ).run()
         return ExitCode.OK
     finally:

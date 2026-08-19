@@ -47,7 +47,12 @@ from forgecli.domain.agent.prompt import PromptSnapshot
 from forgecli.domain.agent.state import ContextPackage, LoopInput
 from forgecli.domain.agent.stop import LoopStopReason
 from forgecli.domain.conversation.message import ChatMessage, TextBlock
-from forgecli.domain.conversation.turn import AssistantResponse, MessageRole, TurnStatus
+from forgecli.domain.conversation.turn import (
+    AssistantResponse,
+    MessageRole,
+    TurnPause,
+    TurnStatus,
+)
 from forgecli.domain.intents import SessionMode, UserMessage
 from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.session.events import EventType, SessionEvent
@@ -58,6 +63,8 @@ from forgecli.domain.tool.catalog import ToolCatalog
 _DEFAULT_MAX_LOOP_STEPS = 99999
 
 _CANCEL_NOTICE = "（本轮回复已被用户取消）"
+
+_REVIEW_NOTICE = "已提交一份计划, 等待你的决定。"
 
 
 @dataclass(frozen=True)
@@ -71,6 +78,8 @@ class _TurnOutcome:
     # 完整 traceback. 只进事件日志, 不上屏 —— 终端一行摘要就够,
     # 但排查时必须找得回来.
     diagnostic: str | None = None
+    # 本轮停下来等人做什么 (ADR-0023). 交回 CLI 由它驱动交互.
+    pause: TurnPause | None = None
 
 
 class AgentTurnService:
@@ -148,7 +157,10 @@ class AgentTurnService:
             self._session.record_usage(draft.to_payload(), turn_id=turn_id)
         self._remember_turn(text, outcome)
         return AssistantResponse(
-            turn_id=turn_id, text=outcome.text, status=outcome.status
+            turn_id=turn_id,
+            text=outcome.text,
+            status=outcome.status,
+            pause=outcome.pause,
         )
 
     # ---- 提示词 ----
@@ -313,6 +325,18 @@ class AgentTurnService:
                 status=TurnStatus.COMPLETED,
                 usage_drafts=drafts,
                 stop_reason=stop.reason.value,
+            )
+        if stop.reason is LoopStopReason.WAIT_PLAN_REVIEW:
+            # 本轮是成功的: 模型交出了一份计划. 停下来是它主动要的, 不是出错.
+            #
+            # text 取模型这一轮说过的话 (通常是一句"我拟了个方案"), 计划正文由 CLI 从
+            # PlanningService 现取 —— 让它跟着回复文本走, 就会有两份可能不一致的正文.
+            return _TurnOutcome(
+                text=answer or _REVIEW_NOTICE,
+                status=TurnStatus.COMPLETED,
+                usage_drafts=drafts,
+                stop_reason=stop.reason.value,
+                pause=TurnPause.PLAN_REVIEW,
             )
         if stop.reason is LoopStopReason.USER_CANCELLED:
             partial = _partial_answer_of(loop)

@@ -4,6 +4,11 @@
 infrastructure/planning.
 """
 
+from forgecli.application.planning.plan_review import (
+    PlanReviewChoice,
+    PlanReviewOutcome,
+    PlanReviewService,
+)
 from forgecli.application.planning.plan_store import PlanStore, PlanStoreError
 from forgecli.application.planning.plan_template import (
     PLAN_TEMPLATE_VERSION,
@@ -18,6 +23,9 @@ from forgecli.application.planning.planning_service import (
 __all__ = [
     "PLAN_TEMPLATE_VERSION",
     "ActivePlanning",
+    "PlanReviewChoice",
+    "PlanReviewOutcome",
+    "PlanReviewService",
     "PlanStore",
     "PlanStoreError",
     "PlanningService",
