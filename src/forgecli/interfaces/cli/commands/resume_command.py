@@ -11,6 +11,7 @@ from __future__ import annotations
 from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
 from forgecli.application.interaction_ports import MenuPresenter, UserOutput
 from forgecli.application.menu import Choice, Menu
+from forgecli.application.planning import PlanningService
 from forgecli.application.project import ProjectContext
 from forgecli.application.session import SessionService
 from forgecli.application.session.resume_service import ResumeService
@@ -32,6 +33,7 @@ class ResumeCommand(CommandHandler):
         context: ProjectContext,
         presenter: MenuPresenter,
         output: UserOutput,
+        planning: PlanningService | None = None,
     ) -> None:
         self._service = service
         self._session = session
@@ -39,6 +41,7 @@ class ResumeCommand(CommandHandler):
         self._context = context
         self._presenter = presenter
         self._output = output
+        self._planning = planning
 
     def execute(self, command: SlashCommand) -> bool:
         if not command.args:
@@ -64,6 +67,32 @@ class ResumeCommand(CommandHandler):
         self._session.resume(snapshot, history)
         self._agent_turn.resume(history)
         self._output.print(_summary(snapshot, len(history)))
+        self._print_planning(session_id)
+
+    def _print_planning(self, session_id: str) -> None:
+        """续写会话时把它的计划与待办也报一行 (ADR-0022 §5.3).
+
+        **只在这里报, 不在启动时报.** 计划与待办按会话分区, 而全新会话的 id 每次都不同,
+        目录必然不存在 —— 启动时那一行永远是空的. 真正有东西可说的时刻只有 /resume.
+
+        显示的是 live_* 而不是原始状态: 做完的活不值得在续写时再提一遍.
+        """
+        if self._planning is None:
+            return
+        active = self._planning.load()
+        for line in active.diagnostics:
+            self._output.print(f"计划加载: {line}")
+        parts: list[str] = []
+        plan = active.live_plan
+        if plan is not None:
+            parts.append(
+                f"计划: {plan.title} ({plan.status.value}, {plan.step_count} 步)"
+            )
+        todo = active.live_todo
+        if todo is not None:
+            parts.append(f"待办: {todo.done_count}/{todo.total_count} 完成")
+        if parts:
+            self._output.print("  |  ".join(parts))
 
     def _present(self, sessions: list[SessionSnapshot], *, query: str | None) -> None:
         if not sessions:

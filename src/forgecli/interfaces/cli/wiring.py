@@ -243,6 +243,7 @@ def build_registry(
                 context,
                 presenter,
                 output,
+                planning=None if tools is None else tools.planning,
             ),
         ),
     ]
