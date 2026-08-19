@@ -11,7 +11,10 @@ ExecutionContext 用工厂每次现取, 不缓存: 文件系统视图是带版�
 
 from __future__ import annotations
 
+import contextlib
+import os
 import shutil
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -236,13 +239,60 @@ def build_tool_stack(
     )
 
 
-def _write_file(path: str, content: str) -> None:
-    """原子写: 先写同目录临时文件再 rename, 崩在中间不会留下半个文件."""
+def _write_file(path: str | os.PathLike[str], content: str) -> None:
+    """
+    尽可能跨平台地原子替换文本文件。
+    - target 要么保持旧内容，要么变成完整的新内容
+    注意：
+    - Windows 上若目标文件被其他程序以不允许删除/重命名的方式打开，
+      os.replace() 仍可能失败。
+    """
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temp = target.with_name(f".{target.name}.forge-partial")
-    temp.write_text(content, encoding="utf-8")
-    temp.replace(target)
+    parent = target.parent
+
+    parent.mkdir(parents=True, exist_ok=True)
+
+    fd = -1
+    temp_path: str | None = None
+
+    try:
+        fd, temp_path = tempfile.mkstemp(
+            dir=parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+        )
+
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            fd = -1
+
+            f.write(content)
+
+            # Python -> OS
+            f.flush()
+
+            # OS -> storage device
+            os.fsync(f.fileno())
+
+        # 同一文件系统内用新文件原子替换旧路径
+        os.replace(temp_path, target)
+        temp_path = None
+
+        # POSIX 上进一步保证目录项落盘。
+        # Windows 不支持以这种方式 fsync 目录。
+        if os.name != "nt":
+            dir_fd = os.open(parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+
+    finally:
+        if fd != -1:
+            os.close(fd)
+
+        if temp_path is not None:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temp_path)
 
 
 def _write_bytes(path: str, data: bytes) -> None:
