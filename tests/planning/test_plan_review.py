@@ -198,3 +198,16 @@ def test_review_issues_no_authorization(
         "seeded_todo_count",
         "message",
     }
+
+
+def test_every_choice_carries_the_plan_for_the_audit(
+    review: PlanReviewService, plan: PlanDocument
+) -> None:
+    """裁决要能进审计, 而 outcome 是调用方唯一拿得到"人裁了哪一份"的地方.
+
+    拒绝那条最容易漏 —— 它不起新一轮, 看起来"什么都没发生".
+    """
+    for choice in PlanReviewChoice:
+        outcome = review.decide(choice, plan, mode=SessionMode.PLAN, note="补充一句")
+        assert outcome.plan is not None, choice
+        assert outcome.plan.plan_id == plan.plan_id

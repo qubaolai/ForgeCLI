@@ -39,6 +39,7 @@ from forgecli.domain.intents import (
     UserIntent,
     UserMessage,
 )
+from forgecli.domain.session.events import EventType
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.plan_review_prompt import PlanReviewPrompt
 from forgecli.interfaces.cli.prompt_loop import ForgePrompt
@@ -201,7 +202,24 @@ class Repl:
         mode = self._session.current().mode
         outcome = self._plan_review.run(mode)
         if outcome is None:
+            # 中断不是裁决: 什么都没发生, 也就没有可审计的决定.
             return ""
+        if outcome.plan is not None:
+            # 人怎么裁的要进审计. 与 PLAN_CREATED 一样只记摘要 —— 补充意见的原文进的是
+            # 下一轮的 user_message, 这里再存一份就是两个会漂的副本.
+            self._session.record_tool_event(
+                EventType.PLAN_REVIEWED,
+                {
+                    "plan_id": outcome.plan.plan_id,
+                    "revision": outcome.plan.revision,
+                    "decision": outcome.choice.value,
+                    "upgraded_mode": (
+                        ""
+                        if outcome.upgraded_mode is None
+                        else outcome.upgraded_mode.value
+                    ),
+                },
+            )
         if outcome.upgraded_mode is not None:
             # 等价于用户手敲 /accept-edits, 经 SessionService.set_mode, 不新增旁路.
             self._session.set_mode(outcome.upgraded_mode)

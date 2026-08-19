@@ -78,18 +78,24 @@ class PlanReviewService:
         if choice is PlanReviewChoice.REJECT:
             # 刻意不起新一轮: 花一次模型调用去说"不行"是浪费, 而用户拒绝之后下一句话本来
             # 就该由他自己说 —— 与 _weigh 对人类拒绝的既有处理逻辑一致.
-            self._planning.set_plan_status(plan.plan_id, PlanStatus.REJECTED)
+            rejected = self._planning.set_plan_status(plan.plan_id, PlanStatus.REJECTED)
+            # plan 一定要带上: 拒绝恰恰是最该进审计的一次裁决, 而 outcome 是调用方唯一
+            # 拿得到"人裁了哪一份"的地方.
             return PlanReviewOutcome(
-                choice=choice, message="计划已拒绝. 告诉我你想怎么改, 或者换个方向."
+                choice=choice,
+                plan=rejected or plan,
+                message="计划已拒绝. 告诉我你想怎么改, 或者换个方向.",
             )
 
         if choice is PlanReviewChoice.AMEND:
             # plan_id 不变: 一次"补充 -> 重提"的往返留在同一份计划的历史里, 而不是散成
             # 两份互不相干的计划.
-            self._planning.set_plan_status(plan.plan_id, PlanStatus.SUPERSEDED)
+            superseded = self._planning.set_plan_status(
+                plan.plan_id, PlanStatus.SUPERSEDED
+            )
             return PlanReviewOutcome(
                 choice=choice,
-                plan=plan,
+                plan=superseded or plan,
                 follow_up=_AMEND_PROMPT.format(note=note.strip()),
                 message="已记下补充意见, 正在重新拟定.",
             )
