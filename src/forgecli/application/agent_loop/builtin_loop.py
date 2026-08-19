@@ -107,6 +107,11 @@ _DEFAULT_MAX_TOOL_CALLS = 9999
 # 模型却读不出该换个做法, 总预算再大也只是让它多转几百圈.
 #
 # 允许 2 次而不是 1 次: 中间穿插过写操作时, 重列一次目录是合理的.
+#
+# 2026-08-19 重新评估过降到 1, 结论是不降. 上面那条"写完再列一次"是真实场景, 而循环判断
+# 不了"中间那次调用改没改工作区" —— 那是安全层的知识, 拿进来等于让循环认识工具语义.
+# 真正的漏网之鱼是**参数每次都变**的原地打转 (8 个 grep 变体各不相同), 它按签名判身份
+# 本来就拦不住, 该由 _MAX_BARREN_OBSERVATIONS 接手.
 _MAX_IDENTICAL_CALLS = 2
 
 # 本轮累计被安全策略拒绝多少次之后就不再派工具.
@@ -132,6 +137,16 @@ _MAX_BLOCKED_CALLS = 3
 # 数**累计**不数连续, 理由同 _MAX_BLOCKED_CALLS: 中间夹一次成功调用就重置的话, 一个
 # 每隔一步坏一次的模型能把整轮预算烧光而永远撞不到上限.
 _MAX_MALFORMED_RESPONSES = 2
+
+# 连续多少次工具调用没带回新信息之后提醒一次.
+#
+# 这道闸补的是 _MAX_IDENTICAL_CALLS 的盲区: 那道闸按**入参**判身份, 而一次真实任务里
+# 8 个 grep 变体的参数各不相同 (加个 --include, 加个 | head, 换个转义), 全部放行, 返回
+# 的却都是同一个空结果. 真正的浪费信号不是"参数一样", 是"结果没告诉我新东西".
+#
+# 只提醒, 不收工具: 空结果不是错误, 模型该做的是换个思路或者直接报告"没找到", 而这两件
+# 事都还需要工具. 收掉目录等于因为没找到就罚它闭嘴.
+_MAX_BARREN_OBSERVATIONS = 3
 
 # 停止原因分类 -> turn 终态事件. 可恢复暂停 (等审批 / 等输入) 也算"这一轮结束了",
 # 终端要收掉活动区; 它与失败的区别由 TurnFinishedPayload.status 表达.
@@ -168,6 +183,13 @@ _MALFORMED_NOTICE = (
 )
 
 _MALFORMED_STOP_MESSAGE = "模型连续 {count} 次产出无法使用的工具调用，本轮中止。"
+
+_BARREN_NOTICE = (
+    "刚才连续 {count} 次工具调用没有带回新信息: 要么是空结果, 要么与上一次完全相同. "
+    "换个写法再试一次多半还是这个结果. "
+    "如果这几次是在找同一样东西, 那么找不到本身就是结论, 直接说出来; "
+    "否则换一条思路 —— 换个入口文件, 换个关键词, 或者问用户."
+)
 
 # 模型侧工具调用 markup. 它出现在**参数值或工具名**里, 说明供应商没能把模型的工具调用
 # 解析干净, 把标记连同内容一起塞进了参数.
@@ -275,6 +297,9 @@ class BuiltinAgentLoop(AgentLoop):
         self._call_counts: dict[str, int] = {}
         self._blocked_calls = 0
         self._malformed_responses = 0
+        # 连续几次工具调用没带回新信息, 以及上一次带回的是什么.
+        self._barren_streak = 0
+        self._last_observation: str | None = None
         self._tools_closed = False
         self._model_calls = 0
         self._tool_calls = 0
@@ -500,12 +525,51 @@ class BuiltinAgentLoop(AgentLoop):
         # 这里不发 TOOL_COMPLETED: 执行结果的权威事实在协调器那边 (状态, 耗时, 退出码,
         # 是否产生了副作用). 循环只拿到一段回填文本, 用它冒充执行结论会让终端显示的
         # "完成"与真正发生的事脱节.
+        self._track_progress(observation)
         halt = self._weigh(observation)
         if halt is not None:
             return self._close_tools(halt)
         if self._pending_calls:
             return self._dispatch_next(reason="继续派发同一批中的下一个工具调用")
+        # 提醒只在整批工具结果都回填完之后追加. 插在两条 tool result 中间会打断
+        # "assistant 的 tool_calls -> 配对的 tool result"这段连续区, 供应商会拒.
+        nudge = self._barren_nudge()
+        if nudge is not None:
+            self._messages = (
+                *self._messages,
+                ChatMessage(role=MessageRole.USER, content=(TextBlock(nudge),)),
+            )
         return self._advance()
+
+    def _track_progress(self, observation: LoopObservation) -> None:
+        """记一次调用有没有带回新信息.
+
+        判据两条, 满足其一就算没有: 内容为空, 或与上一次的内容完全相同.
+
+        失败的观察不参与计数 —— 它们有专门的闸 (_MAX_BLOCKED_CALLS 与 HALT). 两个计数器
+        数同一件事, 事后就说不清到底是哪条规则停的.
+        """
+        if observation.is_error:
+            return
+        content = observation.content.strip()
+        if not content or content == self._last_observation:
+            self._barren_streak += 1
+        else:
+            self._barren_streak = 0
+        self._last_observation = content
+
+    def _barren_nudge(self) -> str | None:
+        """到了连续次数就给一句提醒, 并把计数清零 —— 否则之后每一步都会再提醒一次."""
+        if self._barren_streak < _MAX_BARREN_OBSERVATIONS:
+            return None
+        count = self._barren_streak
+        self._barren_streak = 0
+        notice = _BARREN_NOTICE.format(count=count)
+        self._publish(
+            AgentRunEventKind.DECISION_SUMMARY,
+            DecisionSummaryPayload(reason_summary=f"连续 {count} 次调用没有新信息"),
+        )
+        return notice
 
     def _weigh(self, observation: LoopObservation) -> str | None:
         """按观察的处置意见决定要不要收掉本轮的工具. 返回收摊理由, None 表示继续.
