@@ -13,6 +13,7 @@ EXECUTE_SHELL / SPAWN_PROCESS 这一项.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,8 @@ import pytest
 from forgecli.application.security.authorization_service import ToolAuthorizationService
 from forgecli.application.security.policy_engine import PolicyEngine
 from forgecli.application.security.wiring import build_analyzer_registry
+from forgecli.application.tool_request.audit import ToolAuditSink
+from forgecli.application.tool_request.coordinator import ToolRequestCoordinator
 from forgecli.application.tools.artifact_store import NullArtifactStore
 from forgecli.application.tools.builtin.shell_run import ShellRunTool
 from forgecli.application.tools.command_executor import (
@@ -27,18 +30,22 @@ from forgecli.application.tools.command_executor import (
     CommandOutcome,
     CommandRequest,
 )
+from forgecli.application.tools.registry import ToolRegistry
 from forgecli.application.tools.resource_governor import ResourceGovernor
+from forgecli.application.tools.runtime import ToolRuntime
 from forgecli.application.tools.tool import ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
+from forgecli.domain.agent.actions import ToolRequest
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.context import PolicyContext
 from forgecli.domain.security.decision import AuthorizationDecision
 from forgecli.domain.security.protected_paths import ProtectedPathPolicy
 from forgecli.domain.security.vocabulary import Decision, DecisionReason
 from forgecli.domain.tool.plan import ToolPlan
+from forgecli.domain.tool.result import ToolResult
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
 from forgecli.shared.cancellation import CancelToken
-from support.fakes import PROFILE, unavailable_classifier
+from support.fakes import PROFILE, SilentToolRunObserver, unavailable_classifier
 
 
 class _NeverRuns(CommandExecutor):
@@ -195,3 +202,92 @@ def test_the_mode_budget_itself_is_unchanged(workspace: Path) -> None:
     decision = _decide(workspace, "ls src", mode=SessionMode.PLAN)
 
     assert decision.decision is not Decision.ALLOW
+
+
+# ---- 不经审批 != 不记录 ----
+
+
+class _RecordingAudit(ToolAuditSink):
+    """只记事件名. 这组用例关心的是"有没有落", 不是落了什么."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def bind_turn(self, turn_id: str) -> None:
+        return None
+
+    def tool_requested(
+        self, plan: ToolPlan, *, invocation_id: str, authorization_id: str
+    ) -> None:
+        self.events.append("tool_requested")
+
+    def tool_completed(self, result: ToolResult, *, plan_hash: str) -> None:
+        self.events.append("tool_completed")
+
+    def policy_decision(
+        self, decision: AuthorizationDecision, *, invocation_id: str
+    ) -> None:
+        self.events.append(f"policy_decision:{decision.reason.value}")
+
+    def approval_event(self, name: str, payload: Mapping[str, object]) -> None:
+        self.events.append(name)
+
+    def recovery_event(self, name: str, payload: Mapping[str, object]) -> None:
+        self.events.append(name)
+
+
+class _Echo(CommandExecutor):
+    def run(
+        self, request: CommandRequest, cancel: CancelToken | None = None
+    ) -> CommandOutcome:
+        return CommandOutcome(exit_code=0, stdout="a.py\n")
+
+
+def test_an_auto_allowed_call_still_lands_in_the_audit(
+    workspace: Path, tmp_path: Path
+) -> None:
+    """这条路径省掉的是一次人类打断, 不是一条审计记录.
+
+    有人日后把快速路径提到协调器里短路掉整条管线, 这条用例会先响.
+    """
+    registry = ToolRegistry()
+    registry.register_all(
+        (ShellRunTool(_Echo(), ResourceGovernor(), NullArtifactStore()),)
+    )
+    audit = _RecordingAudit()
+    coordinator = ToolRequestCoordinator(
+        registry,
+        ToolRuntime(registry),
+        ToolAuthorizationService(
+            build_analyzer_registry(
+                ProtectedPathPolicy(roots=()), classifier=unavailable_classifier()
+            ),
+            PolicyEngine(),
+        ),
+        audit=audit,
+        observer=SilentToolRunObserver(),
+    )
+    context = ExecutionContext(
+        cwd=str(workspace),
+        workspace_roots=(str(workspace),),
+        environment={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path / "home")},
+        filesystem=OsFileSystemView(),
+        profile=PROFILE,
+    )
+
+    coordinator.handle(
+        ToolRequest(name="shell.run", arguments={"command": "ls src"}),
+        context=context,
+        policy=PolicyContext(
+            mode=SessionMode.ACCEPT_EDITS,
+            session_id="s",
+            turn_id="t",
+            execution_profile_hash=PROFILE.execution_profile_hash,
+        ),
+    )
+
+    assert (
+        f"policy_decision:{DecisionReason.PROVEN_READ_ONLY_SHELL.value}" in audit.events
+    )
+    assert "tool_requested" in audit.events
+    assert "tool_completed" in audit.events
