@@ -21,7 +21,7 @@ from forgecli.infrastructure.planning import FsPlanStore
 
 @pytest.fixture
 def service(tmp_path: Path) -> PlanningService:
-    return PlanningService(FsPlanStore(tmp_path / "plans"))
+    return PlanningService(FsPlanStore(lambda: tmp_path / "plans"))
 
 
 def _write(service: PlanningService, **overrides: object) -> object:
@@ -208,7 +208,7 @@ def test_a_corrupt_index_degrades_to_no_plan(tmp_path: Path) -> None:
     root.mkdir(parents=True)
     (root / "index.toml").write_text("这不是 = = toml", encoding="utf-8")
 
-    assert PlanningService(FsPlanStore(root)).load().empty
+    assert PlanningService(FsPlanStore(lambda: root)).load().empty
 
 
 def test_an_index_pointing_at_a_missing_plan_says_so(

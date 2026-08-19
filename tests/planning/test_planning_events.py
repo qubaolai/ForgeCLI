@@ -22,7 +22,7 @@ from forgecli.infrastructure.planning import FsPlanStore
 
 @pytest.fixture
 def planning(tmp_path: Path) -> PlanningService:
-    return PlanningService(FsPlanStore(tmp_path / "plans"))
+    return PlanningService(FsPlanStore(lambda: tmp_path / "plans"))
 
 
 def test_the_event_types_exist() -> None:

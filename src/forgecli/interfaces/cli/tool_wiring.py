@@ -157,7 +157,12 @@ def build_tool_stack(
     governor = ResourceGovernor()
     store = artifacts or FsArtifactStore(artifacts_dir())
     executor = LocalCommandExecutor()
-    planning = PlanningService(FsPlanStore(plans_dir(workspace_id)))
+    # 计划目录按会话分区, 而这里跑在组合根里 —— 那时 REPL 还没 session.start(),
+    # 组合期读 current() 会直接抛 SessionStateError. 与下面分类器的 session id 同一个
+    # 坑, 同样用延迟取.
+    planning = PlanningService(
+        FsPlanStore(lambda: plans_dir(workspace_id, session.current().session_id))
+    )
     registry = ToolRegistry()
     registry.register_all(
         (

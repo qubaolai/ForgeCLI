@@ -455,23 +455,35 @@ def _planning(**overrides: object) -> ActivePlanning:
     return ActivePlanning(**overrides)  # type: ignore[arg-type]
 
 
-def _a_plan() -> PlanDocument:
+def _a_plan(status: PlanStatus = PlanStatus.PROPOSED) -> PlanDocument:
     return PlanDocument(
         plan_id="pl_abc",
         revision=1,
         title="拆分值域对象",
         goal="把混在一起的领域概念分开",
         steps=(PlanStep(title="读现状"), PlanStep(title="切分")),
-        status=PlanStatus.APPROVED,
+        status=status,
     )
 
 
-def _a_todo() -> TodoList:
+def _a_todo(plan_id: str = "pl_abc") -> TodoList:
     return TodoList(
         todo_id="td_abc",
+        plan_id=plan_id,
         items=(
             TodoItem(title="读现状", status=TodoStatus.DONE),
             TodoItem(title="切分", status=TodoStatus.IN_PROGRESS),
+        ),
+    )
+
+
+def _a_finished_todo(plan_id: str = "pl_abc") -> TodoList:
+    return TodoList(
+        todo_id="td_abc",
+        plan_id=plan_id,
+        items=(
+            TodoItem(title="读现状", status=TodoStatus.DONE),
+            TodoItem(title="切分", status=TodoStatus.DONE),
         ),
     )
 
@@ -539,3 +551,55 @@ def test_block_order_stays_fixed_with_planning() -> None:
         PromptBlockId.PLAN_STATE,
         PromptBlockId.TODO_STATE,
     ]
+
+
+# ---- 做完了就不再出现 (ADR-0022 §5.5) ----
+
+
+def test_a_finished_todo_renders_nothing() -> None:
+    """留一份 "2/2 完成" 每轮注入, 对模型是噪音, 对下一件事还是误导."""
+    snapshot = _build(planning=_planning(todo=_a_finished_todo()))
+
+    assert PromptBlockId.TODO_STATE not in _ids(snapshot)
+
+
+def test_an_approved_plan_disappears_once_its_todo_is_done() -> None:
+    """会话内的一种陈旧: 一件事做完了, 用户接着提下一件, 而计划还挂在那儿."""
+    snapshot = _build(
+        planning=_planning(plan=_a_plan(PlanStatus.APPROVED), todo=_a_finished_todo())
+    )
+
+    assert PromptBlockId.PLAN_STATE not in _ids(snapshot)
+
+
+def test_a_proposed_plan_shows_even_without_a_todo() -> None:
+    """它还没播种待办 —— 正等着人拍板, 而那恰恰是最该被看见的一份.
+
+    按"没待办就不显示"处理会把它藏掉.
+    """
+    snapshot = _build(planning=_planning(plan=_a_plan(PlanStatus.PROPOSED)))
+
+    assert PromptBlockId.PLAN_STATE in _ids(snapshot)
+
+
+def test_an_approved_plan_whose_todo_moved_on_disappears() -> None:
+    """待办被别的清单顶掉了: 执行跟踪没了, 这份计划也就无从判断做没做完.
+
+    按做完处理, 方向是少显示一份陈旧的东西.
+    """
+    snapshot = _build(
+        planning=_planning(
+            plan=_a_plan(PlanStatus.APPROVED), todo=_a_todo(plan_id="pl_other")
+        )
+    )
+
+    assert PromptBlockId.PLAN_STATE not in _ids(snapshot)
+
+
+def test_an_approved_plan_with_live_work_still_shows() -> None:
+    """还在做的时候要看得见: 模型可能需要 plan.read 回去看大方向."""
+    snapshot = _build(
+        planning=_planning(plan=_a_plan(PlanStatus.APPROVED), todo=_a_todo())
+    )
+
+    assert PromptBlockId.PLAN_STATE in _ids(snapshot)

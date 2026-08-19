@@ -266,8 +266,10 @@ def _plan_state(build_input: PromptBuildInput) -> PromptBlock | None:
     计划正文可能很长而模型只在部分轮次需要它 —— ADR-0018 §4.4 的两条判据各命中一条,
     所以它走工具 (`plan.read`) 而不是每轮重述一遍.
     """
-    plan = build_input.planning.plan
+    plan = build_input.planning.live_plan
     if plan is None:
+        # 没有计划, 或者它已经做完了. 后一种同样整块不渲染 —— 一份做完的计划每轮注入
+        # 只会让模型去想它和当前这件事有没有关系.
         return None
     return PromptBlock(
         block_id=PromptBlockId.PLAN_STATE,
@@ -289,7 +291,7 @@ def _todo_state(build_input: PromptBuildInput) -> PromptBlock | None:
     它小, 而且**每轮都要对齐** —— "当前该做哪一步"这件事只存在于对话历史里的话, 越往后
     越容易被稀释, 而那正是执行漂移的根因.
     """
-    todo = build_input.planning.todo
+    todo = build_input.planning.live_todo
     if todo is None or not todo.items:
         return None
     return PromptBlock(

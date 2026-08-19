@@ -7,6 +7,9 @@
 
 - **加载是只读的.** 打开一个会话不会把 PROPOSED 变成 APPROVED, 也不会重置待办状态.
   状态只由工具与人的裁决改变 (ADR-0022 §5.2).
+- **计划与待办归属产生它们的那个会话.** 目录按 session 分区 (见 paths.plans_dir), 因此
+  新会话天然什么都读不到. 跨会话带出一份计划等于带出一份没有上下文的清单 —— 模型会按
+  自己的理解填空, 而那个理解未必是当初的.
 - **不可用不阻塞.** 索引缺失, 文件损坏, 版本比当前新 —— 一律降级成"没有计划", 打诊断,
   照常开工 (§10).
 - **不发事件.** 会话事件与运行事件由调用方 (AgentTurnService) 发, 因为只有它持有
@@ -64,6 +67,44 @@ class ActivePlanning:
     @property
     def empty(self) -> bool:
         return self.plan is None and self.todo is None
+
+    @property
+    def live_plan(self) -> PlanDocument | None:
+        """还有事要做的计划, 否则 None.
+
+        判据一句话: **它还等着人裁决, 或者它播种的待办还没做完.**
+
+        跨会话的陈旧问题已经由目录分区解决 (新会话什么都读不到), 这条只管**会话内**的
+        一种: 一件事做完了, 用户接着提下一件, 而上一份计划还挂在那儿.
+
+        proposed 单独留一条路, 是因为那种计划**还没有待办** —— 它正等着人拍板. 按"没待办
+        就不显示"处理会把它藏掉, 而那恰恰是最该让人看见的一份.
+
+        推导而不是改盘: 加载必须是只读的 (§5.2), 而且文件记录要留给 /plan list.
+        """
+        plan = self.plan
+        if plan is None:
+            return None
+        if plan.status is PlanStatus.PROPOSED:
+            return plan
+        todo = self.todo
+        if todo is None or todo.plan_id != plan.plan_id:
+            # 批准过, 但它播种的那份待办已经被别的清单顶掉了. 执行跟踪没了, 这份计划也就
+            # 无从判断做没做完 —— 按做完处理, 方向是少显示一份陈旧的东西.
+            return None
+        return None if todo.finished else plan
+
+    @property
+    def live_todo(self) -> TodoList | None:
+        """还没做完的待办, 否则 None.
+
+        全部落终态之后整块不再渲染. 留一份 "5/5 完成" 每轮注入, 对模型是噪音, 对下一件
+        事还是误导 —— 它会去想这两件事有没有关系.
+        """
+        todo = self.todo
+        if todo is None or not todo.items or todo.finished:
+            return None
+        return todo
 
 
 @dataclass(frozen=True)

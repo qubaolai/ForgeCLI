@@ -278,8 +278,8 @@ def run() -> ExitCode:
                 git_repository=_is_git_repo(execution.cwd),
             )
 
-        # 活动计划与待办 (ADR-0022 §5.3). 加载是只读的, 打开会话不会推进任何状态;
-        # 读失败也不阻塞启动, 只打一行诊断.
+        # 本会话的计划与待办 (ADR-0022 §5.3). 目录按 session 分区, 所以全新会话这里
+        # 什么都读不到 —— 那是常态. 加载只读, 读失败也不阻塞启动.
         _render_planning_line(console, tools.planning.load())
 
         agent_turn = AgentTurnService(
@@ -348,11 +348,11 @@ def _render_planning_line(console: Console, active: ActivePlanning) -> None:
     for line in active.diagnostics:
         console.print(f"计划加载: {line}")
     parts: list[str] = []
-    if active.plan is not None:
-        plan = active.plan
+    plan = active.live_plan
+    if plan is not None:
         parts.append(f"计划: {plan.title} ({plan.status.value}, {plan.step_count} 步)")
-    if active.todo is not None and active.todo.items:
-        todo = active.todo
+    todo = active.live_todo
+    if todo is not None:
         parts.append(f"待办: {todo.done_count}/{todo.total_count} 完成")
     if parts:
         console.print("  |  ".join(parts))

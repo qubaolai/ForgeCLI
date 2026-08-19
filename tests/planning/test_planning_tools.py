@@ -45,7 +45,7 @@ _PLAN_ARGS = {
 
 @pytest.fixture
 def planning(tmp_path: Path) -> PlanningService:
-    return PlanningService(FsPlanStore(tmp_path / "plans"))
+    return PlanningService(FsPlanStore(lambda: tmp_path / "plans"))
 
 
 @pytest.fixture

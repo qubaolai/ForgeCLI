@@ -20,7 +20,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import tomlkit
@@ -46,8 +46,22 @@ _INDEX_SCHEMA_VERSION = 1
 
 
 class FsPlanStore(PlanStore):
-    def __init__(self, plans_root: Path) -> None:
-        self._root = plans_root
+    """根路径**延迟求值**.
+
+    计划目录按会话分区, 而组合根装配这个 store 时 REPL 还没 session.start() —— 那时读
+    session id 会直接抛 SessionStateError. 同一个文件里的安全分类器早就踩过这个坑, 用的
+    也是延迟取的写法.
+
+    每次调用现算而不是首次调用后缓存: `/resume` 会在同一个进程内换会话, 缓存下来的根路径
+    会让 resume 之后的计划仍然写进上一段会话的目录.
+    """
+
+    def __init__(self, plans_root: Callable[[], Path]) -> None:
+        self._plans_root = plans_root
+
+    @property
+    def _root(self) -> Path:
+        return self._plans_root()
 
     # ---- 索引 ----
 

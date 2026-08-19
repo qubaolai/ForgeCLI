@@ -59,16 +59,24 @@ def projects_dir() -> Path:
     return config_dir() / "projects"
 
 
-def plans_dir(project_id: str) -> Path:
+def plans_dir(project_id: str, session_id: str) -> Path:
     """计划与待办的存放位置 (ADR-0022 §2).
 
-    项目级, 跨会话 —— 一份计划可能跨三个会话, 所以它不能落在 sessions/ 下面.
+    **会话级.** 计划与待办脱离产生它们的那段对话就会失真: 一条写着"切分"的待办, 切什么,
+    按什么边界, 那个信息在对话里而不在清单里. 新会话读到它只会按自己的理解填空, 而那个
+    理解未必是当初的 —— 这是看不出来的漂移, 因为清单本身长得完全正常.
 
-    也不落在工作区里: 那会污染用户仓库, 还会被下一轮 Agent 当成项目内容读回上下文
+    ``/resume`` 回到的是**同一个** session_id, 历史由事件重建, 上下文跟着回来, 所以
+    "中断后接着干"不需要靠跨会话持久化来实现.
+
+    住在会话目录下而不是项目目录加一个 session_id 字段: 如果它只对一个会话有意义, 就该
+    住在那个会话里. 附带好处是删会话时它一起走, 项目目录不会攒下孤儿计划.
+
+    仍然不落在工作区里: 那会污染用户仓库, 还会被下一轮 Agent 当成项目内容读回上下文
     (与 state_dir 同一条理由). 落在工作区外的另一个后果是 ``fs.*`` 工具够不到它 ——
     这正是 ADR-0022 决策 5 想要的隔离.
     """
-    return projects_dir() / project_id / "plans"
+    return projects_dir() / project_id / "sessions" / session_id / "plans"
 
 
 def learned_rules_file(workspace_id: str) -> Path:
