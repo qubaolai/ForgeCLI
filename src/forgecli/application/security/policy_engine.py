@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from forgecli.application.security.analyzers.registry import AnalysisFindings
+from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.context import PolicyContext
 from forgecli.domain.security.decision import AuthorizationDecision, RiskFact
 from forgecli.domain.security.modes import capabilities_requiring_approval
@@ -25,6 +26,22 @@ _NEVER_AUTO = frozenset(
         Capability.CREDENTIAL_ACCESS,
         Capability.EXTERNAL_IRREVERSIBLE_EFFECT,
         Capability.UNKNOWN,
+    }
+)
+
+# 只读快速路径能免掉的能力 (ADR-0024).
+#
+# **只有这两项**, 这是这条路径全部的作用域. 分析已经证明这条命令等价于一次读取, 那么
+# "它是经 Shell 跑的"这件事本身不该再要一次人类确认 —— 同样一次目录列举走 fs.list_files
+# 本来就自动放行.
+#
+# 免不掉的东西同样要紧: EXTERNAL_READ 越界读取仍然超预算, 于是 ADR-0024 条件 7 (目标全
+# 在工作区内) 不需要单独实现 —— 越界的读取会自己留在 over_budget 里. 把这条写成"免掉
+# 全部 over_budget"会顺带放行 `cat ~/.ssh/id_rsa`.
+_READ_ONLY_SHELL_CAPABILITIES = frozenset(
+    {
+        Capability.EXECUTE_SHELL,
+        Capability.SPAWN_PROCESS,
     }
 )
 
@@ -98,6 +115,8 @@ class PolicyEngine:
             )
 
         over_budget = capabilities_requiring_approval(context.mode, plan.capabilities)
+        if over_budget and _proven_read_only(findings, context.mode):
+            over_budget = over_budget - _READ_ONLY_SHELL_CAPABILITIES
         if over_budget:
             # 理由取分析器给出的那一条 (更具体), 只在没有时才落到模式预算. 反过来写会把
             # PARSE_INCOMPLETE / CLASSIFIER_UNAVAILABLE / SCRIPT_EXECUTION 全部盖掉:
@@ -132,7 +151,10 @@ class PolicyEngine:
 
         return AuthorizationDecision(
             decision=Decision.ALLOW,
-            reason=_allow_reason(plan.capabilities),
+            reason=_allow_reason(
+                plan.capabilities,
+                proven_read_only=_proven_read_only(findings, context.mode),
+            ),
             effective_plan=plan,
             executable_identity_hash=findings.executable_identity_hash,
             executable_names=findings.executable_names,
@@ -141,11 +163,36 @@ class PolicyEngine:
         )
 
 
-def _allow_reason(capabilities: frozenset[Capability]) -> DecisionReason:
+def _proven_read_only(findings: AnalysisFindings, mode: SessionMode) -> bool:
+    """这次调用能不能走只读快速路径 (ADR-0024).
+
+    三个条件缺一不可:
+
+    - 分析器证明命令结构只读 (条件 1-5, 8). 只有它拿得到 CommandPlan.
+    - 目标集合已封闭 (条件 6). 策略层从 ToolPlan 就能看到, 因此在这里独立再验一次 ——
+      分析器漏标时这一条仍然拦得住.
+    - 不是 plan 档. 那一档对用户的承诺是"不执行", 而起一个子进程就是执行 —— 它会占用
+      时间, 会读东西, 也会挂住. `shell.run` 本来就不在 plan 档的工具目录里, 所以这条
+      判断买不到新功能, 只是不让策略层依赖目录过滤兜底.
+
+    条件 7 (目标全在工作区内) 由 _READ_ONLY_SHELL_CAPABILITIES 的窄作用域自动保证.
+    """
+    if mode is SessionMode.PLAN:
+        return False
+    return findings.proven_read_only and findings.plan.target_resolution.closed
+
+
+def _allow_reason(
+    capabilities: frozenset[Capability], *, proven_read_only: bool = False
+) -> DecisionReason:
     if capabilities <= {Capability.PLAN_ONLY}:
         return DecisionReason.PLAN_ONLY_FAST_PATH
     if capabilities <= {Capability.WORKSPACE_READ, Capability.SPAWN_PROCESS}:
         return DecisionReason.WORKSPACE_READ_FAST_PATH
+    if proven_read_only:
+        # 与上一条分开, 审计才答得出"这次为什么没问人": 一个是工具自己就窄, 一个是这条
+        # 命令被证明窄. 前者换个参数还是窄的, 后者换个参数可能就不是了.
+        return DecisionReason.PROVEN_READ_ONLY_SHELL
     return DecisionReason.RULE_ALLOW
 
 

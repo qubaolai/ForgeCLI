@@ -42,6 +42,7 @@ from forgecli.domain.security.shell.command_plan import (
     CommandPlan,
     CommandUnit,
     ShellKind,
+    UnitOrigin,
 )
 from forgecli.domain.security.shell.effects import (
     EffectKind,
@@ -207,6 +208,8 @@ class ShellCapabilityAnalyzer(CapabilityAnalyzer):
                     + "; ".join(expansion.reasons or ("未知原因",)),
                 ),
             )
+        if _proven_read_only(command, effects):
+            result = replace(result, proven_read_only=True)
         return result
 
     # ---- 各段 ----
@@ -572,6 +575,35 @@ def _may_write(command: CommandPlan) -> bool:
         effect_kind_of(unit) in _MAY_WRITE_KINDS or unit.write_targets
         for unit in command.units
     )
+
+
+def _proven_read_only(command: CommandPlan, effects: PlanEffects) -> bool:
+    """分析能否证明这条命令等价于一次读取 (ADR-0024 §决策).
+
+    只产出事实, 不做裁决: 要不要因此免掉一次人类确认由 PolicyEngine 决定, 而它免掉的
+    只有模式预算里的 EXECUTE_SHELL / SPAWN_PROCESS 一项.
+
+    判据全部是"必须成立", 缺一即返回 False. 新增一种没见过的语法, 新增一个表外命令,
+    新增一种重定向形态 —— 结果都是多问一次人, 不是少问一次.
+
+    `_may_write` 一次性覆盖了四条: 写 / 删 / 移动 / 跑任意代码的单元, 影响范围推导不出来
+    的单元 (UNPROVEN), 以及任何写重定向. 它已经是"证明不了就当它会写"的口径, 正好是这里
+    需要的方向.
+    """
+    if not command.status.complete:
+        return False
+    if _may_write(command):
+        return False
+    if command.has_dynamic_execution:
+        return False
+    if effects.network_targets or effects.external_effects:
+        return False
+    # 只认最外层单元. 命令替换, 包装器内层, 进程替换与子 Shell 都排除掉 —— 外层的
+    # "只读"证明不传导给内层, 而这里要的是整条命令的证明.
+    #
+    # 比 ADR 列的四种 origin 更严: 多排除的 SUBSHELL 与 SCRIPT_BLOCK 只会让某些本可以
+    # 放行的命令继续问人, 方向朝安全.
+    return all(unit.origin is UnitOrigin.TOP_LEVEL for unit in command.units)
 
 
 def _unproven_units(command: CommandPlan) -> tuple[str, ...]:

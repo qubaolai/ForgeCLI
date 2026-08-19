@@ -62,6 +62,13 @@ class AnalysisFindings:
     unrunnable: DecisionReason | None = None
     requires_ask: DecisionReason | None = None
     mandatory_ask: bool = False
+    # 分析证明这次调用等价于一次读取 (ADR-0024). 只有 Shell 分析器会填, 因为只有它拿得到
+    # CommandPlan —— 策略层看不见单元, 连接符与重定向.
+    #
+    # 它**只免掉模式预算里的 EXECUTE_SHELL / SPAWN_PROCESS 这一项**, 不免任何别的:
+    # requires_ask, Hard Deny, 受保护路径, 以及 EXTERNAL_READ 一类越界能力照常裁决.
+    # 写成一个通用的"放行"标志会让下一个人以为它能盖掉更多.
+    proven_read_only: bool = False
     # 本次命令用到的可执行文件身份的合并哈希. 只有 shell 分析器会填 —— 学习规则要靠它
     # 绑定"是哪个二进制", 拿不到就不允许沉淀成规则 (ADR-0013 §5.1).
     executable_identity_hash: str = ""

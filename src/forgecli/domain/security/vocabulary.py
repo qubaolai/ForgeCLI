@@ -56,6 +56,9 @@ class DecisionReason(Enum):
     # -- ALLOW --
     PLAN_ONLY_FAST_PATH = "plan_only_fast_path"
     WORKSPACE_READ_FAST_PATH = "workspace_read_fast_path"
+    # 分析证明这条 Shell 命令等价于一次读取 (ADR-0024). 与上一条分开是为了让审计
+    # 能回答"这次为什么没问人": 一个是工具自己就窄, 一个是命令被证明窄.
+    PROVEN_READ_ONLY_SHELL = "proven_read_only_shell"
     RULE_ALLOW = "rule_allow"
     LEARNED_ALLOW = "learned_allow"
     # 人类批准且全量重验通过后, 普通 ASK 转成的一次性 ALLOW.
