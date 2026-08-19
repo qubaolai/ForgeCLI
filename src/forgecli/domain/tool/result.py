@@ -23,6 +23,7 @@ __all__ = [
     "ToolMetrics",
     "ToolResult",
     "ToolResultStatus",
+    "TurnDisposition",
 ]
 
 
@@ -75,6 +76,23 @@ class ToolError:
     retryable: bool = False
 
 
+class TurnDisposition(Enum):
+    """工具对**本次 turn 该怎么继续**的声明 (ADR-0023 决策 1).
+
+    这是工具唯一能影响循环走向的字段, 它的作用范围被刻意定得极窄:
+
+    **只能缩短一次 turn, 不能延长, 不能授予能力.** 失效方向朝安全 —— 将来一个行为不端的
+    MCP 工具把它置上, 后果是多问一次人, 不是绕过任何检查.
+
+    循环按这个**字段**分流, 不去读 content 里的文字, 也不认识任何工具名. 于是同一套机制
+    对将来的 `ask_user` 一类工具同样成立.
+    """
+
+    CONTINUE = "continue"
+    # 这次输出需要人裁决. 循环在回合边界停下, 由 CLI 驱动交互.
+    AWAIT_USER_DECISION = "await_user_decision"
+
+
 @dataclass(frozen=True)
 class ToolResult:
     invocation_id: str
@@ -84,12 +102,19 @@ class ToolResult:
     artifacts: tuple[ArtifactRef, ...] = ()
     metrics: ToolMetrics = field(default_factory=ToolMetrics)
     error: ToolError | None = None
+    turn_disposition: TurnDisposition = TurnDisposition.CONTINUE
 
     def __post_init__(self) -> None:
         if self.status is ToolResultStatus.OK and self.error is not None:
             raise ValueError("status=ok 的结果不能带 error")
         if self.status is not ToolResultStatus.OK and self.error is None:
             raise ValueError(f"status={self.status.value} 的结果必须带 error")
+        if (
+            self.turn_disposition is TurnDisposition.AWAIT_USER_DECISION
+            and self.status is not ToolResultStatus.OK
+        ):
+            # 失败的调用没有可供人裁决的产出. 允许它停下, 人看到的会是一个空的评审界面.
+            raise ValueError("只有成功的结果才能要求人裁决")
 
     @property
     def text(self) -> str:

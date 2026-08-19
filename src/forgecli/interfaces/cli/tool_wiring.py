@@ -24,6 +24,7 @@ from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_run.tool_observer import EventBusToolRunObserver
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
+from forgecli.application.planning import PlanningService
 from forgecli.application.recovery.coordinator import WorkspaceMutationCoordinator
 from forgecli.application.recovery.recovery_service import RecoveryService
 from forgecli.application.security.approval_service import ApprovalService
@@ -47,10 +48,14 @@ from forgecli.application.tools.builtin import (
     GitReadTool,
     ListFilesTool,
     MoveTool,
-    PlanUpdateTool,
+    PlanReadTool,
+    PlanWriteTool,
     ReadFileTool,
     SearchTextTool,
     ShellRunTool,
+    TodoReadTool,
+    TodoSetStatusTool,
+    TodoWriteTool,
     WritePatchTool,
 )
 from forgecli.application.tools.registry import ToolRegistry
@@ -62,6 +67,7 @@ from forgecli.domain.security.protected_paths import ProtectedPathPolicy
 from forgecli.infrastructure.config.paths import (
     artifacts_dir,
     learned_rules_file,
+    plans_dir,
     recovery_dir,
 )
 from forgecli.infrastructure.execution.environment_probe import (
@@ -71,6 +77,7 @@ from forgecli.infrastructure.execution.environment_probe import (
 from forgecli.infrastructure.execution.local_command_executor import (
     LocalCommandExecutor,
 )
+from forgecli.infrastructure.planning import FsPlanStore
 from forgecli.infrastructure.recovery.cow_snapshot_backend import (
     probe_snapshot_backend,
 )
@@ -101,7 +108,7 @@ class ToolStack:
     profile: ExecutionProfile
     workspace_id: str
     context_factory: Callable[[], ExecutionContext]
-    plan_tool: PlanUpdateTool
+    planning: PlanningService
     # 人工 Shell 回来之后要清的缓存都注册在它上面 (ADR-0017 §10).
     barrier: ManualMutationBarrier
 
@@ -150,11 +157,15 @@ def build_tool_stack(
     governor = ResourceGovernor()
     store = artifacts or FsArtifactStore(artifacts_dir())
     executor = LocalCommandExecutor()
-    plan_tool = PlanUpdateTool()
+    planning = PlanningService(FsPlanStore(plans_dir(workspace_id)))
     registry = ToolRegistry()
     registry.register_all(
         (
-            plan_tool,
+            PlanReadTool(planning),
+            PlanWriteTool(planning),
+            TodoReadTool(planning),
+            TodoWriteTool(planning),
+            TodoSetStatusTool(planning),
             ReadFileTool(governor, store),
             ListFilesTool(governor, store),
             SearchTextTool(governor, store),
@@ -234,7 +245,7 @@ def build_tool_stack(
         profile=profile,
         workspace_id=workspace_id,
         context_factory=context_factory,
-        plan_tool=plan_tool,
+        planning=planning,
         barrier=barrier,
     )
 

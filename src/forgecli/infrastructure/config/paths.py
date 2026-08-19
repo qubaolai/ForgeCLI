@@ -54,6 +54,23 @@ def recovery_dir() -> Path:
     return state_dir() / "recovery"
 
 
+def projects_dir() -> Path:
+    """项目存储根: ``~/.forge/projects``."""
+    return config_dir() / "projects"
+
+
+def plans_dir(project_id: str) -> Path:
+    """计划与待办的存放位置 (ADR-0022 §2).
+
+    项目级, 跨会话 —— 一份计划可能跨三个会话, 所以它不能落在 sessions/ 下面.
+
+    也不落在工作区里: 那会污染用户仓库, 还会被下一轮 Agent 当成项目内容读回上下文
+    (与 state_dir 同一条理由). 落在工作区外的另一个后果是 ``fs.*`` 工具够不到它 ——
+    这正是 ADR-0022 决策 5 想要的隔离.
+    """
+    return projects_dir() / project_id / "plans"
+
+
 def learned_rules_file(workspace_id: str) -> Path:
     """学习规则文件 (ADR-0013 §5.1). 按项目分开, workspace 范围的规则不跨项目.
 
