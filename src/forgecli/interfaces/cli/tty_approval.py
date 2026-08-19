@@ -119,18 +119,26 @@ def _render_body(console: Console, body: str) -> None:
 
 
 def _render_targets(console: Console, view: HitlApprovalView) -> None:
-    counts = " · ".join(f"{label} {count}" for label, count in view.counts)
+    # 目标集不封闭时, 每个数字都只是已知下限, 必须这么标出来.
+    #
+    # 不标的后果是这一行**在说假话**: `find . -exec rm {} \;` 的删除目标由运行期产生,
+    # 清单是空的, 于是最显眼的一行写着"删除 0" —— 一条会删文件的命令, 用户读到的是它
+    # 什么都不删. 而这一行正是他做决定的依据.
+    prefix = "" if view.closed else "≥"
+    counts = " · ".join(f"{label} {prefix}{count}" for label, count in view.counts)
     console.print(f"目标 {counts}" if counts else "目标 (无)")
     if not view.closed:
         # 目标集不封闭: 显示保守上界与未知原因, 不能当成普通审批直接放行
         # (ADR-0013 §6.2).
+        console.print("上面的数字是已知下限, 实际影响范围可能更大")
         console.print(f"未封闭原因：{_safe(view.unresolved_reason or '')}")
         if view.recovery_strategy:
             console.print(f"执行前将建立 {_safe(view.recovery_strategy)} checkpoint")
     for group in view.target_groups:
         if not group.paths:
             continue
-        console.print(f"{group.label} ({group.count} 项):")
+        suffix = "" if view.closed else ", 可能不止"
+        console.print(f"{group.label} ({group.count} 项{suffix}):")
         for path in group.paths:
             # 全量列出, 不省略. 条目多时终端自己滚, 不由这里替用户决定看哪几条.
             console.print(f"  {_safe(_wrap(path))}")

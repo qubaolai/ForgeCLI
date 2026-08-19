@@ -37,6 +37,7 @@ __all__ = [
     "FlagStyle",
     "Interpreter",
     "NestedCommand",
+    "indirect_inner_commands",
     "inline_code_of",
     "interpreter_of",
     "nested_command_of",
@@ -546,3 +547,90 @@ def _language_of_suffix(name: str) -> str | None:
         if lowered.endswith(suffix):
             return language
     return None
+
+
+# ---- 间接执行的内层命令 ----
+
+# find 的执行谓词, 以及它们的终止符.
+_EXEC_PREDICATES = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_EXEC_TERMINATORS = frozenset({";", "+", "\\;"})
+
+# xargs 自己吃掉一个值的选项. 剩下的第一个非选项才是要跑的命令.
+_XARGS_VALUE_OPTIONS = frozenset(
+    {
+        "I",
+        "L",
+        "n",
+        "P",
+        "s",
+        "d",
+        "E",
+        "a",
+        "--replace",
+        "--max-lines",
+        "--max-args",
+        "--max-procs",
+        "--max-chars",
+        "--delimiter",
+        "--eof",
+        "--arg-file",
+    }
+)
+
+
+def indirect_inner_commands(
+    executable: str, argv: tuple[str, ...]
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """`find ... -exec CMD ... \\;` 与 `... | xargs CMD ...` 的内层命令.
+
+    与 nested_command_of 分开: 那个把内层交回 Shell 解析器再解析一遍字符串, 而这里的
+    内层**已经是分好词的 argv**. 把它拼回字符串再解析会在引号与 `{}` 上出错.
+
+    不提取的后果不是少一条信息, 是**说反话**: `find . -exec rm {} \\;` 只会得到一个
+    名叫 find 的单元, 于是 `rm`, `{}`, `;` 变成三个位置参数被当成路径, 而审批框顶上
+    写着"删除 0 · 写入 0" —— 一条会删文件的命令, 最显眼的那行是错的.
+    """
+    name = normalize_executable(executable)
+    if name in ("find", "fd"):
+        return _find_exec_commands(argv)
+    if name == "xargs":
+        return _xargs_command(argv)
+    return ()
+
+
+def _find_exec_commands(
+    argv: tuple[str, ...],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """一条 find 可以带多个 -exec, 每个都要提取."""
+    found: list[tuple[str, tuple[str, ...]]] = []
+    index = 0
+    while index < len(argv):
+        if argv[index] not in _EXEC_PREDICATES:
+            index += 1
+            continue
+        body: list[str] = []
+        index += 1
+        while index < len(argv) and argv[index] not in _EXEC_TERMINATORS:
+            body.append(argv[index])
+            index += 1
+        if body:
+            found.append((body[0], tuple(body[1:])))
+    return tuple(found)
+
+
+def _xargs_command(argv: tuple[str, ...]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """xargs 自己的选项之后的第一个非选项就是要跑的命令.
+
+    没给命令时 xargs 跑 echo, 那不值得造一个单元.
+    """
+    index = 0
+    while index < len(argv):
+        argument = argv[index]
+        if not argument.startswith("-") or argument in ("-", "--"):
+            return ((argument, tuple(argv[index + 1 :])),)
+        head, separator, _ = argument.partition("=")
+        keys: tuple[str, ...] = (head,) if head.startswith("--") else tuple(head[1:])
+        if not separator and any(key in _XARGS_VALUE_OPTIONS for key in keys):
+            index += 1
+        index += 1
+    return ()

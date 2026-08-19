@@ -21,6 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from forgecli.domain.security.shell.arguments import classify_arguments
 from forgecli.domain.security.shell.command_plan import CommandPlan, CommandUnit
 from forgecli.domain.security.shell.effects import EffectKind, effect_kind_of
 from forgecli.domain.tool.plan import TargetResolution
@@ -105,13 +106,15 @@ def expand_targets(
 
 
 def _candidate_targets(unit: CommandUnit) -> tuple[str, ...]:
-    """该单元可能改写的目标: 位置参数 + 输出重定向目标.
+    """该单元可能改写的目标: 路径参数 + 输出重定向目标.
 
     这里不区分"这个命令到底会不会写": 判断 `sed -i` 写不写文件属于规则层的事实分析,
     展开层只负责把候选目标变成可判定的绝对路径.
+
+    哪些参数算路径交给 classify_arguments —— 把 `sed` 的脚本或 `grep` 的搜索词当成候选
+    目标, 展开层会拿它去 glob, 去比对受保护路径, 最后在审批框里当成一个文件展示出来.
     """
-    positional = tuple(arg for arg in unit.argv if not arg.startswith("-"))
-    return (*positional, *unit.write_targets)
+    return (*classify_arguments(unit).paths, *unit.write_targets)
 
 
 def _resolve(candidate: str, cwd: str, home: str = "") -> str:

@@ -32,6 +32,7 @@ from forgecli.domain.security.shell.powershell import (
 from forgecli.domain.security.shell.tokens import ScanError
 from forgecli.domain.security.shell.wrappers import (
     NestedCommand,
+    indirect_inner_commands,
     nested_command_of,
     strip_prefix,
 )
@@ -152,9 +153,33 @@ def _expand_unit(
 
     nested = nested_command_of(current.executable, current.argv)
     units.append(current)
+    # `find -exec CMD ;` 与 `xargs CMD` 的内层已经是分好词的 argv, 不能拼回字符串再走
+    # 一遍 Shell 解析 —— 引号与 `{}` 都会在那一步出错. 所以它与 nested 走两条路.
+    units.extend(
+        _inner_unit(executable, argv, depth=depth)
+        for executable, argv in indirect_inner_commands(
+            current.executable, current.argv
+        )
+    )
     if nested is None:
         return
     _descend(nested, depth=depth, units=units, opaque=opaque)
+
+
+def _inner_unit(executable: str, argv: tuple[str, ...], *, depth: int) -> CommandUnit:
+    """间接执行的内层命令.
+
+    connector 保持 NONE: 它不是与前一个单元并列的一条命令, 而是**被**前一个单元调起的.
+    origin 说明了这层关系, 再给它一个 `;` 之类的连接符只会让审批展示看起来像是用户自己
+    写了两条命令.
+    """
+    return CommandUnit(
+        executable=executable,
+        argv=argv,
+        origin=UnitOrigin.WRAPPER_INNER,
+        depth=depth + 1,
+        raw=" ".join((executable, *argv)),
+    )
 
 
 def _descend(

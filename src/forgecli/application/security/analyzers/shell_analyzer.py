@@ -33,6 +33,7 @@ from forgecli.domain.security.context import PolicyContext
 from forgecli.domain.security.decision import RiskFact
 from forgecli.domain.security.hard_deny import inspect_command, prefilter_raw
 from forgecli.domain.security.protected_paths import ProtectedPathPolicy
+from forgecli.domain.security.shell.arguments import classify_arguments
 from forgecli.domain.security.shell.builtins import (
     dialect_has_closed_builtin_set,
     is_builtin,
@@ -423,13 +424,18 @@ def _dialect(shell_kind: str) -> ShellKind:
 
 
 def _unresolved_targets(command: CommandPlan, home: str) -> tuple[str, ...]:
-    """展开之后仍然无法确定的位置参数."""
+    """展开之后仍然无法确定的位置参数.
+
+    只看被判定为路径的那些 (classify_arguments): `grep "$PATTERN" .` 里的 `$PATTERN`
+    是搜索词, 它没展开不影响目标集合能不能封闭, 而按未解析目标报出去会让一条本可以
+    封闭的命令白白掉进 DYNAMIC.
+    """
     return tuple(
         dict.fromkeys(
             arg
             for unit in command.units
-            for arg in unit.argv
-            if not arg.startswith("-") and _unresolved(expand_home(arg, home))
+            for arg in classify_arguments(unit).paths
+            if _unresolved(expand_home(arg, home))
         )
     )
 
@@ -449,10 +455,13 @@ def _effects_of(
     for unit in command.units:
         # 未解析的引用 ($VAR, %VAR%) 不进目标集合: 它们只会得到一个假的绝对路径.
         # 这类命令已经由展开层标成 DYNAMIC, 由策略层要求人类确认.
+        # 哪些参数是路径由 classify_arguments 判, 不再用 `not startswith("-")` 一刀切.
+        # 那条判据会把 grep 的搜索词, sed 的脚本, find 的 -name 模式全当成文件, 于是
+        # 审批框里的"读取 (6 项)"有一半是凭空造的.
         positional = [
             resolved
-            for arg in unit.argv
-            if not arg.startswith("-") and not _unresolved(expand_home(arg, home))
+            for arg in classify_arguments(unit).paths
+            if not _unresolved(expand_home(arg, home))
             for resolved in _resolve_positional(expand_home(arg, home), cwd, expanded)
         ]
         kind = effect_kind_of(unit)
