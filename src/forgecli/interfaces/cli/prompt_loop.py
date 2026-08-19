@@ -37,14 +37,17 @@ import asyncio
 from collections.abc import Callable, Iterable, Sequence
 
 from prompt_toolkit.application import Application
+from prompt_toolkit.application.current import get_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import has_completions
 from prompt_toolkit.formatted_text import StyleAndTextTuples
+from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.key_binding.defaults import load_key_bindings
 from prompt_toolkit.key_binding.key_processor import KeyPressEvent
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout.containers import (
     ConditionalContainer,
     HSplit,
@@ -56,11 +59,42 @@ from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.styles import Style
+from prompt_toolkit.utils import get_cwidth
 
 from forgecli.interfaces.cli.session_exit import SessionExit
 
 # 命令菜单最多显示的行数；命令很多时只显示前若干行（当前命令数远小于它）。
 _MENU_MAX_ROWS = 12
+
+# 输入框最多长到几行. 到顶之后在框内滚动, 光标始终可见.
+#
+# 有上限是因为输入框长高会把上面的对话往上顶. 粘一篇长文进来时, 用户想看的是自己刚打的
+# 那几行, 不是让输入框吃掉整个屏幕.
+_INPUT_MAX_ROWS = 10
+
+# Shift+Enter 的 CSI-u 序列 (kitty 键盘协议). prompt_toolkit 3.0.52 没有内置这一条,
+# 这里补进去并映射到 ControlJ —— 于是一条 c-j 绑定同时覆盖三种输入方式.
+#
+# **必须在任何输入被解析之前注册.** vt100 解析器的前缀判定是惰性缓存 (__missing__),
+# 一旦为某个前缀缓存过 False 就不会再回头看这张表.
+_SHIFT_ENTER_CSI_U = "\x1b[13;2u"
+
+ANSI_SEQUENCES.setdefault(_SHIFT_ENTER_CSI_U, Keys.ControlJ)
+
+# 框下提示行的分组, **按重要性排序** —— 窄终端上从右往左丢.
+#
+# 换行那一条写 Ctrl+J 而不是 Shift+↵: 后者在一部分终端上根本送不到进程 (见 _newline 的
+# 说明), 写上去等于让用户去按一个不生效的键. Ctrl+J 处处可用, 而支持 CSI-u 的终端上
+# Shift+↵ 照样能用.
+_HINT_GROUPS: tuple[tuple[str, str], ...] = (
+    ("/", " 命令"),
+    ("↵", " 发送"),
+    ("Ctrl+J", " 换行"),
+    ("Ctrl+C×2", " 退出"),
+)
+
+# 分组之间的间隔.
+_HINT_GAP = "   "
 
 # 两次 Ctrl-C 退出的有效间隔（秒）。超过它，第一次按键作废，需重新计时。
 _EXIT_WINDOW = 0.8
@@ -141,10 +175,14 @@ class ForgePrompt:
         self._on_mode_step = on_mode_step
 
         # 输入缓冲区：挂上斜杠补全器，并开启"边打字边补全"。
+        #
+        # multiline=True 只影响 Buffer 自己对回车的默认处理；本模块把 enter 显式绑成
+        # 提交、把换行绑到另外几个键上（见 _换行键），所以这里开多行不会让回车失去提交
+        # 语义。开它是为了让缓冲区能容纳 \n，否则粘贴一段多行文本会被压成一行。
         self._buffer = Buffer(
             completer=_SlashCompleter(commands),
             complete_while_typing=True,
-            multiline=False,
+            multiline=True,
         )
         # 用户一开始打字就解除"待退出", 输入会驱散退出提示。
         self._buffer.on_text_changed += self._on_text_changed
@@ -201,15 +239,20 @@ class ForgePrompt:
         if self._exit_armed:
             return [("class:hint-alert", "  再按一次 Ctrl-C 退出")]
         # 普通态：列出主要按键，快捷键提示。
-        return [
-            ("class:hint-dim", "  "),
-            ("class:hint", "/"),
-            ("class:hint-dim", " 命令   "),
-            ("class:hint", "↵"),
-            ("class:hint-dim", " 发送   "),
-            ("class:hint", "Ctrl+C×2"),
-            ("class:hint-dim", " 退出"),
-        ]
+        # 窄终端上按重要性从右往左丢. 不丢的话它会和右侧状态撞在一起, 渲染成
+        # "Ctrl+C模式 accept_edits" 这种两段文字咬在一起的样子 —— 那比少一个提示更糟.
+        return _fit_hint(_HINT_GROUPS, self._hint_budget())
+
+    def _hint_budget(self) -> int:
+        """留给左侧提示的列数: 终端宽度减去右侧状态实际占的宽.
+
+        取终端**当前**宽度而不是启动时的: 用户拉窗口是常事, 而这一行每次重绘都会调它.
+        """
+        columns = get_app().output.get_size().columns
+        # StyleAndTextTuples 的元素可能是 2 元也可能是 3 元 (带 mouse handler),
+        # 所以按下标取文本而不是解包.
+        status = sum(get_cwidth(part[1]) for part in self._bottom_status())
+        return columns - status
 
     def _bottom_status(self) -> StyleAndTextTuples:
         """右侧持续状态：当前模型与该模型的 thinking 配置。"""
@@ -252,14 +295,17 @@ class ForgePrompt:
 
     def _build_app(self) -> Application[str]:
         """把缓冲区、布局、按键、样式组装成一个可运行的 Application。"""
-        # 输入区窗口：固定为一行高，左侧带 "› " 前缀。
-        # 关键：height=1 + dont_extend_height=True，否则 Window 默认会纵向撑满终端，
-        # 把输入框拉成很高的一块。内容过宽时横向滚动（multiline=False，不换行）。
+        # 输入区窗口：左侧带 "› " 前缀，内容超宽自动折行，框随内容长高。
+        #
+        # height 用 Dimension(min=1, max=_INPUT_MAX_ROWS) 而不是固定 1:
+        # dont_extend_height 让它按内容行数收缩到最小，Dimension 给出增长区间。
+        # 少了 max 的话，粘贴一篇长文会把输入框撑满整个终端, 把上面的对话全顶掉;
+        # 到顶之后 prompt_toolkit 自己在框内滚动, 光标始终可见。
         input_window = Window(
             BufferControl(buffer=self._buffer),
             get_line_prefix=self._prompt_prefix,
-            wrap_lines=False,
-            height=1,
+            wrap_lines=True,
+            height=Dimension(min=1, max=_INPUT_MAX_ROWS),
             dont_extend_height=True,
         )
 
@@ -373,8 +419,38 @@ class ForgePrompt:
                 else:
                     buffer.apply_completion(comp)
                 return
-            # 没有菜单：正常提交，让 app.run() 以这行文本作为返回值结束。
+            # 没有菜单：正常提交，让 app.run() 以这段文本作为返回值结束。
             event.app.exit(result=buffer.text)
+
+        # ---- 换行 ----
+        #
+        # 三个键都插换行, 因为**终端未必送得出 Shift+Enter**:
+        #
+        # | 终端 | Shift+Enter 实际发什么 |
+        # | --- | --- |
+        # | kitty / WezTerm / Ghostty | CSI-u `\x1b[13;2u`, 与 Enter 可区分 |
+        # | macOS Terminal.app | 就是 `\r`, 与 Enter **完全相同** |
+        # | iTerm2 / VS Code / Windows Terminal | 默认同 Enter, 可手动配 |
+        #
+        # 也就是说在一部分终端上, Shift+Enter 这个需求在按键到达进程之前就已经丢了 ——
+        # 代码这一侧做什么都没用. 所以再挂两个一定送得到的:
+        #
+        # - Ctrl+J: 发 `\n` (ControlJ), 与 Enter 的 `\r` (ControlM) 天然不同码,
+        #   处处可用.
+        # - Alt/Option+Enter: 发 `\x1b\r`, 绝大多数终端支持
+        #   (macOS Terminal 需开 "Option as Meta").
+        #
+        # Shift+Enter 走 CSI-u 时被映射成 ControlJ (见 _SHIFT_ENTER_CSI_U), 所以一条
+        # c-j 绑定就同时覆盖它和 Ctrl+J.
+        @kb.add("c-j")
+        @kb.add("escape", "enter")
+        def _newline(event: KeyPressEvent) -> None:
+            buffer = event.current_buffer
+            # 补全菜单开着时先关掉: 让它留着, 下一次回车会去选菜单项而不是提交, 而用户
+            # 此刻的意图明显是继续写.
+            if buffer.complete_state is not None:
+                buffer.cancel_completion()
+            buffer.insert_text("\n")
 
         @kb.add("c-c")
         def _interrupt(event: KeyPressEvent) -> None:
@@ -404,6 +480,26 @@ class ForgePrompt:
                 self._disarm_exit()  # 退出只接受空行 Ctrl-C×2，空行 Ctrl-D 不退出
 
         return kb
+
+
+def _fit_hint(groups: tuple[tuple[str, str], ...], budget: int) -> StyleAndTextTuples:
+    """按可用列数渲染提示行, 放不下的分组整组丢掉.
+
+    整组丢而不是截断文字: 半个 "Ctrl+C×" 比没有更让人困惑.
+    """
+    fragments: StyleAndTextTuples = [("class:hint-dim", "  ")]
+    used = 2
+    for index, (key, label) in enumerate(groups):
+        gap = _HINT_GAP if index else ""
+        width = get_cwidth(gap) + get_cwidth(key) + get_cwidth(label)
+        if used + width > budget:
+            break
+        if gap:
+            fragments.append(("class:hint-dim", gap))
+        fragments.append(("class:hint", key))
+        fragments.append(("class:hint-dim", label))
+        used += width
+    return fragments
 
 
 def _border_row(left: str, right: str) -> VSplit:
