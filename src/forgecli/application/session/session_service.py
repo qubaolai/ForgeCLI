@@ -131,11 +131,15 @@ class SessionService:
         turn_id: str,
         status: TurnStatus,
         stop_reason: str | None = None,
+        diagnostic: str | None = None,
     ) -> SessionEvent:
         """记录一条助手输出（与 user_message 同一 turn 成对，带终态）。
 
         stop_reason 为循环停止原因的机器可读标记（LoopStopReason 值，如
         user_cancelled）；仅在有值时写入 payload，保证取消轮在事件日志无歧义。
+
+        diagnostic 是驱动抛错时的完整 traceback，只在异常轮有值。它不上屏，只进事件
+        日志——终端给一行摘要就够，但事故排查必须找得回来。
         """
         payload: dict[str, object] = {
             "turn_id": turn_id,
@@ -145,6 +149,8 @@ class SessionService:
         }
         if stop_reason is not None:
             payload["stop_reason"] = stop_reason
+        if diagnostic is not None:
+            payload["diagnostic"] = diagnostic
         return self._append(EventType.ASSISTANT_MESSAGE, payload)
 
     def record_usage(

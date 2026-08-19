@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
-from pathlib import PurePosixPath
+from pathlib import PurePath
 
 from forgecli.application.recovery.recovery_store import RecoveryStore
 from forgecli.application.recovery.snapshot_backend import (
@@ -209,15 +209,26 @@ class MutationTransaction:
         self._store.save_manifest(self._checkpoint)
 
     def _relative(self, absolute_path: str) -> str:
-        """相对主工作区根的路径. 按路径段比较, 不做字符串前缀匹配.
+        r"""相对主工作区根的路径. 按路径段比较, 不做字符串前缀匹配.
 
         字符串前缀会把 `/w2/x` 判成不在 `/w` 内 (正确), 但也会把 `/workspace-backup`
         判成在 `/workspace` 内 (错误) —— 全仓其他地方都用 is_within, 这里不该例外.
+
+        **必须用平台原生 PurePath, 不能写死 PurePosixPath.** 后者在 Windows 上不把
+        反斜杠当分隔符, 于是 `\\psf\Home\proj\a.py` 被当成一整个文件名: is_within
+        (走原生 PureWindowsPath) 说"在根内", 紧接着 relative_to 说"不在根内", 同一个
+        函数里两行自相矛盾, 抛 ValueError. Parallels 共享目录这类 UNC 路径必踩.
+
+        relative_to 仍可能因为两侧锚点不同而抛错 (例如一个是 UNC 一个是盘符), 那时
+        退回绝对路径: 恢复清单里多一条绝对路径只是不好看, 而抛错会让整次写入失败.
         """
         root = self._context.primary_root
         if not is_within(absolute_path, root):
             return absolute_path
-        return str(PurePosixPath(absolute_path).relative_to(PurePosixPath(root)))
+        try:
+            return str(PurePath(absolute_path).relative_to(PurePath(root)))
+        except ValueError:
+            return absolute_path
 
     def _hash_of(self, absolute_path: str) -> str | None:
         facts = self._context.filesystem.facts(absolute_path)

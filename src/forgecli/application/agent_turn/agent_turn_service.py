@@ -18,6 +18,7 @@ stop_reason=user_cancelled，事件日志无歧义。
 
 from __future__ import annotations
 
+import traceback
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
@@ -66,6 +67,9 @@ class _TurnOutcome:
     status: TurnStatus
     usage_drafts: tuple[UsageRecordDraft, ...] = ()
     stop_reason: str | None = None
+    # 完整 traceback. 只进事件日志, 不上屏 —— 终端一行摘要就够,
+    # 但排查时必须找得回来.
+    diagnostic: str | None = None
 
 
 class AgentTurnService:
@@ -133,6 +137,7 @@ class AgentTurnService:
             turn_id=turn_id,
             status=outcome.status,
             stop_reason=outcome.stop_reason,
+            diagnostic=outcome.diagnostic,
         )
         for draft in outcome.usage_drafts:
             # usage 写入边界（ADR-0011 §11.1）：loop 只随回复交回草稿，这里统一落盘。
@@ -177,9 +182,23 @@ class AgentTurnService:
     ) -> _TurnOutcome:
         try:
             return self._run_loop(text, mode, turn_id)
-        except Exception:
-            # 失败隔离：驱动抛错不破坏会话，仍成对落盘 assistant。
-            return _TurnOutcome(text="助手处理出错。", status=TurnStatus.FAILED)
+        except Exception as error:
+            # 失败隔离: 驱动抛错不破坏会话, 仍成对落盘 assistant.
+            #
+            # 但**不能连异常一起丢掉**. 早先这里是裸 `except Exception:`, 连异常对象都
+            # 不绑定, 用户只看到"助手处理出错。"而 traceback 无处可寻 —— 一个平台相关
+            # 的失败因此完全无法定位, 连"错在哪一层"都答不上来.
+            #
+            # 分两处给: 摘要进用户可见文本 (类型 + 消息, 一行), 完整 traceback 进
+            # assistant_message 事件的 diagnostic 字段. 后者不上屏, 但 /resume 与事故
+            # 排查时读 events.jsonl 就能拿到.
+            return _TurnOutcome(
+                text=f"助手处理出错: {type(error).__name__}: {error}",
+                status=TurnStatus.FAILED,
+                diagnostic="".join(
+                    traceback.format_exception(type(error), error, error.__traceback__)
+                ),
+            )
 
     def _run_loop(self, text: str, mode: SessionMode, turn_id: str) -> _TurnOutcome:
         loop = self._loop_factory()
