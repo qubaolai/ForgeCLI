@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from forgecli.application.agent_run.events import AgentRunEventBus
+from forgecli.application.agent_run.scrubbing import scrub_arguments, scrub_text
 from forgecli.application.tool_request.run_observer import ToolRunObserver
 from forgecli.domain.agent.run_events import (
     AgentRunEventKind,
@@ -28,22 +29,14 @@ from forgecli.domain.tool.result import ToolResult
 __all__ = ["EventBusToolRunObserver"]
 
 
-def _arguments_of(arguments: Mapping[str, object]) -> tuple[tuple[str, str], ...]:
-    """入参逐字进事件, 只做控制字符清理.
-
-    不做脱敏, 也不留 allowlist 之类的开关: 工具入参是用户判断"要不要让这次调用发生"的
-    依据, 挡掉一部分只会让他在看不全的信息上做决定. 控制字符仍然要剥 —— 那不是隐藏
-    内容, 是防止参数里的 ANSI 序列重画终端.
-    """
-    return tuple(
-        (name, _scrub(str(value))) for name, value in sorted(arguments.items())
-    )
+# 一次调用最多逐条列出多少个目标. 超了只列前若干个并让 target_count 说出完整数量 ——
+# 一次递归删除可能有几千个路径, 全塞进事件既没人看得完, 也会把 SSE 帧撑大.
+_MAX_LISTED_TARGETS = 40
 
 
-def _scrub(text: str) -> str:
-    return "".join(
-        char for char in text if char == "\t" or (char >= " " and char != "\x7f")
-    )
+def _targets_of(plan: ToolPlan) -> tuple[str, ...]:
+    paths = (*plan.effects.mutating_targets, *plan.effects.read_paths)
+    return tuple(paths[:_MAX_LISTED_TARGETS])
 
 
 def _summary_of(result: ToolResult) -> str:
@@ -77,7 +70,9 @@ class EventBusToolRunObserver(ToolRunObserver):
                 target_count=len(plan.effects.mutating_targets)
                 + len(plan.effects.read_paths),
                 target_resolution=plan.target_resolution.value,
-                arguments=_arguments_of(arguments),
+                arguments=scrub_arguments(arguments),
+                targets=_targets_of(plan),
+                workspace_scope=plan.workspace_scope.value,
             ),
             invocation_id=invocation_id,
         )
@@ -92,6 +87,9 @@ class EventBusToolRunObserver(ToolRunObserver):
                 decision=decision.decision.value,
                 reason=decision.reason.value,
                 mandatory=decision.mandatory,
+                matched_rule_id=decision.matched_rule_id or "",
+                risk_facts=tuple(fact.code for fact in decision.risk_facts),
+                detail=scrub_text(decision.message),
             ),
             invocation_id=invocation_id,
         )
@@ -132,6 +130,23 @@ class EventBusToolRunObserver(ToolRunObserver):
             invocation_id=invocation_id,
         )
 
+    def tool_rejected(
+        self, tool_name: str, *, invocation_id: str, reason_code: str, message: str
+    ) -> None:
+        # 复用 TOOL_COMPLETED: 对展示层来说这就是这次调用的终态, 只是没有执行过。
+        self._publish(
+            AgentRunEventKind.TOOL_COMPLETED,
+            ToolCompletedPayload(
+                tool_name=tool_name,
+                status=reason_code,
+                elapsed_ms=0.0,
+                error_summary=scrub_text(message),
+                error_code=reason_code,
+                executed=False,
+            ),
+            invocation_id=invocation_id,
+        )
+
     def tool_completed(
         self, result: ToolResult, *, invocation_id: str, elapsed_ms: float
     ) -> None:
@@ -145,6 +160,11 @@ class EventBusToolRunObserver(ToolRunObserver):
                 # 不回显, 由 artifact 承载 (ADR-0016 §7.2).
                 result_summary=_summary_of(result),
                 error_summary="" if result.error is None else result.error.message,
+                error_code="" if result.error is None else result.error.code,
+                exit_code=result.metrics.exit_code,
+                bytes_out=result.metrics.bytes_out,
+                artifact_count=len(result.artifacts),
+                truncated=any(part.truncated for part in result.content_parts),
             ),
             invocation_id=invocation_id,
         )
@@ -160,6 +180,7 @@ class EventBusToolRunObserver(ToolRunObserver):
                 # 不幂等的调用被打断时, "没成功"与"没发生"是两回事: 终端不能显示成
                 # 普通失败 (ADR-0016 §10.1).
                 side_effect_unknown=side_effect_unknown,
+                error_code="cancelled",
             ),
             invocation_id=invocation_id,
         )

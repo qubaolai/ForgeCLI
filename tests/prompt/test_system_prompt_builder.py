@@ -37,7 +37,7 @@ _TOOLS = (
     ToolBrief("fs.list_files", "列出文件"),
     ToolBrief("search.text", "搜索文本"),
     ToolBrief("git.read", "读取 git 状态"),
-    ToolBrief("fs.write_patch", "精确替换文件片段"),
+    ToolBrief("fs.edit_file", "精确替换文件片段"),
     ToolBrief("shell.run", "执行 Shell 命令"),
 )
 
@@ -160,7 +160,7 @@ def test_the_tool_table_only_lists_this_turn_catalog() -> None:
     )
 
     assert "fs.read_file" in body
-    assert "fs.write_patch" not in body
+    assert "fs.edit_file" not in body
     assert "shell.run" not in body
 
 
@@ -371,9 +371,9 @@ def test_the_tool_table_separates_name_from_title() -> None:
 def test_the_tool_name_comes_first() -> None:
     """模型要用名字发起调用, 名字左对齐才好扫."""
     body = _body(_build(), PromptBlockId.TOOL_CONTRACT)
-    line = next(row for row in body.splitlines() if "fs.write_patch" in row)
+    line = next(row for row in body.splitlines() if "fs.edit_file" in row)
 
-    assert line.strip().startswith("fs.write_patch")
+    assert line.strip().startswith("fs.edit_file")
 
 
 # ---- 检索顺序 ----

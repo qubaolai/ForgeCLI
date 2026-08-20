@@ -154,3 +154,6 @@ class SilentToolRunObserver(ToolRunObserver):
 
     def tool_cancelled(self, *args: object, **kwargs: object) -> None:
         return None
+
+    def tool_rejected(self, *args: object, **kwargs: object) -> None:
+        return None

@@ -20,7 +20,7 @@ from datetime import datetime
 from forgecli.application.session.event_store import EventStore
 from forgecli.application.session.state_store import StateStore
 from forgecli.domain.conversation.turn import MessageRole, TurnStatus
-from forgecli.domain.intents import SessionMode
+from forgecli.domain.intents import InputOrigin, SessionMode
 from forgecli.domain.session.events import EventType, SessionEvent
 from forgecli.domain.session.snapshot import SessionSnapshot
 from forgecli.shared.errors import SessionStateError
@@ -117,11 +117,22 @@ class SessionService:
         self._persisted = True
         return snapshot
 
-    def record_user_message(self, text: str, *, turn_id: str) -> SessionEvent:
+    def record_user_message(
+        self,
+        text: str,
+        *,
+        turn_id: str,
+        origin: InputOrigin = InputOrigin.PROGRAM,
+    ) -> SessionEvent:
         """记录一条自然语言输入（属于某个 turn）。"""
         return self._append(
             EventType.USER_MESSAGE,
-            {"turn_id": turn_id, "role": MessageRole.USER.value, "text": text},
+            {
+                "turn_id": turn_id,
+                "role": MessageRole.USER.value,
+                "text": text,
+                "origin": origin.value,
+            },
         )
 
     def record_assistant_message(

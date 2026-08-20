@@ -1,7 +1,7 @@
 """配置命令菜单面板（手写层级，统一走 ConfigService）。
 
 每个配置项的展示与编辑都委托同一个 ConfigService：`display(key)` 读、`set(key,v)` 写，
-按该键在 SCHEMA 里的 `level` 自动路由到 config.toml 或 forge.toml。菜单只声明"哪个键
+按该键在 SCHEMA 里的 `level` 自动路由到 config.json 或 forge.json。菜单只声明"哪个键
 放在哪一层、用什么交互"，加配置项 = 加一行 Choice，不写新回调（开闭原则）。
 
 工作区目录与默认模型不在此编辑——分别走 `/add-dir` 与 `/model`。

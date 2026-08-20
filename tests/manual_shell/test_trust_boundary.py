@@ -51,6 +51,11 @@ def test_the_same_hash_from_a_program_is_just_text() -> None:
     assert isinstance(_router().route("#", origin=InputOrigin.PROGRAM), UserMessage)
 
 
+def test_a_hash_from_the_web_is_just_text() -> None:
+    """Web 用户经 Agent 安全工具链工作，不继承终端人工 Shell 的旁路特权。"""
+    assert isinstance(_router().route("#", origin=InputOrigin.WEB_USER), UserMessage)
+
+
 def test_the_default_origin_is_not_privileged() -> None:
     """忘记传 origin 的后果必须是**少**一项特权, 不是多一项."""
     assert isinstance(_router().route("#"), UserMessage)

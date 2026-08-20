@@ -34,6 +34,7 @@ from dataclasses import dataclass
 
 from forgecli.application.agent_loop.loop import AgentLoop
 from forgecli.application.agent_run.events import AgentRunEventBus
+from forgecli.application.agent_run.scrubbing import scrub_arguments
 from forgecli.application.llm.error_hints import actionable_message
 from forgecli.application.llm.gateway.errors import (
     MalformedToolCallError,
@@ -459,7 +460,11 @@ class BuiltinAgentLoop(AgentLoop):
         self._publish(
             AgentRunEventKind.TOOL_QUEUED,
             ToolQueuedPayload(
-                tool_name=call.name, queue_position=len(self._pending_calls)
+                tool_name=call.name,
+                queue_position=len(self._pending_calls),
+                # 连 prepare 都走不到的调用 (工具名不存在, schema 不合法) 只有排队与
+                # 终态两条事件. 入参不在这里发出去, 它在整条时间线上一次都不会出现.
+                arguments=scrub_arguments(call.arguments),
             ),
             tool_call_id=call.tool_call_id,
         )

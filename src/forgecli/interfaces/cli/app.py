@@ -1,7 +1,6 @@
-"""ForgeCLI 的 Typer 命令行入口。
+"""Forge 的极薄命令行启动入口。
 
-本模块只负责根入口、全局选项和入口分发。产品入口收敛为裸 ``forge``
-进入交互式会话；具体能力通过 REPL 内的 slash command 提供。
+裸 ``forge`` 启动仅监听本机的 Web 控制面；业务交互全部进入浏览器。
 """
 
 from __future__ import annotations
@@ -9,16 +8,16 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
-from forgecli.interfaces.cli.bootstrap import run as run_session
-from forgecli.interfaces.cli.exit_codes import ExitCode
+from forgecli.interfaces.web.server import DEFAULT_PORT
+from forgecli.interfaces.web.server import run as run_web
 from forgecli.shared import __version__
 
 app = typer.Typer(
     name="forge",
-    help="Forge —— 一个可在终端交互的 AI 编码助手。",
+    help="Forge —— 本地优先的 Web AI 编码助手。",
     # MVP 阶段暂不生成 shell 补全脚本，减少安装与验收变量。
     add_completion=False,
-    # 裸 forge 是产品主入口：不显示 help，而是进入交互式 workspace 会话。
+    # 裸 forge 是产品主入口：不显示 help，而是启动本地 Web 控制面。
     no_args_is_help=False,
 )
 
@@ -30,7 +29,7 @@ def _version_callback(vla: bool) -> None:
     """处理 ``--version`` 的 eager 回调。
 
     Typer 在解析到 eager option 后会先调用这里。打印版本并抛出
-    ``typer.Exit`` 可以阻止裸 ``forge --version`` 继续进入 REPL。
+    ``typer.Exit`` 可以阻止裸 ``forge --version`` 继续启动服务。
     """
     if vla:
         console.print(f"forge [bold cyan]{__version__}[/]")
@@ -48,17 +47,28 @@ def _root(
         callback=_version_callback,
         is_eager=True,
     ),
+    open_browser: bool = typer.Option(
+        False,
+        "--open",
+        help="启动后自动在默认浏览器中打开控制面；默认只打印启动链接。",
+    ),
+    port: int = typer.Option(
+        DEFAULT_PORT,
+        "--port",
+        min=0,
+        max=65535,
+        help="本地监听端口；固定端口才能让已打开的页面在重启后自己连回来，0 表示随机。",
+    ),
 ) -> None:
     """Forge 命令行根回调。
 
-    ``invoke_without_command=True`` 让裸 ``forge`` 也会执行回调。MVP 当前
-    不注册 Typer 子命令，避免形成交互式和命令式两套入口。
+    ``invoke_without_command=True`` 让裸 ``forge`` 也会执行回调。CLI 只保留启动与
+    诊断参数，不再形成第二套业务入口。
     """
     if ctx.invoked_subcommand is None:
-        # 会话没能开始时以非零码退出, 让脚本与 CI 可判据 (码值语义见 exit_codes 模块).
-        # 正常收尾返回 0, 不抛 typer.Exit.
-        code = run_session()
-        if code is not ExitCode.OK:
+        # 服务没能开始时以非零码退出，让脚本与 CI 可判据；正常停止返回 0。
+        code = run_web(port=port, open_browser=open_browser)
+        if code != 0:
             raise typer.Exit(code)
 
 

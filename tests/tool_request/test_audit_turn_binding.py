@@ -53,6 +53,11 @@ class RecordingAudit(ToolAuditSink):
     def tool_completed(self, result: ToolResult, *, plan_hash: str) -> None:
         self.events.append(("tool_completed", self.turn_id))
 
+    def tool_rejected(
+        self, tool_name: str, *, invocation_id: str, reason_code: str, message: str
+    ) -> None:
+        self.events.append(("tool_rejected", self.turn_id))
+
     def policy_decision(
         self, decision: AuthorizationDecision, *, invocation_id: str
     ) -> None:

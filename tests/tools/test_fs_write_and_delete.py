@@ -1,8 +1,11 @@
-"""fs.write_patch 的精确替换与 fs.delete 的目录支持.
+"""fs.create_file 的新建, fs.edit_file 的精确替换, fs.delete 的目录支持.
 
-两件事都在 prepare 阶段定死: 替换后的内容与要删的文件清单都是**计划里的事实**, 不是
+三件事都在 prepare 阶段定死: 要写的内容与要删的文件清单都是**计划里的事实**, 不是
 执行时才算的. 裁决, 审批与恢复层拿到的因此是"文件会变成什么样", 而不是一段还要再解释
 一次的意图.
+
+新建与修改分成两个工具之后, 各自的前置条件方向相反 (create 要求不存在, edit 要求存在),
+所以两边的"走错门"用例都要钉住: 错误信息必须指向另一个工具, 否则模型只会原地重试.
 """
 
 from __future__ import annotations
@@ -11,7 +14,11 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.tools.builtin import DeleteTool, WritePatchTool
+from forgecli.application.tools.builtin import (
+    CreateFileTool,
+    DeleteTool,
+    EditFileTool,
+)
 from forgecli.application.tools.tool import ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.tool.errors import PreparationError
@@ -49,11 +56,47 @@ def _prepare(tool: object, workspace: Path, **arguments: object):  # type: ignor
     )
 
 
-# ---- fs.write_patch ----
+def _writer(path: str, content: str) -> None:
+    Path(path).write_text(content, "utf-8")
 
 
-def _write_tool() -> WritePatchTool:
-    return WritePatchTool(lambda path, content: Path(path).write_text(content, "utf-8"))
+# ---- fs.create_file ----
+
+
+def test_creating_a_file_carries_the_whole_content(workspace: Path) -> None:
+    plan = _prepare(
+        CreateFileTool(_writer), workspace, path="new.py", content="print(1)\n"
+    )
+
+    assert isinstance(plan, ToolPlan)
+    assert plan.normalized_input["content"] == "print(1)\n"
+    assert plan.effects.write_paths == (str(workspace / "new.py"),)
+
+
+def test_creating_over_an_existing_file_is_refused(workspace: Path) -> None:
+    """挡的是"全文覆盖"的后门: 模型没读全文件就能把它整段换掉, 丢掉的部分没人看得见."""
+    (workspace / "a.py").write_text("重要内容\n", encoding="utf-8")
+
+    error = _prepare(CreateFileTool(_writer), workspace, path="a.py", content="没了")
+
+    assert isinstance(error, PreparationError)
+    assert "已存在" in error.message
+    assert "fs.edit_file" in error.message
+
+
+def test_the_create_plan_shows_what_the_file_will_contain(workspace: Path) -> None:
+    """审批界面靠 content_previews 逐字展示, 少了它用户只能看到一个路径就点批准."""
+    plan = _prepare(CreateFileTool(_writer), workspace, path="a.py", content="x = 1\n")
+
+    assert isinstance(plan, ToolPlan)
+    assert [preview.content for preview in plan.content_previews] == ["x = 1\n"]
+
+
+# ---- fs.edit_file ----
+
+
+def _write_tool() -> EditFileTool:
+    return EditFileTool(_writer)
 
 
 def test_a_unique_fragment_is_replaced(workspace: Path) -> None:
@@ -110,34 +153,72 @@ def test_a_fragment_that_does_not_exist_is_rejected(workspace: Path) -> None:
     assert "逐字符一致" in error.message
 
 
-def test_an_empty_old_string_creates_a_new_file(workspace: Path) -> None:
-    plan = _prepare(
+def test_an_empty_old_string_points_at_the_create_tool(workspace: Path) -> None:
+    """回归: 新建文件曾经靠"old_string 传空串"表达, 一个没写在名字上的隐藏约定.
+
+    模型找不到叫"建文件"的工具, 于是编了个 fs.write_file 调过去, 拿回"未注册",
+    转头改用 shell 写文件 —— 绕开了整条恢复与裁决链路.
+    """
+    error = _prepare(
         _write_tool(), workspace, path="new.py", old_string="", new_string="print(1)\n"
     )
 
-    assert isinstance(plan, ToolPlan)
-    assert plan.normalized_input["content"] == "print(1)\n"
-
-
-def test_an_empty_old_string_cannot_overwrite_an_existing_file(workspace: Path) -> None:
-    """这条挡的是"全文覆盖"的后门 —— 而全文覆盖正是这次要去掉的东西."""
-    (workspace / "a.py").write_text("重要内容\n", encoding="utf-8")
-
-    error = _prepare(
-        _write_tool(), workspace, path="a.py", old_string="", new_string="没了"
-    )
-
     assert isinstance(error, PreparationError)
-    assert "已存在" in error.message
+    assert "fs.create_file" in error.message
 
 
-def test_editing_a_missing_file_points_at_the_right_fix(workspace: Path) -> None:
+def test_editing_a_missing_file_points_at_the_create_tool(workspace: Path) -> None:
     error = _prepare(
         _write_tool(), workspace, path="nope.py", old_string="a", new_string="b"
     )
 
     assert isinstance(error, PreparationError)
-    assert "old_string 留空" in error.message
+    assert "fs.create_file" in error.message
+
+
+def test_a_replacement_that_changes_nothing_is_refused(workspace: Path) -> None:
+    """放行等于消耗一次审批写回一模一样的内容, 而模型会把"成功"当成"改动生效了"."""
+    (workspace / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+    error = _prepare(
+        _write_tool(), workspace, path="a.py", old_string="x = 1", new_string="x = 1"
+    )
+
+    assert isinstance(error, PreparationError)
+    assert "不会改变任何内容" in error.message
+
+
+def test_a_whitespace_only_mismatch_says_so(workspace: Path) -> None:
+    """只说"找不到", 模型唯一能做的是换个写法再试 —— 而它看不出差的是缩进."""
+    (workspace / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    error = _prepare(
+        _write_tool(),
+        workspace,
+        path="a.py",
+        old_string="def f():\n        return 1",
+        new_string="def f():\n    return 2",
+    )
+
+    assert isinstance(error, PreparationError)
+    assert "空白" in error.message
+
+
+def test_a_missing_fragment_reports_where_its_first_line_appears(
+    workspace: Path,
+) -> None:
+    (workspace / "a.py").write_text("a\nvalue = 1\nb\n", encoding="utf-8")
+
+    error = _prepare(
+        _write_tool(),
+        workspace,
+        path="a.py",
+        old_string="value = 1  # 注释",
+        new_string="value = 2",
+    )
+
+    assert isinstance(error, PreparationError)
+    assert "第 2" in error.message
 
 
 def test_the_plan_declares_the_write_target(workspace: Path) -> None:

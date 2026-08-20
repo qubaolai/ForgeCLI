@@ -2,13 +2,13 @@
 
 ## 1. 背景与定位
 
-ForgeCLI 是一个本地优先的对话式软件工程 CLI Agent，面向开发者在真实代码仓库中完成长期、复杂、可恢复的软件工程任务。
+ForgeCLI 是一个本地优先、由浏览器控制的对话式软件工程 Agent，面向开发者在真实代码仓库中完成长期、复杂、可恢复的软件工程任务。
 
-用户在仓库目录中执行 `forge` 进入交互式会话，随后通过自然语言和斜杠命令持续对话。Agent 读取上下文、提出计划、执行修改、运行验证、解释结果，并在需要时请求确认。ForgeCLI 不应被设计成单纯的“输入目标后自动跑完”的任务执行器。
+用户执行 `forge` 启动只监听本机的 Runtime，并在浏览器项目中心进入交互式会话。Agent 读取上下文、提出计划、执行修改、运行验证、解释结果，并在需要时请求确认。ForgeCLI 不应被设计成单纯的“输入目标后自动跑完”的任务执行器。
 
 ### 1.1 产品目标
 
-- 通过 CLI 对话完成代码理解、修改、调试、测试、Review、提交说明等工程任务。
+- 通过本地 Web 对话完成代码理解、修改、调试、测试、Review、提交说明等工程任务。
 - 支持长任务会话恢复，避免上下文丢失和中断后重来。
 - 通过 mode policy 控制自治程度，让用户可在 plan、accept_edits、auto、full_access 之间切换。
 - 通过本地事件日志和状态快照实现可审计、可恢复、可复盘。
@@ -26,7 +26,7 @@ ForgeCLI 是一个本地优先的对话式软件工程 CLI Agent，面向开发�
 
 ### 2.1 Conversation-first
 
-CLI 的核心入口是持续会话。用户执行一次 `forge` 激活当前目录下的会话，之后不需要每轮都输入 `forge <command>`。一次用户输入不一定对应一个完整任务，而是一个 turn。Agent 应根据当前会话、工作区状态、用户意图和模式策略决定回答、探索、规划或执行。
+Web 控制面的核心入口是持续会话。用户执行一次 `forge` 启动本地服务，之后所有项目、会话、配置和审批都在浏览器完成。一次用户输入不一定对应一个完整任务，而是一个 turn。Agent 应根据当前会话、工作区状态、用户意图和模式策略决定回答、探索、规划或执行。
 
 ### 2.2 Mode-gated autonomy
 
@@ -39,7 +39,7 @@ Agent 的能力不是全局开关，而是由模式控制：
 
 ### 2.3 优先本地存储
 
-本地 CLI 的会话存储优先使用追加式 `jsonl` 事件日志和 `state.json` 快照。它比数据库更适合持续对话、版本管理、人工排查和轻量恢复。
+本地 Runtime 的会话存储优先使用追加式 `jsonl` 事件日志和 `state.json` 快照。它比数据库更适合持续对话、版本管理、人工排查和轻量恢复。
 
 ### 2.4 轻量DDD领域设计
 
@@ -47,7 +47,7 @@ Agent 的能力不是全局开关，而是由模式控制：
 
 ### 2.5 Human-in-the-loop
 
-企业级 CLI Agent 必须把用户确认作为架构能力，而不是临时交互：
+企业级工程 Agent 必须把用户确认作为架构能力，而不是临时交互：
 
 - 高风险工具调用前审批。
 - 需求歧义时澄清。
@@ -131,14 +131,16 @@ turn 判断（ADR-0009 决策 3）。裁决核心是**规则引擎**（`deny →
 
 模式不是独立 Agent，而是 Policy。它影响同一个 Orchestrator 的工具权限、上下文策略、输出结构和是否自动继续。
 
-交互式会话内通过斜杠命令切换模式或执行控制动作，例如 `/plan`、`/act`、`/config`、`/models`、`/status`、`/compact`、`/pause`、`/exit`。当前 MVP 只保留裸 `forge` 进入交互式会话；`chat`、`status`、`config`、`models`、`resume` 等能力优先通过 slash command 暴露，避免在 Typer 层形成第二套业务入口。
+模式、配置、模型、session、恢复和审批都通过 Web 控件调用 application services。输入框可用 `/` 打开快捷操作面板，但 slash 文本不再承担配置菜单职责。裸 `forge` 只启动本地服务，Typer 层不承载业务流程。
 
 ## 5. 总体架构
 
 ```mermaid
 flowchart TD
-    User["User"] --> CLI["CLI / TUI Interface"]
-    CLI --> App["Application Services"]
+    User["User"] --> Web["Local React Web UI"]
+    Launcher["forge launcher"] --> Server["Loopback FastAPI Server"]
+    Web --> Server
+    Server --> App["Application Services"]
     App --> Conversation["Conversation Context"]
     App --> Agent["Agent Runtime"]
     App --> Policy["Policy Context"]
@@ -158,7 +160,7 @@ flowchart TD
 
 ### 5.1 分层
 
-- `interfaces`：CLI、TUI、JSON 输出、人机交互。
+- `interfaces`：极薄 CLI 启动器、本地 Web API、React 静态资源和共享 runtime 组合根。
 - `application`：会话用例、Agent turn 编排、审批流程、恢复流程。
 - `domain`：Session、Message、Plan、ToolInvocation、ModePolicy、MemoryItem 等核心模型。
 - `infrastructure`：LLM Provider、MCP SDK、Shell、Git、文件系统、日志、遥测。
@@ -185,7 +187,7 @@ ForgeCLI 的推荐方案是：
 ForgeCLI 自有控制面 + 可替换 AgentLoop 编排内核 + 可选 LangGraph 后端
 ```
 
-也就是说，首版必须先实现稳定的本地 CLI 控制面，然后在 Agent Runtime 内预留框架适配接口。复杂 workflow 可以优先评估 LangGraph，但不把 LangGraph 的 checkpoint、message schema、tool schema 直接暴露为 ForgeCLI 的公共协议。
+也就是说，首版必须先实现稳定的本地控制面，然后在 Agent Runtime 内预留框架适配接口。复杂 workflow 可以优先评估 LangGraph，但不把 LangGraph 的 checkpoint、message schema、tool schema 直接暴露为 ForgeCLI 的公共协议。
 
 ### 6.2 为什么不直接使用框架搭完整系统
 

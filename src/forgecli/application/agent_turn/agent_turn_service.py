@@ -60,7 +60,7 @@ from forgecli.domain.conversation.turn import (
     TurnPause,
     TurnStatus,
 )
-from forgecli.domain.intents import SessionMode, UserMessage
+from forgecli.domain.intents import InputOrigin, SessionMode, UserMessage
 from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.session.events import EventType, SessionEvent
 from forgecli.domain.tool.catalog import ToolCatalog
@@ -137,14 +137,16 @@ class AgentTurnService:
         self._turns = sum(1 for e in events if e.type == EventType.USER_MESSAGE)
         self._history = _rebuild_transcript(events)
 
-    def handle_user_message(self, text: str) -> AssistantResponse:
+    def handle_user_message(
+        self, text: str, *, origin: InputOrigin = InputOrigin.PROGRAM
+    ) -> AssistantResponse:
         self._turns += 1
         turn_id = f"turn_{self._turns:04d}"
         if self._barrier.blocked:
             # 人工 Shell 回来后清缓存失败 (ADR-0017 §12). 清不掉就无法证明后续裁决基于
             # 当前事实, 而"基于过期事实的 Allow"正是这套机制要防的 —— 宁可让用户重启。
             # 仍然成对落盘: 这一轮确实发生过, 只是被拒绝了。
-            self._session.record_user_message(text, turn_id=turn_id)
+            self._session.record_user_message(text, turn_id=turn_id, origin=origin)
             refusal = self._barrier.block_reason
             self._session.record_assistant_message(
                 refusal, turn_id=turn_id, status=TurnStatus.FAILED
@@ -152,7 +154,7 @@ class AgentTurnService:
             return AssistantResponse(
                 turn_id=turn_id, text=refusal, status=TurnStatus.FAILED
             )
-        self._session.record_user_message(text, turn_id=turn_id)
+        self._session.record_user_message(text, turn_id=turn_id, origin=origin)
         # mode 从 session 快照读，单一真相（不再依赖 REPL 内存态）。
         mode = self._session.current().mode
         outcome = self._obtain_outcome(text, mode, turn_id)
@@ -355,7 +357,7 @@ class AgentTurnService:
                         "template_version": plan.template_version,
                         "title": plan.title,
                         "step_count": plan.step_count,
-                        "file": f"{plan.plan_id}/r{plan.revision}.toml",
+                        "file": f"{plan.plan_id}/r{plan.revision}.json",
                     },
                     turn_id=turn_id,
                 )

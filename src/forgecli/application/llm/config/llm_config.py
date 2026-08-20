@@ -380,7 +380,7 @@ class ProviderConfig:
 
 
 # ---- 网关运行时配置段（ADR-0012）----
-# 以下值对象对应 llm.toml 的 [llm.cache] / [llm.circuit_breaker] / [llm.retry]，
+# 以下值对象对应 llm.json  的 llm.cache / llm.circuit_breaker / llm.retry，
 # 由 LlmConfigService 解析、wiring 消费装配。所有能力默认关闭或回落现行为；
 # 网关自身不解析 TOML（ADR-0011 §4 边界不变）。已移除的配置段：[llm.rate_limit]
 # （客户端主动限流，见 governance.py）、[llm.credentials]（凭证只支持环境变量，

@@ -2,8 +2,8 @@
 
 这里是配置面的*唯一权威登记*：所有**可设置的配置偏好**——无论应用级还是项目级——都在
 SCHEMA 里声明一条 ConfigKey，带 `level` 区分归属。新增配置项 = 加一条；键名、类型、
-默认值、允许取值、属于哪一级都从这里读。落盘按 level 路由（应用级 → config.toml，
-项目级 → forge.toml）由 ConfigService 据 `level` 完成，"写哪个文件"是数据而非代码分叉。
+默认值、允许取值、属于哪一级都从这里读。落盘按 level 路由（应用级 → config.json，
+项目级 → forge.json）由 ConfigService 据 `level` 完成，"写哪个文件"是数据而非代码分叉。
 
 注意：trust 标记、工作区目录等是**项目状态**而非配置偏好——它们由 ProjectService /
 `/add-dir` 等领域流程管理，不进本 SCHEMA、不经通用 set。
@@ -23,11 +23,11 @@ from forgecli.domain.config.errors import (
 )
 
 # ---- 键名常量（dotted key 与配置文件表结构对应）----
-# 应用级（config.toml）
+# 应用级（config.json）
 TELEMETRY_ENABLED = "telemetry.enabled"
 OUTPUT_THEME = "output.theme"
 LOGGING_LEVEL = "logging.level"
-# 项目级（forge.toml）
+# 项目级（forge.json）
 DEFAULT_MODEL_PROVIDER_KEY = "model.provider"
 DEFAULT_MODEL_NAME_KEY = "model.name"
 
@@ -91,7 +91,7 @@ class ConfigKey:
 
 
 SCHEMA: tuple[ConfigKey, ...] = (
-    # 应用级 → config.toml
+    # 应用级 → config.json
     ConfigKey(TELEMETRY_ENABLED, ConfigLevel.APP, ValueKind.BOOL, default="false"),
     ConfigKey(
         OUTPUT_THEME,
@@ -107,7 +107,7 @@ SCHEMA: tuple[ConfigKey, ...] = (
         default="info",
         choices=("debug", "info", "warn"),
     ),
-    # 项目级 → forge.toml
+    # 项目级 → forge.json
     ConfigKey(DEFAULT_MODEL_PROVIDER_KEY, ConfigLevel.PROJECT, ValueKind.TEXT),
     ConfigKey(DEFAULT_MODEL_NAME_KEY, ConfigLevel.PROJECT, ValueKind.TEXT),
 )

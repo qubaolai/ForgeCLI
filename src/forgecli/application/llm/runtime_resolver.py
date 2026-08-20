@@ -1,6 +1,6 @@
 """配置现读的 ModelSelectionResolver（ADR-0011 §2 / §5 运行期装配）。
 
-当前模型（/model）、按用途覆盖（/config）与模型目录（llm.toml）都可能在会话中
+当前模型（/model）、按用途覆盖（/config）与模型目录（llm.json）都可能在会话中
 被修改，因此不能在启动时把它们冻进 resolver。本类每次 resolve 时现读三个来源、
 重建 DefaultModelSelectionResolver 并委托——解析语义（含 catalog 校验、无 fallback）
 与 DefaultModelSelectionResolver 完全一致。

@@ -1,7 +1,7 @@
 """/tools: 当前模式下模型能看见什么 (ADR-0007).
 
 它必须走与模型完全相同的目录谓词. 用另一套过滤逻辑的话, "/tools 说 plan 档看不见
-fs.write_patch"就不再是关于真实目录的陈述, 而只是一句好听的话.
+fs.edit_file"就不再是关于真实目录的陈述, 而只是一句好听的话.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def _run(mode: SessionMode) -> str:
     registry.register_all(
         (
             _Tool("fs.read_file", Capability.WORKSPACE_READ),
-            _Tool("fs.write_patch", Capability.WORKSPACE_WRITE),
+            _Tool("fs.edit_file", Capability.WORKSPACE_WRITE),
             _Tool("shell.run", Capability.EXECUTE_SHELL),
         )
     )
@@ -105,16 +105,16 @@ def test_plan_mode_hides_mutating_tools() -> None:
 
     visible = _section(text, "模型可见")
     assert "fs.read_file" in visible
-    assert "fs.write_patch" not in visible
+    assert "fs.edit_file" not in visible
     assert "shell.run" not in visible
 
 
 def test_hidden_tools_are_listed_as_hidden_not_omitted() -> None:
-    """ "看不见 fs.write_patch"与"没有这个工具"是两回事, 混在一起会被当成功能缺失."""
+    """ "看不见 fs.edit_file"与"没有这个工具"是两回事, 混在一起会被当成功能缺失."""
     text = _run(SessionMode.PLAN)
 
     hidden = _section(text, "本模式下不可见")
-    assert "fs.write_patch" in hidden
+    assert "fs.edit_file" in hidden
     assert "shell.run" in hidden
 
 
@@ -122,7 +122,7 @@ def test_other_modes_see_everything() -> None:
     text = _run(SessionMode.ACCEPT_EDITS)
 
     assert "本模式下不可见" not in text
-    for name in ("fs.read_file", "fs.write_patch", "shell.run"):
+    for name in ("fs.read_file", "fs.edit_file", "shell.run"):
         assert name in text
 
 

@@ -1,8 +1,8 @@
 """按用途模型覆盖的持久化端口 ModelOverridesStore（ADR-0011 §16）。
 
-覆盖存放在项目级 forge.toml 的 `[model_overrides.<origin>]` 段（每个 origin 最多
+覆盖存放在项目级 forge.json 的 ``model_overrides.<origin>` 段（每个 origin 最多
 一条 provider/model）。ConfigService 的扁平 SCHEMA 白名单面向标量偏好，不适合
-嵌套表 + 删除操作，故独立端口（tomlkit 实现在 infrastructure）。
+嵌套对象 + 删除操作，故独立端口（JSON 实现在 infrastructure）。
 
 store 只做「段 <-> 原始 mapping」搬运，不校验 origin / provider / model——
 校验归 ModelOverridesService（复用 build_model_overrides）。

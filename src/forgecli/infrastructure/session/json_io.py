@@ -1,4 +1,4 @@
-"""会话 JSON 读写的统一入口（对标 infrastructure/toml_io）。
+"""会话 JSON 读写的统一入口（对标 infrastructure/json_io）。
 
 收敛保证：
     - 一致的落盘：先写临时文件再 rename，避免读到半截文件（state.json 用）。

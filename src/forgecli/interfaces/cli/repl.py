@@ -177,8 +177,9 @@ class Repl:
         链上限存在的理由: 一次评审最多起一轮后续 turn, 而那一轮可能又停在评审. 一个每轮
         都提计划的模型能造出无人输入的死循环.
         """
+        origin = InputOrigin.TTY_USER
         for _ in range(_MAX_REVIEW_CHAIN):
-            response = self._run_turn(text)
+            response = self._run_turn(text, origin=origin)
             self._finish_render(response)
             if response.pause is not TurnPause.PLAN_REVIEW:
                 return
@@ -186,6 +187,7 @@ class Repl:
             if not follow_up:
                 return
             text = follow_up
+            origin = InputOrigin.PROGRAM
         self._output.print(
             "连续多轮都停在计划评审, 已回到提示符. 直接说你想怎么做会更快."
         )
@@ -236,7 +238,9 @@ class Repl:
             return
         self._shell_mode.enter(intent)
 
-    def _run_turn(self, text: str) -> AssistantResponse:
+    def _run_turn(
+        self, text: str, *, origin: InputOrigin = InputOrigin.PROGRAM
+    ) -> AssistantResponse:
         """跑一轮 agent turn：挂取消 token + SIGINT 接线 + 流式渲染。
 
         finish() 在 Live 激活期间调用，把最后半行正文定稿提交；收尾提示留到
@@ -246,7 +250,7 @@ class Repl:
         restore = _install_sigint(token)
         try:
             with self._stream_view.turn():
-                response = self._agent_turn.handle_user_message(text)
+                response = self._agent_turn.handle_user_message(text, origin=origin)
                 self._stream_view.finish()
             return response
         finally:

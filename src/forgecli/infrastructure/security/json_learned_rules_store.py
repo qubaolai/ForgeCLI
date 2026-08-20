@@ -1,4 +1,4 @@
-"""学习规则的 TOML 落盘.
+"""学习规则的 JSON 落盘.
 
 规则跨会话有效, 所以必须存起来. 落在 Forge 状态目录而不是工作区: Agent 和它起的
 子进程都不该能改自己的授权规则 —— 能改就等于能给自己发许可.
@@ -14,17 +14,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-
-import tomlkit
-from tomlkit.items import InlineTable
+from typing import Any
 
 from forgecli.application.security.learned_rules import LearnedRuleStore
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.rules import LearnedAllowRule, RuleMatch
 from forgecli.domain.security.vocabulary import ApprovalScope
-from forgecli.infrastructure.toml_io import read_document, write_document
+from forgecli.infrastructure.json_io import read_document, write_document
 
-__all__ = ["TomlLearnedRuleStore"]
+__all__ = ["JsonLearnedRuleStore"]
 
 _RULES = "rules"
 _MATCH_FIELDS = (
@@ -39,12 +37,12 @@ _MATCH_FIELDS = (
 )
 
 
-class TomlLearnedRuleStore(LearnedRuleStore):
+class JsonLearnedRuleStore(LearnedRuleStore):
     def __init__(self, path: Path) -> None:
         self._path = path
 
     def load(self) -> tuple[LearnedAllowRule, ...]:
-        raw = read_document(self._path).unwrap().get(_RULES, [])
+        raw = read_document(self._path).get(_RULES, [])
         if not isinstance(raw, list):
             return ()
         loaded: list[LearnedAllowRule] = []
@@ -58,24 +56,22 @@ class TomlLearnedRuleStore(LearnedRuleStore):
 
     def save(self, rules: tuple[LearnedAllowRule, ...]) -> None:
         document = read_document(self._path)
-        array = tomlkit.array()
-        for rule in rules:
-            array.append(_payload_of(rule))
-        document[_RULES] = array
+        document[_RULES] = [_payload_of(rule) for rule in rules]
         write_document(self._path, document)
 
 
-def _payload_of(rule: LearnedAllowRule) -> InlineTable:
-    body = tomlkit.inline_table()
-    body["rule_id"] = rule.rule_id
-    body["scope"] = rule.scope.value
-    body["created_at_epoch"] = rule.created_at_epoch
-    body["session_id"] = rule.session_id
-    body["revoked"] = rule.revoked
-    body["label"] = rule.label
+def _payload_of(rule: LearnedAllowRule) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "rule_id": rule.rule_id,
+        "scope": rule.scope.value,
+        "created_at_epoch": rule.created_at_epoch,
+        "session_id": rule.session_id,
+        "revoked": rule.revoked,
+        "label": rule.label,
+        "mode": rule.match.mode.value,
+    }
     if rule.expires_at_epoch is not None:
         body["expires_at_epoch"] = rule.expires_at_epoch
-    body["mode"] = rule.match.mode.value
     if rule.match.script_content_hash is not None:
         body["script_content_hash"] = rule.match.script_content_hash
     for name in _MATCH_FIELDS:

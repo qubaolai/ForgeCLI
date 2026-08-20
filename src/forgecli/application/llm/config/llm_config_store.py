@@ -1,4 +1,4 @@
-"""LLM 配置持久化端口（由 infrastructure 用 tomlkit 实现）。
+"""LLM 配置持久化端口（由 infrastructure 用 JSON 实现）。
 
 约定：
     - load() 返回 [llm] 段落的原始嵌套 dict（plain python），无文件返回 {}。

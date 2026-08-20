@@ -37,23 +37,22 @@ from forgecli.application.prompt.system_prompt_builder import SystemPromptBuilde
 from forgecli.application.session import SessionService
 from forgecli.domain.manual_shell.request import TerminalSize
 from forgecli.domain.model.thinking import ThinkingMode
-from forgecli.infrastructure.config import TomlConfigStore, config_dir, config_file
-from forgecli.infrastructure.llm import TomlLlmConfigStore
+from forgecli.infrastructure.config import JsonConfigStore, config_dir, config_file
+from forgecli.infrastructure.llm import JsonLlmConfigStore
 from forgecli.infrastructure.manual_shell import (
     SystemShellResolver,
     build_interactive_shell_provider,
 )
 from forgecli.infrastructure.project import (
+    JsonProjectConfigStore,
+    JsonProjectIndexStore,
     ProcessLock,
     ProjectLockedError,
-    TomlProjectConfigStore,
-    TomlProjectIndexStore,
 )
 from forgecli.infrastructure.prompt import FsProjectInstructionReader
 from forgecli.infrastructure.session import JsonlEventStore, JsonStateStore
 from forgecli.interfaces.cli.banner import render_banner
 from forgecli.interfaces.cli.exit_codes import ExitCode
-from forgecli.interfaces.cli.llm_wiring import build_llm_runtime
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.plan_review_prompt import PlanReviewPrompt
@@ -65,11 +64,12 @@ from forgecli.interfaces.cli.shell_mode import (
     ShellModeEntry,
 )
 from forgecli.interfaces.cli.terminal_lease import CliTerminalLease
-from forgecli.interfaces.cli.tool_wiring import ToolStack, build_tool_stack
 from forgecli.interfaces.cli.tty.tty import stdin_is_tty
 from forgecli.interfaces.cli.tty_approval import TtyApprovalService
 from forgecli.interfaces.cli.tty_prompts import TtyDirectoryPicker, TtyTrustPrompter
 from forgecli.interfaces.cli.wiring import build_registry
+from forgecli.interfaces.runtime.llm_wiring import build_llm_runtime
+from forgecli.interfaces.runtime.tool_wiring import ToolStack, build_tool_stack
 
 # 正文不出现方括号, 免得被 Rich 当成样式标记解析.
 _ELEVATED_REFUSAL = (
@@ -87,8 +87,8 @@ def _project_service() -> ProjectService:
     # 项目索引与项目配置都落在用户级 Forge home 下（projects/），不写入项目目录。
     projects = config_dir() / "projects"
     return ProjectService(
-        TomlProjectIndexStore(projects / "index.toml"),
-        TomlProjectConfigStore(projects),
+        JsonProjectIndexStore(projects / "index.json"),
+        JsonProjectConfigStore(projects),
     )
 
 
@@ -222,15 +222,15 @@ def run() -> ExitCode:
         # 调用经统一网关流式返回，增量进 REPL Live 区；usage 草稿随回复交回、
         # 由 AgentTurnService 落盘；Ctrl-C 经 TurnCancelSource 协作取消在途调用。
         project_home = config_dir() / "projects" / context.project.project_id
-        forge_toml = project_home / "forge.toml"
+        forge_json = project_home / "forge.json"
         config_service = ConfigService(
-            TomlConfigStore(config_file("config.toml")),
-            TomlConfigStore(forge_toml),
+            JsonConfigStore(config_file("config.json")),
+            JsonConfigStore(forge_json),
         )
-        llm_service = LlmConfigService(TomlLlmConfigStore(config_file("llm.toml")))
+        llm_service = LlmConfigService(JsonLlmConfigStore(config_file("llm.json")))
         thinking_state = ThinkingRuntimeState()
         llm_runtime = build_llm_runtime(
-            config_service, llm_service, forge_toml, thinking_state
+            config_service, llm_service, forge_json, thinking_state
         )
         cancel_source = TurnCancelSource()
         run_bus = AgentRunEventBus()

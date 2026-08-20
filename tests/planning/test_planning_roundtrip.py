@@ -26,6 +26,7 @@ def service(tmp_path: Path) -> PlanningService:
 
 def _write(service: PlanningService, **overrides: object) -> object:
     base: dict[str, object] = {
+        "name": "拆分值域对象",
         "title": "拆分值域对象",
         "goal": "把混在一起的领域概念分开",
         "context": "domain 下几个模块互相引用",
@@ -99,8 +100,8 @@ def test_both_revisions_stay_on_disk(service: PlanningService, tmp_path: Path) -
     _write(service, plan_id=first.plan_id)  # type: ignore[attr-defined]
 
     directory = tmp_path / "plans" / first.plan_id  # type: ignore[attr-defined]
-    assert (directory / "r1.toml").exists()
-    assert (directory / "r2.toml").exists()
+    assert (directory / "r1.json").exists()
+    assert (directory / "r2.json").exists()
     assert (directory / "r1.md").exists()
 
 
@@ -167,7 +168,7 @@ def test_rewriting_the_table_archives_the_old_one(
     service.write_todo(["先读", "再写"])
 
     archive = tmp_path / "plans" / "todo" / "archive"
-    assert list(archive.glob("*.toml"))
+    assert list(archive.glob("*.json"))
 
 
 def test_rewriting_resets_statuses(service: PlanningService) -> None:
@@ -206,7 +207,7 @@ def test_a_missing_directory_is_not_an_error(service: PlanningService) -> None:
 def test_a_corrupt_index_degrades_to_no_plan(tmp_path: Path) -> None:
     root = tmp_path / "plans"
     root.mkdir(parents=True)
-    (root / "index.toml").write_text("这不是 = = toml", encoding="utf-8")
+    (root / "index.json").write_text("这不是 } { json", encoding="utf-8")
 
     assert PlanningService(FsPlanStore(lambda: root)).load().empty
 
@@ -229,11 +230,11 @@ def test_a_future_template_version_is_refused(
 ) -> None:
     """比当前实现更新的模板渲染出来大概率缺小节. 与其给人看半截的, 不如说清楚."""
     written = _write(service)
-    path = tmp_path / "plans" / written.plan_id / "r1.toml"  # type: ignore[attr-defined]
+    path = tmp_path / "plans" / written.plan_id / "r1.json"  # type: ignore[attr-defined]
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            f"template_version = {PLAN_TEMPLATE_VERSION}",
-            f"template_version = {PLAN_TEMPLATE_VERSION + 9}",
+            f'"template_version": {PLAN_TEMPLATE_VERSION}',
+            f'"template_version": {PLAN_TEMPLATE_VERSION + 9}',
         ),
         encoding="utf-8",
     )
@@ -242,3 +243,84 @@ def test_a_future_template_version_is_refused(
 
     assert active.plan is None
     assert any("模板版本" in line for line in active.diagnostics)
+
+
+# ---- 命名 ----
+
+
+def test_the_plan_id_comes_from_the_name_the_model_picked(
+    service: PlanningService, tmp_path: Path
+) -> None:
+    """目录名要能说明这份计划是关于什么的, 而不是一串 pl_a3f19c."""
+    written = _write(service, name="修复 Web 退出卡住")
+
+    assert written.plan_id == "修复-web-退出卡住"  # type: ignore[attr-defined]
+    assert (tmp_path / "plans" / "修复-web-退出卡住" / "r1.json").exists()
+
+
+def test_a_second_plan_with_the_same_name_gets_a_suffix(
+    service: PlanningService,
+) -> None:
+    """id 是目录名: 撞名直接覆盖等于丢掉上一份计划的全部历史."""
+    first = _write(service, name="同一个名字")
+    second = _write(service, name="同一个名字")
+
+    assert first.plan_id == "同一个名字"  # type: ignore[attr-defined]
+    assert second.plan_id == "同一个名字-2"  # type: ignore[attr-defined]
+
+
+def test_a_new_revision_keeps_the_original_name(service: PlanningService) -> None:
+    """改标题不该让历史散成两份, 所以 id 只在新建时取一次."""
+    first = _write(service, name="保持同名")
+
+    second = _write(
+        service,
+        name="换了个完全不同的名字",
+        title="改过的标题",
+        plan_id=first.plan_id,  # type: ignore[attr-defined]
+    )
+
+    assert second.plan_id == "保持同名"  # type: ignore[attr-defined]
+    assert second.revision == 2  # type: ignore[attr-defined]
+
+
+def test_an_unusable_name_falls_back_instead_of_writing_a_weird_directory(
+    service: PlanningService,
+) -> None:
+    """纯符号当目录名是危险的, 不是不好看."""
+    written = _write(service, name="../../..")
+
+    assert written.plan_id.startswith("plan-")  # type: ignore[attr-defined]
+    assert "/" not in written.plan_id  # type: ignore[attr-defined]
+
+
+def test_the_todo_keeps_its_name_while_being_corrected(
+    service: PlanningService,
+) -> None:
+    """同名 = 继续修正同一份清单: revision 递增, 归档留得住上一版."""
+    service.write_todo(["先读"], name="接线清单")
+
+    second = service.write_todo(["先读", "再写"], name="接线清单")
+
+    assert second.todo_id == "接线清单"
+    assert second.revision == 2
+
+
+def test_a_renamed_todo_starts_over(service: PlanningService) -> None:
+    """换名 = 这是另一件事的清单, 从 revision 1 起算."""
+    service.write_todo(["先读"], name="接线清单")
+
+    second = service.write_todo(["另一件事"], name="回归清单")
+
+    assert second.todo_id == "回归清单"
+    assert second.revision == 1
+
+
+def test_seeding_from_a_plan_reuses_the_plan_name(service: PlanningService) -> None:
+    """同一件事在磁盘上就该是同一个名字."""
+    plan = _write(service, name="播种命名")
+
+    todo = service.seed_from_plan(plan)  # type: ignore[arg-type]
+
+    assert todo.todo_id == "播种命名"
+    assert todo.plan_id == "播种命名"

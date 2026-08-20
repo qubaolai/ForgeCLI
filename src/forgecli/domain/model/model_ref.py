@@ -1,8 +1,8 @@
 """稳定模型引用：provider + model。
 
 ModelRef 只表示运行时默认模型指向哪个已配置模型。供应商和模型参数仍由
-application/llm/config 读取 .forge/llm.toml；默认引用由 application/config
-读取 .forge/config.toml。
+application/llm/config 读取 .forge/llm.json；默认引用由 application/config
+读取 .forge/config.json。
 
 InvalidModelRef 与 ModelRef 同住: 它守的就是本类的构造不变量, 且全仓只有这里抛。
 它继承 shared.errors 的 ConfigValidationError —— domain 依赖 shared 是允许的,

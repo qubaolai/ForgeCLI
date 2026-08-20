@@ -117,12 +117,12 @@ def test_the_presentation_hash_covers_the_script_body() -> None:
 
 def test_the_presentation_hash_covers_write_content() -> None:
     base = ApprovalPresentation(
-        action_summary="fs.write_patch: 写入 README.md",
+        action_summary="fs.edit_file: 写入 README.md",
         write_paths=("/ws/README.md",),
         content_previews=(ContentPreview(path="/ws/README.md", content="hello\n"),),
     )
     tampered = ApprovalPresentation(
-        action_summary="fs.write_patch: 写入 README.md",
+        action_summary="fs.edit_file: 写入 README.md",
         write_paths=("/ws/README.md",),
         content_previews=(ContentPreview(path="/ws/README.md", content="pwned\n"),),
     )

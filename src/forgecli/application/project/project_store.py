@@ -6,7 +6,7 @@
 约定：
     - 两类数据都落在用户级 Forge home 下，不写入被信任的项目目录。
     - load 无文件时返回空（{} 或 None），不抛异常；解析失败抛 ConfigReadError。
-    - 写入走 round-trip + 原子替换（由 infrastructure/toml_io 保证）。
+    - 写入走 round-trip + 原子替换（由 infrastructure/json_io 保证）。
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from forgecli.domain.workspace.project import IndexEntry, ProjectConfig
 
 
 class ProjectIndexStore(ABC):
-    """``projects/index.toml`` 的读写。"""
+    """``projects/index.json`` 的读写。"""
 
     @abstractmethod
     def load(self) -> dict[str, IndexEntry]:
@@ -29,7 +29,7 @@ class ProjectIndexStore(ABC):
 
 
 class ProjectConfigStore(ABC):
-    """``projects/<project-id>/forge.toml`` 的读写。"""
+    """``projects/<project-id>/forge.json`` 的读写。"""
 
     @abstractmethod
     def load(self, project_id: str) -> ProjectConfig | None:

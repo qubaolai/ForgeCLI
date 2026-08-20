@@ -45,6 +45,12 @@ class ToolAuditSink(ABC):
     def tool_completed(self, result: ToolResult, *, plan_hash: str) -> None: ...
 
     @abstractmethod
+    def tool_rejected(
+        self, tool_name: str, *, invocation_id: str, reason_code: str, message: str
+    ) -> None:
+        """没有执行就结束的调用也要留痕: 事后要能回答"模型请求过什么, 为什么没发生"."""
+
+    @abstractmethod
     def policy_decision(
         self, decision: AuthorizationDecision, *, invocation_id: str
     ) -> None: ...
@@ -74,6 +80,11 @@ class NullToolAudit(ToolAuditSink):
         return None
 
     def tool_completed(self, result: ToolResult, *, plan_hash: str) -> None:
+        return None
+
+    def tool_rejected(
+        self, tool_name: str, *, invocation_id: str, reason_code: str, message: str
+    ) -> None:
         return None
 
     def policy_decision(

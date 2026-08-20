@@ -9,6 +9,7 @@ ASK. 读 ~/.ssh/id_rsa 和读 src/main.py 因此得到不同待遇, 而工具本
 from __future__ import annotations
 
 from types import MappingProxyType
+from typing import NamedTuple
 
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.builtin.base import (
@@ -30,6 +31,7 @@ from forgecli.domain.tool.plan import (
     ToolPlan,
 )
 from forgecli.domain.tool.result import (
+    ContentPart,
     ToolMetrics,
     ToolResult,
     ToolResultStatus,
@@ -45,14 +47,20 @@ __all__ = ["ReadFileTool"]
 
 _SPEC = ToolSpec(
     name="fs.read_file",
-    version="1",
+    version="2",
     title="读取文件",
-    description="读取工作区内某个文件的文本内容. 超长内容会截断并落为产物.",
+    description=(
+        "读取一个文件的文本内容. 默认读全文; "
+        "大文件可以传 offset (从第几行开始, 从 1 起) 与 limit (读多少行) 只取一段, "
+        "返回时会附带这一段在全文中的位置. 超长内容会截断并落为产物."
+    ),
     input_schema={
         "type": "object",
         "properties": {
             "path": {"type": "string"},
-            "max_bytes": {"type": "integer"},
+            "offset": {"type": "integer", "minimum": 1},
+            "limit": {"type": "integer", "minimum": 1},
+            "max_bytes": {"type": "integer", "minimum": 1},
         },
         "required": ["path"],
         "additionalProperties": False,
@@ -105,6 +113,8 @@ class ReadFileTool(Tool):
             normalized_input=MappingProxyType(
                 {
                     "path": facts.realpath,
+                    "offset": request.arguments.get("offset"),
+                    "limit": request.arguments.get("limit"),
                     "max_bytes": request.arguments.get("max_bytes"),
                 }
             ),
@@ -124,9 +134,16 @@ class ReadFileTool(Tool):
     ) -> ToolResult:
         limits = self._governor.limits_for(_SPEC)
         path = str(plan.normalized_input["path"])
-        text = context.filesystem.read_text(path, max_bytes=limits.max_artifact_bytes)
-        emitted = emit_text(
+        requested = _positive(plan.normalized_input.get("max_bytes"))
+        ceiling = min(requested or limits.max_artifact_bytes, limits.max_artifact_bytes)
+        text = context.filesystem.read_text(path, max_bytes=ceiling)
+        window = _slice(
             text,
+            offset=_positive(plan.normalized_input.get("offset")),
+            limit=_positive(plan.normalized_input.get("limit")),
+        )
+        emitted = emit_text(
+            window.text,
             invocation_id=plan.plan_id,
             limits=limits,
             artifacts=self._artifacts,
@@ -136,7 +153,42 @@ class ReadFileTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=ToolResultStatus.OK,
-            content_parts=emitted.parts,
+            # 位置说明单独一个 part, 不拼进正文: 拼进去模型照抄一段内容当 old_string 时
+            # 会把它一起抄走, 于是 fs.edit_file 逐字比对必然对不上.
+            content_parts=emitted.parts + window.notes,
             artifacts=emitted.artifacts,
             metrics=ToolMetrics(bytes_out=emitted.bytes_out),
         )
+
+
+class _Window(NamedTuple):
+    text: str
+    notes: tuple[ContentPart, ...]
+
+
+def _positive(raw: object) -> int | None:
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    return None
+
+
+def _slice(text: str, *, offset: int | None, limit: int | None) -> _Window:
+    """按行取一段, 并如实说明取的是哪一段.
+
+    不报位置的话, 模型拿到的是一段没有坐标的文本: 它无从判断上面还有没有内容, 也就
+    容易把"这一段里没有"当成"这个文件里没有".
+    """
+    if offset is None and limit is None:
+        return _Window(text, ())
+    lines = text.splitlines(keepends=True)
+    total = len(lines)
+    requested = offset or 1
+    if requested > total:
+        # 报**请求的** offset 而不是夹紧后的值: 用户和模型要对上的是自己传进来的数,
+        # 看到一个自己没写过的行号只会以为工具算错了.
+        note = f"[第 {requested} 行超出文件末尾, 全文共 {total} 行]"
+        return _Window("", (ContentPart(text=note),))
+    start = requested - 1
+    stop = min(start + limit, total) if limit is not None else total
+    note = f"[以上是第 {start + 1}-{stop} 行, 全文共 {total} 行]"
+    return _Window("".join(lines[start:stop]), (ContentPart(text=note),))

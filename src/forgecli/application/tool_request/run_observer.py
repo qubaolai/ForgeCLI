@@ -68,3 +68,14 @@ class ToolRunObserver(ABC):
     def tool_cancelled(
         self, tool_name: str, *, invocation_id: str, side_effect_unknown: bool
     ) -> None: ...
+
+    @abstractmethod
+    def tool_rejected(
+        self, tool_name: str, *, invocation_id: str, reason_code: str, message: str
+    ) -> None:
+        """这次调用没有执行就结束了 (工具不存在, prepare 失败, 被拒或没等到批准).
+
+        没有终态事件的调用会让展示层永远停在"未完成": 用户看到的是一次悬空的工具调用,
+        既不知道它失败了, 也不知道为什么。而模型其实早就收到了结论 —— 两边看到的不是
+        同一件事, 这比单纯少一条事件更糟。
+        """

@@ -121,6 +121,16 @@ def _unresolved_reason_of(decision: AuthorizationDecision) -> str | None:
     return "; ".join(reasons) if reasons else "分析无法确定完整目标集合"
 
 
+# 这两类结论意味着工具真的跑过了, 终态事件由 _execute 负责; 其余一律没有执行。
+_EXECUTED_KINDS = frozenset(
+    {
+        ObservationKind.TOOL_RESULT,
+        ObservationKind.PLAN_REVIEW_REQUIRED,
+        ObservationKind.OUTCOME_UNKNOWN,
+    }
+)
+
+
 class ToolRequestCoordinator:
     """把一次 ToolRequest 走完整条安全管线, 产出一个 ToolObservation."""
 
@@ -179,6 +189,32 @@ class ToolRequestCoordinator:
         # 不能跨项目命中.
         policy = replace(policy, workspace_id=self._workspace_id)
         invocation_id = self._new_invocation_id()
+        observation = self._resolve(request, invocation_id, context, policy, cancel)
+        if observation.kind not in _EXECUTED_KINDS:
+            # 没有执行的调用也必须留下终态与审计. 少了这一步, 展示层会永远停在"未完成",
+            # events.jsonl 里也查不到这次请求发生过 —— 而模型其实早就拿到了结论。
+            self._observer.tool_rejected(
+                observation.tool_name,
+                invocation_id=invocation_id,
+                reason_code=observation.reason_code,
+                message=observation.message,
+            )
+            self._audit.tool_rejected(
+                observation.tool_name,
+                invocation_id=invocation_id,
+                reason_code=observation.reason_code,
+                message=observation.message,
+            )
+        return observation
+
+    def _resolve(
+        self,
+        request: ToolRequest,
+        invocation_id: str,
+        context: ExecutionContext,
+        policy: PolicyContext,
+        cancel: CancelToken | None,
+    ) -> ToolObservation:
         catalog = self.catalog_for(policy)
 
         unavailable = self._check_availability(request, catalog, invocation_id, policy)

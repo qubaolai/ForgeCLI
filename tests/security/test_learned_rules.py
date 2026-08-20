@@ -26,8 +26,8 @@ from forgecli.domain.tool.plan import (
     ToolPlan,
     WorkspaceScope,
 )
-from forgecli.infrastructure.security.toml_learned_rules_store import (
-    TomlLearnedRuleStore,
+from forgecli.infrastructure.security.json_learned_rules_store import (
+    JsonLearnedRuleStore,
 )
 
 IDENTITY = "sha256:abc123"
@@ -208,7 +208,7 @@ def test_a_revoked_rule_stops_matching() -> None:
 
 
 def test_rules_survive_a_restart(tmp_path: Path) -> None:
-    store = TomlLearnedRuleStore(tmp_path / "rules.toml")
+    store = JsonLearnedRuleStore(tmp_path / "rules.json")
     LearnedRuleService(store, workspace_id="ws-1").record(
         _decision(), _policy(), ApprovalScope.WORKSPACE
     )
@@ -222,8 +222,8 @@ def test_arguments_are_never_persisted(tmp_path: Path) -> None:
     落盘的只有匹配用的哈希, 加上一个可执行文件基名 —— `curl` 这三个字母带不出任何
     东西, 而它后面跟的 header 带得出.
     """
-    path = tmp_path / "rules.toml"
-    service = LearnedRuleService(TomlLearnedRuleStore(path), workspace_id="ws-1")
+    path = tmp_path / "rules.json"
+    service = LearnedRuleService(JsonLearnedRuleStore(path), workspace_id="ws-1")
     service.record(
         _decision(
             command="curl -H 'Authorization: Bearer sk-secret' https://api.internal",
@@ -241,11 +241,11 @@ def test_arguments_are_never_persisted(tmp_path: Path) -> None:
 
 def test_the_label_round_trips_so_rules_can_be_listed(tmp_path: Path) -> None:
     """没有可读标签, /rules 就只是一串 rule_id, 用户无从判断该撤销哪一条."""
-    path = tmp_path / "rules.toml"
-    LearnedRuleService(TomlLearnedRuleStore(path), workspace_id="ws-1").record(
+    path = tmp_path / "rules.json"
+    LearnedRuleService(JsonLearnedRuleStore(path), workspace_id="ws-1").record(
         _decision(names=("poetry", "pytest")), _policy(), ApprovalScope.WORKSPACE
     )
-    revived = LearnedRuleService(TomlLearnedRuleStore(path), workspace_id="ws-1")
+    revived = LearnedRuleService(JsonLearnedRuleStore(path), workspace_id="ws-1")
     assert revived.rules[0].label == "poetry | pytest"
 
 
@@ -261,6 +261,6 @@ def test_the_label_does_not_affect_matching() -> None:
 
 def test_a_corrupt_entry_is_skipped_not_fatal(tmp_path: Path) -> None:
     """一条坏规则不该让会话起不来; 少一条 Allow 的后果是多问一次, 方向安全."""
-    path = tmp_path / "rules.toml"
-    path.write_text('rules = [{rule_id = "x"}]\n', encoding="utf-8")
-    assert TomlLearnedRuleStore(path).load() == ()
+    path = tmp_path / "rules.json"
+    path.write_text('{"rules": [{"rule_id": "x"}]}\n', encoding="utf-8")
+    assert JsonLearnedRuleStore(path).load() == ()

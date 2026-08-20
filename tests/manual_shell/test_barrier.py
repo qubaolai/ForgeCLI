@@ -15,7 +15,7 @@ from forgecli.application.manual_shell import ManualMutationBarrier, ManualShell
 from forgecli.application.prompt.system_prompt_builder import SystemPromptBuilder
 from forgecli.application.security.risk_cache import RiskCache
 from forgecli.domain.conversation.turn import TurnStatus
-from forgecli.domain.intents import ManualShellIntent
+from forgecli.domain.intents import InputOrigin, ManualShellIntent
 from forgecli.domain.security.risk import RiskLevel, RiskReport
 from forgecli.interfaces.cli.shell_mode import ShellModeEntry
 from support.fakes import FACTS, NoProjectInstructions
@@ -111,7 +111,9 @@ class _Session:
     def __init__(self) -> None:
         self.messages: list[tuple[str, str]] = []
 
-    def record_user_message(self, text: str, *, turn_id: str) -> None:
+    def record_user_message(
+        self, text: str, *, turn_id: str, origin: InputOrigin = InputOrigin.PROGRAM
+    ) -> None:
         self.messages.append(("user", text))
 
     def record_assistant_message(self, text: str, **kwargs: object) -> None:

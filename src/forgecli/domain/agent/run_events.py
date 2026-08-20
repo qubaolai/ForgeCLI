@@ -241,14 +241,17 @@ class TodoUpdatedPayload(RunEventPayload):
 
 @dataclass(frozen=True)
 class ToolQueuedPayload(RunEventPayload):
-    """模型请求了一个工具.
+    """模型请求了一个工具, 带它**原样**提交的入参.
 
-    这里只带工具名与队列位置; 入参随 TOOL_PREPARED 一起给出 —— 排队那一刻的入参还没
-    经过 prepare 归一化, 展示它容易与真正执行的东西对不上.
+    这里的入参没经过 prepare 归一化, 所以展示时要让位给 TOOL_PREPARED 的那一份. 但它
+    必须发出来: 一次连 prepare 都没走到的调用 (工具名不存在, schema 不合法) 只有排队
+    和终态两条事件, 入参在别处一次都不会出现 —— 而"模型到底传了什么"正是这类失败唯一
+    值得看的东西. 之前少了它, 一个 fs.write_file 的悬空调用在页面上只剩一个工具名.
     """
 
     tool_name: str
     queue_position: int = 0
+    arguments: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -264,6 +267,10 @@ class ToolPreparedPayload(RunEventPayload):
     target_count: int = 0
     target_resolution: str = ""
     arguments: tuple[tuple[str, str], ...] = ()
+    # 归一化后**真正会碰到**的路径 (超出上限时截断, target_count 仍是完整计数).
+    # 只报个数的话, "影响 12 个目标"这句话没法核对: 用户要看的是哪 12 个.
+    targets: tuple[str, ...] = ()
+    workspace_scope: str = ""
 
 
 @dataclass(frozen=True)
@@ -278,6 +285,11 @@ class PolicyResolvedPayload(RunEventPayload):
     decision: str
     reason: str
     mandatory: bool = False
+    # 命中了哪条规则, 认定了哪些风险事实, 以及裁决自己给的那句话. 少了这三项, 一次
+    # ask 或 deny 在页面上只有一个 reason 枚举值, 排查时看不出是规则还是分析器判的.
+    matched_rule_id: str = ""
+    risk_facts: tuple[str, ...] = ()
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -313,6 +325,16 @@ class ToolCompletedPayload(RunEventPayload):
     result_summary: str = ""
     error_summary: str = ""
     side_effect_unknown: bool = False
+    # 结构化的机制事实. result_summary 是给人一眼看的那一行, 这几项是给排查用的 ——
+    # 从一句"1024 字节 · 退出码 1"里再解析出退出码, 是把展示格式当成了数据接口.
+    error_code: str = ""
+    exit_code: int | None = None
+    bytes_out: int = 0
+    artifact_count: int = 0
+    truncated: bool = False
+    # 这次调用有没有真的执行过. 工具不存在, prepare 失败, 被拒或没等到批准都会走到
+    # 终态, 但它们与"执行了然后失败了"是两回事 (ADR-0004 §8).
+    executed: bool = True
 
 
 @dataclass(frozen=True)

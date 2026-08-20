@@ -33,6 +33,7 @@ from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemVie
 from support.fakes import PROFILE
 
 _PLAN_ARGS = {
+    "name": "拆分值域对象",
     "title": "拆分值域对象",
     "goal": "把混在一起的领域概念分开",
     "context": "domain 下几个模块互相引用",
@@ -178,7 +179,11 @@ def test_reading_a_plan_matches_what_write_returned(
 def test_todo_write_then_read(
     planning: PlanningService, context: ExecutionContext
 ) -> None:
-    _run(TodoWriteTool(planning), context, {"items": ["先读", "再写"]})
+    _run(
+        TodoWriteTool(planning),
+        context,
+        {"name": "读写清单", "items": ["先读", "再写"]},
+    )
 
     body = _run(TodoReadTool(planning), context, {}).text
 
@@ -189,7 +194,11 @@ def test_todo_write_then_read(
 def test_set_status_marks_the_item(
     planning: PlanningService, context: ExecutionContext
 ) -> None:
-    _run(TodoWriteTool(planning), context, {"items": ["先读", "再写"]})
+    _run(
+        TodoWriteTool(planning),
+        context,
+        {"name": "读写清单", "items": ["先读", "再写"]},
+    )
 
     body = _run(
         TodoSetStatusTool(planning),
@@ -204,7 +213,7 @@ def test_a_bad_index_is_a_plain_tool_error(
     planning: PlanningService, context: ExecutionContext
 ) -> None:
     """模型能自己改正的普通失败, 不该走安全裁决, 也不该炸成一次工具异常."""
-    _run(TodoWriteTool(planning), context, {"items": ["先读"]})
+    _run(TodoWriteTool(planning), context, {"name": "读写清单", "items": ["先读"]})
 
     result = _run(
         TodoSetStatusTool(planning),
@@ -220,7 +229,11 @@ def test_two_in_progress_in_one_call_is_refused(
     planning: PlanningService, context: ExecutionContext
 ) -> None:
     """一次调用里想把两条都标成进行中: 不变量在 TodoList 构造里拦下, 工具只负责转译."""
-    _run(TodoWriteTool(planning), context, {"items": ["先读", "再写"]})
+    _run(
+        TodoWriteTool(planning),
+        context,
+        {"name": "读写清单", "items": ["先读", "再写"]},
+    )
 
     result = _run(
         TodoSetStatusTool(planning),

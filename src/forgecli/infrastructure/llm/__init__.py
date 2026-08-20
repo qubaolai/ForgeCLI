@@ -4,12 +4,12 @@ from forgecli.infrastructure.llm.credentials import (
     EnvCredentialResolver,
     InMemoryCredentialPool,
 )
+from forgecli.infrastructure.llm.json_store import JsonLlmConfigStore
 from forgecli.infrastructure.llm.settings import LlmConfigProviderSettingsSource
-from forgecli.infrastructure.llm.toml_store import TomlLlmConfigStore
 
 __all__ = [
     "EnvCredentialResolver",
     "InMemoryCredentialPool",
     "LlmConfigProviderSettingsSource",
-    "TomlLlmConfigStore",
+    "JsonLlmConfigStore",
 ]

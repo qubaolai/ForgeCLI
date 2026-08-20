@@ -1,6 +1,6 @@
 """按用途模型覆盖读取 build_model_overrides（ADR-0011 §3.4 / §16）。
 
-把已加载的 `[model_overrides.<origin>]` 段转成类型化 {RequestOrigin: ModelRef} 覆盖表，
+把已加载的 ``model_overrides.<origin>` 段转成类型化 {RequestOrigin: ModelRef} 覆盖表，
 供 ModelSelectionResolver 注入使用。这里只做「已加载 mapping -> 类型化值」的转换与校验，
 *不*做文件 IO、*不*解析 TOML（解析归 config store）；resolver 由此保持只依赖 catalog。
 

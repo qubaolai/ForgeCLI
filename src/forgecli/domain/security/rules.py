@@ -190,7 +190,7 @@ def can_learn(
         return False, "目标集合未封闭, 规则会匹配到当时并不存在的目标"
     if not decision.executable_identity_hash:
         # 只有 shell 分析器会给出身份. 其余工具 (fs.*, git.read 等) 因此学不到规则 ——
-        # 这不是遗漏: 它们的 plan_hash 里含 normalized_input, 对 fs.write_patch 就是
+        # 这不是遗漏: 它们的 plan_hash 里含 normalized_input, 对 fs.edit_file 就是
         # 替换后的完整文件内容, 规则只会在下次写入逐字节相同的内容时命中, 毫无用处.
         return False, "拿不到可执行文件身份, 规则绑不住"
     return True, ""

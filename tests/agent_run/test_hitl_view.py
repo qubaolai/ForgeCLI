@@ -124,7 +124,7 @@ def test_write_content_is_shown_not_just_the_path() -> None:
         HitlApprovalView.of(
             _presentation(
                 raw_command="",
-                action_summary="fs.write_patch: 写入 README.md",
+                action_summary="fs.edit_file: 写入 README.md",
                 write_paths=("/workspace/forge/README.md",),
                 content_previews=(
                     ContentPreview(

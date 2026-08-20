@@ -243,7 +243,7 @@ def test_only_full_captures_a_snapshot(
     )
     plan = ToolPlan(
         plan_id="inv_2",
-        tool_name="fs.write_patch",
+        tool_name="fs.edit_file",
         spec_hash="spec",
         normalized_input={},
         capabilities=frozenset({Capability.WORKSPACE_WRITE}),

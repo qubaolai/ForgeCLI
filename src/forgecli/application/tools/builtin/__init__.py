@@ -8,7 +8,12 @@
 from forgecli.application.tools.builtin.fs_list_files import ListFilesTool
 from forgecli.application.tools.builtin.fs_move import MoveTool
 from forgecli.application.tools.builtin.fs_read_file import ReadFileTool
-from forgecli.application.tools.builtin.fs_write import DeleteTool, WritePatchTool
+from forgecli.application.tools.builtin.fs_scan_tree import ScanTreeTool
+from forgecli.application.tools.builtin.fs_write import (
+    CreateFileTool,
+    DeleteTool,
+    EditFileTool,
+)
 from forgecli.application.tools.builtin.git_read import GitReadTool
 from forgecli.application.tools.builtin.planning_tools import (
     PlanReadTool,
@@ -21,17 +26,19 @@ from forgecli.application.tools.builtin.search_text import SearchTextTool
 from forgecli.application.tools.builtin.shell_run import ShellRunTool
 
 __all__ = [
+    "CreateFileTool",
     "DeleteTool",
+    "EditFileTool",
     "GitReadTool",
     "ListFilesTool",
     "MoveTool",
     "PlanReadTool",
     "PlanWriteTool",
     "ReadFileTool",
+    "ScanTreeTool",
     "SearchTextTool",
     "ShellRunTool",
     "TodoReadTool",
     "TodoSetStatusTool",
     "TodoWriteTool",
-    "WritePatchTool",
 ]

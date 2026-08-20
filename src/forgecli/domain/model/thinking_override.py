@@ -15,7 +15,7 @@ from forgecli.domain.model.thinking import (
 
 @dataclass(frozen=True)
 class ThinkingOverride:
-    """一个模型的进程内部分覆盖；None 表示沿用 llm.toml 默认值。"""
+    """一个模型的进程内部分覆盖；None 表示沿用 llm.json 默认值。"""
 
     mode: ThinkingMode | None = None
     effort: ThinkingEffortName | None = None

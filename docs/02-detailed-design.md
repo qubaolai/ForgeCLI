@@ -9,9 +9,16 @@ src/
   forgecli/
     interfaces/
       cli/
-        commands/
-      tui/
-      json_api/
+        app.py
+      runtime/
+        llm_wiring.py
+        tool_wiring.py
+      web/
+        app.py
+        server.py
+        runtime.py
+        events.py
+        approval.py
     application/
       services/
         conversation_service.py
@@ -80,7 +87,7 @@ infrastructure adapters -> domain/application ports
 domain -> shared
 ```
 
-项目采用 `src/forgecli + tests` 布局。`domain` 不依赖 Typer、Rich、LLM SDK、MCP SDK 或具体文件系统。`tools` 是 Agent 能力层，不是普通基础设施；具体 shell、git、filesystem、MCP client 才属于基础设施适配器。
+项目采用 `src/forgecli + tests` 布局，React/TypeScript 源码位于 `web/`，构建产物进入 Python package。`domain` 不依赖 Typer、FastAPI、React、LLM SDK、MCP SDK 或具体文件系统。`tools` 是 Agent 能力层，不是普通基础设施；具体 shell、git、filesystem、MCP client 才属于基础设施适配器。
 
 ### 1.1 模块边界说明
 
@@ -580,16 +587,16 @@ AutoGen 更适合 V2 的完整 Multi-Agent 能力，不进入 MVP。
 
 ## 5. Agent Turn 流程
 
-### 5.1 CLI 入口模型
+### 5.1 本地 Web 入口模型
 
-ForgeCLI 当前 MVP 只保留交互式主入口。
+ForgeCLI 当前只保留本地 Web 主入口。
 
 交互式入口：
 
-- `forge`：在当前目录启动或恢复交互式会话。
-- 会话启动时绑定当前目录为 `workspace_root`。
-- 若当前目录或父目录存在 `.forge/`，优先使用已有项目状态。
-- 若存在可恢复 session，CLI 应提示用户恢复最近会话或创建新会话。
+- `forge`：启动 loopback Web 服务并打开浏览器。
+- 已信任当前目录时自动激活对应项目；否则进入项目中心。
+- 项目中心列出 `~/.forge/projects` 中的已信任项目，并允许显式信任新目录。
+- 历史 session 由 Web 列表恢复；同一时刻只激活一个项目和一个 turn。
 
 当前不实现 Typer 业务子命令：
 
@@ -605,17 +612,19 @@ ForgeCLI 当前 MVP 只保留交互式主入口。
 - `/models ...` 复用 `ModelCatalogService`。
 - `/status` 复用 session 查询服务。
 - `/resume` 复用恢复服务。
-- Typer 层只负责裸 `forge`、`--help`、`--version` 和进程入口，不承载业务流程。
+- Typer 层只负责裸 `forge`、`--help`、`--version`、`--open`、`--port` 和进程入口，不承载业务流程。
 
-交互式会话内，用户输入分两类：
+Web 会话内，用户输入与控制动作分开：
 
-- 普通自然语言：进入 Agent Turn。
-- 斜杠命令：由 `IntentRouter` 解析为控制意图，不直接交给模型自由解释。
+- 普通自然语言：以 `InputOrigin.WEB_USER` 进入 Agent Turn。
+- 模式、配置、恢复、审批和计划评审：调用版本化 REST API，不转成模型文本。
+- `#` 没有人工 Shell 语义；Web 不提供 PTY，Agent `shell.run` 仍走完整安全链。
 
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant CLI as CLI
+    participant WEB as Web UI
+    participant API as Local API
     participant APP as AgentTurnService
     participant POL as Policy
     participant CTX as ContextManager
@@ -623,8 +632,9 @@ sequenceDiagram
     participant TOOLS as ToolRuntime
     participant STORE as EventStore
 
-    U->>CLI: 输入自然语言或斜杠命令
-    CLI->>APP: handle_turn
+    U->>WEB: 输入自然语言
+    WEB->>API: POST /turns
+    API->>APP: handle_user_message(origin=web_user)
     APP->>STORE: append user_message
     APP->>POL: resolve mode policy
     APP->>CTX: build context
@@ -634,7 +644,8 @@ sequenceDiagram
         APP->>POL: risk check
         alt approval required
             APP->>STORE: append approval_requested
-            APP-->>CLI: 请求用户确认
+            APP-->>WEB: SSE approval_requested
+            WEB->>API: POST approval decision
         else allowed
             APP->>TOOLS: invoke tool
             TOOLS-->>APP: tool result
@@ -644,7 +655,7 @@ sequenceDiagram
     else final answer
         APP->>STORE: append assistant_message
         APP->>STORE: update state snapshot
-        APP-->>CLI: 渲染输出
+        APP-->>WEB: SSE + persisted transcript
     end
 ```
 
@@ -834,17 +845,17 @@ git 写不做硬性限制，按普通命令走。高危 deny 穿透所有模式�
 
 ### 8.3 内置工具
 
-首版工具：
+以 ADR-0004 §14 的清单为准，那张表带能力上界、目标声明能力和"是否已注册"，并由
+`tests/tool_request/test_registered_tool_stack.py` 对组合根的产物断言。这里只列名字：
 
-- `fs.read_file`
-- `fs.write_patch`
-- `fs.list_files`
-- `search.text`
-- `shell.run`
-- `git.status`
-- `git.diff`
-- `git.show`
-- `test.run`
+- 读：`fs.scan_tree`、`fs.read_file`、`fs.list_files`、`search.text`、`git.read`
+- 写：`fs.create_file`、`fs.edit_file`、`fs.move`、`fs.delete`
+- 执行：`shell.run`
+- 计划与待办：`plan.read`、`plan.write`、`todo.read`、`todo.write`、`todo.set_status`
+
+> 2026-08-20 修订：本节此前列的是首版设想（`fs.write_patch`、`git.status`、`git.diff`、
+> `git.show`、`test.run`），其中后四个从未实现——git 只读查询合并成了一个 `git.read`，
+> 跑测试走 `shell.run`。列一份没人维护的清单，比不列更容易让人以为工具已经存在。
 - `artifact.write`
 
 文件修改应优先通过 patch 语义执行，便于审计和回滚。

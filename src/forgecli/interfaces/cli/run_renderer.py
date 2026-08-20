@@ -67,10 +67,13 @@ def _clean(text: str, *, limit: int = _LINE_LIMIT) -> str:
 
     剥控制字符不是隐藏内容, 是防止参数与路径里的 ANSI/OSC 序列重画屏幕; Rich markup
     转义则保证显示的字符串与真正执行的一致.
+
+    换行**转义成可见的两个字符**而不是删掉: 活动区是一行一条, 直接留着换行会把布局
+    撑开, 而删掉会让多行内容拼成一行看不出接缝 —— 用户会以为那真的是一行.
     """
     stripped = "".join(
-        char for char in text if char == "\t" or (char >= " " and char != "\x7f")
-    )
+        char for char in text.replace("\n", "\\n") if char == "\t" or char >= " "
+    ).replace("\x7f", "")
     if len(stripped) > limit:
         stripped = f"{stripped[:limit]}…"
     return escape(stripped)

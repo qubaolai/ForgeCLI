@@ -1,8 +1,9 @@
-"""LLM 网关运行时装配（ADR-0011 §2 / §6 / §8 组合根扩展，ADR-0012 装配面）。
+"""界面无关的 LLM 网关运行时装配。
 
-只有这里知道网关的全部具体实现：OpenAI-compatible adapter 的注册（含 thinking
+CLI 与 Web 必须共用这一组合根。只有这里知道网关的全部具体实现：
+OpenAI-compatible adapter 的注册（含 thinking
 方言）、凭证解析器（env 环境变量）/ 凭证池、动态选择解析器、token 估算与分词器
-注册表、计量、治理件（熔断 / 预算 / 响应缓存，按 llm.toml 配置段驱动，未启用
+注册表、计量、治理件（熔断 / 预算 / 响应缓存，按 llm.json 配置段驱动，未启用
 维持 no-op）与进程内观测聚合。application / AgentTurn 只依赖 LlmGateway 端口，
 不 import httpx 或任何 adapter（§19）；chat 主路径由 bootstrap 组装
 BuiltinAgentLoop 驱动（ADR-0010），本模块交回网关与计量件。
@@ -53,7 +54,7 @@ from forgecli.infrastructure.llm.credentials import (
     EnvCredentialResolver,
     InMemoryCredentialPool,
 )
-from forgecli.infrastructure.llm.overrides_toml_store import TomlModelOverridesStore
+from forgecli.infrastructure.llm.overrides_json_store import JsonModelOverridesStore
 from forgecli.infrastructure.llm.settings import LlmConfigProviderSettingsSource
 
 
@@ -72,14 +73,14 @@ class LlmRuntime:
 def build_llm_runtime(
     config_service: ConfigService,
     llm_config_service: LlmConfigService,
-    forge_toml: Path,
+    forge_json: Path,
     thinking_state: ThinkingRuntimeState | None = None,
 ) -> LlmRuntime:
     """装配统一 LLM 网关及其协作件"""
     if thinking_state is None:
         thinking_state = ThinkingRuntimeState()
     overrides_service = ModelOverridesService(
-        TomlModelOverridesStore(forge_toml), llm_config_service
+        JsonModelOverridesStore(forge_json), llm_config_service
     )
     resolver = ConfigBackedSelectionResolver(
         config_service=config_service,

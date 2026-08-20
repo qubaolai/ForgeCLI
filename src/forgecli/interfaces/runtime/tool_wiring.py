@@ -1,4 +1,4 @@
-"""工具, 安全与恢复三层的组合根 (ADR-0004 §13).
+"""CLI 与 Web 共用的工具、安全与恢复组合根 (ADR-0004 §13).
 
 三层在这里, 而且只在这里被串起来. 之所以单独一个模块而不是塞进 wiring.py: 这套装配的
 顺序本身就是安全约束的一部分 —— 受保护路径要先于执行画像生成 (画像绑定 roots_hash),
@@ -44,19 +44,21 @@ from forgecli.application.tool_request.dispatcher import CoordinatorToolDispatch
 from forgecli.application.tool_request.session_audit import SessionToolAudit
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.builtin import (
+    CreateFileTool,
     DeleteTool,
+    EditFileTool,
     GitReadTool,
     ListFilesTool,
     MoveTool,
     PlanReadTool,
     PlanWriteTool,
     ReadFileTool,
+    ScanTreeTool,
     SearchTextTool,
     ShellRunTool,
     TodoReadTool,
     TodoSetStatusTool,
     TodoWriteTool,
-    WritePatchTool,
 )
 from forgecli.application.tools.registry import ToolRegistry
 from forgecli.application.tools.resource_governor import ResourceGovernor
@@ -82,11 +84,11 @@ from forgecli.infrastructure.recovery.cow_snapshot_backend import (
     probe_snapshot_backend,
 )
 from forgecli.infrastructure.recovery.fs_recovery_store import FsRecoveryStore
+from forgecli.infrastructure.security.json_learned_rules_store import (
+    JsonLearnedRuleStore,
+)
 from forgecli.infrastructure.security.protected_paths_builder import (
     build_protected_path_policy,
-)
-from forgecli.infrastructure.security.toml_learned_rules_store import (
-    TomlLearnedRuleStore,
 )
 from forgecli.infrastructure.tools.fs_artifact_store import FsArtifactStore
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
@@ -96,7 +98,7 @@ __all__ = ["ToolStack", "build_tool_stack"]
 
 @dataclass
 class ToolStack:
-    """装配好的一整套工具链. REPL 与 slash command 从这里取零件."""
+    """装配好的一整套工具链，界面适配器只从这里取公开协作件。"""
 
     registry: ToolRegistry
     coordinator: ToolRequestCoordinator
@@ -171,11 +173,13 @@ def build_tool_stack(
             TodoReadTool(planning),
             TodoWriteTool(planning),
             TodoSetStatusTool(planning),
+            ScanTreeTool(governor, store),
             ReadFileTool(governor, store),
             ListFilesTool(governor, store),
             SearchTextTool(governor, store),
             GitReadTool(executor, governor, store),
-            WritePatchTool(_write_file),
+            CreateFileTool(_write_file),
+            EditFileTool(_write_file),
             MoveTool(_move_file),
             DeleteTool(_delete_file),
             ShellRunTool(executor, governor, store),
@@ -201,7 +205,7 @@ def build_tool_stack(
     barrier.register("risk_cache", risk_cache.clear)
     #    学习规则 (always) 由授权服务查, 由协调器写 —— 共用同一个实例.
     learned = LearnedRuleService(
-        TomlLearnedRuleStore(learned_rules_file(workspace_id)),
+        JsonLearnedRuleStore(learned_rules_file(workspace_id)),
         workspace_id=workspace_id,
     )
     authorization = ToolAuthorizationService(

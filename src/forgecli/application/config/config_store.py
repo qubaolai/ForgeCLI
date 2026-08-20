@@ -1,7 +1,7 @@
 """配置持久化端口（由 infrastructure 实现）。
 
 ConfigStore 把“配置存放在哪里、用什么格式”隔离在 application 之外。
-今天只有一个 TOML 文件来源（.forge/config.toml）；将来要加用户级配置、环境变量、
+今天只有一个 JSON 文件来源（.forge/config.json）；将来要加用户级配置、环境变量、
 远程配置或多来源合并时，只需新增 / 组合 ConfigStore 实现，application 不变。
 
 约定：

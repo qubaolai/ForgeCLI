@@ -1,6 +1,6 @@
 """/config 下的应用级 LLM 网关运行时配置。
 
-cache / circuit breaker / retry 持久化到 Forge home 的 ``llm.toml``；
+cache / circuit breaker / retry 持久化到 Forge home 的 ``llm.json``；
 本菜单只负责呈现和调用 LlmConfigService，不解析或直接写 TOML。
 """
 
@@ -39,7 +39,7 @@ class GatewayConfigMenu:
 
     def cache_menu(self) -> Menu:
         return Menu(
-            "响应缓存（应用级 llm.toml）",
+            "响应缓存（应用级 llm.json）",
             (
                 Choice(
                     "启用响应缓存",
@@ -78,7 +78,7 @@ class GatewayConfigMenu:
 
     def circuit_breaker_menu(self) -> Menu:
         return Menu(
-            "熔断器（应用级 llm.toml）",
+            "熔断器（应用级 llm.json）",
             (
                 Choice(
                     "启用熔断器",
@@ -112,7 +112,7 @@ class GatewayConfigMenu:
 
     def retry_menu(self) -> Menu:
         return Menu(
-            "重试策略（应用级 llm.toml）",
+            "重试策略（应用级 llm.json）",
             (
                 self._text_choice(
                     "429 短等阈值（秒）",

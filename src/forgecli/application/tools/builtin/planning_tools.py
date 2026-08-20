@@ -8,7 +8,7 @@
   `PolicyEngine` 另有 `PLAN_ONLY_FAST_PATH`. "不经 ASK"不是为它们新开的特例.
 - 真正的原因: **它们的 input_schema 里没有路径字段.** 写入位置由 Forge 从项目 id 与
   plan_id 算出来, 模型无法指定写到哪里. 没有可由模型影响的目标, 就没有可裁决的内容.
-  对照 `fs.write_patch` —— 它的路径来自模型, 所以必须逐次裁决. **是"模型能不能选目标"
+  对照 `fs.edit_file` —— 它的路径来自模型, 所以必须逐次裁决. **是"模型能不能选目标"
   决定要不要审批, 不是"这件事重不重要".**
 
 顺带回答"为什么不直接用 fs.* 读写计划文件": 计划目录在任何工作区根之外, 那条路会落
@@ -180,6 +180,15 @@ class PlanWriteTool(_PlanningTool):
             "只给结构化字段, 格式由 Forge 按固定模板渲染."
         ),
         {
+            "name": {
+                "type": "string",
+                "description": (
+                    "这份计划的短名, 用作目录名与索引显示, 请按任务本身命名, "
+                    "例如 web-shutdown-fix 或 修复Web退出卡住. "
+                    "只在新建时使用; 为已有计划提交新版本时忽略."
+                ),
+                "maxLength": 60,
+            },
             "title": {"type": "string"},
             "goal": {"type": "string"},
             "context": {"type": "string"},
@@ -205,6 +214,7 @@ class PlanWriteTool(_PlanningTool):
         # risks 也在 required 里而允许空数组, 是为了强制模型**表态**: 空数组表示"想过了,
         # 没有"; 不给这个键则说明它根本没考虑. 两者不该无法区分.
         required=(
+            "name",
             "title",
             "goal",
             "context",
@@ -230,6 +240,7 @@ class PlanWriteTool(_PlanningTool):
             for item in _mappings(arguments.get("steps"))
         ]
         document = self._planning.write_plan(
+            name=str(arguments.get("name", "")),
             title=str(arguments.get("title", "")),
             goal=str(arguments.get("goal", "")),
             context=str(arguments.get("context", "")),
@@ -272,13 +283,21 @@ class TodoWriteTool(_PlanningTool):
             "全部状态会重置为 pending. 只改状态请用 todo.set_status."
         ),
         {
+            "name": {
+                "type": "string",
+                "description": (
+                    "这份清单的短名, 请按任务本身命名. 沿用当前清单的名字表示继续修正 "
+                    "同一份清单; 换一个名字表示这是另一件事的清单, 旧的进归档."
+                ),
+                "maxLength": 60,
+            },
             "items": {
                 "type": "array",
                 "maxItems": MAX_TODO_ITEMS,
                 "items": {"type": "string"},
-            }
+            },
         },
-        required=("items",),
+        required=("name", "items"),
     )
 
     def perform(
@@ -288,7 +307,9 @@ class TodoWriteTool(_PlanningTool):
         cancel: CancelToken | None = None,
     ) -> ToolResult:
         titles = _strings(plan.normalized_input.get("items"))
-        todo = self._planning.write_todo(titles)
+        todo = self._planning.write_todo(
+            titles, name=str(plan.normalized_input.get("name", ""))
+        )
         return self._ok(plan, todo.render())
 
 

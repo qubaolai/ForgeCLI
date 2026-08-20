@@ -39,6 +39,8 @@ class InputOrigin(Enum):
     """
 
     TTY_USER = "tty_user"
+    # 经本地 Web 控制面的认证用户。它是人类输入，但没有 TTY 人工 Shell 特权。
+    WEB_USER = "web_user"
     PROGRAM = "program"
 
 

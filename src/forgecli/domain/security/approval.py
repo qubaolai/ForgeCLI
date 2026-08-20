@@ -269,7 +269,7 @@ class HitlApprovalView:
         return cls(
             mode=presentation.mode,
             workspace_roots=presentation.workspace_roots,
-            # 没有原始命令的工具 (fs.write_patch 之类) 用动作摘要顶上, 但绝不留空:
+            # 没有原始命令的工具 (fs.edit_file 之类) 用动作摘要顶上, 但绝不留空:
             # 第二行是用户唯一能看懂"要发生什么"的地方.
             raw_command=presentation.raw_command or presentation.action_summary,
             target_groups=groups,

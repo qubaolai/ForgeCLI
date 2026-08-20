@@ -1,11 +1,11 @@
 """ConfigService：统一的配置读取与更新用例（按 level 路由）。
 
 一个泛型 set/get/display：查 SCHEMA 拿到 ConfigKey 的 `level`，路由到该级对应的
-ConfigStore（应用级 → config.toml，项目级 → forge.toml）。"写哪个文件"由数据决定，
+ConfigStore（应用级 → config.json，项目级 → forge.json）。"写哪个文件"由数据决定，
 不再为某个配置项写专门的 setter——加配置项只需在 SCHEMA 加一条（满足开闭原则）。
 
 ConfigService 不感知 TOML / 文件路径，全部委托给 ConfigStore；校验由 SCHEMA 的
-ConfigKey 负责。项目级 store 在装配时绑定当前项目的 forge.toml；未绑定时对项目级键
+ConfigKey 负责。项目级 store 在装配时绑定当前项目的 forge.json；未绑定时对项目级键
 的访问会显式报错而不是误落应用文件。
 """
 

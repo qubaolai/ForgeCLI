@@ -65,8 +65,34 @@ class ProjectService:
         best = max(matches, key=lambda entry: len(entry.root))
         return self._configs.load(best.project_id)
 
+    def list_trusted(self) -> tuple[ProjectConfig, ...]:
+        """列出所有仍可读取的已信任项目，供 Web 项目中心使用。
+
+        索引是项目身份与信任状态的真相源；损坏或缺失的项目配置被忽略，避免项目中心
+        展示一个点击后无法激活的半残项目。排序使用主工作区路径，保证跨进程稳定。
+        """
+        projects: list[ProjectConfig] = []
+        for entry in self._index.load().values():
+            if not entry.trusted:
+                continue
+            project = self._configs.load(entry.project_id)
+            if project is not None and project.trusted:
+                projects.append(project)
+        projects.sort(key=lambda item: item.primary_workspace_root.casefold())
+        return tuple(projects)
+
+    def get(self, project_id: str) -> ProjectConfig | None:
+        """按 id 读取一个已信任项目；未知或已撤销信任时返回 ``None``。"""
+        project = self._configs.load(project_id)
+        if project is None or not project.trusted:
+            return None
+        indexed = self._index.load().get(project.primary_workspace_root)
+        if indexed is None or not indexed.trusted or indexed.project_id != project_id:
+            return None
+        return project
+
     def trust(self, cwd: Path) -> ProjectConfig:
-        """信任当前目录：生成 project-id、写 forge.toml 与索引一条。"""
+        """信任当前目录：生成 project-id、写 forge.json 与索引一条。"""
         root = canonical_path(cwd)
         root_str = str(root)
         project = ProjectConfig(
@@ -109,6 +135,22 @@ class ProjectService:
         if value in project.workspace_roots:
             return project
         updated = replace(project, workspace_roots=(*project.workspace_roots, value))
+        self._configs.save(updated)
+        return updated
+
+    def remove_workspace_dir(self, project: ProjectConfig, path: Path) -> ProjectConfig:
+        """移除额外工作区目录；主工作区根是项目身份，不允许移除。"""
+        value = str(path)
+        if value == project.primary_workspace_root:
+            raise WorkspaceError("不能移除项目的主工作区目录。")
+        if value not in project.workspace_roots:
+            return project
+        updated = replace(
+            project,
+            workspace_roots=tuple(
+                root for root in project.workspace_roots if root != value
+            ),
+        )
         self._configs.save(updated)
         return updated
 

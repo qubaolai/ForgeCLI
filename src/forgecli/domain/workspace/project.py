@@ -24,7 +24,7 @@ class ProjectConfig:
     """单个项目的**状态**快照：信任与工作区目录（会话事件 27 日再接入）。
 
     项目级*配置偏好*（如 logging.level）不在此——它们由 ConfigService 经统一 SCHEMA
-    读写 forge.toml，与本状态在同一文件、各写各的键（round-trip 互不覆盖）。
+    读写 forge.json，与本状态在同一文件、各写各的键（各写各的键，互不覆盖）。
     """
 
     project_id: str
@@ -36,7 +36,7 @@ class ProjectConfig:
     def __post_init__(self) -> None:
         """把 workspace_roots 归一到不变量, 而不是指望每个构造方自觉.
 
-        这条不变量原先只写在注释里. 后果是: 早于 workspace_roots 字段的 forge.toml
+        这条不变量原先只写在注释里. 后果是: 早于 workspace_roots 字段的 forge.json
         (以及手改过的文件) 载入后 roots 为空, 而下游拿 roots[0] 当主工作区根用 —— 一直
         没人真的依赖它, 直到工具链装配时才炸在启动路径上.
 
@@ -56,7 +56,7 @@ class ProjectConfig:
 class IndexEntry:
     """项目索引里的一条：已信任根目录(规范路径) -> project-id。"""
 
-    root: str  # 规范绝对路径，同时是 index.toml 中的 key
+    root: str  # 规范绝对路径，同时是 index.json 中的 key
     project_id: str
     trusted: bool
     created_at: str

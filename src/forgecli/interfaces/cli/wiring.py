@@ -16,9 +16,9 @@ from forgecli.application.project import ProjectContext, ProjectService
 from forgecli.application.session import ResumeService, SessionService
 from forgecli.application.slash_commands import CommandRegistry, CommandSpec
 from forgecli.domain.intents import SessionMode
-from forgecli.infrastructure.config import TomlConfigStore, config_dir, config_file
-from forgecli.infrastructure.llm import TomlLlmConfigStore
-from forgecli.infrastructure.llm.overrides_toml_store import TomlModelOverridesStore
+from forgecli.infrastructure.config import JsonConfigStore, config_dir, config_file
+from forgecli.infrastructure.llm import JsonLlmConfigStore
+from forgecli.infrastructure.llm.overrides_json_store import JsonModelOverridesStore
 from forgecli.infrastructure.session import (
     FsSessionCatalog,
     JsonlEventStore,
@@ -47,7 +47,7 @@ from forgecli.interfaces.cli.commands.thinking_command import ThinkingCommand
 from forgecli.interfaces.cli.commands.tools_command import ToolsCommand
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
-from forgecli.interfaces.cli.tool_wiring import ToolStack
+from forgecli.interfaces.runtime.tool_wiring import ToolStack
 
 
 def build_registry(
@@ -66,21 +66,21 @@ def build_registry(
     tools: ToolStack | None = None,
 ) -> CommandRegistry:
     registry = CommandRegistry()
-    # ConfigService 按 level 路由落盘：应用级 config.toml，项目级当前项目的 forge.toml。
+    # ConfigService 按 level 路由落盘：应用级 config.json，项目级当前项目的 forge.json。
     # 都在用户级 Forge home 下；不预先创建，首次写配置时才落盘。
     # bootstrap 会传入与 LLM 网关共享的同一批 service；未传入时（测试直连）自行构建。
     project_home = config_dir() / "projects" / context.project.project_id
-    forge_toml = project_home / "forge.toml"
+    forge_json = project_home / "forge.json"
     if config_service is None:
         config_service = ConfigService(
-            TomlConfigStore(config_file("config.toml")),
-            TomlConfigStore(forge_toml),
+            JsonConfigStore(config_file("config.json")),
+            JsonConfigStore(forge_json),
         )
     if llm_service is None:
-        llm_service = LlmConfigService(TomlLlmConfigStore(config_file("llm.toml")))
+        llm_service = LlmConfigService(JsonLlmConfigStore(config_file("llm.json")))
     if overrides_service is None:
         overrides_service = ModelOverridesService(
-            TomlModelOverridesStore(forge_toml), llm_service
+            JsonModelOverridesStore(forge_json), llm_service
         )
     if thinking_state is None:
         thinking_state = ThinkingRuntimeState()

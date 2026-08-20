@@ -18,7 +18,9 @@
 
 from __future__ import annotations
 
+import re
 import secrets
+import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -39,20 +41,34 @@ from forgecli.domain.planning import (
     TodoStatus,
 )
 
-__all__ = ["ActivePlanning", "PlanningService", "StatusUpdate"]
+__all__ = ["ActivePlanning", "PlanningService", "StatusUpdate", "slugify_name"]
+
+_MAX_NAME_LENGTH = 40
+# 目录名里真会出事的是路径分隔符, 控制字符和保留名; 其余一律折成连字符.
+_UNSAFE = re.compile(r"[^\w-]+", re.UNICODE)
+_REPEATED_DASH = re.compile(r"-{2,}")
 
 
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def _new_plan_id() -> str:
-    """短 id, **不由标题派生** —— 标题会改, 而 id 是文件名的一部分."""
-    return f"pl_{secrets.token_hex(3)}"
+def slugify_name(name: str, *, fallback_prefix: str) -> str:
+    """把模型起的名字规整成可作目录名的短 id.
 
+    **保留 Unicode 字词字符.** 这个项目的计划标题多半是中文, 只留 ASCII 等于把命名这件事
+    又还给随机 id. 规整之后仍然为空 (纯符号, 或只有点) 才退回随机 id —— 那种名字当目录名
+    是危险的, 而不是不好看.
 
-def _new_todo_id() -> str:
-    return f"td_{secrets.token_hex(3)}"
+    id 是文件名的一部分, 所以只在**创建**时取一次: 后续 revision 沿用同一个 id, 改标题
+    不会让历史散成两份.
+    """
+    normalized = unicodedata.normalize("NFC", name).strip().lower()
+    slug = _REPEATED_DASH.sub("-", _UNSAFE.sub("-", normalized)).strip("-._")
+    slug = slug[:_MAX_NAME_LENGTH].strip("-._")
+    if not slug:
+        return f"{fallback_prefix}-{secrets.token_hex(3)}"
+    return slug
 
 
 @dataclass(frozen=True)
@@ -121,13 +137,9 @@ class PlanningService:
         store: PlanStore,
         *,
         clock: Callable[[], str] = _now_iso,
-        plan_id_factory: Callable[[], str] = _new_plan_id,
-        todo_id_factory: Callable[[], str] = _new_todo_id,
     ) -> None:
         self._store = store
         self._clock = clock
-        self._new_plan_id = plan_id_factory
-        self._new_todo_id = todo_id_factory
 
     # ---- 加载 ----
 
@@ -183,6 +195,7 @@ class PlanningService:
     def write_plan(
         self,
         *,
+        name: str = "",
         title: str,
         goal: str,
         context: str,
@@ -196,12 +209,15 @@ class PlanningService:
 
         给了 plan_id 就是续写: revision + 1, 同一个 plan_id 下. 于是一次"补充 -> 重提"的
         往返留在同一份计划的历史里, 而不是散成两份互不相干的计划.
+
+        新建时用 ``name`` 命名: 目录名与索引因此能直接说明这份计划是关于什么的, 不再是
+        一串 ``pl_a3f19c``. 没给 name 就退回标题.
         """
         now = self._clock()
         index = self._store.load_index()
         previous = self._store.load_plan(plan_id) if plan_id else None
         document = PlanDocument(
-            plan_id=plan_id or self._new_plan_id(),
+            plan_id=plan_id or self._unique_plan_id(name or title, index),
             revision=(previous.revision + 1) if previous is not None else 1,
             title=title,
             goal=goal,
@@ -238,7 +254,9 @@ class PlanningService:
     def read_todo(self) -> TodoList | None:
         return self._store.load_todo()
 
-    def write_todo(self, titles: Sequence[str], *, plan_id: str = "") -> TodoList:
+    def write_todo(
+        self, titles: Sequence[str], *, name: str = "", plan_id: str = ""
+    ) -> TodoList:
         """整表替换 (内容纠错).
 
         旧清单进归档而不是被覆盖: 换一份清单不该让上一份消失, 事后要能回答"当时那份是
@@ -247,15 +265,22 @@ class PlanningService:
         **状态一律重置为 pending.** 整表替换表达的是"步骤拆错了", 而不是"步骤没变但我要
         改状态" —— 后者是 set_status 的事. 试图在这里保留状态需要把新旧两张表按标题配对,
         而标题恰恰是这次要改的东西.
+
+        ``name`` 同名表示继续修正当前这份清单 (revision + 1), 换名表示这是另一件事的
+        清单 —— 后者从 revision 1 重新起算, 旧的那份留在归档里.
         """
         existing = self._store.load_todo()
         if existing is not None:
             self._store.archive_todo(existing)
+        todo_id = self._todo_id_for(name, existing)
+        continued = (
+            existing if existing is not None and todo_id == existing.todo_id else None
+        )
         todo = TodoList(
-            todo_id=existing.todo_id if existing is not None else self._new_todo_id(),
+            todo_id=todo_id,
             items=tuple(TodoItem(title=title) for title in titles),
             plan_id=plan_id or (existing.plan_id if existing is not None else ""),
-            revision=(existing.revision + 1) if existing is not None else 1,
+            revision=(continued.revision + 1) if continued is not None else 1,
             updated_at=self._clock(),
         )
         self._store.save_todo(todo)
@@ -281,9 +306,32 @@ class PlanningService:
         批准一份计划 = 用它的步骤播种待办. 这一步让"计划 -> 执行"之间不需要人再翻译一次,
         也不需要模型重新把步骤抄一遍 —— 抄的过程正是步骤悄悄走样的地方.
         """
+        # 待办沿用计划的名字: 同一件事在磁盘上就是同一个名字, 不用再对照 id.
         return self.write_todo(
-            [step.title for step in plan.steps], plan_id=plan.plan_id
+            [step.title for step in plan.steps], name=plan.plan_id, plan_id=plan.plan_id
         )
+
+    # ---- 命名 ----
+
+    def _unique_plan_id(self, name: str, index: PlanIndex) -> str:
+        """同名计划加序号, 不覆盖已有的那一份 —— id 是目录名, 撞名等于丢历史."""
+        base = slugify_name(name, fallback_prefix="plan")
+        taken = {item.plan_id for item in index.plans}
+        if base not in taken:
+            return base
+        return next(
+            f"{base}-{suffix}"
+            for suffix in range(2, 1000)
+            if f"{base}-{suffix}" not in taken
+        )
+
+    @staticmethod
+    def _todo_id_for(name: str, existing: TodoList | None) -> str:
+        if name.strip():
+            return slugify_name(name, fallback_prefix="todo")
+        if existing is not None:
+            return existing.todo_id
+        return f"todo-{secrets.token_hex(3)}"
 
 
 def _with_summary(index: PlanIndex, plan: PlanDocument, *, active: bool) -> PlanIndex:

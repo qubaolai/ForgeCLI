@@ -1,0 +1,186 @@
+"""Web 控制面必须覆盖 CLI 的全部配置能力 (ADR-0025 决策 2)。
+
+这组用例是**清单**: 每条 CLI 斜杠命令能改的东西, Web 都要有对应入口。少一条就说明
+Web 用户被迫回终端, 而终端入口已经由 ADR-0025 取代。
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
+
+from forgecli.domain.planning import PlanIndex
+from forgecli.interfaces.web.app import create_app
+
+
+class FakeRegistry:
+    def __init__(self, active: object) -> None:
+        self.projects = SimpleNamespace(list_trusted=tuple)
+        self.active = active
+
+    def close(self) -> None:
+        return None
+
+
+class FakeRuntime:
+    """只记录被调用了什么: 这组用例断言的是接线, 不是 PlanningService 的行为。"""
+
+    def __init__(self) -> None:
+        self.busy = False
+        self.project = SimpleNamespace(project_id="demo")
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.overrides = {"act": "openai:gpt-x"}
+
+    # /model
+    def current_model(self) -> str:
+        return "openai:gpt-x"
+
+    def set_current_model(self, provider: str, model: str) -> None:
+        self.calls.append(("set_current_model", (provider, model)))
+
+    # /config 用途覆盖
+    def model_overrides(self) -> dict[str, str]:
+        return dict(self.overrides)
+
+    def set_model_override(self, origin: str, provider: str, model: str) -> None:
+        self.calls.append(("set_model_override", (origin, provider, model)))
+
+    def clear_model_override(self, origin: str) -> None:
+        self.calls.append(("clear_model_override", (origin,)))
+
+    # /thinking
+    def thinking_view(self) -> dict[str, object]:
+        return {"model": "openai:gpt-x", "configured": True, "mode": "on"}
+
+    def update_thinking(self, mode: str, effort: str) -> bool:
+        self.calls.append(("update_thinking", (mode, effort)))
+        return True
+
+    # /status 与 /recovery
+    def status(self) -> dict[str, object]:
+        return {"session_id": "s1", "mode": "plan", "model": "openai:gpt-x"}
+
+    def recovery_status(self) -> dict[str, object]:
+        return {"checkpoint_count": 2, "pending": []}
+
+    # /plan-doc
+    def plan_index(self) -> PlanIndex:
+        return PlanIndex(active_plan_id="p1")
+
+    def activate_plan(self, plan_id: str) -> bool:
+        self.calls.append(("activate_plan", (plan_id,)))
+        return plan_id == "p1"
+
+
+def _client(runtime: FakeRuntime, tmp_path) -> TestClient:
+    app = create_app(
+        registry=FakeRegistry(runtime),  # type: ignore[arg-type]
+        boot_token="known-token",
+        static_dir=tmp_path,
+    )
+    client = TestClient(app, base_url="http://127.0.0.1")
+    client.get("/boot?token=known-token", follow_redirects=False)
+    return client
+
+
+def _csrf(client: TestClient) -> dict[str, str]:
+    return {"X-CSRF-Token": client.get("/api/v1/bootstrap").json()["csrf_token"]}
+
+
+def test_current_model_can_be_chosen_from_the_web(tmp_path) -> None:
+    """CLI 的 /model: 选运行时默认模型。原来 Web 只能手写两个配置键。"""
+    runtime = FakeRuntime()
+    with _client(runtime, tmp_path) as client:
+        response = client.put(
+            "/api/v1/models/current",
+            json={"provider_id": "openai", "model_id": "gpt-x"},
+            headers=_csrf(client),
+        )
+
+    assert response.status_code == 200
+    assert ("set_current_model", ("openai", "gpt-x")) in runtime.calls
+
+
+def test_per_origin_overrides_can_be_set_and_cleared(tmp_path) -> None:
+    """CLI 的 /config 用途模型覆盖: 原来 Web 完全没有入口。"""
+    runtime = FakeRuntime()
+    with _client(runtime, tmp_path) as client:
+        headers = _csrf(client)
+        client.put(
+            "/api/v1/model-overrides/classifier",
+            json={"provider_id": "openai", "model_id": "gpt-mini"},
+            headers=headers,
+        )
+        client.delete("/api/v1/model-overrides/classifier", headers=headers)
+
+    assert ("set_model_override", ("classifier", "openai", "gpt-mini")) in runtime.calls
+    assert ("clear_model_override", ("classifier",)) in runtime.calls
+
+
+def test_thinking_is_adjustable_at_runtime(tmp_path) -> None:
+    """CLI 的 /thinking: 进程内覆盖, 与模型配置里的持久 thinking 是两回事。"""
+    runtime = FakeRuntime()
+    with _client(runtime, tmp_path) as client:
+        response = client.post(
+            "/api/v1/thinking",
+            json={"mode": "on", "effort": "high"},
+            headers=_csrf(client),
+        )
+
+    assert response.json()["changed"] is True
+    assert ("update_thinking", ("on", "high")) in runtime.calls
+
+
+def test_status_and_recovery_are_readable(tmp_path) -> None:
+    """CLI 的 /status 与 /recovery。"""
+    with _client(FakeRuntime(), tmp_path) as client:
+        status = client.get("/api/v1/status").json()
+        recovery = client.get("/api/v1/recovery").json()
+
+    assert status["session_id"] == "s1"
+    assert recovery["checkpoint_count"] == 2
+
+
+def test_plans_can_be_listed_and_switched(tmp_path) -> None:
+    """CLI 的 /plan-doc list | use <id>。"""
+    runtime = FakeRuntime()
+    with _client(runtime, tmp_path) as client:
+        headers = _csrf(client)
+        listed = client.get("/api/v1/plans").json()
+        activated = client.post("/api/v1/plans/p1/activate", headers=headers)
+        missing = client.post("/api/v1/plans/nope/activate", headers=headers)
+
+    assert listed["active_plan_id"] == "p1"
+    assert activated.status_code == 200
+    assert missing.status_code == 404
+
+
+def test_config_changes_are_refused_while_a_turn_runs(tmp_path) -> None:
+    """与既有模型 / 授权接口同一条边界: 运行期间不改运行配置。"""
+    runtime = FakeRuntime()
+    runtime.busy = True
+    with _client(runtime, tmp_path) as client:
+        headers = _csrf(client)
+        assert (
+            client.put(
+                "/api/v1/models/current",
+                json={"provider_id": "openai", "model_id": "gpt-x"},
+                headers=headers,
+            ).status_code
+            == 409
+        )
+        assert (
+            client.post(
+                "/api/v1/thinking", json={"mode": "on"}, headers=headers
+            ).status_code
+            == 409
+        )
+        assert (
+            client.put(
+                "/api/v1/model-overrides/act",
+                json={"provider_id": "openai", "model_id": "gpt-x"},
+                headers=headers,
+            ).status_code
+            == 409
+        )
