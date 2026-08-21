@@ -8,7 +8,8 @@
 这些成本换不到任何东西.
 
 **这里不硬编码任何工具名, 也不硬编码任何模式的能力描述.** 工具用途取自
-`ToolSpec.title`, 模式能力取自 `auto_allowed_capabilities` —— 两者都是既有的单一真相.
+`ToolSpec.title`, 自动放行的能力取自 `fence_allowed_capabilities`.
+两者都是既有的单一真相.
 写死一份的后果是它会和真相各自演化, 而漂了不会报错: 提示词照常渲染, 只是内容开始骗人.
 
 改动本文件里的任何一段内置文本, 都必须同时升 MAIN_AGENT_PROMPT_VERSION 并更新快照测试.
@@ -23,8 +24,9 @@ from forgecli.application.planning import ActivePlanning
 from forgecli.application.prompt.project_instruction_reader import ProjectInstruction
 from forgecli.application.prompt.runtime_facts import RuntimeFacts
 from forgecli.domain.agent.prompt import PromptBlock, PromptBlockId, PromptSnapshot
+from forgecli.domain.execution.fence import FencePolicy
 from forgecli.domain.intents import SessionMode
-from forgecli.domain.security.modes import auto_allowed_capabilities
+from forgecli.domain.security.budget import fence_allowed_capabilities
 from forgecli.domain.tool.capability import Capability
 
 __all__ = [
@@ -65,7 +67,9 @@ _TOOL_CONTRACT = """\
 # 现在给的是**理由**而不是**代价**: 专用工具的输出是结构化的, 省 token 也省一轮解析。
 _SHELL_BOUNDARY = """\
 shell.run 用于运行测试, 构建, 包管理, 以及上表未覆盖的命令.
-上表覆盖的动作优先用专用工具: 它们的输出已经结构化, 不必再解析一遍 stdout."""
+上表覆盖的动作优先用专用工具: 它们的输出已经结构化, 不必再解析一遍 stdout.
+命令跑在围栏里, 越界的访问会被系统拒绝并让命令失败. 看到这类失败就换一条路,
+或者说明你需要哪一项边界之外的权限 —— 不要改写命令去绕它."""
 
 # 检索顺序. 这里**按动作写, 不按工具名写** —— 哪个工具承担哪个动作由上面那张表回答,
 # 在这里再点一次名就是第二份会漂的真相.
@@ -143,6 +147,8 @@ class PromptBuildInput:
     project_instructions: tuple[ProjectInstruction, ...] = field(default_factory=tuple)
     # 当前活动的计划与待办 (ADR-0022 §5.4). 空的是常态, 不是错误.
     planning: ActivePlanning = field(default_factory=ActivePlanning)
+    # 本回合的围栏边界 (ADR-0030). 模型据此知道自己能碰到什么, 不必靠猜.
+    fence: FencePolicy | None = None
 
 
 class SystemPromptBuilder:
@@ -242,7 +248,9 @@ def _workspace_instructions(build_input: PromptBuildInput) -> PromptBlock | None
 
 def _runtime_facts(build_input: PromptBuildInput) -> PromptBlock:
     facts = build_input.facts
-    allowed = auto_allowed_capabilities(build_input.mode)
+    allowed = fence_allowed_capabilities(
+        build_input.fence, confined=build_input.facts.isolation_level.contained
+    )
     rows: list[tuple[str, str]] = [
         ("mode", build_input.mode.value),
         ("自动放行", _capability_names(allowed)),
@@ -315,10 +323,10 @@ def _todo_state(build_input: PromptBuildInput) -> PromptBlock | None:
 
 
 def _capability_names(allowed: frozenset[Capability]) -> str:
-    """把模式的自动放行能力集渲染成中文.
+    """把自动放行的能力集渲染成中文.
 
-    从 auto_allowed_capabilities 现取, 不在提示词层再维护一份模式描述 —— 有人往
-    _ACCEPT_EDITS 里加一个 NETWORK_ACCESS 时, 这里会跟着变, 而散文不会.
+    从 fence_allowed_capabilities 现取, 不在提示词层再维护一份模式描述 —— 围栏策略
+    变了这里会跟着变, 而散文不会.
     """
     return ", ".join(
         text for capability, text in _CAPABILITY_NAMES if capability in allowed

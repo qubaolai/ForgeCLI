@@ -125,7 +125,9 @@ class ShellCapabilityAnalyzer(CapabilityAnalyzer):
 
         result = bind_executables(result, command, context, self._resolver)
         result = self._check_irreversible(result, command)
-        result = self._check_target_closure(result, command, expansion, home)
+        result = self._check_target_closure(
+            result, command, expansion, home, confined=policy.confined
+        )
         if proven_read_only(command, effects):
             result = replace(result, proven_read_only=True)
         return result
@@ -154,48 +156,62 @@ class ShellCapabilityAnalyzer(CapabilityAnalyzer):
         command: CommandPlan,
         expansion: ExpansionResult,
         home: str,
+        *,
+        confined: bool,
     ) -> AnalysisFindings:
         """目标集合封不封得住. 三条判据的**顺序就是根因优先级**.
 
         `asked()` 保留最先给出的理由, 而"不认识这个程序"是根因, "目标集合没封闭"是它的
         后果 —— 审计里该记根因.
+
+        **有围栏时这三条只产出事实, 不产出 ASK** (ADR-0030 决策 1). 它们回答的都是
+        "静态推不出这条命令会碰什么", 而围栏不需要推 —— 推不出来的后果退化成一次全量
+        快照 (慢一点) 与一段不完整的说明, 不再是一次人工确认.
+
+        风险事实照常记录: 审批界面与审计要用, 恢复层也要用它选 TARGETED 还是 FULL.
         """
         result = findings
         unresolved = unresolved_targets(command, home)
         if unresolved:
             # 目标里还有运行期才确定的引用. 读取也要拦: `cat $SECRET_PATH` 的真实目标
             # 只有跑起来才知道, 受保护路径检查对它无从下手.
-            result = result.asked(
-                DecisionReason.UNRESOLVED_TARGET_SET,
-                RiskFact(
-                    code="unresolved_target",
-                    detail="目标含运行期引用: " + ", ".join(unresolved),
-                ),
+            fact = RiskFact(
+                code="unresolved_target",
+                detail="目标含运行期引用: " + ", ".join(unresolved),
+            )
+            result = (
+                result.with_risk(fact)
+                if confined
+                else result.asked(DecisionReason.UNRESOLVED_TARGET_SET, fact)
             )
         unproven = unproven_units(command)
         if unproven:
             # 认不出这个可执行文件会碰什么. 空的 write_paths 在这里**不构成**"它没写"
             # 的证据, 所以不能让它凭 WORKSPACE_READ 走只读快速路径.
-            result = result.asked(
-                DecisionReason.UNPROVEN_EXECUTABLE,
-                RiskFact(
-                    code="unproven_executable",
-                    detail=(
-                        "无法推导影响范围的命令: "
-                        + ", ".join(unproven)
-                        + " (位置参数已按读取记录, 但这不是完整清单)"
-                    ),
+            fact = RiskFact(
+                code="unproven_executable",
+                detail=(
+                    "无法推导影响范围的命令: "
+                    + ", ".join(unproven)
+                    + " (位置参数已按读取记录, 但这不是完整清单)"
                 ),
+            )
+            result = (
+                result.with_risk(fact)
+                if confined
+                else result.asked(DecisionReason.UNPROVEN_EXECUTABLE, fact)
             )
         if not expansion.closed and may_write(command):
             # 目标集合没封闭还要写真实工作区: 不能给普通 ALLOW (ADR-0013 §6.2).
             reasons = expansion.reasons or ("未知原因",)
-            result = result.asked(
-                DecisionReason.UNRESOLVED_TARGET_SET,
-                RiskFact(
-                    code="target_resolution",
-                    detail="目标集合无法静态封闭: " + "; ".join(reasons),
-                ),
+            fact = RiskFact(
+                code="target_resolution",
+                detail="目标集合无法静态封闭: " + "; ".join(reasons),
+            )
+            result = (
+                result.with_risk(fact)
+                if confined
+                else result.asked(DecisionReason.UNRESOLVED_TARGET_SET, fact)
             )
         return result
 

@@ -18,10 +18,11 @@ from forgecli.application.workspace.filesystem_view import (
     PathFacts,
     PathKind,
 )
+from forgecli.domain.execution.fence import fence_for
 from forgecli.domain.intents import SessionMode
+from forgecli.domain.security.budget import capabilities_requiring_approval
 from forgecli.domain.security.context import PolicyContext
 from forgecli.domain.security.findings import AnalysisFindings
-from forgecli.domain.security.modes import capabilities_requiring_approval
 from forgecli.domain.security.protected_paths import ProtectedPathPolicy
 from forgecli.domain.security.script_patterns import analyze_script_source
 from forgecli.domain.security.vocabulary import Decision
@@ -81,10 +82,11 @@ def test_script_network_access_reaches_the_capability_set() -> None:
     narrowed = _with_script_capabilities(_plan(_NARROWED), facts, _declared())
 
     assert Capability.NETWORK_ACCESS in narrowed.capabilities
-    # auto 不含 NETWORK_ACCESS, 所以这条脚本在 auto 下必须落 ASK.
-    assert capabilities_requiring_approval(SessionMode.AUTO, narrowed.capabilities) == (
-        frozenset({Capability.NETWORK_ACCESS})
-    )
+    # auto 档的围栏断网, 所以这条脚本在 auto 下必须落 ASK.
+    fence = fence_for(SessionMode.AUTO, workspace_roots=("/ws",))
+    assert capabilities_requiring_approval(
+        narrowed.capabilities, fence, confined=True
+    ) == frozenset({Capability.NETWORK_ACCESS})
 
 
 def test_the_upper_bound_is_still_respected() -> None:

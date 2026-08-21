@@ -2,7 +2,7 @@
 
 求值顺序就是安全优先级, 一步都不能调换:
 
-    Hard Deny > Mandatory Ask > 模式预算 > 分析器要求的 Ask > Allow
+    Hard Deny > Mandatory Ask > 围栏边界 > 分析器要求的 Ask > Allow
 
 最后一条分支是 fail closed: 没有任何依据能证明这次调用落在模式预算内时, 结果是 DENY
 而不是"没有规则匹配所以放行". 这条默认值是整套机制里最容易被写反的一行.
@@ -17,38 +17,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from forgecli.domain.intents import SessionMode
+from forgecli.domain.security.budget import capabilities_requiring_approval
 from forgecli.domain.security.context import PolicyContext
 from forgecli.domain.security.decision import AuthorizationDecision
 from forgecli.domain.security.findings import AnalysisFindings, RiskFact
-from forgecli.domain.security.modes import capabilities_requiring_approval
 from forgecli.domain.security.vocabulary import Decision, DecisionReason
 from forgecli.domain.tool.capability import Capability
 
 __all__ = ["PolicyEngine"]
 
-# 无论哪种模式都不能自动放行, 且不接受"模式预算内"这条理由的能力.
+# 无论围栏如何都要人类确认的能力. 与 budget._NEVER_AUTO 同源, 这里单独留一份是因为
+# 这一支要置 mandatory —— 那是 budget 表达不了的.
 _NEVER_AUTO = frozenset(
     {
         Capability.CREDENTIAL_ACCESS,
         Capability.EXTERNAL_IRREVERSIBLE_EFFECT,
         Capability.UNKNOWN,
-    }
-)
-
-# 只读快速路径能免掉的能力 (ADR-0024).
-#
-# **只有这两项**, 这是这条路径全部的作用域. 分析已经证明这条命令等价于一次读取, 那么
-# "它是经 Shell 跑的"这件事本身不该再要一次人类确认 —— 同样一次目录列举走 fs.list_files
-# 本来就自动放行.
-#
-# 免不掉的东西同样要紧: EXTERNAL_READ 越界读取仍然超预算, 于是 ADR-0024 条件 7 (目标全
-# 在工作区内) 不需要单独实现 —— 越界的读取会自己留在 over_budget 里. 把这条写成"免掉
-# 全部 over_budget"会顺带放行 `cat ~/.ssh/id_rsa`.
-_READ_ONLY_SHELL_CAPABILITIES = frozenset(
-    {
-        Capability.EXECUTE_SHELL,
-        Capability.SPAWN_PROCESS,
     }
 )
 
@@ -86,8 +70,6 @@ class PolicyEngine:
 
 def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
     """求值顺序即安全优先级. 分支顺序是 ADR-0013 §4 的决策, 不能调换."""
-    plan = findings.plan
-
     if findings.hard_deny is not None:
         return _Verdict(
             Decision.DENY, findings.hard_deny, message="命中不可覆盖的安全底线"
@@ -108,7 +90,9 @@ def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
             mandatory=True,
         )
 
-    never_auto = plan.capabilities & _NEVER_AUTO
+    capabilities = _reliable_capabilities(findings, context)
+
+    never_auto = capabilities & _NEVER_AUTO
     if never_auto:
         # mandatory=True 是这一支的要点. 不置位的话它只是一次普通 ASK, 而普通 ASK
         # 会被学习规则抬成 ALLOW —— 于是"读凭证永远需要人类在场"和 ADR-0013 §4.1
@@ -121,20 +105,20 @@ def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
             extra_facts=_capability_facts(never_auto),
         )
 
-    over_budget = capabilities_requiring_approval(context.mode, plan.capabilities)
-    if over_budget and _proven_read_only(findings, context.mode):
-        over_budget = over_budget - _READ_ONLY_SHELL_CAPABILITIES
-    if over_budget:
-        # 理由取分析器给出的那一条 (更具体), 只在没有时才落到模式预算. 反过来写会把
-        # PARSE_INCOMPLETE / CLASSIFIER_UNAVAILABLE / SCRIPT_EXECUTION 全部盖掉:
-        # shell.run 在 plan 与 accept_edits 下必然超预算, 于是那些理由永远不会出现
-        # 在审计与界面上, 而 _UNLEARNABLE_REASONS 也就永远匹配不到它们.
+    outside_fence = capabilities_requiring_approval(
+        capabilities, context.fence, confined=context.confined
+    )
+    if outside_fence:
+        # 理由取分析器给出的那一条 (更具体), 只在没有时才落到围栏边界. 反过来写会把
+        # PARSE_INCOMPLETE / CLASSIFIER_UNAVAILABLE 全部盖掉: 无围栏时 shell.run 必然
+        # 超出边界, 于是那些理由永远不会出现在审计与界面上, 而 _UNLEARNABLE_REASONS
+        # 也就永远匹配不到它们.
         return _Verdict(
             Decision.ASK,
             findings.requires_ask or DecisionReason.MODE_REQUIRES_APPROVAL,
-            message=f"当前模式 {context.mode.value} 不自动允许这些能力",
+            message=f"围栏兜不住这些能力 (模式 {context.mode.value})",
             mandatory=findings.mandatory_ask,
-            extra_facts=_capability_facts(over_budget),
+            extra_facts=_capability_facts(outside_fence),
         )
 
     if findings.requires_ask is not None:
@@ -142,45 +126,54 @@ def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
             Decision.ASK, findings.requires_ask, message="分析结果不足以自动放行"
         )
 
-    return _Verdict(
-        Decision.ALLOW,
-        _allow_reason(
-            plan.capabilities,
-            proven_read_only=_proven_read_only(findings, context.mode),
-        ),
-    )
+    return _Verdict(Decision.ALLOW, _allow_reason(capabilities, context))
 
 
-def _proven_read_only(findings: AnalysisFindings, mode: SessionMode) -> bool:
-    """这次调用能不能走只读快速路径 (ADR-0024).
+# 目标集合没封闭时靠推导得出的越界能力. 它们的判据是"这个路径在不在工作区里", 而
+# 路径本身就是猜的.
+_DERIVED_FROM_TARGETS = frozenset(
+    {
+        Capability.EXTERNAL_READ,
+        Capability.EXTERNAL_WRITE,
+    }
+)
 
-    三个条件缺一不可:
 
-    - 分析器证明命令结构只读 (条件 1-5, 8). 只有它拿得到 CommandPlan.
-    - 目标集合已封闭 (条件 6). 策略层从 ToolPlan 就能看到, 因此在这里独立再验一次 ——
-      分析器漏标时这一条仍然拦得住.
-    - 不是 plan 档. 那一档对用户的承诺是"不执行", 而起一个子进程就是执行 —— 它会占用
-      时间, 会读东西, 也会挂住. `shell.run` 本来就不在 plan 档的工具目录里, 所以这条
-      判断买不到新功能, 只是不让策略层依赖目录过滤兜底.
+def _reliable_capabilities(
+    findings: AnalysisFindings, context: PolicyContext
+) -> frozenset[Capability]:
+    """把靠不住的推导结论从裁决输入里摘掉 (ADR-0030 决策 1).
 
-    条件 7 (目标全在工作区内) 由 _READ_ONLY_SHELL_CAPABILITIES 的窄作用域自动保证.
+    目标集合没封闭时, "这个目标在工作区之外"是从一堆猜出来的路径得来的 ——
+    `find . -exec rm {} +` 里的 `{}` 会被当成一个路径, 于是推出 EXTERNAL_WRITE, 于是
+    命中 _NEVER_AUTO 变成 Mandatory Ask. 这正是本 ADR 要消灭的那类误判: 判据不是
+    "它真的要写工作区外", 而是"解析器把占位符看成了路径".
+
+    **有围栏时不必猜.** 真要碰工作区外的东西, 内核在系统调用那一刻会拒绝, 命令报错,
+    模型看到失败再决定要不要请求扩张. 没有围栏时这些推导仍然是唯一的依据, 照旧生效
+    (ADR-0030 决策 5).
+
+    只摘"靠目标路径推出来的"那两项. CREDENTIAL_ACCESS 与
+    EXTERNAL_IRREVERSIBLE_EFFECT 来自命令语义而不是路径归属, 不受目标封闭度影响,
+    照常留在裁决输入里.
     """
-    if mode is SessionMode.PLAN:
-        return False
-    return findings.proven_read_only and findings.plan.target_resolution.closed
+    capabilities = findings.plan.capabilities
+    if not context.confined or findings.plan.target_resolution.closed:
+        return capabilities
+    return frozenset(capabilities - _DERIVED_FROM_TARGETS)
 
 
 def _allow_reason(
-    capabilities: frozenset[Capability], *, proven_read_only: bool = False
+    capabilities: frozenset[Capability], context: PolicyContext
 ) -> DecisionReason:
     if capabilities <= {Capability.PLAN_ONLY}:
         return DecisionReason.PLAN_ONLY_FAST_PATH
     if capabilities <= {Capability.WORKSPACE_READ, Capability.SPAWN_PROCESS}:
         return DecisionReason.WORKSPACE_READ_FAST_PATH
-    if proven_read_only:
-        # 与上一条分开, 审计才答得出"这次为什么没问人": 一个是工具自己就窄, 一个是这条
-        # 命令被证明窄. 前者换个参数还是窄的, 后者换个参数可能就不是了.
-        return DecisionReason.PROVEN_READ_ONLY_SHELL
+    if context.confined:
+        # 与上一条分开, 审计才答得出"这次为什么没问人": 一个是工具自己就窄, 一个是
+        # 围栏把它关住了. 前者换个参数还是窄的, 后者靠的是内核.
+        return DecisionReason.FENCE_CONFINED
     return DecisionReason.RULE_ALLOW
 
 

@@ -12,6 +12,7 @@ build_tool_stack, 一行代码都不会报错, 只有真跑一轮才发现模型
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -88,12 +89,17 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ToolStack:
 def _call(stack: ToolStack, name: str, **arguments: object):  # type: ignore[no-untyped-def]
     return stack.coordinator.handle(
         ToolRequest(name=name, arguments=arguments),
-        context=stack.context_factory(),
+        context=replace(
+            stack.context_factory(),
+            fence=stack.fence_factory(SessionMode.ACCEPT_EDITS),
+        ),
         policy=PolicyContext(
             mode=SessionMode.ACCEPT_EDITS,
             session_id="sess-1",
             turn_id="turn-1",
             execution_profile_hash=stack.profile.execution_profile_hash,
+            fence=stack.fence_factory(SessionMode.ACCEPT_EDITS),
+            confined=stack.confined,
         ),
     )
 

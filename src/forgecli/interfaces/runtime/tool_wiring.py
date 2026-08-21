@@ -17,7 +17,7 @@ import shutil
 import stat
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -62,11 +62,14 @@ from forgecli.application.tools.builtin import (
     TodoSetStatusTool,
     TodoWriteTool,
 )
+from forgecli.application.tools.command_executor import CommandExecutor
 from forgecli.application.tools.registry import ToolRegistry
 from forgecli.application.tools.resource_governor import ResourceGovernor
 from forgecli.application.tools.runtime import ToolRuntime
 from forgecli.application.workspace.execution_context import ExecutionContext
-from forgecli.domain.execution.profile import ExecutionProfile
+from forgecli.domain.execution.fence import FencePolicy, fence_for
+from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
+from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.protected_paths import ProtectedPathPolicy
 from forgecli.infrastructure.config.paths import (
     artifacts_dir,
@@ -80,6 +83,10 @@ from forgecli.infrastructure.execution.environment_probe import (
 )
 from forgecli.infrastructure.execution.local_command_executor import (
     LocalCommandExecutor,
+)
+from forgecli.infrastructure.execution.sandbox import select_provider
+from forgecli.infrastructure.execution.sandboxed_command_executor import (
+    SandboxedCommandExecutor,
 )
 from forgecli.infrastructure.planning import FsPlanStore
 from forgecli.infrastructure.recovery.cow_snapshot_backend import (
@@ -112,6 +119,11 @@ class ToolStack:
     profile: ExecutionProfile
     workspace_id: str
     context_factory: Callable[[], ExecutionContext]
+    # 按模式编译围栏 (ADR-0030 决策 4). 与 context_factory 分开: 不起子进程的调用方
+    # 不需要它, 而需要它的调用方一定知道 mode.
+    fence_factory: Callable[[SessionMode], FencePolicy]
+    # 围栏是不是真的立起来了 —— 来自启动期行为自测, 不是"装了就算".
+    confined: bool
     planning: PlanningService
     # 人工 Shell 回来之后要清的缓存都注册在它上面 (ADR-0017 §10).
     barrier: ManualMutationBarrier
@@ -146,6 +158,20 @@ def build_tool_stack(
     )
     environment = build_execution_environment(profile)
 
+    # 2.5 围栏: 选 Provider 并做行为自测, 结论回填进画像 (ADR-0030 决策 3).
+    #     自测结论必须进 execution_profile_hash —— 换一台没有围栏的机器继续用旧授权,
+    #     就是"按有围栏批准, 按无围栏执行".
+    provider, fence_report = select_provider()
+    profile = replace(
+        profile,
+        isolation_level=(
+            IsolationLevel.HOST_CONFINED
+            if fence_report.confined
+            else IsolationLevel.UNCONFINED
+        ),
+    )
+    denied_reads = tuple(root.path for root in protected.roots if root.deny_read)
+
     def context_factory() -> ExecutionContext:
         return ExecutionContext(
             cwd=workspace_roots[0],
@@ -157,10 +183,27 @@ def build_tool_stack(
             readonly_roots=grants.readonly_roots(),
         )
 
+    def fence_factory(mode: SessionMode) -> FencePolicy:
+        """按模式编译围栏 (ADR-0030 决策 4).
+
+        与 context_factory 分开是因为它们的调用方不同: `/undo` 与 Web 的展示路径也要
+        ExecutionContext, 但它们不起子进程, 拿一个围栏策略没有意义. 围栏挂在真正知道
+        mode 的那一层 —— 也就是调度器.
+        """
+        return fence_for(
+            mode,
+            workspace_roots=(*workspace_roots, *grants.as_roots()),
+            readonly_roots=grants.readonly_roots(),
+            protected_paths=denied_reads,
+        )
+
     # 3. 工具注册表.
     governor = ResourceGovernor()
     store = artifacts or FsArtifactStore(artifacts_dir())
-    executor = LocalCommandExecutor()
+    # 围栏包在执行器外面, 不在工具内部分支 (ADR-0030 决策 1).
+    executor: CommandExecutor = SandboxedCommandExecutor(
+        LocalCommandExecutor(), provider
+    )
     # 计划目录按会话分区, 而这里跑在组合根里 —— 那时 REPL 还没 session.start(),
     # 组合期读 current() 会直接抛 SessionStateError. 与下面分类器的 session id 同一个
     # 坑, 同样用延迟取.
@@ -251,7 +294,9 @@ def build_tool_stack(
     return ToolStack(
         registry=registry,
         coordinator=coordinator,
-        dispatcher=CoordinatorToolDispatcher(coordinator, context_factory),
+        dispatcher=CoordinatorToolDispatcher(
+            coordinator, context_factory, fence_factory, confined=fence_report.confined
+        ),
         recovery=recovery,
         grants=grants,
         protected_paths=protected,
@@ -259,6 +304,8 @@ def build_tool_stack(
         profile=profile,
         workspace_id=workspace_id,
         context_factory=context_factory,
+        fence_factory=fence_factory,
+        confined=fence_report.confined,
         planning=planning,
         barrier=barrier,
     )

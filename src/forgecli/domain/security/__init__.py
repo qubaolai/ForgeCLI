@@ -13,6 +13,10 @@ from forgecli.domain.security.approval import (
     ApprovalResponse,
     ApprovalView,
 )
+from forgecli.domain.security.budget import (
+    capabilities_requiring_approval,
+    fence_allowed_capabilities,
+)
 from forgecli.domain.security.context import PolicyContext
 from forgecli.domain.security.decision import AuthorizationDecision
 from forgecli.domain.security.executable_identity import ExecutableIdentity, TrustZone
@@ -21,10 +25,6 @@ from forgecli.domain.security.hard_deny import (
     HardDenyHit,
     inspect_command,
     prefilter_raw,
-)
-from forgecli.domain.security.modes import (
-    auto_allowed_capabilities,
-    capabilities_requiring_approval,
 )
 from forgecli.domain.security.protected_paths import (
     PathVerdict,
@@ -69,9 +69,9 @@ __all__ = [
     "RuleMatch",
     "RuleSet",
     "TrustZone",
-    "auto_allowed_capabilities",
     "can_learn",
     "capabilities_requiring_approval",
+    "fence_allowed_capabilities",
     "inspect_command",
     "prefilter_raw",
 ]

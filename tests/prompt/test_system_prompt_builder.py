@@ -19,6 +19,7 @@ from forgecli.application.prompt.system_prompt_builder import (
     ToolBrief,
 )
 from forgecli.domain.agent.prompt import PromptBlockId, PromptSnapshot
+from forgecli.domain.execution.fence import fence_for
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.planning import (
     PlanDocument,
@@ -28,7 +29,7 @@ from forgecli.domain.planning import (
     TodoList,
     TodoStatus,
 )
-from forgecli.domain.security.modes import auto_allowed_capabilities
+from forgecli.domain.security.budget import fence_allowed_capabilities
 from forgecli.domain.tool.capability import Capability
 from support.fakes import FACTS, PROFILE, prompt
 
@@ -91,7 +92,7 @@ def test_the_builtin_profile_is_pinned_by_fingerprint() -> None:
 
     assert MAIN_AGENT_PROMPT_VERSION == 5
     assert snapshot.fingerprint == (
-        "sha256:b91fed80a548c16a25173c9522a7ca4f6de02162731f33b2d57036d85c860e83"
+        "sha256:b463f87465912f8c72db4f892c9bcd9ef14edccb12383bc469daedbf1b309c9f"
     )
 
 
@@ -177,20 +178,22 @@ def test_the_shell_boundary_is_dropped_when_shell_is_not_available() -> None:
 def test_the_mode_summary_is_derived_from_the_real_capability_budget(
     mode: SessionMode,
 ) -> None:
-    """能力预算改了提示词必须跟着改.
+    """围栏边界改了提示词必须跟着改.
 
-    这条是本文件里最要紧的一个: 早先这里是四段手写散文, 有人往 _ACCEPT_EDITS 里加一个
-    NETWORK_ACCESS, 散文照样说"网络需要人类确认", 而没有任何一层会说话.
+    这条是本文件里最要紧的一个: 早先这里是四段手写散文, 有人放开某个模式的网络,
+    散文照样说"网络需要人类确认", 而没有任何一层会说话.
     """
     body = _body(_build(mode=mode), PromptBlockId.RUNTIME_FACTS)
-    allowed = auto_allowed_capabilities(mode)
+    allowed = fence_allowed_capabilities(
+        fence_for(mode, workspace_roots=("/ws",)), confined=False
+    )
 
     assert mode.value in body
     if Capability.EXECUTE_SHELL in allowed:
         assert "执行 Shell" in body
     else:
         assert "执行 Shell" not in body
-    # 三个能力在任何模式下都不自动放行 (domain/security/modes.py).
+    # 这几个能力在任何围栏下都不自动放行 (domain/security/budget.py).
     for never in (
         Capability.CREDENTIAL_ACCESS,
         Capability.EXTERNAL_IRREVERSIBLE_EFFECT,

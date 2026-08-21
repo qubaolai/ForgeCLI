@@ -73,18 +73,28 @@ class WorkspacePathAnalyzer(CapabilityAnalyzer):
                     ),
                 )
 
+        # 目标集合封不封得住, 决定下面两条结论可不可信 (ADR-0030 决策 1).
+        # 封不住时它们是从猜出来的路径推的, 有围栏就不该拿它去问人 —— 真越界了内核会拒.
+        closed = plan.target_resolution.closed
+        derived_only = policy.confined and not closed
+
         if plan.workspace_scope is WorkspaceScope.OUTSIDE and _touches_paths(plan):
-            result = result.asked(
-                DecisionReason.OUTSIDE_WORKSPACE,
-                RiskFact(code="workspace_scope", detail="目标位于工作区之外"),
+            fact = RiskFact(code="workspace_scope", detail="目标位于工作区之外")
+            result = (
+                result.with_risk(fact)
+                if derived_only
+                else result.asked(DecisionReason.OUTSIDE_WORKSPACE, fact)
             )
-        if plan.mutates_workspace and not plan.target_resolution.closed:
-            result = result.asked(
-                DecisionReason.UNRESOLVED_TARGET_SET,
-                RiskFact(
-                    code="target_resolution",
-                    detail=f"写入目标为 {plan.target_resolution.value}, 未封闭",
-                ),
+        if plan.mutates_workspace and not closed:
+            fact = RiskFact(
+                code="target_resolution",
+                detail=f"写入目标为 {plan.target_resolution.value}, 未封闭",
+            )
+            # 有围栏时这条只影响恢复层选 TARGETED 还是 FULL, 不影响裁决.
+            result = (
+                result.with_risk(fact)
+                if policy.confined
+                else result.asked(DecisionReason.UNRESOLVED_TARGET_SET, fact)
             )
         return result
 

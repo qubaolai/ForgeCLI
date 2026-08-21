@@ -60,7 +60,28 @@ NETWORK_TOOLS = frozenset(
 )
 
 # 不可逆外部副作用 (ADR-0013 §4.1). 命中即 Mandatory Ask, 所有模式一视同仁.
+# 围栏外不可回滚的操作 (ADR-0030 决策 7.3).
+#
+# **本 ADR 之后唯一一张"漏一条有害"的表.** 其余命令知识都退到了性能路径与展示路径,
+# 只有这一张仍在安全路径上, 因此单独立规矩:
+#
+# - 它必须小到可以一次审计完;
+# - 命中即 Mandatory Ask, 表外默认放行, 所以每加一条都要说明**后果为什么快照救不了**;
+# - **不做参数级判断**. `git push` 与 `git status` 靠子命令区分, 但不去分辨
+#   `--force` 与普通 push —— 那是精度换体量的老路.
+#
+# 两类合成一张, 因为它们的性质相同: 后果落在围栏之外, 而工作区快照救不了.
+#
+# (a) 不可逆的外部操作. 围栏在 socket 层**分不出 `git fetch` 与 `git push --force`**,
+#     两者都只是一个到远端的 TLS 连接. full_access 放开网络之后, 只剩这张表拦得住.
+#
+# (b) 进程操作. 它们既不写文件也不用网络, 围栏的两个维度都盖不到. Linux 的 bubblewrap
+#     用 PID namespace 真的关住了, 但 **Seatbelt 没有独立 PID namespace**, 所以 macOS
+#     上只能靠表.
+#
+# 子命令元组为空表示"这个命令的任何调用都算".
 _IRREVERSIBLE: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    # (a) 不可逆的外部操作
     ("git", ("push",), "推送到远端"),
     ("npm", ("publish", "unpublish", "deprecate", "dist-tag"), "发布 npm 包"),
     ("yarn", ("publish",), "发布 npm 包"),
@@ -72,6 +93,17 @@ _IRREVERSIBLE: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("gh", ("release",), "发布 release"),
     ("cargo", ("publish",), "发布 crate"),
     ("twine", ("upload",), "发布 Python 包"),
+    # (b) 进程操作
+    ("kill", (), "终止宿主进程"),
+    ("pkill", (), "按名字终止宿主进程"),
+    ("killall", (), "按名字终止宿主进程"),
+    ("systemctl", (), "改动系统服务"),
+    ("launchctl", (), "改动系统服务"),
+    ("service", (), "改动系统服务"),
+    ("shutdown", (), "关机或重启"),
+    ("reboot", (), "关机或重启"),
+    ("halt", (), "关机或重启"),
+    ("docker", ("stop", "kill", "rm", "restart"), "改动容器生命周期"),
 )
 
 _MAY_WRITE_KINDS = (
@@ -226,10 +258,14 @@ def proven_read_only(command: CommandPlan, effects: PlanEffects) -> bool:
 
 
 def irreversible_detail(unit: CommandUnit) -> str | None:
+    """命中围栏外不可回滚操作表就给出说明, 否则 None.
+
+    子命令元组为空 = 这个命令的任何调用都算 (进程操作那一类没有子命令).
+    """
     for executable, subcommands, detail in _IRREVERSIBLE:
         if unit.name != executable:
             continue
-        if any(sub in unit.argv for sub in subcommands):
+        if not subcommands or any(sub in unit.argv for sub in subcommands):
             return detail
     return None
 

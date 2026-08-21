@@ -27,7 +27,9 @@ __all__ = [
 #
 # 3: ADR-0028 收缩 ApprovalBinding 并合并审批视图. 旧规则绑的是旧口径的字段集,
 #    沿用等于拿旧绑定去满足新裁决.
-POLICY_VERSION = "3"
+# 4: ADR-0030 用围栏边界顶替模式能力预算. 旧规则绑的是"某模式允许某能力"这个口径,
+#    而现在的判据是"围栏兜不兜得住", 沿用等于拿旧口径去满足新裁决.
+POLICY_VERSION = "4"
 
 
 class Decision(Enum):
@@ -60,9 +62,9 @@ class DecisionReason(Enum):
     # -- ALLOW --
     PLAN_ONLY_FAST_PATH = "plan_only_fast_path"
     WORKSPACE_READ_FAST_PATH = "workspace_read_fast_path"
-    # 分析证明这条 Shell 命令等价于一次读取 (ADR-0024). 与上一条分开是为了让审计
-    # 能回答"这次为什么没问人": 一个是工具自己就窄, 一个是命令被证明窄.
-    PROVEN_READ_ONLY_SHELL = "proven_read_only_shell"
+    # 围栏把这次执行关住了 (ADR-0030). 与上一条分开是为了让审计能回答"这次为什么没
+    # 问人": 一个是工具自己就窄, 一个是内核拦住了它伸出去的路.
+    FENCE_CONFINED = "fence_confined"
     RULE_ALLOW = "rule_allow"
     LEARNED_ALLOW = "learned_allow"
     # 人类批准且全量重验通过后, 普通 ASK 转成的一次性 ALLOW.

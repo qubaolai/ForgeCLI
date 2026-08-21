@@ -93,13 +93,18 @@ class ScriptExecutionAnalyzer(CapabilityAnalyzer):
 
         payloads = self._collect(findings, context)
         if not payloads:
-            # 声明了脚本执行却拿不出内容: 无法分析, 交给人.
-            return findings.asked(
-                DecisionReason.SCRIPT_EXECUTION,
-                RiskFact(
-                    code="script_unavailable",
-                    detail=f"要执行代码但拿不到内容: {_subject_summary(subject)}",
-                ),
+            # 声明了脚本执行却拿不出内容.
+            fact = RiskFact(
+                code="script_unavailable",
+                detail=f"要执行代码但拿不到内容: {_subject_summary(subject)}",
+            )
+            # 有围栏时这只是"说明不全", 不是"该拦的没拦": 看不到内容不影响它被关在
+            # 围栏里 (ADR-0030 决策 1 的判定规则). `find -exec` 与 `eval` 属于这一类 ——
+            # 内层命令是运行期产生的, 静态永远拿不到, 而按名字拦会误伤纯列举.
+            return (
+                findings.with_risk(fact)
+                if policy.confined
+                else findings.asked(DecisionReason.SCRIPT_EXECUTION, fact)
             )
 
         result = findings
@@ -136,9 +141,19 @@ class ScriptExecutionAnalyzer(CapabilityAnalyzer):
                     path=payload.path,
                 )
             )
-            result = self._apply(result, facts, source, policy, context)
-            if result.hard_deny is not None:
-                return result
+            if not policy.confined:
+                # **有围栏时不读正文找危险模式** (ADR-0030 决策 1).
+                #
+                # 上面那几步照做: FileStateBinding 与 ScriptSnapshot 都不是"找危险",
+                # 它们是 TOCTOU 锚点与审批展示 —— 围栏替代不了. 学习规则用脚本正文的
+                # 哈希绑定 (learned_rules.py), 少了它 `bash deploy.sh` 学到的规则只绑
+                # 命令行那一串字, deploy.sh 随后改成什么都照样命中.
+                #
+                # 跳过的只有 `_apply`: 风险模式匹配, 分类器调用, 以及从正文推导能力.
+                # 这三件事回答的都是"这段代码会做什么", 而围栏不需要问 —— 它跑在里面.
+                result = self._apply(result, facts, source, policy, context)
+                if result.hard_deny is not None:
+                    return result
         return result
 
     # ---- 内容收集 ----

@@ -365,6 +365,9 @@ class GitReadTool(Tool):
                 environment=_git_environment(context.environment),
                 timeout_seconds=limits.timeout_seconds,
                 max_output_bytes=limits.max_artifact_bytes,
+                # 围栏边界随请求走 (ADR-0030 决策 1). 漏传的后果是执行器 fail closed,
+                # 不是"没策略就不围".
+                fence=context.fence,
             ),
             cancel,
         )
