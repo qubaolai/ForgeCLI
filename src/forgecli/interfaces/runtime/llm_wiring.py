@@ -4,7 +4,7 @@ CLI 与 Web 必须共用这一组合根。只有这里知道网关的全部具�
 OpenAI-compatible adapter 的注册（含 thinking
 方言）、凭证解析器（env 环境变量）/ 凭证池、动态选择解析器、token 估算与分词器
 注册表、计量、治理件（熔断 / 预算 / 响应缓存，按 llm.json 配置段驱动，未启用
-维持 no-op）与进程内观测聚合。application / AgentTurn 只依赖 LlmGateway 端口，
+未启用即空转）与进程内观测聚合。application / AgentTurn 只依赖 LlmGateway 端口，
 不 import httpx 或任何 adapter（§19）；chat 主路径由 bootstrap 组装
 BuiltinAgentLoop 驱动（ADR-0010），本模块交回网关与计量件。
 
@@ -28,21 +28,14 @@ from forgecli.application.llm import providers as provider_registry
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.gateway import (
-    BudgetGuard,
     DefaultLlmGateway,
     InMemoryResponseCache,
     InProcessGatewayMetrics,
-    LlmCacheController,
     LlmGateway,
     ModelCatalogEntry,
     ModelCatalogService,
-    NoopLlmCacheController,
-    NoopProviderHealthRegistry,
-    ProviderHealthRegistry,
     ProviderRegistry,
     SlidingWindowHealthRegistry,
-    SnapshotBudgetGuard,
-    TokenizerRegistry,
 )
 from forgecli.application.llm.metering import CostEstimator, UsageMeter
 from forgecli.application.llm.overrides_service import ModelOverridesService
@@ -97,11 +90,7 @@ def build_llm_runtime(
         settings_source=LlmConfigProviderSettingsSource(llm_config_service),
         # 凭证只支持环境变量（ADR-0011 §7 复核）：dotenv / keychain 已移除。
         credential_pool=InMemoryCredentialPool(EnvCredentialResolver()),
-        # 精确分词器接入点（ADR-0012 §6）：默认无映射，回落近似估算；
-        # 精确分词器作为可选依赖在此注册。
-        tokenizer_registry=TokenizerRegistry(),
         health_registry=_build_health_registry(llm_config_service),
-        budget_guard=_build_budget_guard(),
         cache=_build_response_cache(llm_config_service),
         observer=metrics,
     )
@@ -137,33 +126,24 @@ def _build_provider_registry(llm_config_service: LlmConfigService) -> ProviderRe
     return registry
 
 
-def _build_response_cache(llm: LlmConfigService) -> LlmCacheController:
-    """[llm.cache] 驱动（ADR-0012 §3）：未启用维持 Noop（现行为）。"""
+def _build_response_cache(llm: LlmConfigService) -> InMemoryResponseCache:
+    """[llm.cache] 驱动（ADR-0012 §3）：未启用 = 空白名单，lookup/store 都不做事。"""
     settings = llm.cache_settings()
-    if not settings.enabled:
-        return NoopLlmCacheController()
     return InMemoryResponseCache(
-        allowed_origins=settings.origins,
+        allowed_origins=settings.origins if settings.enabled else (),
         ttl_seconds=settings.ttl_seconds,
         max_entries=settings.max_entries,
     )
 
 
-def _build_health_registry(llm: LlmConfigService) -> ProviderHealthRegistry:
-    """[llm.circuit_breaker] 驱动（ADR-0012 §8）：未启用维持 no-op。"""
+def _build_health_registry(llm: LlmConfigService) -> SlidingWindowHealthRegistry:
+    """[llm.circuit_breaker] 驱动（ADR-0012 §8）：未启用时三个方法都直通。"""
     settings = llm.circuit_breaker_settings()
-    if not settings.enabled:
-        return NoopProviderHealthRegistry()
     return SlidingWindowHealthRegistry(
+        enabled=settings.enabled,
         failure_threshold=settings.failure_threshold,
         cooldown_seconds=settings.cooldown_seconds,
     )
-
-
-def _build_budget_guard() -> BudgetGuard:
-    """快照比对裁决（ADR-0012 §8）：无快照直通，与今日生产行为完全一致；
-    预算规则与已用量状态归 AgentTurnService（注入快照后自动生效）。"""
-    return SnapshotBudgetGuard()
 
 
 class _DynamicCatalog(ModelCatalogService):

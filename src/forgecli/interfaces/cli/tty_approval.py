@@ -37,7 +37,7 @@ from forgecli.domain.security.approval import (
     ApprovalOutcome,
     ApprovalRequest,
     ApprovalResponse,
-    HitlApprovalView,
+    ApprovalView,
 )
 from forgecli.domain.security.vocabulary import ApprovalScope
 from forgecli.interfaces.cli.tty.select import (
@@ -76,7 +76,7 @@ def _safe(text: str) -> str:
 
 
 def render_approval_view(
-    console: Console, view: HitlApprovalView, *, interactive: bool = False
+    console: Console, view: ApprovalView, *, interactive: bool = False
 ) -> None:
     """按固定层级打印确认视图. 与输入分开, 便于快照测试."""
     roots = ", ".join(view.workspace_roots) or "(无)"
@@ -94,7 +94,7 @@ def render_approval_view(
         _render_options(console, view)
 
 
-def _render_content(console: Console, view: HitlApprovalView) -> None:
+def _render_content(console: Console, view: ApprovalView) -> None:
     """逐字展示要跑的代码与要写的内容.
 
     这一节不能省, 也不能只给路径: 用户批准的是"会发生什么", 而 `python3 deploy.py` 这
@@ -118,7 +118,7 @@ def _render_body(console: Console, body: str) -> None:
     console.print()
 
 
-def _render_targets(console: Console, view: HitlApprovalView) -> None:
+def _render_targets(console: Console, view: ApprovalView) -> None:
     # 目标集不封闭时, 每个数字都只是已知下限, 必须这么标出来.
     #
     # 不标的后果是这一行**在说假话**: `find . -exec rm {} \;` 的删除目标由运行期产生,
@@ -132,8 +132,7 @@ def _render_targets(console: Console, view: HitlApprovalView) -> None:
         # (ADR-0013 §6.2).
         console.print("上面的数字是已知下限, 实际影响范围可能更大")
         console.print(f"未封闭原因：{_safe(view.unresolved_reason or '')}")
-        if view.recovery_strategy:
-            console.print(f"执行前将建立 {_safe(view.recovery_strategy)} checkpoint")
+        console.print("执行前会建立 checkpoint, 事后可以 /undo")
     for group in view.target_groups:
         if not group.paths:
             continue
@@ -152,13 +151,13 @@ def _wrap(text: str) -> str:
     return "\n    ".join(chunks)
 
 
-def _render_options(console: Console, view: HitlApprovalView) -> None:
+def _render_options(console: Console, view: ApprovalView) -> None:
     for index, (key, label) in enumerate(_options(view), start=1):
         console.print(f"[{index}] {key:<6} {label}")
     console.print()
 
 
-def _options(view: HitlApprovalView) -> tuple[tuple[str, str], ...]:
+def _options(view: ApprovalView) -> tuple[tuple[str, str], ...]:
     """once 在首位且是默认; always 只在策略允许学习授权时出现, deny 永远在.
 
     always 的措辞随内容变: 执行脚本时学的是"这份脚本内容", 普通命令时学的是"这条
@@ -184,25 +183,13 @@ class TtyApprovalService(ApprovalService):
                 approval_id=approval.approval_id,
                 note="非交互环境无法审批, 请求保持 pending",
             )
-        view = HitlApprovalView.of(
-            approval.presentation,
-            allowed_scopes=self._scopes_for(approval),
-        )
-        render_approval_view(self._console, view, interactive=True)
-        return self._ask(approval, view)
+        # 直接用请求里那份视图: 允许哪几个范围由协调器按学习规则算好, 并已由
+        # ApprovalRequest 校验过 (Mandatory Ask 只能 once). 界面再算一遍等于同一条
+        # 规则存两份, 而两份一旦漂移, 界面给出的选项会与重验接受的范围对不上.
+        render_approval_view(self._console, approval.view, interactive=True)
+        return self._ask(approval, approval.view)
 
-    def _scopes_for(self, approval: ApprovalRequest) -> tuple[ApprovalScope, ...]:
-        """Mandatory Ask 不提供学习授权; 其余按 presentation 允许的范围收窄到工作区."""
-        if approval.mandatory:
-            return (ApprovalScope.ONCE,)
-        allowed = approval.presentation.allowed_scopes
-        if any(scope.learned for scope in allowed):
-            return (ApprovalScope.ONCE, ApprovalScope.WORKSPACE)
-        return (ApprovalScope.ONCE,)
-
-    def _ask(
-        self, approval: ApprovalRequest, view: HitlApprovalView
-    ) -> ApprovalResponse:
+    def _ask(self, approval: ApprovalRequest, view: ApprovalView) -> ApprovalResponse:
         options = _options(view)
         try:
             chosen = select_one(

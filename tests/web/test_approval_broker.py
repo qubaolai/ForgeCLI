@@ -11,22 +11,35 @@ from __future__ import annotations
 
 import threading
 
-from forgecli.domain.security.approval import ApprovalOutcome, ApprovalRequest
+from forgecli.domain.intents import SessionMode
+from forgecli.domain.security.approval import (
+    ApprovalBinding,
+    ApprovalOutcome,
+    ApprovalRequest,
+    ApprovalView,
+)
 from forgecli.domain.security.vocabulary import ApprovalScope
 from forgecli.interfaces.web.approval import WebApprovalBroker
+from support.fakes import tool_plan
 
 
 def _request(approval_id: str = "ap-1") -> ApprovalRequest:
-    from forgecli.domain.security.approval import ApprovalPresentation
-
+    view = ApprovalView(
+        plan=tool_plan(raw_command="rm -rf /tmp/demo"),
+        action_summary="执行 shell 命令",
+        allowed_scopes=(ApprovalScope.ONCE,),
+    )
     return ApprovalRequest(
         approval_id=approval_id,
-        binding=None,  # type: ignore[arg-type]
-        presentation=ApprovalPresentation(
-            action_summary="执行 shell 命令",
-            raw_command="rm -rf /tmp/demo",
-            allowed_scopes=(ApprovalScope.ONCE,),
+        binding=ApprovalBinding(
+            plan_hash=view.plan.plan_hash,
+            catalog_snapshot_hash="catalog",
+            execution_profile_hash="profile",
+            policy_version="1",
+            mode=SessionMode.ACCEPT_EDITS,
+            view_hash=view.view_hash,
         ),
+        view=view,
         mandatory=True,
     )
 

@@ -52,7 +52,6 @@ from forgecli.infrastructure.project import (
 from forgecli.infrastructure.prompt import FsProjectInstructionReader
 from forgecli.infrastructure.session import JsonlEventStore, JsonStateStore
 from forgecli.interfaces.cli.banner import render_banner
-from forgecli.interfaces.cli.exit_codes import ExitCode
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.plan_review_prompt import PlanReviewPrompt
@@ -68,6 +67,7 @@ from forgecli.interfaces.cli.tty.tty import stdin_is_tty
 from forgecli.interfaces.cli.tty_approval import TtyApprovalService
 from forgecli.interfaces.cli.tty_prompts import TtyDirectoryPicker, TtyTrustPrompter
 from forgecli.interfaces.cli.wiring import build_registry
+from forgecli.interfaces.exit_codes import ExitCode
 from forgecli.interfaces.runtime.llm_wiring import build_llm_runtime
 from forgecli.interfaces.runtime.tool_wiring import ToolStack, build_tool_stack
 

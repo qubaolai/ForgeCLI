@@ -21,6 +21,7 @@ from rich.console import Console
 
 from forgecli.infrastructure.config import config_dir
 from forgecli.infrastructure.project import ProjectLockedError
+from forgecli.interfaces.exit_codes import ExitCode
 from forgecli.interfaces.web.app import create_app
 from forgecli.interfaces.web.runtime import (
     ProjectRuntimeRegistry,
@@ -29,8 +30,6 @@ from forgecli.interfaces.web.runtime import (
 
 DEFAULT_PORT = 8765
 
-_PROJECT_LOCKED_EXIT = 6
-_PORT_BUSY_EXIT = 7
 _GRACEFUL_SHUTDOWN_SECONDS = 5
 _SECRETS_FILE = "web-secrets.json"
 
@@ -115,7 +114,7 @@ def run(*, port: int = DEFAULT_PORT, open_browser: bool = False) -> int:
             registry.activate(current.project_id)
         except ProjectLockedError as exc:
             console.print(f"[yellow]{exc.message}[/]")
-            return _PROJECT_LOCKED_EXIT
+            return ExitCode.PROJECT_LOCKED
 
     session_token, csrf_token = load_web_secrets()
     app = create_app(
@@ -133,7 +132,7 @@ def run(*, port: int = DEFAULT_PORT, open_browser: bool = False) -> int:
                 "多半是另一个 Forge 还在运行；可以先停掉它，或用 "
                 "[bold]forge --port <其他端口>[/] 换一个端口。"
             )
-            return _PORT_BUSY_EXIT
+            return ExitCode.PORT_BUSY
         sock.listen(2048)
         selected_port = int(sock.getsockname()[1])
         url = (

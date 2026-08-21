@@ -5,8 +5,8 @@
 恢复层要先于协调器 (协调器拿它建屏障), 分析器要先于授权服务. 装配顺序写乱了不会报错,
 只会让某一层悄悄失效.
 
-ExecutionContext 用工厂每次现取, 不缓存: 文件系统视图是带版本的快照, 跨调用复用会让
-第二次调用基于过时的目录内容展开目标集合.
+ExecutionContext 用工厂每次现取, 不缓存: 文件系统入口的版本标识调用实例，具体文件身份
+由 ToolPlan 绑定。跨调用复用仍会让目录展开和上下文身份混在一起。
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import os
 import shutil
+import stat
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -39,11 +40,12 @@ from forgecli.application.security.risk_cache import RiskCache
 from forgecli.application.security.wiring import build_analyzer_registry
 from forgecli.application.security.workspace_grants import WorkspaceGrants
 from forgecli.application.session import SessionService
+from forgecli.application.session.tool_audit import SessionToolAudit
 from forgecli.application.tool_request.coordinator import ToolRequestCoordinator
 from forgecli.application.tool_request.dispatcher import CoordinatorToolDispatcher
-from forgecli.application.tool_request.session_audit import SessionToolAudit
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.builtin import (
+    CreateDirectoryTool,
     CreateFileTool,
     DeleteTool,
     EditFileTool,
@@ -178,8 +180,9 @@ def build_tool_stack(
             ListFilesTool(governor, store),
             SearchTextTool(governor, store),
             GitReadTool(executor, governor, store),
-            CreateFileTool(_write_file),
-            EditFileTool(_write_file),
+            CreateDirectoryTool(_make_directory),
+            CreateFileTool(_create_file),
+            EditFileTool(_replace_file),
             MoveTool(_move_file),
             DeleteTool(_delete_file),
             ShellRunTool(executor, governor, store),
@@ -226,6 +229,8 @@ def build_tool_stack(
         recovery_store,
         writer=_write_bytes,
         remover=_delete_file,
+        directory_creator=_create_directory,
+        mode_setter=_set_mode,
         snapshots=snapshots,
         clock=_now,
     )
@@ -259,7 +264,7 @@ def build_tool_stack(
     )
 
 
-def _write_file(path: str | os.PathLike[str], content: str) -> None:
+def _replace_file(path: str | os.PathLike[str], content: str) -> None:
     """
     尽可能跨平台地原子替换文本文件。
     - target 要么保持旧内容，要么变成完整的新内容
@@ -270,7 +275,11 @@ def _write_file(path: str | os.PathLike[str], content: str) -> None:
     target = Path(path)
     parent = target.parent
 
-    parent.mkdir(parents=True, exist_ok=True)
+    if not parent.is_dir():
+        raise FileNotFoundError(f"父目录不存在或不是目录: {parent}")
+    before = target.lstat()
+    if stat.S_ISLNK(before.st_mode):
+        raise OSError(f"拒绝替换符号链接: {target}")
 
     fd = -1
     temp_path: str | None = None
@@ -281,6 +290,9 @@ def _write_file(path: str | os.PathLike[str], content: str) -> None:
             prefix=f".{target.name}.",
             suffix=".tmp",
         )
+
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, stat.S_IMODE(before.st_mode))
 
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             fd = -1
@@ -315,6 +327,37 @@ def _write_file(path: str | os.PathLike[str], content: str) -> None:
                 os.unlink(temp_path)
 
 
+def _create_file(path: str | os.PathLike[str], content: str) -> None:
+    """用硬链接发布完整临时文件，目标已存在时由内核原子拒绝。"""
+    target = Path(path)
+    parent = target.parent
+    if not parent.is_dir():
+        raise FileNotFoundError(f"父目录不存在或不是目录: {parent}")
+    fd = -1
+    temp_path: str | None = None
+    try:
+        fd, temp_path = tempfile.mkstemp(
+            dir=parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+        )
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+            fd = -1
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temp_path, target)
+        os.unlink(temp_path)
+        temp_path = None
+        _sync_directory(parent)
+    finally:
+        if fd != -1:
+            os.close(fd)
+        if temp_path is not None:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temp_path)
+
+
 def _write_bytes(path: str, data: bytes) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -324,10 +367,48 @@ def _write_bytes(path: str, data: bytes) -> None:
 
 
 def _move_file(source: str, target: str) -> None:
-    """移动文件. 目标父目录不存在时先建 —— prepare 已确认目标本身不存在."""
+    """以 no-replace 语义移动普通文件，目标竞争出现时绝不覆盖。"""
     destination = Path(target)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    Path(source).replace(destination)
+    if not destination.parent.is_dir():
+        raise FileNotFoundError(f"目标父目录不存在或不是目录: {destination.parent}")
+    source_path = Path(source)
+    if source_path.is_symlink():
+        raise OSError(f"拒绝移动符号链接: {source}")
+    os.link(source_path, destination)
+    try:
+        source_path.unlink()
+    except OSError:
+        with contextlib.suppress(OSError):
+            destination.unlink()
+        raise
+    _sync_directory(destination.parent)
+    if source_path.parent != destination.parent:
+        _sync_directory(source_path.parent)
+
+
+def _sync_directory(directory: Path) -> None:
+    if os.name == "nt":
+        return
+    dir_fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def _create_directory(path: str, mode: int) -> None:
+    target = Path(path)
+    target.mkdir(parents=True, exist_ok=True)
+    if mode:
+        _set_mode(path, mode)
+
+
+def _make_directory(path: str) -> None:
+    Path(path).mkdir(exist_ok=False)
+
+
+def _set_mode(path: str, mode: int) -> None:
+    os.chmod(path, stat.S_IMODE(mode), follow_symlinks=False)
 
 
 def _delete_file(path: str) -> None:

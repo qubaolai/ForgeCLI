@@ -10,10 +10,8 @@ from forgecli.domain.security.approval import (
     ApprovalOutcome,
     ApprovalRequest,
     ApprovalResponse,
-    HitlApprovalView,
 )
 from forgecli.domain.security.vocabulary import ApprovalScope
-from forgecli.interfaces.web.serialization import to_jsonable
 
 
 @dataclass
@@ -57,17 +55,11 @@ class WebApprovalBroker(ApprovalService):
             items = tuple(self._pending.values())
         result: list[dict[str, object]] = []
         for item in items:
-            view = HitlApprovalView.of(
-                item.request.presentation,
-                allowed_scopes=item.request.presentation.allowed_scopes,
-            )
-            payload = to_jsonable(view)
-            assert isinstance(payload, dict)
             result.append(
                 {
                     "approval_id": item.request.approval_id,
                     "mandatory": item.request.mandatory,
-                    "view": payload,
+                    "view": item.request.view.to_payload(),
                 }
             )
         return tuple(result)
@@ -90,7 +82,7 @@ class WebApprovalBroker(ApprovalService):
                     "workspace": ApprovalScope.WORKSPACE,
                 }
                 scope = scopes.get(decision)
-                if scope is None or scope not in request.presentation.allowed_scopes:
+                if scope is None or scope not in request.view.allowed_scopes:
                     return False
                 response = ApprovalResponse(
                     outcome=ApprovalOutcome.APPROVED,
