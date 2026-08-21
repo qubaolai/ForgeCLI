@@ -49,7 +49,7 @@ from forgecli.domain.security.shell.command_plan import CommandPlan, ShellKind
 from forgecli.domain.security.shell.effects import runs_arbitrary_code
 from forgecli.domain.security.shell.expansion import ExpansionResult, expand_targets
 from forgecli.domain.security.shell.parser import parse_command
-from forgecli.domain.security.shell.wrappers import INDIRECT_EXECUTORS
+from forgecli.domain.security.shell.wrappers import indirectly_executes
 from forgecli.domain.security.vocabulary import DecisionReason
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.plan import (
@@ -213,7 +213,10 @@ class ShellCapabilityAnalyzer(CapabilityAnalyzer):
             capabilities.add(Capability.EXECUTE_SCRIPT)
         if any(unit.name in NETWORK_TOOLS for unit in command.units):
             capabilities.add(Capability.NETWORK_ACCESS)
-        if any(unit.name in INDIRECT_EXECUTORS for unit in command.units):
+        if any(indirectly_executes(unit.name, unit.argv) for unit in command.units):
+            # 判据是"这次有没有把控制权交出去", 不是"命令叫不叫 find".
+            # `find . -name '*.java'` 一个进程都不起, 与 `ls -R` 同构; 而按名字判会让
+            # 每一条纯列举都要人点头 (ADR-0024 拒绝命令名白名单的同一条理由).
             capabilities.add(Capability.EXECUTE_SCRIPT)
         for path in effects.write_paths:
             capabilities.add(_write_capability(path, context))

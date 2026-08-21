@@ -146,6 +146,60 @@ def test_the_reason_is_distinct_from_the_narrow_tool_fast_path(
     assert decision.reason is DecisionReason.PROVEN_READ_ONLY_SHELL
 
 
+# ---- 间接执行按实际委托判, 不按命令名 ----
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find . -name '*.java'",
+        "find src -type f -name '*.java'",
+        "find . -maxdepth 2 -type d",
+    ],
+)
+def test_find_without_exec_is_a_plain_listing(workspace: Path, command: str) -> None:
+    """回归: 裸 find 一个进程都不起, 与 ls -R 同构, 却曾经每次都要人点头.
+
+    根因是两处判据都作用在**命令名**上 —— wrappers.INDIRECT_EXECUTORS 让它拿到
+    EXECUTE_SCRIPT, expansion 的动态清单让目标集合判成 DYNAMIC. 这与 ADR-0024 拒绝
+    「只读命令白名单」是同一条理由的两个方向: 判据一旦作用在命令名上, 两个方向都会错。
+    """
+    decision = _decide(workspace, command)
+
+    assert decision.decision is Decision.ALLOW
+    assert decision.reason is DecisionReason.PROVEN_READ_ONLY_SHELL
+    assert decision.effective_plan.target_resolution.closed
+
+
+def test_a_bare_find_matches_how_ls_is_treated(workspace: Path) -> None:
+    """两条命令走同一棵目录树, 产出同一类输出, 就该拿到同一个结论."""
+    assert _decide(workspace, "find . -type f").decision is (
+        _decide(workspace, "ls -R .").decision
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find . -name '*.java' -exec rm {} ;",
+        "find . -name '*.java' -execdir rm {} ;",
+        "find . -name '*.java' -ok rm {} ;",
+        "find . -name '*.java' | xargs rm",
+        "xargs rm",
+        "eval ls",
+    ],
+)
+def test_actual_delegation_still_requires_a_human(
+    workspace: Path, command: str
+) -> None:
+    """放宽的只有「没委托」那一支. 真把控制权交出去的一条都没放过。
+
+    xargs 单独列一条: 它连内层都读不出来时**更**危险, 不能因为提取不到内层就当没有
+    间接执行 —— 这正是 indirectly_executes 与 indirect_inner_commands 分开的理由。
+    """
+    assert _decide(workspace, command).decision is not Decision.ALLOW
+
+
 # ---- 核心集之外的只读命令仍要人点头 (ADR-0028 规则 D) ----
 
 

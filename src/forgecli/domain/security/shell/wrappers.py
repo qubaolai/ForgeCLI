@@ -38,6 +38,7 @@ __all__ = [
     "Interpreter",
     "NestedCommand",
     "indirect_inner_commands",
+    "indirectly_executes",
     "inline_code_of",
     "interpreter_of",
     "nested_command_of",
@@ -163,9 +164,23 @@ PRIVILEGE_ESCALATORS: frozenset[str] = frozenset(
 )
 
 # 间接执行: 外层授权不传导给内层.
+#
+# **判据是这次调用有没有真的委托出去, 不是命令叫什么名字** —— 用 `indirectly_executes`,
+# 不要直接拿名字去比对这个集合. `find . -name '*.java'` 一个进程都不起, 它和 `ls -R`
+# 做的是同一件事; 而按名字判会给它扣上 EXECUTE_SCRIPT, 于是一条纯列举命令永远要人
+# 点头。这与 ADR-0024 拒绝"只读命令白名单"是同一条理由的两个方向: 判据一旦作用在命令名
+# 上, 两个方向都会错。
 INDIRECT_EXECUTORS: frozenset[str] = frozenset(
     {"xargs", "find", "eval", "watch", "parallel", "entr", "Invoke-Expression"}
 )
+
+# 这些命令的存在本身就是为了跑别的东西, 没有"不委托"的形态.
+_ALWAYS_INDIRECT: frozenset[str] = frozenset(
+    {"xargs", "eval", "watch", "parallel", "entr", "Invoke-Expression"}
+)
+
+# 只在给了这些谓词时才执行内层的命令.
+_CONDITIONAL_INDIRECT: frozenset[str] = frozenset({"find", "fd"})
 
 # 会执行任意项目代码的入口命令. 不是白名单, 是"这些一定算脚本执行"的清单.
 _SCRIPT_ENTRYPOINTS: dict[str, str] = {
@@ -576,6 +591,21 @@ _XARGS_VALUE_OPTIONS = frozenset(
         "--arg-file",
     }
 )
+
+
+def indirectly_executes(executable: str, argv: tuple[str, ...]) -> bool:
+    """这次调用会不会把控制权交给另一条命令.
+
+    与 `indirect_inner_commands` 分开: 那个回答"内层是什么", 而内层提取失败时它返回
+    空元组 —— 拿"空"当成"没有间接执行"会把 `xargs` 这种**读不出内层反而更危险**的情形
+    判成安全。这里回答的是"有没有委托", 提取不出内层时仍然是 True。
+    """
+    name = normalize_executable(executable)
+    if name in _ALWAYS_INDIRECT:
+        return True
+    if name in _CONDITIONAL_INDIRECT:
+        return any(arg in _EXEC_PREDICATES for arg in argv)
+    return False
 
 
 def indirect_inner_commands(

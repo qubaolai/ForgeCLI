@@ -23,12 +23,12 @@ from dataclasses import dataclass
 from forgecli.domain.security.shell.arguments import classify_arguments
 from forgecli.domain.security.shell.command_plan import CommandPlan, CommandUnit
 from forgecli.domain.security.shell.effects import EffectKind, effect_kind_of
+from forgecli.domain.security.shell.wrappers import indirectly_executes
 from forgecli.domain.tool.plan import TargetResolution
 
 __all__ = ["ExpansionResult", "expand_home", "expand_targets"]
 
 # 目标由运行期决定的间接执行命令.
-_DYNAMIC_PRODUCERS = frozenset({"xargs", "find", "eval", "parallel"})
 
 _GLOB_CHARS = ("*", "?", "[")
 
@@ -61,9 +61,13 @@ def expand_targets(
     dynamic = False
 
     for unit in plan.units:
-        if unit.name in _DYNAMIC_PRODUCERS:
+        if indirectly_executes(unit.name, unit.argv):
+            # 目标由运行期产生的是**把结果喂给别的命令**那一类: `find -exec`,
+            # `... | xargs rm`. 裸 `find` 只是把路径打到 stdout 给模型读, 它
+            # 不触达自己列出的那些文件 —— 和 `ls -R` 一样, 目标集合就是它的
+            # 起点目录, 是封闭的.
             dynamic = True
-            reasons.append(f"{unit.name} 的目标由运行期产生")
+            reasons.append(f"{unit.name} 把目标交给内层命令, 由运行期产生")
             continue
         if effect_kind_of(unit) is EffectKind.UNPROVEN:
             # 不认识这个命令. 位置参数照样收 (多报无害), 但集合**不能算封闭** ——
