@@ -13,12 +13,12 @@ PATH 上, 判死它们会让最普通的操作彻底不可用.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
 
 import pytest
 
-from forgecli.application.security.analyzers.registry import AnalysisFindings
 from forgecli.application.security.analyzers.shell_analyzer import (
     ShellCapabilityAnalyzer,
 )
@@ -28,7 +28,7 @@ from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.context import PolicyContext
 from forgecli.domain.security.decision import AuthorizationDecision
-from forgecli.domain.security.protected_paths import ProtectedPathPolicy
+from forgecli.domain.security.findings import AnalysisFindings
 from forgecli.domain.security.shell.builtins import (
     dialect_has_closed_builtin_set,
     is_builtin,
@@ -49,14 +49,17 @@ from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemVie
 from support.fakes import PROFILE
 
 
-def _context(workspace: Path) -> ExecutionContext:
+def _context(workspace: Path, shell_kind: str) -> ExecutionContext:
     return ExecutionContext(
         cwd=str(workspace),
         workspace_roots=(str(workspace),),
         # 受控 PATH 故意只有系统目录: 与产品里一致, 也保证 `ls` 存在而胡编的命令不存在.
         environment={"PATH": "/usr/bin:/bin", "HOME": str(workspace)},
         filesystem=OsFileSystemView(),
-        profile=PROFILE,
+        profile=replace(
+            PROFILE,
+            shell_launch=replace(PROFILE.shell_launch, kind=shell_kind),
+        ),
     )
 
 
@@ -79,10 +82,7 @@ def _plan(command: str, cwd: str, shell_kind: str) -> ToolPlan:
         declaration_confidence=DeclarationConfidence.DECLARED,
         # cwd 要指向真实目录, 否则 glob 展开无处落脚.
         analysis_subject=ShellSubject(
-            shell_kind=shell_kind,
             raw_command=command,
-            cwd=cwd,
-            env_snapshot_ref="env",
         ),
     )
 
@@ -90,9 +90,13 @@ def _plan(command: str, cwd: str, shell_kind: str) -> ToolPlan:
 def _analyze(
     command: str, workspace: Path, shell_kind: str = "posix"
 ) -> AnalysisFindings:
-    analyzer = ShellCapabilityAnalyzer(ExecutableResolver(), ProtectedPathPolicy(()))
+    analyzer = ShellCapabilityAnalyzer(ExecutableResolver())
     plan = _plan(command, str(workspace), shell_kind)
-    return analyzer.analyze(AnalysisFindings(plan=plan), _policy(), _context(workspace))
+    return analyzer.analyze(
+        AnalysisFindings(plan=plan),
+        _policy(),
+        _context(workspace, shell_kind),
+    )
 
 
 def _policy() -> PolicyContext:

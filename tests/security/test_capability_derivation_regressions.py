@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-from forgecli.application.security.analyzers.registry import AnalysisFindings
 from forgecli.application.security.analyzers.script_analyzer import (
     _with_script_capabilities,
 )
@@ -21,6 +20,7 @@ from forgecli.application.workspace.filesystem_view import (
 )
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.context import PolicyContext
+from forgecli.domain.security.findings import AnalysisFindings
 from forgecli.domain.security.modes import capabilities_requiring_approval
 from forgecli.domain.security.protected_paths import ProtectedPathPolicy
 from forgecli.domain.security.script_patterns import analyze_script_source
@@ -174,5 +174,7 @@ class _LiteralFileSystem(FileSystemView):
     def list_dir(self, path: str) -> tuple[str, ...]:
         return ()
 
-    def expand_glob(self, pattern: str, *, root: str) -> tuple[str, ...]:
+    def expand_glob(
+        self, pattern: str, *, root: str, max_results: int | None = None
+    ) -> tuple[str, ...]:
         return ()

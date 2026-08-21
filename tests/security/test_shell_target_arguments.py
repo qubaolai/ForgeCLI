@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
-from forgecli.application.security.analyzers.shell_analyzer import _effects_of
+import posixpath
+
+from forgecli.application.security.analyzers.shell_effects import effects_of
 from forgecli.domain.security.shell.arguments import classify_arguments
 from forgecli.domain.security.shell.command_plan import ShellKind, UnitOrigin
 from forgecli.domain.security.shell.effects import EffectKind, effect_kind_of
@@ -25,7 +27,14 @@ from forgecli.domain.tool.plan import PlanEffects
 
 def _effects(command: str, *, cwd: str = "/ws") -> PlanEffects:
     plan = parse_command(command, ShellKind.POSIX, cwd=cwd)
-    return _effects_of(plan, cwd=cwd, expanded=(), home="/home/u")
+    return effects_of(
+        plan,
+        expanded=(),
+        home="/home/u",
+        resolve=lambda path: posixpath.normpath(
+            path if path.startswith("/") else f"{cwd}/{path}"
+        ),
+    )
 
 
 def _paths(command: str) -> tuple[str, ...]:
@@ -160,3 +169,7 @@ def test_a_home_target_of_an_unknown_command_still_reaches_the_check() -> None:
     effects = _effects("mytool ~/.ssh/id_rsa")
 
     assert "/home/u/.ssh/id_rsa" in effects.read_paths
+
+
+def test_shell_effect_paths_are_lexically_normalized_once() -> None:
+    assert _effects("cat nested/../secret.txt").read_paths == ("/ws/secret.txt",)

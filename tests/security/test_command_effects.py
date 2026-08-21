@@ -95,7 +95,12 @@ def test_an_unproven_command_leaves_the_target_set_open() -> None:
     这条决定了它拿不到普通 ALLOW 直写, 也无法沉淀成学习规则.
     """
     plan = parse_command("some-vendor-tool out.txt", ShellKind.POSIX, cwd="/w")
-    result = expand_targets(plan, cwd="/w", glob=lambda _: (), home="/home/dev")
+    result = expand_targets(
+        plan,
+        resolve=lambda path: f"/w/{path}" if not path.startswith("/") else path,
+        glob=lambda _: (),
+        home="/home/dev",
+    )
 
     assert result.closed is False
     assert any("影响范围无法推导" in reason for reason in result.reasons)
@@ -103,5 +108,10 @@ def test_an_unproven_command_leaves_the_target_set_open() -> None:
 
 def test_a_known_reader_keeps_the_target_set_closed() -> None:
     plan = parse_command("cat README.md", ShellKind.POSIX, cwd="/w")
-    result = expand_targets(plan, cwd="/w", glob=lambda _: (), home="/home/dev")
+    result = expand_targets(
+        plan,
+        resolve=lambda path: f"/w/{path}" if not path.startswith("/") else path,
+        glob=lambda _: (),
+        home="/home/dev",
+    )
     assert result.closed is True

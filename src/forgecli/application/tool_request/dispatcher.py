@@ -1,7 +1,11 @@
-"""ToolDispatcher: AgentLoop 与安全管线之间的唯一通道.
+"""CoordinatorToolDispatcher: AgentLoop 与安全管线之间的唯一通道.
 
-AgentTurnService 只认识这个抽象, 因此它不需要知道 ExecutionContext, PolicyContext 或者
+AgentTurnService 只认识这一个类, 因此它不需要知道 ExecutionContext, PolicyContext 或者
 协调器长什么样 —— 也就不可能"顺手"绕开协调器直接调工具.
+
+ADR-0028 删掉了它头上的 ToolDispatcher 抽象: 只有这一个实现, 且实现与抽象同层同文件,
+不承担任何依赖倒置. "唯一通道"这条约束由 check_arch.py 的 SIBLING_BANS 守着, 不靠一个
+抽象基类表达.
 
 每次调用都重新构造 PolicyContext: mode 可能在两次工具调用之间被用户切换, 而策略上下文
 必须反映**发起这次调用时**的模式, 不能沿用一轮开始时的快照.
@@ -9,7 +13,6 @@ AgentTurnService 只认识这个抽象, 因此它不需要知道 ExecutionContex
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Callable
 
 from forgecli.application.tool_request.coordinator import ToolRequestCoordinator
@@ -22,30 +25,10 @@ from forgecli.domain.security.vocabulary import POLICY_VERSION
 from forgecli.domain.tool.catalog import ToolCatalog
 from forgecli.shared.cancellation import CancelToken
 
-__all__ = ["CoordinatorToolDispatcher", "ToolDispatcher"]
+__all__ = ["CoordinatorToolDispatcher"]
 
 
-class ToolDispatcher(ABC):
-    """把一次工具请求交出去, 拿回一个结构化 observation."""
-
-    @abstractmethod
-    def dispatch(
-        self,
-        request: ToolRequest,
-        *,
-        mode: SessionMode,
-        session_id: str,
-        turn_id: str,
-        user_intent_summary: str = "",
-        cancel: CancelToken | None = None,
-    ) -> ToolObservation: ...
-
-    @abstractmethod
-    def catalog_for(self, mode: SessionMode) -> ToolCatalog:
-        """当前模式下模型可见的工具目录."""
-
-
-class CoordinatorToolDispatcher(ToolDispatcher):
+class CoordinatorToolDispatcher:
     def __init__(
         self,
         coordinator: ToolRequestCoordinator,

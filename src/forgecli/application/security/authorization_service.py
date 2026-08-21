@@ -109,7 +109,7 @@ class ToolAuthorizationService:
         policy: PolicyContext,
         *,
         recovery_binding: str | None = None,
-        approval_presentation_hash: str | None = None,
+        approval_view_hash: str | None = None,
     ) -> ExecutionAuthorization:
         """签发一次性授权. 只接受 ALLOW 裁决.
 
@@ -129,5 +129,5 @@ class ToolAuthorizationService:
             expires_at_epoch=now + self._ttl,
             single_use=True,
             recovery_binding=recovery_binding,
-            approval_presentation_hash=approval_presentation_hash,
+            approval_view_hash=approval_view_hash,
         )

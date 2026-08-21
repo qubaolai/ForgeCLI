@@ -5,14 +5,14 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 from pathlib import Path
 
-from pytest import raises
-
 from forgecli.application.recovery.coordinator import (
-    RecoveryUnavailableError,
     WorkspaceMutationCoordinator,
 )
+from forgecli.application.recovery.recovery_service import RecoveryService
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.recovery.checkpoint import (
     RecoveryPolicy,
@@ -23,6 +23,7 @@ from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.plan import (
     DeclarationConfidence,
     ExecutionContextRef,
+    MovePair,
     PlanEffects,
     TargetResolution,
     ToolPlan,
@@ -62,10 +63,9 @@ def _plan(capabilities: frozenset[Capability], effects: PlanEffects) -> ToolPlan
     )
 
 
-def test_a_directory_never_yields_a_silent_empty_preimage(tmp_path: Path) -> None:
-    """目录进不了 preimage. 早先 read_bytes 吞掉 OSError 返回 b"", 于是 checkpoint 里
-    存的是"空内容的哈希", recoverability 却标着 FULL —— 声称可恢复而什么都没存.
-    """
+def test_a_directory_records_metadata_instead_of_a_fake_empty_blob(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "pkg").mkdir()
     coordinator = WorkspaceMutationCoordinator(FsRecoveryStore(tmp_path / "store"))
     plan = _plan(
@@ -82,8 +82,12 @@ def test_a_directory_never_yields_a_silent_empty_preimage(tmp_path: Path) -> Non
     )
     assert transaction is not None
 
-    with raises(RecoveryUnavailableError, match="不是普通文件"):
-        transaction.record_write(str(tmp_path / "pkg"), Operation.OVERWRITE)
+    entry = transaction.record_write(str(tmp_path / "pkg"), Operation.DELETE)
+
+    assert entry.object_type.value == "directory"
+    assert entry.preimage_content_hash is None
+    assert entry.preimage_metadata_hash is not None
+    assert entry.mode != 0
 
 
 def test_full_strategy_reaches_files_in_subdirectories(tmp_path: Path) -> None:
@@ -131,3 +135,127 @@ def test_a_pure_reader_needs_no_checkpoint(tmp_path: Path) -> None:
     )
     assert plan.mutates_workspace is False
     assert coordinator.strategy_for(plan) is SnapshotStrategy.NONE
+
+
+def _recovery_service(store: FsRecoveryStore) -> RecoveryService:
+    def write(path: str, data: bytes) -> None:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+    return RecoveryService(
+        store,
+        writer=write,
+        remover=lambda path: Path(path).unlink(missing_ok=True),
+        directory_creator=lambda path, mode: (
+            Path(path).mkdir(parents=True, exist_ok=True),
+            os.chmod(path, mode),
+        ),
+        mode_setter=lambda path, mode: os.chmod(path, mode),
+    )
+
+
+def test_deleted_empty_directories_and_file_modes_are_restored(tmp_path: Path) -> None:
+    root = tmp_path / "ws"
+    empty = root / "pkg" / "empty"
+    empty.mkdir(parents=True)
+    source = root / "pkg" / "run.sh"
+    source.write_text("echo ok\n", encoding="utf-8")
+    source.chmod(0o755)
+    store = FsRecoveryStore(tmp_path / "store")
+    coordinator = WorkspaceMutationCoordinator(store)
+    targets = (root / "pkg", empty, source)
+    plan = _plan(
+        frozenset({Capability.WORKSPACE_DELETE}),
+        PlanEffects(delete_paths=tuple(str(path) for path in targets)),
+    )
+    transaction = coordinator.begin(
+        plan,
+        _context(root),
+        workspace_id="ws",
+        session_id="s",
+        turn_id="t",
+        policy_version="1",
+    )
+    assert transaction is not None
+    for target in targets:
+        transaction.record_write(str(target), Operation.DELETE)
+    shutil.rmtree(root / "pkg")
+    for target in targets:
+        transaction.record_result(str(target), deleted=True)
+    checkpoint = transaction.complete()
+
+    outcome = _recovery_service(store).restore(checkpoint, _context(root))
+
+    assert outcome.skipped == ()
+    assert empty.is_dir()
+    assert source.read_text(encoding="utf-8") == "echo ok\n"
+    assert source.stat().st_mode & 0o777 == 0o755
+
+
+def test_move_recovery_restores_source_and_removes_target(tmp_path: Path) -> None:
+    root = tmp_path / "ws"
+    root.mkdir()
+    source = root / "source.txt"
+    target = root / "target.txt"
+    source.write_text("before", encoding="utf-8")
+    store = FsRecoveryStore(tmp_path / "store")
+    coordinator = WorkspaceMutationCoordinator(store)
+    plan = _plan(
+        frozenset({Capability.PATH_MOVE}),
+        PlanEffects(move_pairs=(MovePair(source=str(source), target=str(target)),)),
+    )
+    transaction = coordinator.begin(
+        plan,
+        _context(root),
+        workspace_id="ws",
+        session_id="s",
+        turn_id="t",
+        policy_version="1",
+    )
+    assert transaction is not None
+    transaction.record_write(str(source), Operation.MOVE)
+    transaction.record_write(str(target), Operation.REPLACE)
+    source.replace(target)
+    transaction.record_result(str(source), deleted=True)
+    transaction.record_result(str(target))
+    checkpoint = transaction.complete()
+
+    outcome = _recovery_service(store).restore(checkpoint, _context(root))
+
+    assert outcome.skipped == ()
+    assert source.read_text(encoding="utf-8") == "before"
+    assert not target.exists()
+
+
+def test_undo_never_removes_a_created_directory_after_user_added_a_file(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "ws"
+    root.mkdir()
+    created = root / "src"
+    store = FsRecoveryStore(tmp_path / "store")
+    coordinator = WorkspaceMutationCoordinator(store)
+    plan = _plan(
+        frozenset({Capability.WORKSPACE_WRITE}),
+        PlanEffects(write_paths=(str(created),)),
+    )
+    transaction = coordinator.begin(
+        plan,
+        _context(root),
+        workspace_id="ws",
+        session_id="s",
+        turn_id="t",
+        policy_version="1",
+    )
+    assert transaction is not None
+    transaction.record_write(str(created), Operation.OVERWRITE)
+    created.mkdir()
+    transaction.record_result(str(created))
+    checkpoint = transaction.complete()
+    (created / "user.txt").write_text("user", encoding="utf-8")
+
+    preview = _recovery_service(store).preview(checkpoint, _context(root))
+
+    assert preview.conflicted
+    assert preview.items[0].action == "skip_conflict"

@@ -14,7 +14,7 @@ from forgecli.application.security.analyzers.registry import (
 )
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.security.context import PolicyContext
-from forgecli.domain.security.decision import RiskFact
+from forgecli.domain.security.findings import RiskFact
 from forgecli.domain.security.vocabulary import DecisionReason
 from forgecli.domain.tool.capability import Capability
 

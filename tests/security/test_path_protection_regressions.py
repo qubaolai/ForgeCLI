@@ -97,3 +97,19 @@ def test_a_missing_file_under_a_real_parent_keeps_its_own_path(tmp_path: Path) -
     """没有符号链接时结果不变 —— 修复不该改变正常路径的判定."""
     facts = OsFileSystemView().facts(str(tmp_path / "plain.txt"))
     assert facts.realpath == str((tmp_path / "plain.txt").resolve())
+
+
+def test_symlink_metadata_describes_the_content_that_will_be_read(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "real-tool"
+    target.write_bytes(b"executable-content")
+    link = tmp_path / "tool"
+    os.symlink(target, link)
+
+    facts = OsFileSystemView().facts(str(link))
+
+    assert facts.is_symlink is True
+    assert facts.realpath == str(target)
+    assert facts.size == len(b"executable-content")
+    assert facts.file_identity == f"{target.stat().st_dev}:{target.stat().st_ino}"

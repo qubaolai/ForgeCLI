@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from forgecli.application.security.analyzers.registry import (
     AnalysisFindings,
@@ -32,20 +32,30 @@ from forgecli.application.security.classifier import (
 from forgecli.application.security.risk_cache import RiskCache
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.security.context import PolicyContext
-from forgecli.domain.security.decision import RiskFact
+from forgecli.domain.security.findings import RiskFact
 from forgecli.domain.security.risk import RiskReport, risk_cache_key
 from forgecli.domain.security.script_facts import ScriptFacts
 from forgecli.domain.security.script_patterns import analyze_script_source
-from forgecli.domain.security.shell.command_plan import ScriptPayload, ShellKind
-from forgecli.domain.security.shell.parser import PARSER_VERSION, parse_command
+from forgecli.domain.security.shell.command_plan import ScriptPayload
+from forgecli.domain.security.shell.parser import PARSER_VERSION
 from forgecli.domain.security.vocabulary import DecisionReason
 from forgecli.domain.tool.capability import Capability, normalize_capability
-from forgecli.domain.tool.plan import ShellSubject, ToolPlan
+from forgecli.domain.tool.hashing import digest_bytes
+from forgecli.domain.tool.plan import FileStateBinding, ToolPlan
 
 __all__ = ["ANALYZER_VERSION", "ScriptExecutionAnalyzer"]
 
 ANALYZER_VERSION = "1"
 _MAX_SCRIPT_BYTES = 512 * 1024
+
+
+@dataclass(frozen=True)
+class _ScriptMaterial:
+    facts: ScriptFacts
+    source: str
+    payload: ScriptPayload
+    binding: FileStateBinding | None = None
+    unavailable_reason: str | None = None
 
 
 class ScriptExecutionAnalyzer(CapabilityAnalyzer):
@@ -93,7 +103,30 @@ class ScriptExecutionAnalyzer(CapabilityAnalyzer):
             )
 
         result = findings
-        for facts, source, payload in payloads:
+        for material in payloads:
+            facts, source, payload = (
+                material.facts,
+                material.source,
+                material.payload,
+            )
+            if material.unavailable_reason is not None:
+                return result.cannot_run(
+                    DecisionReason.SCRIPT_CONTENT_UNAVAILABLE,
+                    RiskFact(
+                        code="script_content_unavailable",
+                        detail=material.unavailable_reason,
+                    ),
+                )
+            if material.binding is not None:
+                result = result.with_plan(
+                    replace(
+                        result.plan,
+                        file_state_bindings=_merge_bindings(
+                            result.plan.file_state_bindings,
+                            (material.binding,),
+                        ),
+                    )
+                )
             # 快照先记下: 即便随后 Hard Deny, 审批与审计也该看到"被拦下的是哪段代码".
             result = result.with_scripts(
                 ScriptSnapshot(
@@ -112,40 +145,60 @@ class ScriptExecutionAnalyzer(CapabilityAnalyzer):
 
     def _collect(
         self, findings: AnalysisFindings, context: ExecutionContext
-    ) -> tuple[tuple[ScriptFacts, str, ScriptPayload], ...]:
+    ) -> tuple[_ScriptMaterial, ...]:
         """从 heredoc, 内联代码和脚本文件三条来源收集内容并做静态分析."""
-        subject = findings.plan.analysis_subject
-        payloads: list[ScriptPayload] = []
-        if isinstance(subject, ShellSubject):
-            command = parse_command(
-                subject.raw_command, _dialect(subject.shell_kind), cwd=subject.cwd
-            )
-            payloads.extend(command.scripts)
+        payloads = list(findings.command_plan.scripts) if findings.command_plan else []
         return tuple(self._facts_of(payload, context) for payload in payloads)
 
     def _facts_of(
         self, payload: ScriptPayload, context: ExecutionContext
-    ) -> tuple[ScriptFacts, str, ScriptPayload]:
+    ) -> _ScriptMaterial:
         source = payload.source
         incomplete = False
+        binding: FileStateBinding | None = None
+        unavailable_reason: str | None = None
         if source is None and payload.path:
-            absolute = context.resolve(payload.path.split()[0])
+            absolute = context.resolve(payload.path)
             path_facts = context.filesystem.facts(absolute)
             if path_facts.is_regular_file:
-                source = context.filesystem.read_text(
-                    path_facts.realpath, max_bytes=_MAX_SCRIPT_BYTES
+                raw = context.filesystem.read_bytes(
+                    path_facts.realpath, max_bytes=_MAX_SCRIPT_BYTES + 1
                 )
+                if path_facts.size > _MAX_SCRIPT_BYTES or len(raw) > _MAX_SCRIPT_BYTES:
+                    source = raw[:_MAX_SCRIPT_BYTES].decode("utf-8", errors="replace")
+                    incomplete = True
+                    unavailable_reason = (
+                        f"脚本超过 {_MAX_SCRIPT_BYTES} 字节安全分析上限: {absolute}"
+                    )
+                elif len(raw) != path_facts.size:
+                    source = raw.decode("utf-8", errors="replace")
+                    incomplete = True
+                    unavailable_reason = f"无法完整读取脚本: {absolute}"
+                else:
+                    source = raw.decode("utf-8", errors="replace")
+                    binding = FileStateBinding(
+                        path=absolute,
+                        realpath=path_facts.realpath,
+                        file_identity=path_facts.file_identity,
+                        size=path_facts.size,
+                        mtime_ns=path_facts.mtime_ns,
+                        content_hash=digest_bytes(raw),
+                    )
             else:
-                # 入口存在但读不到 (npm test 这类间接入口), 内容不完整.
                 incomplete = True
+                unavailable_reason = f"脚本不存在或不是普通文件: {absolute}"
         if source is None:
             source = ""
             incomplete = True
         # 正文与事实一起返回: 分类器要读的是正文, 静态事实只是提示.
-        return (
-            analyze_script_source(source, payload.language, incomplete=incomplete),
-            source,
-            payload,
+        return _ScriptMaterial(
+            facts=analyze_script_source(
+                source, payload.language, incomplete=incomplete
+            ),
+            source=source,
+            payload=payload,
+            binding=binding,
+            unavailable_reason=unavailable_reason,
         )
 
     # ---- 逐份脚本裁决 ----
@@ -171,7 +224,7 @@ class ScriptExecutionAnalyzer(CapabilityAnalyzer):
                 findings.plan, facts, findings.declared_capabilities
             )
         )
-        if not _needs_classifier(facts):
+        if not _needs_classifier(facts, context):
             return result
 
         report = self._classify(facts, source, policy, context)
@@ -228,7 +281,7 @@ class ScriptExecutionAnalyzer(CapabilityAnalyzer):
             working_directory=context.cwd,
             policy_version=policy.policy_version,
             execution_profile_hash=policy.execution_profile_hash,
-            shell_kind=context.profile.shell_launch.kind,
+            shell_kind=context.profile.shell_launch.dialect,
             analyzer_version=ANALYZER_VERSION,
             parser_version=PARSER_VERSION,
             classifier_profile_version=CLASSIFIER_PROFILE_VERSION,
@@ -256,12 +309,12 @@ class ScriptExecutionAnalyzer(CapabilityAnalyzer):
         return report
 
 
-def _needs_classifier(facts: ScriptFacts) -> bool:
+def _needs_classifier(facts: ScriptFacts, context: ExecutionContext) -> bool:
     """无沙箱环境下, 新脚本, 变更脚本与未知脚本一律要过分类器.
 
     这里不看"有没有发现危险": 静态分析的"未发现"不构成放行依据 (ADR-0013 §8).
     """
-    return facts.needs_classifier or not facts.hard_signals
+    return not context.profile.isolation_level.contained or facts.needs_classifier
 
 
 def _with_script_capabilities(
@@ -286,13 +339,6 @@ def _with_script_capabilities(
     return replace(plan, capabilities=frozenset(capabilities) & upper_bound)
 
 
-def _dialect(shell_kind: str) -> ShellKind:
-    try:
-        return ShellKind(shell_kind)
-    except ValueError:
-        return ShellKind.POSIX
-
-
 def _subject_summary(subject: object) -> str:
     """给人看的"这次要跑什么". 只取命令原文的第一行且截断: 它是不可信输入."""
     raw = getattr(subject, "raw_command", None)
@@ -314,3 +360,10 @@ def _with_reported_capabilities(
     capabilities = set(plan.capabilities)
     capabilities.update(normalize_capability(name) for name in reported)
     return replace(plan, capabilities=frozenset(capabilities) & upper_bound)
+
+
+def _merge_bindings(
+    current: tuple[FileStateBinding, ...], added: tuple[FileStateBinding, ...]
+) -> tuple[FileStateBinding, ...]:
+    merged = {item.realpath: item for item in (*current, *added)}
+    return tuple(merged[path] for path in sorted(merged))

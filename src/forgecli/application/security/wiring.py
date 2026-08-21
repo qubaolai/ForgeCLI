@@ -46,7 +46,7 @@ def build_analyzer_registry(
     registry = CapabilityAnalyzerRegistry()
     registry.register_all(
         (
-            ShellCapabilityAnalyzer(resolver or ExecutableResolver(), protected_paths),
+            ShellCapabilityAnalyzer(resolver or ExecutableResolver()),
             ScriptExecutionAnalyzer(
                 classifier,
                 cache=cache,

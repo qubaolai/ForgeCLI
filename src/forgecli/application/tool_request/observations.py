@@ -18,9 +18,11 @@ from forgecli.domain.agent.actions import (
     ObservationDisposition,
     ObservationSource,
 )
+from forgecli.domain.security.findings import RiskFact
+from forgecli.domain.tool.plan import ToolPlan
 from forgecli.domain.tool.result import ToolResult
 
-__all__ = ["ObservationKind", "ToolObservation"]
+__all__ = ["ObservationKind", "ToolObservation", "rejected"]
 
 
 class ObservationKind(Enum):
@@ -171,3 +173,34 @@ class ToolObservation:
         if self.result is not None:
             payload["result"] = self.result.to_audit_payload()
         return payload
+
+
+def rejected(
+    kind: ObservationKind,
+    message: str,
+    *,
+    invocation_id: str,
+    tool_name: str,
+    reason_code: str,
+    can_retry: bool = False,
+    plan: ToolPlan | None = None,
+    approval_id: str | None = None,
+    risk_facts: tuple[RiskFact, ...] = (),
+) -> ToolObservation:
+    """一次没有执行的调用的结论 (ADR-0028 规则 B).
+
+    协调器里原本有五处几乎相同的 ToolObservation 构造, 每处都要记得从 plan 取
+    plan_hash, 从 risk_facts 取 detail. 收成一个入口之后, "被拒绝的调用长什么样"
+    只有一份定义 —— 而它正是模型唯一看得到的拒绝说明.
+    """
+    return ToolObservation(
+        kind=kind,
+        message=message,
+        invocation_id=invocation_id,
+        tool_name=tool_name,
+        reason_code=reason_code,
+        plan_hash=plan.plan_hash if plan is not None else None,
+        approval_id=approval_id,
+        risk_summary=tuple(fact.detail for fact in risk_facts),
+        can_retry=can_retry,
+    )

@@ -15,6 +15,7 @@ from forgecli.domain.execution.profile import ExecutionProfile
 from forgecli.domain.intents import SessionMode, SlashCommand
 from forgecli.domain.security.context import PolicyContext
 from forgecli.domain.security.decision import AuthorizationDecision
+from forgecli.domain.security.findings import AnalysisFindings
 from forgecli.domain.security.vocabulary import ApprovalScope, Decision, DecisionReason
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.plan import (
@@ -48,9 +49,7 @@ def _plan(command: str) -> ToolPlan:
             toolchain_id="default",
         ),
         declaration_confidence=DeclarationConfidence.DECLARED,
-        analysis_subject=ShellSubject(
-            shell_kind="posix", raw_command=command, cwd="/ws", env_snapshot_ref="env"
-        ),
+        analysis_subject=ShellSubject(raw_command=command),
     )
 
 
@@ -58,9 +57,11 @@ def _decision(command: str = "poetry run pytest") -> AuthorizationDecision:
     return AuthorizationDecision(
         decision=Decision.ASK,
         reason=DecisionReason.MODE_REQUIRES_APPROVAL,
-        effective_plan=_plan(command),
-        executable_identity_hash="sha256:abc",
-        executable_names=("poetry",),
+        findings=AnalysisFindings(
+            plan=_plan(command),
+            executable_identity_hash="sha256:abc",
+            executable_names=("poetry",),
+        ),
     )
 
 
@@ -129,6 +130,7 @@ def test_a_stale_rule_says_why_it_stopped_working() -> None:
         environment_allowlist=PROFILE.environment_allowlist,
         protected_roots_hash=PROFILE.protected_roots_hash,
         executable_resolution_version=PROFILE.executable_resolution_version,
+        path_separator=PROFILE.path_separator,
     )
 
     text = _run(service, profile=changed)

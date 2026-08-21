@@ -6,14 +6,21 @@
 
 最后一条分支是 fail closed: 没有任何依据能证明这次调用落在模式预算内时, 结果是 DENY
 而不是"没有规则匹配所以放行". 这条默认值是整套机制里最容易被写反的一行.
+
+**只有一处构造 AuthorizationDecision** (ADR-0028 规则 B). 判定逻辑写成 `_verdict`,
+它只回答"哪一档, 什么理由, 附加哪几条风险事实"; 分析事实由裁决对象自己从 findings 读.
+早先每个分支各构造一次, 每次抄四个 findings 字段 —— 十八处赋值, 而新增一条分支时漏抄
+一项不会报错, 只会让审批界面少一段信息.
 """
 
 from __future__ import annotations
 
-from forgecli.application.security.analyzers.registry import AnalysisFindings
+from dataclasses import dataclass
+
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.context import PolicyContext
-from forgecli.domain.security.decision import AuthorizationDecision, RiskFact
+from forgecli.domain.security.decision import AuthorizationDecision
+from forgecli.domain.security.findings import AnalysisFindings, RiskFact
 from forgecli.domain.security.modes import capabilities_requiring_approval
 from forgecli.domain.security.vocabulary import Decision, DecisionReason
 from forgecli.domain.tool.capability import Capability
@@ -46,121 +53,102 @@ _READ_ONLY_SHELL_CAPABILITIES = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class _Verdict:
+    """一次判定的结论. 只有这四项因分支而异, 其余全部来自 findings."""
+
+    decision: Decision
+    reason: DecisionReason
+    message: str = ""
+    mandatory: bool = False
+    extra_facts: tuple[RiskFact, ...] = ()
+
+
 class PolicyEngine:
     """确定性裁决. 无 IO, 无 LLM: 分类器结论由分析器带进 findings, 不在这里调用."""
 
     def decide(
         self, findings: AnalysisFindings, context: PolicyContext
     ) -> AuthorizationDecision:
-        plan = findings.plan
-
-        if findings.hard_deny is not None:
-            return AuthorizationDecision(
-                decision=Decision.DENY,
-                reason=findings.hard_deny,
-                effective_plan=plan,
-                executable_identity_hash=findings.executable_identity_hash,
-                executable_names=findings.executable_names,
-                script_snapshots=findings.script_snapshots,
-                message="命中不可覆盖的安全底线",
-                risk_facts=findings.risk_facts,
-            )
-
-        if findings.unrunnable is not None:
-            # 排在 Hard Deny 之后: 一条既危险又跑不了的命令, 审计里该记的是安全理由.
-            # 但排在其余所有分支之前 —— 跑不了的东西不值得再走模式预算与人类审批.
-            return AuthorizationDecision(
-                decision=Decision.DENY,
-                reason=findings.unrunnable,
-                effective_plan=plan,
-                executable_identity_hash=findings.executable_identity_hash,
-                executable_names=findings.executable_names,
-                script_snapshots=findings.script_snapshots,
-                message="这条命令在当前环境下无法执行",
-                risk_facts=findings.risk_facts,
-            )
-
-        if findings.mandatory_ask:
-            return AuthorizationDecision(
-                decision=Decision.ASK,
-                reason=findings.requires_ask
-                or DecisionReason.EXTERNAL_IRREVERSIBLE_EFFECT,
-                effective_plan=plan,
-                executable_identity_hash=findings.executable_identity_hash,
-                executable_names=findings.executable_names,
-                script_snapshots=findings.script_snapshots,
-                message="该操作不可逆或影响共享状态, 必须逐次批准",
-                risk_facts=findings.risk_facts,
-                mandatory=True,
-            )
-
-        never_auto = plan.capabilities & _NEVER_AUTO
-        if never_auto:
-            # mandatory=True 是这一支的要点. 不置位的话它只是一次普通 ASK, 而普通 ASK
-            # 会被学习规则抬成 ALLOW —— 于是"读凭证永远需要人类在场"和 ADR-0013 §4.1
-            # 的逐次批准, 都会在用户点过一次 always 之后失效.
-            return AuthorizationDecision(
-                decision=Decision.ASK,
-                reason=findings.requires_ask or DecisionReason.MODE_REQUIRES_APPROVAL,
-                effective_plan=plan,
-                executable_identity_hash=findings.executable_identity_hash,
-                executable_names=findings.executable_names,
-                script_snapshots=findings.script_snapshots,
-                message="请求的能力在任何模式下都需要人类确认",
-                risk_facts=(
-                    *findings.risk_facts,
-                    *(_capability_fact(cap) for cap in sorted(never_auto, key=_name)),
-                ),
-                mandatory=True,
-            )
-
-        over_budget = capabilities_requiring_approval(context.mode, plan.capabilities)
-        if over_budget and _proven_read_only(findings, context.mode):
-            over_budget = over_budget - _READ_ONLY_SHELL_CAPABILITIES
-        if over_budget:
-            # 理由取分析器给出的那一条 (更具体), 只在没有时才落到模式预算. 反过来写会把
-            # PARSE_INCOMPLETE / CLASSIFIER_UNAVAILABLE / SCRIPT_EXECUTION 全部盖掉:
-            # shell.run 在 plan 与 accept_edits 下必然超预算, 于是那些理由永远不会出现
-            # 在审计与界面上, 而 _UNLEARNABLE_REASONS 也就永远匹配不到它们.
-            return AuthorizationDecision(
-                decision=Decision.ASK,
-                reason=findings.requires_ask or DecisionReason.MODE_REQUIRES_APPROVAL,
-                effective_plan=plan,
-                executable_identity_hash=findings.executable_identity_hash,
-                executable_names=findings.executable_names,
-                script_snapshots=findings.script_snapshots,
-                message=f"当前模式 {context.mode.value} 不自动允许这些能力",
-                risk_facts=(
-                    *findings.risk_facts,
-                    *(_capability_fact(cap) for cap in sorted(over_budget, key=_name)),
-                ),
-                mandatory=findings.mandatory_ask,
-            )
-
-        if findings.requires_ask is not None:
-            return AuthorizationDecision(
-                decision=Decision.ASK,
-                reason=findings.requires_ask,
-                effective_plan=plan,
-                executable_identity_hash=findings.executable_identity_hash,
-                executable_names=findings.executable_names,
-                script_snapshots=findings.script_snapshots,
-                message="分析结果不足以自动放行",
-                risk_facts=findings.risk_facts,
-            )
-
+        verdict = _verdict(findings, context)
         return AuthorizationDecision(
-            decision=Decision.ALLOW,
-            reason=_allow_reason(
-                plan.capabilities,
-                proven_read_only=_proven_read_only(findings, context.mode),
+            decision=verdict.decision,
+            reason=verdict.reason,
+            findings=(
+                findings.with_risk(*verdict.extra_facts)
+                if verdict.extra_facts
+                else findings
             ),
-            effective_plan=plan,
-            executable_identity_hash=findings.executable_identity_hash,
-            executable_names=findings.executable_names,
-            script_snapshots=findings.script_snapshots,
-            risk_facts=findings.risk_facts,
+            message=verdict.message,
+            mandatory=verdict.mandatory,
         )
+
+
+def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
+    """求值顺序即安全优先级. 分支顺序是 ADR-0013 §4 的决策, 不能调换."""
+    plan = findings.plan
+
+    if findings.hard_deny is not None:
+        return _Verdict(
+            Decision.DENY, findings.hard_deny, message="命中不可覆盖的安全底线"
+        )
+
+    if findings.unrunnable is not None:
+        # 排在 Hard Deny 之后: 一条既危险又跑不了的命令, 审计里该记的是安全理由.
+        # 但排在其余所有分支之前 —— 跑不了的东西不值得再走模式预算与人类审批.
+        return _Verdict(
+            Decision.DENY, findings.unrunnable, message="这条命令在当前环境下无法执行"
+        )
+
+    if findings.mandatory_ask:
+        return _Verdict(
+            Decision.ASK,
+            findings.requires_ask or DecisionReason.EXTERNAL_IRREVERSIBLE_EFFECT,
+            message="该操作不可逆或影响共享状态, 必须逐次批准",
+            mandatory=True,
+        )
+
+    never_auto = plan.capabilities & _NEVER_AUTO
+    if never_auto:
+        # mandatory=True 是这一支的要点. 不置位的话它只是一次普通 ASK, 而普通 ASK
+        # 会被学习规则抬成 ALLOW —— 于是"读凭证永远需要人类在场"和 ADR-0013 §4.1
+        # 的逐次批准, 都会在用户点过一次 always 之后失效.
+        return _Verdict(
+            Decision.ASK,
+            findings.requires_ask or DecisionReason.MODE_REQUIRES_APPROVAL,
+            message="请求的能力在任何模式下都需要人类确认",
+            mandatory=True,
+            extra_facts=_capability_facts(never_auto),
+        )
+
+    over_budget = capabilities_requiring_approval(context.mode, plan.capabilities)
+    if over_budget and _proven_read_only(findings, context.mode):
+        over_budget = over_budget - _READ_ONLY_SHELL_CAPABILITIES
+    if over_budget:
+        # 理由取分析器给出的那一条 (更具体), 只在没有时才落到模式预算. 反过来写会把
+        # PARSE_INCOMPLETE / CLASSIFIER_UNAVAILABLE / SCRIPT_EXECUTION 全部盖掉:
+        # shell.run 在 plan 与 accept_edits 下必然超预算, 于是那些理由永远不会出现
+        # 在审计与界面上, 而 _UNLEARNABLE_REASONS 也就永远匹配不到它们.
+        return _Verdict(
+            Decision.ASK,
+            findings.requires_ask or DecisionReason.MODE_REQUIRES_APPROVAL,
+            message=f"当前模式 {context.mode.value} 不自动允许这些能力",
+            mandatory=findings.mandatory_ask,
+            extra_facts=_capability_facts(over_budget),
+        )
+
+    if findings.requires_ask is not None:
+        return _Verdict(
+            Decision.ASK, findings.requires_ask, message="分析结果不足以自动放行"
+        )
+
+    return _Verdict(
+        Decision.ALLOW,
+        _allow_reason(
+            plan.capabilities,
+            proven_read_only=_proven_read_only(findings, context.mode),
+        ),
+    )
 
 
 def _proven_read_only(findings: AnalysisFindings, mode: SessionMode) -> bool:
@@ -196,8 +184,11 @@ def _allow_reason(
     return DecisionReason.RULE_ALLOW
 
 
-def _capability_fact(capability: Capability) -> RiskFact:
-    return RiskFact(code="capability", detail=capability.value)
+def _capability_facts(capabilities: frozenset[Capability]) -> tuple[RiskFact, ...]:
+    return tuple(
+        RiskFact(code="capability", detail=capability.value)
+        for capability in sorted(capabilities, key=_name)
+    )
 
 
 def _name(capability: Capability) -> str:

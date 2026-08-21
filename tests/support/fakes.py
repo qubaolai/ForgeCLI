@@ -33,8 +33,17 @@ from forgecli.domain.execution.environment import (
 from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.risk import RiskLevel, RiskReport
+from forgecli.domain.tool.capability import Capability
+from forgecli.domain.tool.plan import (
+    ExecutionContextRef,
+    PlanEffects,
+    ShellSubject,
+    TargetResolution,
+    ToolPlan,
+    WorkspaceScope,
+)
 
-__all__ = ["PROFILE"]
+__all__ = ["PROFILE", "tool_plan"]
 
 # 一份确定性执行画像: 沙箱层未实现, 只有 NO_SANDBOX 一档 (ADR-0014 §4.1).
 PROFILE = ExecutionProfile(
@@ -45,6 +54,7 @@ PROFILE = ExecutionProfile(
     environment_allowlist=DEFAULT_ENV_ALLOWLIST,
     protected_roots_hash="test-protected-roots",
     executable_resolution_version=EXECUTABLE_RESOLUTION_VERSION,
+    path_separator=":",
 )
 
 FACTS = RuntimeFacts.from_profile(
@@ -157,3 +167,34 @@ class SilentToolRunObserver(ToolRunObserver):
 
     def tool_rejected(self, *args: object, **kwargs: object) -> None:
         return None
+
+
+def tool_plan(
+    *,
+    tool_name: str = "shell.run",
+    raw_command: str | None = "poetry run pytest tests/agent_loop -q",
+    capabilities: frozenset[Capability] = frozenset({Capability.EXECUTE_SHELL}),
+    target_resolution: TargetResolution = TargetResolution.FORGE_EXPANDED,
+    workspace_scope: WorkspaceScope = WorkspaceScope.IN_WORKSPACE,
+    **effects: object,
+) -> ToolPlan:
+    """一份最小可用的 ToolPlan.
+
+    审批视图与绑定的用例都要一份 plan 才能构造 —— ADR-0028 之后路径, 目标封闭度与
+    写入内容全部从 plan 现读, 不再由视图自己存. 只放"每个用例都要用一份, 但内容与
+    被测行为无关"的默认值; 与断言相关的字段由用例显式传进来.
+    """
+    return ToolPlan(
+        plan_id="plan-1",
+        tool_name=tool_name,
+        spec_hash="sha256:spec",
+        normalized_input={"command": raw_command or ""},
+        capabilities=capabilities,
+        effects=PlanEffects(**effects),  # type: ignore[arg-type]
+        target_resolution=target_resolution,
+        workspace_scope=workspace_scope,
+        execution_context=ExecutionContextRef(
+            cwd="/workspace/forge", environment_hash="e"
+        ),
+        analysis_subject=ShellSubject(raw_command=raw_command) if raw_command else None,
+    )

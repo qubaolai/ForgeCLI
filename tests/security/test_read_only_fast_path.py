@@ -146,6 +146,38 @@ def test_the_reason_is_distinct_from_the_narrow_tool_fast_path(
     assert decision.reason is DecisionReason.PROVEN_READ_ONLY_SHELL
 
 
+# ---- 核心集之外的只读命令仍要人点头 (ADR-0028 规则 D) ----
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["sort README.md", "xxd README.md", "uniq README.md", "strings README.md"],
+)
+def test_a_read_only_command_outside_the_core_set_still_asks(
+    workspace: Path, command: str
+) -> None:
+    """ "不写"与"可以自动放行"是两件事 (ADR-0028 规则 D).
+
+    这些命令确实不写, 因此位置参数照旧按读取记账, 审批清单准确. 但放行方向的表是
+    单独一张, 收在能一次审计完的核心集里 —— 进那张表要一次显式改动, 而不是"它在
+    READ 里所以顺带放行".
+    """
+    decision = _decide(workspace, command)
+
+    assert decision.decision is not Decision.ALLOW
+
+
+def test_a_non_core_read_still_records_its_targets(workspace: Path) -> None:
+    """降级出核心集不等于降低清单准确度 —— 那会让审批框说假话."""
+    decision = _decide(workspace, "sort README.md")
+
+    assert any(
+        path.endswith("README.md")
+        for path in decision.effective_plan.effects.read_paths
+    )
+    assert decision.effective_plan.effects.write_paths == ()
+
+
 # ---- 八条判据各自失效时必须退回 ASK ----
 
 

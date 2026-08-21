@@ -37,6 +37,7 @@ EXPECTED_TOOLS = {
     "读取文件": "fs.read_file",
     "列出文件": "fs.list_files",
     "搜索内容": "search.text",
+    "新建目录": "fs.create_directory",
     "新建文件": "fs.create_file",
     "精确替换": "fs.edit_file",
     "移动文件": "fs.move",
@@ -116,7 +117,12 @@ def test_the_model_sees_the_new_tools_in_its_catalog(stack: ToolStack) -> None:
             execution_profile_hash=stack.profile.execution_profile_hash,
         )
     )
-    for name in ("fs.scan_tree", "fs.create_file", "fs.edit_file"):
+    for name in (
+        "fs.scan_tree",
+        "fs.create_directory",
+        "fs.create_file",
+        "fs.edit_file",
+    ):
         assert catalog.contains(name), f"{name} 不在模型看得到的目录里"
 
 
@@ -154,6 +160,7 @@ def test_creating_over_an_existing_file_fails_and_says_which_tool_to_use(
 
 
 def test_scanning_the_workspace_returns_a_tree(stack: ToolStack) -> None:
+    _call(stack, "fs.create_directory", path="src")
     _call(stack, "fs.create_file", path="src/main.py", content="print(1)\n")
 
     scanned = _call(stack, "fs.scan_tree")

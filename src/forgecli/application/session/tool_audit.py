@@ -8,6 +8,11 @@ payload 里只放安全摘要: 不写命令原文以外的敏感内容, 不写�
 工具入参**不进这里**. 它们要逐字给用户看, 所以走运行事件 (进程内, 随会话消失); 落盘的
 这一份只记机制事实 —— 谁, 碰了哪些路径, 什么裁决, 结果如何. 两条出口的取舍不同, 混成
 一条就只能按更严的那一头砍, 而那会让审批界面看不全参数.
+
+**它在 session 这一侧, 不在 tool_request** (ADR-0028 规则 A1): 写入口属于被写的那个
+子系统. 反过来放的话, ToolRequestCoordinator 会顺着同包的 import 直接认识
+SessionService —— 而 ToolAuditSink 这个抽象存在的全部理由就是不让它认识.
+check_arch.py 的 tool_request ⇏ session 把这条边界钉住.
 """
 
 from __future__ import annotations

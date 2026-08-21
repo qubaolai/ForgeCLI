@@ -18,13 +18,13 @@ from pathlib import PurePath
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.application.workspace.filesystem_view import PathKind
 from forgecli.domain.security.executable_identity import ExecutableIdentity, TrustZone
-from forgecli.domain.tool.hashing import digest_text
+from forgecli.domain.tool.hashing import digest_bytes
 from forgecli.domain.workspace.boundary import is_within
 
 __all__ = ["EXECUTABLE_RESOLUTION_VERSION", "ExecutableResolver"]
 
-EXECUTABLE_RESOLUTION_VERSION = "1"
-_MAX_HASH_BYTES = 4 * 1024 * 1024
+EXECUTABLE_RESOLUTION_VERSION = "2"
+_MAX_HASH_BYTES = 64 * 1024 * 1024
 _SHEBANG_MAX = 256
 _TEMP_ROOTS = ("/tmp", "/private/tmp", "/var/tmp", "/dev/shm")
 
@@ -40,14 +40,18 @@ class ExecutableResolver:
         if facts.kind is not PathKind.FILE:
             return ExecutableIdentity.unresolved(token)
         content = context.filesystem.read_bytes(
-            facts.realpath, max_bytes=_MAX_HASH_BYTES
+            facts.realpath, max_bytes=_MAX_HASH_BYTES + 1
         )
+        complete = facts.size <= _MAX_HASH_BYTES and len(content) == facts.size
         return ExecutableIdentity(
             requested_token=token,
             absolute_path=absolute,
             realpath=facts.realpath,
             file_identity=facts.file_identity,
-            content_hash=digest_text(content.decode("utf-8", errors="replace")),
+            size=facts.size,
+            mtime_ns=facts.mtime_ns,
+            content_hash=digest_bytes(content) if complete else "",
+            content_complete=complete,
             trust_zone=self._trust_zone(facts.realpath, context),
             interpreter_chain=self._interpreter_chain(content),
         )
@@ -56,8 +60,7 @@ class ExecutableResolver:
         if "/" in token or "\\" in token:
             return context.resolve(token)
         raw_path = context.environment.get("PATH", "")
-        separator = ";" if "\\" in raw_path else ":"
-        for entry in raw_path.split(separator):
+        for entry in raw_path.split(context.profile.path_separator):
             # PATH 里出现 `.` 本身就是配置错误 (ExecutionProfile 会拒绝), 这里再挡一次.
             if not entry or entry == ".":
                 continue
@@ -72,6 +75,11 @@ class ExecutableResolver:
         if any(is_within(realpath, root) for root in _TEMP_ROOTS):
             return TrustZone.WORKSPACE
         if _is_project_toolchain(realpath):
+            return TrustZone.TOOLCHAIN
+        if any(
+            is_within(realpath, entry)
+            for entry in context.profile.writable_toolchain_path
+        ):
             return TrustZone.TOOLCHAIN
         if any(is_within(realpath, entry) for entry in context.profile.trusted_path):
             return TrustZone.SYSTEM
