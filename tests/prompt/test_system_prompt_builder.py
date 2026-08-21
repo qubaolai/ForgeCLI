@@ -89,9 +89,9 @@ def test_the_builtin_profile_is_pinned_by_fingerprint() -> None:
         ),
     )
 
-    assert MAIN_AGENT_PROMPT_VERSION == 4
+    assert MAIN_AGENT_PROMPT_VERSION == 5
     assert snapshot.fingerprint == (
-        "sha256:f9285aad6ef6a13c30bcd78ceef223892069cb2738aefb2e7d7f4dcd00f636b7"
+        "sha256:b91fed80a548c16a25173c9522a7ca4f6de02162731f33b2d57036d85c860e83"
     )
 
 

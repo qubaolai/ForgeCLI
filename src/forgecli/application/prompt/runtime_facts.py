@@ -19,9 +19,12 @@ from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
 __all__ = ["RuntimeFacts"]
 
 _ISOLATION_SUMMARY: dict[IsolationLevel, str] = {
-    IsolationLevel.STRONG_SANDBOX: "命令在沙箱中运行, 触达宿主资源受限",
-    IsolationLevel.PARTIAL_SANDBOX: "命令部分隔离, 仍能触达部分宿主资源",
-    IsolationLevel.NO_SANDBOX: "命令直接在宿主上运行, 没有额外隔离",
+    IsolationLevel.HOST_CONFINED: (
+        "命令在围栏中运行: 工作区外不可写, 受保护路径不可读, 网络按模式放行"
+    ),
+    IsolationLevel.UNCONFINED: (
+        "命令直接在宿主上运行, 没有围栏; 跨工作区与网络操作一律需要人类确认"
+    ),
 }
 
 

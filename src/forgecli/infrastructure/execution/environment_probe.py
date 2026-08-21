@@ -1,7 +1,10 @@
 """执行环境探测: 生成 ExecutionProfile 与净化后的环境快照.
 
-只探测, 不改变宿主: 不装东西, 不写全局配置, 不联网. 探测到什么就如实报告什么 —— 隔离
-等级当前恒为 NO_SANDBOX, 因为本次没有实现沙箱层, 而不是"探测不出来先当强隔离用".
+只探测, 不改变宿主: 不装东西, 不写全局配置, 不联网. 探测到什么就如实报告什么.
+
+`isolation_level` 在这里给的是**保守缺省** UNCONFINED. 真正的取值来自
+`infrastructure/execution/sandbox/` 的行为自测 —— 那一步会真的去写一个边界外的文件并
+确认失败. 缺省不是"探测不出来先当有围栏用".
 
 受控 PATH 的构造原则: 只收标准系统目录与用户显式配置的工具链目录. 不含 `.`, 不含工作
 区, 不含临时目录, 不含 node_modules/.bin —— 那些目录 Agent 自己能写.
@@ -60,7 +63,7 @@ def probe_execution_profile(
     trusted_path = tuple(dict.fromkeys(entry for entry in entries if entry != "."))
     return ExecutionProfile(
         platform=f"{platform.system()}-{platform.machine()}",
-        isolation_level=IsolationLevel.NO_SANDBOX,
+        isolation_level=IsolationLevel.UNCONFINED,
         trusted_path=trusted_path or (str(Path(sys.executable).parent),),
         writable_toolchain_path=toolchains,
         shell_launch=_shell_launch(is_windows),

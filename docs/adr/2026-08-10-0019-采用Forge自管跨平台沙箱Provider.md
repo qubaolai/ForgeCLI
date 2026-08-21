@@ -2,7 +2,19 @@
 
 ## 状态
 
-Accepted（2026-08-10 实现首个纵向切片）
+Superseded by ADR-0030 (2026-08-21)
+
+> **更正**: 原状态写的是"Accepted(2026-08-10 实现首个纵向切片)", 那个切片指的是
+> 下面"Shell 规范化配套变化"一节, **不是**决策 1-5 的沙箱. 决策 1-5 从未实现 ----
+> 全库检索 `seatbelt` / `sandbox-exec` / `bwrap` / `unshare` / `AppContainer`
+> 无任何命中, `environment_probe.py` 恒定返回 `IsolationLevel.NO_SANDBOX`.
+>
+> 一份 ADR 同时承担"沙箱"与"Shell 规范化"两件事, 后果是其中一件静默没做而状态栏
+> 看不出来, 另一件实现时把 `find -exec` 简写成了 `find` (2026-08-21 修复).
+>
+> 分流: 已落地的"Shell 规范化配套变化"归入 ADR-0013 继续有效;
+> 未落地的决策 1-5 由 ADR-0030 重新设计. ADR-0030 明确废弃本文决策 4 的临时可写
+> 工作区 (它会丢掉子进程生成的文件, 且与 ADR-0015 RecoveryStore 重复).
 
 ## 背景
 

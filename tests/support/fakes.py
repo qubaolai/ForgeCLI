@@ -45,10 +45,10 @@ from forgecli.domain.tool.plan import (
 
 __all__ = ["PROFILE", "tool_plan"]
 
-# 一份确定性执行画像: 沙箱层未实现, 只有 NO_SANDBOX 一档 (ADR-0014 §4.1).
+# 一份确定性执行画像: 测试默认无围栏 (ADR-0030 决策 3).
 PROFILE = ExecutionProfile(
     platform="posix",
-    isolation_level=IsolationLevel.NO_SANDBOX,
+    isolation_level=IsolationLevel.UNCONFINED,
     trusted_path=("/usr/bin", "/bin"),
     shell_launch=ShellLaunch(program="/bin/sh", args=("-c",), kind="posix"),
     environment_allowlist=DEFAULT_ENV_ALLOWLIST,

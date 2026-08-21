@@ -17,6 +17,7 @@ from pathlib import PurePath
 from types import MappingProxyType
 
 from forgecli.application.workspace.filesystem_view import FileSystemView
+from forgecli.domain.execution.fence import FencePolicy
 from forgecli.domain.execution.profile import ExecutionProfile
 from forgecli.domain.tool.hashing import digest
 from forgecli.domain.tool.plan import ExecutionContextRef, WorkspaceScope
@@ -43,6 +44,9 @@ class ExecutionContext:
     # 它们仍然是 root (读得到), 但写入按区外处理.
     readonly_roots: tuple[str, ...] = ()
     toolchain_id: str = "default"
+    # 由 mode 编译出来的围栏边界 (ADR-0030 决策 4). 与 profile 一样直接持有整份而不是
+    # 只存 hash: 用来算 hash 的策略与实际交给 Provider 的策略必须是同一份.
+    fence: FencePolicy | None = None
 
     def __post_init__(self) -> None:
         if not self.workspace_roots:

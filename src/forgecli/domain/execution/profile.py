@@ -1,12 +1,11 @@
-"""ExecutionProfile: 裁决与授权绑定的执行环境画像 (ADR-0014 §4.1).
+"""ExecutionProfile: 裁决与授权绑定的执行环境画像 (ADR-0014 §4.1, ADR-0030 决策 3).
 
 安全裁决绑定的不只是"这条命令是什么", 还包括"它会在什么环境里跑". 受控 PATH 变了,
-环境净化规则变了, 受保护路径集合变了, 或者隔离等级降级了, 旧的 ALLOW 与待执行审批都必须
-失效并重新裁决 —— 否则就会出现"按强隔离批准, 按无隔离执行"这种静默降级.
+环境净化规则变了, 受保护路径集合变了, 或者围栏自测结论变了, 旧的 ALLOW 与待执行审批
+都必须失效并重新裁决 —— 否则就会出现"按有围栏批准, 按无围栏执行"这种静默降级.
 
-沙箱层本次未实现, 因此 isolation_level 目前恒为 NO_SANDBOX. 枚举保留三档不是占位癖:
-它是授权信封里的绑定项, 将来接入任何隔离方案时, 旧授权应当因为这一项变化而自动失效,
-而不是因为有人记得去清缓存.
+`isolation_level` 由启动时的**行为自测**填, 不由平台判断填: 探测的方式是真的去做一次
+被禁止的操作, 验证它确实失败 (ADR-0030 决策 3). 自测任意一项不过就是 UNCONFINED.
 """
 
 from __future__ import annotations
@@ -28,15 +27,22 @@ PROFILE_VERSION = "2"
 
 
 class IsolationLevel(Enum):
-    """获准进程实际能被限制到什么程度."""
+    """围栏自测的结论: 子进程是不是真的被关住了 (ADR-0030 决策 3).
 
-    STRONG_SANDBOX = "strong_sandbox"
-    PARTIAL_SANDBOX = "partial_sandbox"
-    NO_SANDBOX = "no_sandbox"
+    只有两档. 原先的三档里 `STRONG_SANDBOX` 在任何平台都不可达 (Seatbelt 没有独立
+    PID namespace, bubblewrap 也未证明资源硬上限), 而 `PARTIAL` 与 `STRONG` 之间
+    **没有任何行为差异的消费方** —— 全库唯一影响执行路径的读取用的就是 `contained`,
+    那本来就是二元的.
+
+    不存在"部分隔离": 一个说不清自己拦得住什么的围栏, 裁决时只能当作没有.
+    """
+
+    HOST_CONFINED = "host_confined"
+    UNCONFINED = "unconfined"
 
     @property
     def contained(self) -> bool:
-        return self is not IsolationLevel.NO_SANDBOX
+        return self is IsolationLevel.HOST_CONFINED
 
 
 @dataclass(frozen=True)

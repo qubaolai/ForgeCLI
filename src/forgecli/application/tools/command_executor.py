@@ -1,9 +1,9 @@
 """CommandExecutor: 启动子进程的唯一抽象.
 
-这是将来接入任何隔离方案的**唯一接缝**. 沙箱本次不实现, 当前只有
-infrastructure/execution/local_command_executor.py 一个实现; 之后无论换成 SRT, 容器
-还是远程执行节点, 都从这里接入, 而不是从 shell.run 或 git.read 内部接入 —— 工具一旦
-自己知道"有沙箱时走这条, 没沙箱时走那条", 就会出现绕过隔离的隐藏分支.
+这是接入任何隔离方案的**唯一接缝**. 围栏由 infrastructure 的
+`SandboxedCommandExecutor` 包在 `LocalCommandExecutor` 外面接入 (ADR-0030 决策 1),
+而不是从 shell.run 或 git.read 内部接入 —— 工具一旦自己知道"有围栏时走这条, 没围栏时
+走那条", 就会出现绕过隔离的隐藏分支.
 
 请求里带的是**绝对可执行文件路径与已净化的环境**: 执行器不做 PATH 查找, 不继承
 os.environ. 那两件事都会让"裁决时解析的可执行文件"与"实际跑起来的可执行文件"分叉.
@@ -15,6 +15,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from forgecli.domain.execution.fence import FencePolicy
 from forgecli.shared.cancellation import CancelToken
 
 __all__ = ["CommandExecutor", "CommandRequest", "CommandOutcome"]
@@ -28,6 +29,9 @@ class CommandRequest:
     timeout_seconds: float
     max_output_bytes: int
     stdin: str | None = None
+    # 本次执行的围栏边界 (ADR-0030). None 表示无围栏 —— 只有 NoSandboxProvider 接受它,
+    # 真实 Provider 拿到 None 会 fail closed, 因为那多半是漏传而不是有意不围.
+    fence: FencePolicy | None = None
 
     def __post_init__(self) -> None:
         if not self.argv:
