@@ -22,9 +22,9 @@
 
 | 能力 | MVP 取舍 | 来源 | 目标版本 |
 | --- | --- | --- | --- |
-| `ProviderHealthRegistry` 熔断与半开探测 | MVP 无熔断，逐请求试探 | ADR-0011 §12.1、§17 | Beta+ |
-| `BudgetGuard` 实裁决 + `BudgetPolicy` + `BudgetTracker` | `budget_snapshot` 已冻结，guard no-op、不扣减 | ADR-0011 §11.3、§17 | Beta+ |
-| 可观测性聚合与 trace span | MVP 不聚合 provider/model 指标 | ADR-0011 §15、§17 | Beta+ |
+| 熔断与半开探测默认启用 | `SlidingWindowHealthRegistry` 已实现，默认 `enabled=False`，由 `[llm.circuit_breaker]` 开 | ADR-0011 §12.1、§17 | Beta+ |
+| 预算裁决 + `BudgetPolicy` + `BudgetTracker` | ADR-0028 删除了 `BudgetGuard` 与 `budget_snapshot`：全库没有生产方，校验点永远走「快照缺失直通」。要做时按新 ADR 重新设计接入点 | ADR-0011 §11.3、§17、ADR-0028 规则 C | Beta+ |
+| 可观测性聚合与 trace span | 进程内聚合已有 (`InProcessGatewayMetrics`)；缺的是导出与 trace span | ADR-0011 §15、§17 | Beta+ |
 | 企业托管凭证 / keychain / secret store 凭证源 | MVP 只支持 `env:NAME` | ADR-0011 §7 | 企业版 |
 | 企业 allowlist 编辑与插件式 provider 注册 | provider 注册表代码级封闭 | ADR-0011 §6 | 企业版 |
 | Embeddings / rerank 等非对话模型 | 非目标；后续须新增 gateway 方法走同一控制面 | ADR-0011 §1 | 待定 |

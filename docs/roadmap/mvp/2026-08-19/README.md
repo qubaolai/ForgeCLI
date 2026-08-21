@@ -48,6 +48,13 @@ session 语义不变。裸 `forge` 只启动 loopback 服务并打开浏览器�
   规则与风险事实，终态事件带错误码 / 退出码 / 字节数 / 是否真的执行过。
 - 聊天 Markdown 提供内外双复制入口、清晰的行内代码配色和最终回复用量/耗时摘要。
 - 前端静态资源进入 Python wheel；Web typecheck/test/build 纳入 `make ci`。
+- 重构内置工具不变量：schema 数值/长度约束真实生效；计划 ID 防路径穿越；读写前复核对象
+  状态；文件写入/移动 no-replace 且保留 mode；目录与移动两端可完整 undo；所有扫描、输出和
+  artifact 截断显式可见；Git 只读工具关闭网络提示、pager、锁、fsmonitor 与外部 diff。
+- 新增 `fs.create_directory`；文件创建和移动不再顺带创建未声明的父目录。
+- 安全链按 ADR-0027 收敛为单一事实来源：Shell 只解析一次，路径保护统一走 realpath，审批
+  视图并入绑定；环境、cwd、脚本和可执行文件在 perform 前统一复核，审批响应不得串用 id
+  或扩大 scope，隐式用户级工具配置由执行画像关闭。
 
 ## 验收
 

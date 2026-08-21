@@ -169,13 +169,16 @@ spec 声明的是**能力上界不是放行证明**; 没有 `requires_authorizat
 | `domain/security/risk.py` | `RiskReport` / `AgentRiskResponse` / 分类器输出 schema |
 | `domain/security/decision.py` | `AuthorizationDecision` |
 | `domain/security/context.py` | `PolicyContext` |
-| `domain/security/approval.py` | `ApprovalPresentation` (完整事实) + `ApprovalBinding` + `HitlApprovalView` (人类界面 DTO) |
+| `domain/security/approval.py` | `ApprovalView` (完整事实, 同时是界面视图) + `ApprovalBinding` |
 | `infrastructure/security/protected_paths_builder.py` | 按平台生成受保护根: 45 条凭证子路径 (deny_read) + 24 条启动项 (deny_write) + 平台系统目录与设备节点 |
 
 **注意**:
 
-- `approval.py` 里 `ApprovalPresentation` 与 `HitlApprovalView` **是两个东西**, 别合并.
-  前者是授权重验需要的完整事实, 后者是给人看的减法视图 (ADR-0016 §8.4). 减掉的是 hash, 不是效果.
+- ~~`approval.py` 里 `ApprovalPresentation` 与 `HitlApprovalView` **是两个东西**, 别合并.~~
+  **本条已由 ADR-0028 推翻并合并为 `ApprovalView`.** 拆成两个的理由是"重验要的哈希会把人
+  要读的东西淹掉" —— 那是**渲染**该解决的问题, 而拆成两个类的代价是两份互相抄写的字段,
+  其中十个连生产方都没有. 现在界面读什么由 `render_approval_view` 决定, 路径与目标从
+  `plan` 现读. 减掉的仍然不是效果: `consequential` / `target_groups` 逻辑一字未改.
 - `protected_paths_builder.py` 里 `_home_roots()` **不能改写成 `Path.home()`**. 后者等价于
   `expanduser("~")`, 在 POSIX 上先读 `HOME` 环境变量 —— 一个能设环境变量的调用方把 `HOME` 指到
   空目录, 整张凭证保护表就全部落空. 现在的做法是 passwd 里 real uid 的 home + `SUDO_USER` 的
@@ -323,11 +326,11 @@ ALLOW) -> 恢复绑定 -> issue -> execute.
 | 文件 | 说明 |
 |---|---|
 | `application/tool_request/coordinator.py` | 上面那条链路 |
-| `application/tool_request/dispatcher.py` | `ToolDispatcher` ABC + 协调器实现 |
+| `application/tool_request/dispatcher.py` | `CoordinatorToolDispatcher` (ADR-0028 删掉了它头上的 ABC) |
 | `application/tool_request/observations.py` | `ToolObservation` 与 `ObservationKind` |
 | `application/tool_request/catalog_predicates.py` | mode 能力门 (plan 档只留 `PLAN_ONLY` 与只读) |
 | `application/tool_request/audit.py` | `ToolAuditSink` ABC (**写前事件**) |
-| `application/tool_request/session_audit.py` | 落进 `events.jsonl` 的实现 |
+| `application/session/tool_audit.py` | 落进 `events.jsonl` 的实现 (ADR-0028 移到被写的那一侧) |
 | `application/tool_request/run_observer.py` | 运行观察端口, **与审计分离** (ADR-0016 §4.3) |
 
 `observations.py` 里还有一件与人机边界直接相关的事: `ObservationKind.disposition` 把每种结论
