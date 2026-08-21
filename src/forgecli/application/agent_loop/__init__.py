@@ -20,10 +20,8 @@ from __future__ import annotations
 
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
 from forgecli.application.agent_loop.hooks import LoopHook
-from forgecli.application.agent_loop.loop import AgentLoop
 
 __all__ = [
-    "AgentLoop",
     "BuiltinAgentLoop",
     "LoopHook",
 ]

@@ -22,7 +22,7 @@ import traceback
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-from forgecli.application.agent_loop import AgentLoop
+from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
 from forgecli.application.planning import ActivePlanning, PlanningService
@@ -36,7 +36,9 @@ from forgecli.application.prompt.system_prompt_builder import (
     ToolBrief,
 )
 from forgecli.application.session import SessionService
-from forgecli.application.tool_request.dispatcher import ToolDispatcher
+from forgecli.application.tool_request.dispatcher import (
+    CoordinatorToolDispatcher,
+)
 from forgecli.domain.agent.actions import (
     AnswerAction,
     LoopObservation,
@@ -96,7 +98,7 @@ class AgentTurnService:
         self,
         session: SessionService,
         *,
-        loop_factory: Callable[[], AgentLoop],
+        loop_factory: Callable[[], BuiltinAgentLoop],
         # 提示词三件套是**必填**: 缺提示词的主 Agent 不知道自己是谁, 有哪些工具, 也不
         # 知道自己在什么平台上 (ADR-0018 §11). 给个默认值就等于允许静默降级回接入之前
         # 的状态, 而那种降级不会报错, 只会让模型开始猜.
@@ -105,7 +107,7 @@ class AgentTurnService:
         instructions: ProjectInstructionReader,
         planning: PlanningService | None = None,
         run_bus: AgentRunEventBus | None = None,
-        tools: ToolDispatcher | None = None,
+        tools: CoordinatorToolDispatcher | None = None,
         barrier: ManualMutationBarrier | None = None,
         max_steps: int = _DEFAULT_MAX_LOOP_STEPS,
     ) -> None:
@@ -433,7 +435,7 @@ class AgentTurnService:
         return observation.to_loop_observation()
 
     def _outcome_from_stop(
-        self, stop: LoopStop, answer: str | None, loop: AgentLoop
+        self, stop: LoopStop, answer: str | None, loop: BuiltinAgentLoop
     ) -> _TurnOutcome:
         drafts = _drafts_of(loop)
         if stop.reason is LoopStopReason.FINAL_ANSWER:
@@ -491,13 +493,13 @@ class AgentTurnService:
             )
 
 
-def _drafts_of(loop: AgentLoop) -> tuple[UsageRecordDraft, ...]:
+def _drafts_of(loop: BuiltinAgentLoop) -> tuple[UsageRecordDraft, ...]:
     """读取 loop 交回的 usage 草稿（不在冻结 ABC 上，鸭子类型消费）。"""
     drafts = getattr(loop, "usage_drafts", ())
     return tuple(drafts)
 
 
-def _partial_answer_of(loop: AgentLoop) -> str | None:
+def _partial_answer_of(loop: BuiltinAgentLoop) -> str | None:
     """读取取消时已累积的部分回答（不在冻结 ABC 上，鸭子类型消费）。"""
     partial = getattr(loop, "partial_answer", None)
     return partial if isinstance(partial, str) and partial else None

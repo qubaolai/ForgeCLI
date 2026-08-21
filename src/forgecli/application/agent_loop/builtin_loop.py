@@ -32,7 +32,6 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from forgecli.application.agent_loop.loop import AgentLoop
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_run.scrubbing import scrub_arguments
 from forgecli.application.llm.error_hints import actionable_message
@@ -262,7 +261,7 @@ class _ModelOutcome:
         return not self.text.strip() and not self.tool_calls
 
 
-class BuiltinAgentLoop(AgentLoop):
+class BuiltinAgentLoop:
     """受控 ReAct 循环: 每 turn 一个新实例 (由装配方以工厂创建)."""
 
     def __init__(
