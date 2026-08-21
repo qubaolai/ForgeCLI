@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from forgecli.application.llm.gateway.cache import (
     InMemoryResponseCache,
-    LlmCacheController,
-    NoopLlmCacheController,
     structured_schema_digest,
 )
 from forgecli.application.llm.gateway.catalog import ModelCatalogService
@@ -22,9 +20,6 @@ from forgecli.application.llm.gateway.credentials import (
     CredentialResolver,
 )
 from forgecli.application.llm.gateway.default_gateway import DefaultLlmGateway
-from forgecli.application.llm.gateway.default_selection_resolver import (
-    DefaultModelSelectionResolver,
-)
 from forgecli.application.llm.gateway.errors import (
     MalformedToolCallError,
     ModelAuthError,
@@ -41,19 +36,12 @@ from forgecli.application.llm.gateway.errors import (
 )
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.llm.gateway.governance import (
-    BudgetGuard,
-    NoopBudgetGuard,
-    NoopProviderHealthRegistry,
-    ProviderHealthRegistry,
     SlidingWindowHealthRegistry,
-    SnapshotBudgetGuard,
 )
 from forgecli.application.llm.gateway.in_memory_catalog import InMemoryModelCatalog
 from forgecli.application.llm.gateway.observability import (
     GatewayCallSample,
-    GatewayObserver,
     InProcessGatewayMetrics,
-    NoopGatewayObserver,
 )
 from forgecli.application.llm.gateway.provider import (
     ModelProvider,
@@ -66,13 +54,13 @@ from forgecli.application.llm.gateway.provider_settings import (
     ProviderRuntimeSettings,
     ProviderSettingsSource,
 )
-from forgecli.application.llm.gateway.selection_resolver import ModelSelectionResolver
+from forgecli.application.llm.gateway.selection_resolver import (
+    ModelSelectionResolver,
+)
 from forgecli.application.llm.gateway.streaming import StreamAccumulator
 from forgecli.application.llm.gateway.token_estimator import (
     ApproximateTokenEstimator,
-    TokenEstimator,
 )
-from forgecli.application.llm.gateway.tokenizer_registry import TokenizerRegistry
 from forgecli.domain.conversation.message import (
     ChatMessage,
     ContentBlock,
@@ -87,7 +75,6 @@ from forgecli.domain.model.params import (
     ThinkingConfig,
 )
 from forgecli.domain.model.request import (
-    BudgetSnapshot,
     CacheHint,
     ModelRequest,
     StructuredModelRequest,
@@ -124,11 +111,11 @@ __all__ = [
     "ProviderResponse",
     # 实现 / 注册表（MVP）
     "DefaultLlmGateway",
+    "ModelSelectionResolver",
     "ProviderRegistry",
     # 请求 DTO
     "ModelRequest",
     "StructuredModelRequest",
-    "BudgetSnapshot",
     "CancelToken",
     "CacheHint",
     # 用途 / 选择
@@ -141,8 +128,6 @@ __all__ = [
     "ModelCatalogEntry",
     "ModelCatalogService",
     "InMemoryModelCatalog",
-    "ModelSelectionResolver",
-    "DefaultModelSelectionResolver",
     "ResolvedModel",
     # 凭证（§7）
     "Credential",
@@ -152,9 +137,7 @@ __all__ = [
     "ProviderRuntimeSettings",
     "ProviderSettingsSource",
     # token 估算（§11.4 / ADR-0012 §6）
-    "TokenEstimator",
     "ApproximateTokenEstimator",
-    "TokenizerRegistry",
     # 超参
     "ModelParams",
     "ThinkingConfig",
@@ -178,22 +161,13 @@ __all__ = [
     "StructuredModelResponse",
     "FinishReason",
     # 缓存（§14 / ADR-0012 §3）
-    "LlmCacheController",
-    "NoopLlmCacheController",
     "InMemoryResponseCache",
     "structured_schema_digest",
     # 治理（§11.3 / §12.1，真实实现见 ADR-0012 §8）
-    "ProviderHealthRegistry",
-    "NoopProviderHealthRegistry",
     "SlidingWindowHealthRegistry",
-    "BudgetGuard",
-    "NoopBudgetGuard",
-    "SnapshotBudgetGuard",
     # 可观测性（ADR-0012 §9）
-    "GatewayObserver",
     "GatewayCallSample",
     "InProcessGatewayMetrics",
-    "NoopGatewayObserver",
     # 结构化输出校验
     "validate_json_schema",
     # 错误类型

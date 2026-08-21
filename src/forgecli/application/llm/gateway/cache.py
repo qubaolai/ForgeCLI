@@ -21,7 +21,6 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -43,71 +42,23 @@ def structured_schema_digest(schema_name: str, schema: Mapping[str, object]) -> 
     return f"{schema_name}:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
-class LlmCacheController(ABC):
-    """gateway 内的缓存控制端口。实现不得写事件 / state / usage 文件。"""
-
-    @abstractmethod
-    def lookup(
-        self,
-        request: ModelRequest,
-        ref: ModelRef,
-        *,
-        thinking: ThinkingConfig | None = None,
-        schema_digest: str | None = None,
-    ) -> ModelResponse | None:
-        """响应缓存查询；未命中或不适用返回 None。"""
-
-    @abstractmethod
-    def store(
-        self,
-        request: ModelRequest,
-        ref: ModelRef,
-        response: ModelResponse,
-        *,
-        thinking: ThinkingConfig | None = None,
-        schema_digest: str | None = None,
-    ) -> None:
-        """写入响应缓存；不适用时应为 no-op。"""
-
-
-class NoopLlmCacheController(LlmCacheController):
-    """默认实现：响应缓存关闭（prompt 缓存标注仍随请求透传给 adapter）。"""
-
-    def lookup(
-        self,
-        request: ModelRequest,
-        ref: ModelRef,
-        *,
-        thinking: ThinkingConfig | None = None,
-        schema_digest: str | None = None,
-    ) -> ModelResponse | None:
-        return None
-
-    def store(
-        self,
-        request: ModelRequest,
-        ref: ModelRef,
-        response: ModelResponse,
-        *,
-        thinking: ThinkingConfig | None = None,
-        schema_digest: str | None = None,
-    ) -> None:
-        return None
-
-
 @dataclass
 class _CacheSlot:
     stored_at: float
     response: ModelResponse
 
 
-class InMemoryResponseCache(LlmCacheController):
+class InMemoryResponseCache:
     """进程内响应缓存：origin 白名单 + TTL + LRU 容量上限（§14 / ADR-0012 §3）。
 
     chat / act 无论如何不缓存；白名单之外的 origin 也不缓存。
     命中返回副本：cached=True、真实 usage 记 0（estimated=False——这是确定事实，
     不是估算）、raw_metadata 标注 cache_hit。ttl_seconds=None 表示不过期；
     过期为惰性判定（lookup 时对比注入时钟），容量满时淘汰最久未命中项。
+
+    **未启用就是空白名单**（ADR-0028 规则 A）：`allowed_origins=()` 时 lookup 恒
+    返回 None、store 恒不写。早先另有一个 NoopLlmCacheController 与一个只有它们
+    两个实现的抽象基类——三个类表达的是同一个空集合。
     """
 
     def __init__(

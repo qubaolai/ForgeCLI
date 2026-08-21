@@ -15,7 +15,6 @@ MVP 为近似实现（§17：TokenEstimator 至少要有近似实现）：按「
 from __future__ import annotations
 
 import json
-from abc import ABC, abstractmethod
 
 from forgecli.domain.conversation.message import ChatMessage, ContentBlock, TextBlock
 from forgecli.domain.tool.tool_call import ToolSchema
@@ -26,25 +25,7 @@ _CHARS_PER_TOKEN = 4
 _PER_MESSAGE_OVERHEAD = 4
 
 
-class TokenEstimator(ABC):
-    """请求前输入 token 估算端口。"""
-
-    @abstractmethod
-    def estimate_input(
-        self,
-        *,
-        messages: tuple[ChatMessage, ...],
-        system_prompt: str | None = None,
-        tools: tuple[ToolSchema, ...] = (),
-    ) -> int:
-        """估算一次请求的输入 token（messages + system prompt + tools schema）。"""
-
-    @abstractmethod
-    def estimate_text(self, text: str) -> int:
-        """估算一段纯文本的 token 数（供输出估算 / 中断收尾使用）。"""
-
-
-class ApproximateTokenEstimator(TokenEstimator):
+class ApproximateTokenEstimator:
     """字符比例近似估算器。确定性、无 IO，可直接用于单测。"""
 
     def estimate_input(

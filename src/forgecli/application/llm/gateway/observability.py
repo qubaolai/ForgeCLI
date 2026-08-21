@@ -12,7 +12,6 @@ trace span 导出、审计落盘形态留后续；样本字段本 ADR 先冻结�
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from forgecli.domain.model.origin import RequestOrigin
@@ -45,14 +44,6 @@ class GatewayCallSample:
             raise ValueError("GatewayCallSample.latency_ms 不能为负")
 
 
-class GatewayObserver(ABC):
-    """调用收尾统一上报端口。实现不得落盘、不得阻塞调用路径。"""
-
-    @abstractmethod
-    def on_call(self, sample: GatewayCallSample) -> None:
-        """complete 返回 / stream 收尾 / 错误抛出三个位置统一上报。"""
-
-
 @dataclass
 class _ModelMetrics:
     calls: int = 0
@@ -71,7 +62,7 @@ class _ModelMetrics:
             self.latency_buckets = [0] * (len(_LATENCY_BUCKET_UPPER_MS) + 1)
 
 
-class InProcessGatewayMetrics(GatewayObserver):
+class InProcessGatewayMetrics:
     """进程内聚合：按 provider/model 汇总样本。纯内存，不写任何文件。"""
 
     def __init__(self) -> None:
@@ -119,13 +110,6 @@ class InProcessGatewayMetrics(GatewayObserver):
                 },
             }
         return view
-
-
-class NoopGatewayObserver(GatewayObserver):
-    """空实现：测试或显式关闭聚合时使用。"""
-
-    def on_call(self, sample: GatewayCallSample) -> None:
-        return None
 
 
 def _bucket_index(latency_ms: float) -> int:

@@ -1,9 +1,12 @@
 """配置现读的 ModelSelectionResolver（ADR-0011 §2 / §5 运行期装配）。
 
 当前模型（/model）、按用途覆盖（/config）与模型目录（llm.json）都可能在会话中
-被修改，因此不能在启动时把它们冻进 resolver。本类每次 resolve 时现读三个来源、
-重建 DefaultModelSelectionResolver 并委托——解析语义（含 catalog 校验、无 fallback）
-与 DefaultModelSelectionResolver 完全一致。
+被修改，因此不能在启动时把它们冻进 resolver。本类每次 resolve 时现读这三个来源，
+再交给 default_selection_resolver.resolve_selection（含 catalog 校验、无 fallback）。
+
+ADR-0028：解析语义是一个纯函数，本类只负责「现读哪三个来源」。早先它每次 resolve
+都新建一个 DefaultModelSelectionResolver 再委托过去——两个类一套语义，加一个只有
+它们两个实现的抽象基类。
 """
 
 from __future__ import annotations
@@ -15,9 +18,11 @@ from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.gateway.catalog import ModelCatalogService
 from forgecli.application.llm.gateway.default_selection_resolver import (
-    DefaultModelSelectionResolver,
+    resolve_selection,
 )
-from forgecli.application.llm.gateway.selection_resolver import ModelSelectionResolver
+from forgecli.application.llm.gateway.selection_resolver import (
+    ModelSelectionResolver,
+)
 from forgecli.application.llm.thinking_runtime import (
     ThinkingOverlayCatalog,
     ThinkingRuntimeState,
@@ -55,13 +60,11 @@ class ConfigBackedSelectionResolver(ModelSelectionResolver):
         catalog: ModelCatalogService = build_catalog(self._llm.config())
         if self._thinking_state is not None:
             catalog = ThinkingOverlayCatalog(catalog, self._thinking_state)
-        delegate = DefaultModelSelectionResolver(
-            catalog,
+        return resolve_selection(
+            selection,
+            catalog=catalog,
             current_model=self._config.effective().default_model,
             overrides=self._load_overrides(),
-        )
-        return delegate.resolve(
-            selection,
             origin=origin,
             required_capabilities=required_capabilities,
             min_context_window=min_context_window,

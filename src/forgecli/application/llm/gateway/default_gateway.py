@@ -24,7 +24,7 @@ raw_metadata（credential_retries / transport_retries / wait_retries）。
 mark_failed（401/429 冷却）或引用本身消失（配置/解析层面）时变化。
 
 可观测性（ADR-0012 §9）：complete 返回、stream 收尾 chunk、错误抛出三个位置
-统一经 GatewayObserver 上报安全摘要样本；默认装配进程内聚合，无 IO。
+统一经 InProcessGatewayMetrics 上报安全摘要样本；进程内聚合，无 IO。
 
 边界：网关不直接写 events / state / usage 文件；usage 随 ModelResponse 返回，
 由 AgentTurnService 经 UsageMeter 转草稿后落盘（§11.1）。resolver 为必备协作件
@@ -39,8 +39,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, replace
 
 from forgecli.application.llm.gateway.cache import (
-    LlmCacheController,
-    NoopLlmCacheController,
+    InMemoryResponseCache,
     structured_schema_digest,
 )
 from forgecli.application.llm.gateway.credentials import CredentialPool
@@ -57,15 +56,9 @@ from forgecli.application.llm.gateway.errors import (
     ModelUnavailableError,
 )
 from forgecli.application.llm.gateway.gateway import LlmGateway
-from forgecli.application.llm.gateway.governance import (
-    BudgetGuard,
-    NoopBudgetGuard,
-    NoopProviderHealthRegistry,
-    ProviderHealthRegistry,
-)
+from forgecli.application.llm.gateway.governance import SlidingWindowHealthRegistry
 from forgecli.application.llm.gateway.observability import (
     GatewayCallSample,
-    GatewayObserver,
     InProcessGatewayMetrics,
 )
 from forgecli.application.llm.gateway.provider import (
@@ -78,12 +71,12 @@ from forgecli.application.llm.gateway.provider_settings import (
     ProviderRuntimeSettings,
     ProviderSettingsSource,
 )
-from forgecli.application.llm.gateway.selection_resolver import ModelSelectionResolver
+from forgecli.application.llm.gateway.selection_resolver import (
+    ModelSelectionResolver,
+)
 from forgecli.application.llm.gateway.token_estimator import (
     ApproximateTokenEstimator,
-    TokenEstimator,
 )
-from forgecli.application.llm.gateway.tokenizer_registry import TokenizerRegistry
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.credentials import Credential
 from forgecli.domain.model.model_ref import ModelRef
@@ -136,14 +129,12 @@ class DefaultLlmGateway(LlmGateway):
         resolver: ModelSelectionResolver,
         timer: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
-        token_estimator: TokenEstimator | None = None,
-        tokenizer_registry: TokenizerRegistry | None = None,
+        token_estimator: ApproximateTokenEstimator | None = None,
         settings_source: ProviderSettingsSource | None = None,
         credential_pool: CredentialPool | None = None,
-        health_registry: ProviderHealthRegistry | None = None,
-        budget_guard: BudgetGuard | None = None,
-        cache: LlmCacheController | None = None,
-        observer: GatewayObserver | None = None,
+        health_registry: SlidingWindowHealthRegistry | None = None,
+        cache: InMemoryResponseCache | None = None,
+        observer: InProcessGatewayMetrics | None = None,
         structured_retry_limit: int = 1,
     ) -> None:
         self._registry = registry
@@ -156,12 +147,10 @@ class DefaultLlmGateway(LlmGateway):
         self._sleeper = sleeper
         self._estimator = token_estimator or ApproximateTokenEstimator()
         # 精确分词器接入点（ADR-0012 §6）：按已解析 ref 选估算器，无映射回落近似。
-        self._tokenizers = tokenizer_registry
         self._settings_source = settings_source
         self._credential_pool = credential_pool
-        self._health = health_registry or NoopProviderHealthRegistry()
-        self._budget_guard = budget_guard or NoopBudgetGuard()
-        self._cache = cache or NoopLlmCacheController()
+        self._health = health_registry or SlidingWindowHealthRegistry(enabled=False)
+        self._cache = cache or InMemoryResponseCache()
         # 默认装配进程内聚合（ADR-0012 §9）：纯内存无副作用，不设开关。
         self._observer = observer or InProcessGatewayMetrics()
         self._structured_retry_limit = structured_retry_limit
@@ -833,9 +822,6 @@ class DefaultLlmGateway(LlmGateway):
                 model=ref.model,
                 request_id=request.request_id,
             )
-        self._budget_guard.check(
-            request.budget_snapshot, estimated_input_tokens=estimated_input
-        )
         return estimated_input
 
     def _settings(self, provider_id: str) -> ProviderRuntimeSettings:
@@ -989,16 +975,19 @@ class DefaultLlmGateway(LlmGateway):
             and exc.retry_after <= settings.wait_threshold_seconds
         )
 
-    def _estimator_for(self, ref: ModelRef) -> TokenEstimator:
-        """按已解析 ref 取估算器（ADR-0012 §6）；未注入 registry 用默认估算器。"""
-        if self._tokenizers is None:
-            return self._estimator
-        return self._tokenizers.estimator_for(ref)
+    def _estimator_for(self, ref: ModelRef) -> ApproximateTokenEstimator:
+        """取估算器。
+
+        ADR-0028：这里曾经先查一个 TokenizerRegistry（按 provider/model 前缀注册精确
+        分词器），而全库唯一的构造点传的是一个空 registry，没有任何注册方——每次调用
+        都查一张永远为空的表。需要精确分词器时按新 ADR 加回接入点。
+        """
+        return self._estimator
 
     def _estimate_usage(
         self, ref: ModelRef, estimated_input: int, content: str
     ) -> ModelUsage:
-        """供应商未返回 usage 时按 TokenEstimator 估算并标记 estimated（§3.8）。"""
+        """供应商未返回 usage 时按估算器算出并标记 estimated（§3.8）。"""
         output = self._estimator_for(ref).estimate_text(content)
         return ModelUsage(
             input_tokens=estimated_input,
