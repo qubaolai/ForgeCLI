@@ -312,15 +312,31 @@ class WorkspaceMutationCoordinator:
                 removed += 1
         return removed
 
-    def strategy_for(self, plan: ToolPlan) -> SnapshotStrategy:
+    def strategy_for(
+        self, plan: ToolPlan, context: ExecutionContext | None = None
+    ) -> SnapshotStrategy:
         """按计划的目标封闭程度选策略 (ADR-0015 §8).
 
         没有 Overlay 可用时只剩两种可能: 目标可靠就 TARGETED, 不可靠就 FULL. 而 FULL
         建不起来时 auto 不能继续 —— 这一条由 `begin` 抛错来保证.
+
+        **目标封闭还不够, 还得是普通文件.** `_preimage_of` 对目录只存一个元数据哈希
+        (mode + file_identity), 不存内容 —— 于是 `rm -rf src/` 会拿到一个 TARGETED
+        checkpoint, 还原时重建出一个**空目录**, 而 `restore` 照样报告 restored=('src',).
+        这正是 ADR-0015 §10 说的"声称可恢复而实际不可恢复".
+
+        以前这个洞被"删目录必须人工确认"挡着; ADR-0030 让围栏内的删除自动放行之后,
+        它变成一次静默的数据丢失. 所以目标里只要有目录就退到 FULL.
+
+        `context` 缺省 None 是因为要判目录必须看文件系统, 而只想知道"要不要建恢复点"
+        的调用方 (例如预算检查) 没有必要为此准备一份视图. 缺省时按封闭度判, 与旧行为
+        一致.
         """
         if not plan.mutates_workspace:
             return SnapshotStrategy.NONE
         if plan.target_resolution.closed and plan.effects.mutating_targets:
+            if context is not None and _touches_directory(plan, context):
+                return SnapshotStrategy.FULL
             return SnapshotStrategy.TARGETED
         return SnapshotStrategy.FULL
 
@@ -339,7 +355,7 @@ class WorkspaceMutationCoordinator:
         建不起来时抛 RecoveryUnavailableError, 而不是返回一个"其实没保障"的事务 ——
         checkpoint 创建失败时绝不能声称操作可恢复 (ADR-0015 §10).
         """
-        strategy = self.strategy_for(plan)
+        strategy = self.strategy_for(plan, context)
         if strategy is SnapshotStrategy.NONE:
             return None
         if not strategy.available:
@@ -467,6 +483,19 @@ def _walk_files(
                 if len(found) > _MAX_FULL_FILES:
                     break
     return tuple(sorted(found))
+
+
+def _touches_directory(plan: ToolPlan, context: ExecutionContext) -> bool:
+    """计划的改动目标里有没有目录.
+
+    看的是**当前**文件系统: 计划里的路径此刻是不是一个目录. 判不出来 (路径不存在,
+    读不到) 按不是目录处理 —— 那种情况下 preimage 本来也没有内容可存.
+    """
+    for target in plan.effects.mutating_targets:
+        facts = context.filesystem.facts(context.resolve(target))
+        if facts.kind is PathKind.DIRECTORY:
+            return True
+    return False
 
 
 def _object_type(kind: str) -> ObjectType:

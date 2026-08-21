@@ -259,3 +259,72 @@ def test_undo_never_removes_a_created_directory_after_user_added_a_file(
 
     assert preview.conflicted
     assert preview.items[0].action == "skip_conflict"
+
+
+def test_deleting_a_directory_takes_a_full_snapshot_not_a_targeted_one(
+    tmp_path: Path,
+) -> None:
+    """`rm -rf src/` 的目标是封闭的, 但 TARGETED 救不了它.
+
+    2026-08-21 实测发现的数据丢失: `_preimage_of` 对目录只存一个元数据哈希
+    (mode + file_identity), 不存内容. 于是一次 `rm -rf src/` 拿到 TARGETED
+    checkpoint, `restore` 报告 restored=('src',) 并重建出一个**空目录** —— 用户看到
+    "已还原", 文件全没了.
+
+    这个洞以前被"删目录必须人工确认"挡着. ADR-0030 让围栏内的删除自动放行之后, 它
+    变成一次静默的数据丢失, 而围栏对此无能为力 —— 那是工作区内的操作.
+
+    判据是**目标此刻是不是目录**, 不是"命令看起来危不危险".
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("a\n")
+    (tmp_path / "keep.txt").write_text("k\n")
+
+    coordinator = WorkspaceMutationCoordinator(
+        FsRecoveryStore(tmp_path / "store"), policy=RecoveryPolicy()
+    )
+    plan = _plan(
+        frozenset({Capability.WORKSPACE_DELETE}),
+        PlanEffects(delete_paths=(str(tmp_path / "src"),)),
+    )
+    context = _context(tmp_path)
+
+    # 目标是封闭的, 所以不带 context 时仍然判 TARGETED —— 这正是旧行为.
+    assert plan.target_resolution.closed
+    assert coordinator.strategy_for(plan) is SnapshotStrategy.TARGETED
+    # 带上文件系统视图之后看得见它是目录, 退到 FULL.
+    assert coordinator.strategy_for(plan, context) is SnapshotStrategy.FULL
+
+    transaction = coordinator.begin(
+        plan,
+        context,
+        workspace_id="ws",
+        session_id="s",
+        turn_id="t",
+        policy_version="1",
+    )
+    assert transaction is not None
+    protected = {
+        entry.relative_path for entry in transaction.checkpoint.mutations.entries
+    }
+    assert "src/a.py" in protected, "目录里的文件必须逐个进 checkpoint"
+
+
+def test_deleting_a_plain_file_still_uses_the_cheap_targeted_path(
+    tmp_path: Path,
+) -> None:
+    """反向确认: 别为了修目录那条把所有删除都拖进全量快照.
+
+    全量快照实测 5000 文件 403ms, 20000 文件 1.7s (ADR-0030 实测记录). 每删一个文件
+    都付这个代价是不可接受的.
+    """
+    (tmp_path / "a.py").write_text("a\n")
+    coordinator = WorkspaceMutationCoordinator(FsRecoveryStore(tmp_path / "store"))
+    plan = _plan(
+        frozenset({Capability.WORKSPACE_DELETE}),
+        PlanEffects(delete_paths=(str(tmp_path / "a.py"),)),
+    )
+
+    assert coordinator.strategy_for(plan, _context(tmp_path)) is (
+        SnapshotStrategy.TARGETED
+    )
