@@ -189,9 +189,10 @@ class ScanTreeTool(Tool):
         header = f"{root} (深度 {depth}, {len(lines)} 项)"
         body = [header, *lines] if lines else [header, _empty_message(root)]
         if plan.normalized_input.get("truncated"):
-            body.append(
+            body.insert(
+                1,
                 f"[已达 {plan.normalized_input['max_entries']} 项上限, 结构不完整; "
-                "请对更小的 path 再扫一次]"
+                "请对更小的 path 再扫一次]",
             )
         limits = self._governor.limits_for(_SPEC)
         emitted = emit_text(

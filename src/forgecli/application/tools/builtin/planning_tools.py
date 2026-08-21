@@ -24,7 +24,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 
-from forgecli.application.planning import PlanningService, StatusUpdate
+from forgecli.application.planning import (
+    PlanningService,
+    StatusUpdate,
+    is_safe_plan_id,
+)
 from forgecli.application.tools.builtin.base import validate_arguments
 from forgecli.application.tools.tool import Tool, ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
@@ -112,6 +116,9 @@ class _PlanningTool(Tool):
         invalid = validate_arguments(self._SPEC, request.arguments)
         if invalid is not None:
             return invalid
+        semantic_error = self._validate_semantics(request.arguments)
+        if semantic_error is not None:
+            return semantic_error
         return ToolPlan(
             plan_id=request.invocation_id,
             tool_name=self._SPEC.name,
@@ -126,6 +133,11 @@ class _PlanningTool(Tool):
             execution_context=context.to_ref(),
             declaration_confidence=DeclarationConfidence.DECLARED,
         )
+
+    def _validate_semantics(
+        self, arguments: Mapping[str, object]
+    ) -> PreparationError | None:
+        return None
 
     def _ok(
         self,
@@ -153,6 +165,18 @@ class PlanReadTool(_PlanningTool):
         "读当前生效计划的正文. 传 plan_id 可以读指定的一份.",
         {"plan_id": {"type": "string"}},
     )
+
+    def _validate_semantics(
+        self, arguments: Mapping[str, object]
+    ) -> PreparationError | None:
+        plan_id = str(arguments.get("plan_id", ""))
+        if plan_id and not is_safe_plan_id(plan_id):
+            return PreparationError(
+                code=PreparationErrorCode.INVALID_INPUT,
+                message="plan_id 只能包含字词字符和连字符，不能包含路径",
+                field_path="plan_id",
+            )
+        return None
 
     def perform(
         self,
@@ -224,6 +248,26 @@ class PlanWriteTool(_PlanningTool):
             "acceptance",
         ),
     )
+
+    def _validate_semantics(
+        self, arguments: Mapping[str, object]
+    ) -> PreparationError | None:
+        plan_id = str(arguments.get("plan_id", ""))
+        if not plan_id:
+            return None
+        if not is_safe_plan_id(plan_id):
+            return PreparationError(
+                code=PreparationErrorCode.INVALID_INPUT,
+                message="plan_id 只能包含字词字符和连字符，不能包含路径",
+                field_path="plan_id",
+            )
+        if self._planning.read_plan(plan_id) is None:
+            return PreparationError(
+                code=PreparationErrorCode.TARGET_NOT_FOUND,
+                message=f"不能修订不存在的计划: {plan_id}",
+                field_path="plan_id",
+            )
+        return None
 
     def perform(
         self,

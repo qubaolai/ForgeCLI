@@ -1,18 +1,20 @@
-"""ExecutionContext: 一次调用被冻结的执行上下文 (ADR-0004 §2 / §4).
+"""ExecutionContext: 一次调用的不可变执行上下文 (ADR-0004 §2 / §4).
 
 冻结的意义在于消除 TOCTOU: prepare 展开目标用的 cwd, 环境和文件系统视图, 必须与真正
 执行时用的是同一份. 上下文一变, 基于旧上下文算出的 ToolPlan 立即作废, 重新走一遍
 prepare 与裁决, 而不是"补一下差异".
 
-环境是**已净化**的快照 (ADR-0014 §4.2 的 allowlist 结果), 不是 os.environ. 工具拿到的
-就是最终会传给子进程的那一份, 中间没有第二次加工.
+环境会复制成不可变、已净化的快照，不是 os.environ。文件系统入口本身只读但不是 OS
+快照；分析实际读取的文件由 ToolPlan 单独绑定并在运行时复核。
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import PurePath
+from types import MappingProxyType
 
 from forgecli.application.workspace.filesystem_view import FileSystemView
 from forgecli.domain.execution.profile import ExecutionProfile
@@ -45,6 +47,11 @@ class ExecutionContext:
     def __post_init__(self) -> None:
         if not self.workspace_roots:
             raise ValueError("ExecutionContext.workspace_roots 不能为空")
+        # frozen dataclass 不会递归冻结 Mapping。保留调用方传入的 dict 会让裁决后还能
+        # 原地改 PATH/HOME，而 plan 里的 environment_hash 不会自动更新。
+        object.__setattr__(
+            self, "environment", MappingProxyType(dict(self.environment))
+        )
 
     @property
     def primary_root(self) -> str:
@@ -65,6 +72,20 @@ class ExecutionContext:
             environment_hash=self.environment_hash,
             filesystem_view_version=self.filesystem.version,
             toolchain_id=self.toolchain_id,
+        )
+
+    def differences(self, expected: ExecutionContextRef) -> tuple[str, ...]:
+        """列出计划上下文与当前执行上下文的漂移项。"""
+        current = self.to_ref()
+        return tuple(
+            name
+            for name in (
+                "cwd",
+                "environment_hash",
+                "filesystem_view_version",
+                "toolchain_id",
+            )
+            if getattr(current, name) != getattr(expected, name)
         )
 
     def scope_of(self, path: str) -> WorkspaceScope:
@@ -109,15 +130,9 @@ class ExecutionContext:
         path = PurePath(raw)
         if not path.is_absolute():
             path = PurePath(self.cwd) / path
-        parts: list[str] = []
-        for part in path.parts:
-            if part == ".":
-                continue
-            if part == ".." and parts and parts[-1] not in ("..", path.anchor):
-                parts.pop()
-                continue
-            parts.append(part)
-        return str(PurePath(*parts)) if parts else self.cwd
+        # normpath 只做字面规范化，不访问文件系统；同时正确处理根目录以上的 `..`、
+        # Windows drive/UNC 和重复分隔符。手写栈容易把 `/../../x` 留成非法形状。
+        return os.path.normpath(str(path))
 
 
 def _widest(scopes: Iterable[WorkspaceScope]) -> WorkspaceScope:

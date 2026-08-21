@@ -41,12 +41,19 @@ from forgecli.domain.planning import (
     TodoStatus,
 )
 
-__all__ = ["ActivePlanning", "PlanningService", "StatusUpdate", "slugify_name"]
+__all__ = [
+    "ActivePlanning",
+    "PlanningService",
+    "StatusUpdate",
+    "is_safe_plan_id",
+    "slugify_name",
+]
 
 _MAX_NAME_LENGTH = 40
 # 目录名里真会出事的是路径分隔符, 控制字符和保留名; 其余一律折成连字符.
 _UNSAFE = re.compile(r"[^\w-]+", re.UNICODE)
 _REPEATED_DASH = re.compile(r"-{2,}")
+_SAFE_PLAN_ID = re.compile(r"^[\w-]{1,60}$", re.UNICODE)
 
 
 def _now_iso() -> str:
@@ -69,6 +76,12 @@ def slugify_name(name: str, *, fallback_prefix: str) -> str:
     if not slug:
         return f"{fallback_prefix}-{secrets.token_hex(3)}"
     return slug
+
+
+def is_safe_plan_id(plan_id: str) -> bool:
+    """plan_id 只能是一个目录段，不能携带任何路径语义。"""
+    normalized = unicodedata.normalize("NFC", plan_id)
+    return normalized == plan_id and _SAFE_PLAN_ID.fullmatch(plan_id) is not None
 
 
 @dataclass(frozen=True)
@@ -172,7 +185,7 @@ class PlanningService:
     def set_active_plan(self, plan_id: str) -> bool:
         """切换活动计划. 计划不存在时返回 False —— 指针指向一份读不到的计划, 下次会话
         开头就会打一条"读不到"的诊断, 而用户根本不知道自己指错了."""
-        if self._store.load_plan(plan_id) is None:
+        if not is_safe_plan_id(plan_id) or self._store.load_plan(plan_id) is None:
             return False
         self._store.save_index(
             replace(self._store.load_index(), active_plan_id=plan_id)
@@ -187,7 +200,7 @@ class PlanningService:
         返回 Markdown 而不是结构体: 模型该看到的与人看到的是同一份 (ADR-0022 §2.1).
         """
         target = plan_id or self._store.load_index().active_plan_id
-        if not target:
+        if not target or not is_safe_plan_id(target):
             return None
         plan = self._store.load_plan(target)
         return render_plan(plan) if plan is not None else None
@@ -215,7 +228,11 @@ class PlanningService:
         """
         now = self._clock()
         index = self._store.load_index()
+        if plan_id and not is_safe_plan_id(plan_id):
+            raise ValueError("plan_id 必须是 1-60 个字词字符或连字符，不能包含路径")
         previous = self._store.load_plan(plan_id) if plan_id else None
+        if plan_id and previous is None:
+            raise ValueError(f"不能修订不存在的计划: {plan_id}")
         document = PlanDocument(
             plan_id=plan_id or self._unique_plan_id(name or title, index),
             revision=(previous.revision + 1) if previous is not None else 1,
@@ -317,12 +334,13 @@ class PlanningService:
         """同名计划加序号, 不覆盖已有的那一份 —— id 是目录名, 撞名等于丢历史."""
         base = slugify_name(name, fallback_prefix="plan")
         taken = {item.plan_id for item in index.plans}
-        if base not in taken:
+        if base not in taken and self._store.load_plan(base) is None:
             return base
         return next(
             f"{base}-{suffix}"
             for suffix in range(2, 1000)
             if f"{base}-{suffix}" not in taken
+            and self._store.load_plan(f"{base}-{suffix}") is None
         )
 
     @staticmethod

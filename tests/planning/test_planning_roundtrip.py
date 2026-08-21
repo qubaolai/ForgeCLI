@@ -95,6 +95,19 @@ def test_a_second_write_under_the_same_id_bumps_the_revision(
     assert second.created_at == first.created_at  # type: ignore[attr-defined]
 
 
+@pytest.mark.parametrize("plan_id", ["../escaped", "/tmp/escaped", "nested/plan"])
+def test_plan_id_can_never_escape_the_plan_store(
+    service: PlanningService, plan_id: str
+) -> None:
+    with pytest.raises(ValueError, match="plan_id"):
+        _write(service, plan_id=plan_id)
+
+
+def test_revision_requires_an_existing_plan(service: PlanningService) -> None:
+    with pytest.raises(ValueError, match="不存在"):
+        _write(service, plan_id="missing-plan")
+
+
 def test_both_revisions_stay_on_disk(service: PlanningService, tmp_path: Path) -> None:
     first = _write(service)
     _write(service, plan_id=first.plan_id)  # type: ignore[attr-defined]

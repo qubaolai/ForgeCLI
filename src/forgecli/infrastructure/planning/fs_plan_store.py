@@ -107,7 +107,9 @@ class FsPlanStore(PlanStore):
     def load_plan(
         self, plan_id: str, revision: int | None = None
     ) -> PlanDocument | None:
-        directory = self._root / plan_id
+        directory = _plan_directory(self._root, plan_id)
+        if directory is None:
+            return None
         target = (
             directory / f"r{revision}.json"
             if revision is not None
@@ -125,7 +127,9 @@ class FsPlanStore(PlanStore):
             return None
 
     def save_plan(self, plan: PlanDocument, rendered: str) -> None:
-        directory = self._root / plan.plan_id
+        directory = _plan_directory(self._root, plan.plan_id)
+        if directory is None:
+            raise PlanStoreError(f"非法 plan_id: {plan.plan_id!r}")
         self._write(
             directory / f"r{plan.revision}.json",
             {
@@ -155,17 +159,25 @@ class FsPlanStore(PlanStore):
         if document is None:
             return None
         try:
-            return _todo_of(document)
+            todo = _todo_of(document)
+            if _safe_component(todo.todo_id) is None:
+                return None
+            if todo.plan_id and _safe_component(todo.plan_id) is None:
+                return None
+            return todo
         except (ValueError, TypeError):
             return None
 
     def save_todo(self, todo: TodoList) -> None:
+        if _safe_component(todo.todo_id) is None:
+            raise PlanStoreError(f"非法 todo_id: {todo.todo_id!r}")
         self._write(self._root / "todo" / "current.json", _todo_document(todo))
 
     def archive_todo(self, todo: TodoList) -> None:
-        target = (
-            self._root / "todo" / "archive" / f"{todo.todo_id}-r{todo.revision}.json"
-        )
+        todo_id = _safe_component(todo.todo_id)
+        if todo_id is None:
+            raise PlanStoreError(f"非法 todo_id: {todo.todo_id!r}")
+        target = self._root / "todo" / "archive" / f"{todo_id}-r{todo.revision}.json"
         self._write(target, _todo_document(todo))
 
     # ---- IO ----
@@ -195,6 +207,22 @@ class FsPlanStore(PlanStore):
 
 
 # ---- 解码 ----
+
+
+def _plan_directory(root: Path, plan_id: str) -> Path | None:
+    """存储层的第二道边界：任何上层遗漏都不能让路径逃出 plans_root。"""
+    component = _safe_component(plan_id)
+    if component is None:
+        return None
+    resolved_root = root.resolve()
+    candidate = (resolved_root / component).resolve()
+    return candidate if candidate.parent == resolved_root else None
+
+
+def _safe_component(value: str) -> str | None:
+    if not value or Path(value).is_absolute() or len(Path(value).parts) != 1:
+        return None
+    return None if value in {".", ".."} else value
 
 
 def _latest_revision(directory: Path) -> Path | None:

@@ -1,8 +1,8 @@
 """基于真实文件系统的只读视图.
 
-version 由构造时的时间戳与工作区根决定: 视图对象一经创建就代表"那一刻的文件系统",
-需要看到新变化的调用方应当创建新视图, 而不是指望同一个视图自己刷新 —— 后者会让
-prepare 展开的目标集合与执行时的实际目标悄悄分叉.
+version 只标识本次 ExecutionContext 使用的观察入口，不伪装成 OS 级快照。每次调用创建
+新实例；分析读取过的脚本和可执行文件由 FileStateBinding 冻结身份与内容，并在 perform
+前重验。glob 等动态集合则在审批后重新 prepare，不能靠一个时间戳声称文件系统已冻结。
 
 realpath 一律解析: 受保护路径判定与目标集合封闭都依赖它, 字符串前缀匹配挡不住符号
 链接与 macOS 的 /private 别名.
@@ -11,6 +11,7 @@ realpath 一律解析: 受保护路径判定与目标集合封闭都依赖它, �
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 from forgecli.application.workspace.filesystem_view import (
@@ -33,7 +34,7 @@ class OsFileSystemView(FileSystemView):
     def facts(self, path: str) -> PathFacts:
         target = Path(path)
         try:
-            stat = target.lstat()
+            link_stat = target.lstat()
         except OSError:
             # 对象还不存在. realpath 仍然要算 —— 只是要靠**已存在的父目录**去算.
             # 早先这里直接回字面路径, 于是工作区里一个 `link -> ~/.ssh` 加上写入
@@ -54,15 +55,22 @@ class OsFileSystemView(FileSystemView):
                 link_target = str(target.readlink())
             except OSError:
                 link_target = None
+        try:
+            # 身份、大小与 mtime 描述实际会被读取/执行的最终对象；链接本身另由
+            # is_symlink/link_target 表达。混用 lstat 元数据和目标内容会让所有符号链接
+            # 可执行文件都看起来像“短读”。
+            object_stat = target.stat()
+        except OSError:
+            object_stat = link_stat
 
         return PathFacts(
             path=path,
             realpath=real,
             kind=_kind_of(target),
-            size=stat.st_size,
-            mtime_ns=stat.st_mtime_ns,
-            file_identity=f"{stat.st_dev}:{stat.st_ino}",
-            mode=stat.st_mode,
+            size=object_stat.st_size,
+            mtime_ns=object_stat.st_mtime_ns,
+            file_identity=f"{object_stat.st_dev}:{object_stat.st_ino}",
+            mode=object_stat.st_mode,
             is_symlink=is_symlink,
             link_target=link_target,
         )
@@ -85,16 +93,19 @@ class OsFileSystemView(FileSystemView):
         except OSError:
             return ()
 
-    def expand_glob(self, pattern: str, *, root: str) -> tuple[str, ...]:
+    def expand_glob(
+        self, pattern: str, *, root: str, max_results: int | None = None
+    ) -> tuple[str, ...]:
         base = Path(root)
         candidate = Path(pattern)
         if candidate.is_absolute():
             # 绝对 glob: 从根锚点展开, 保留用户写的那一段作为 pattern.
             anchor = Path(candidate.anchor)
             relative = candidate.relative_to(anchor)
-            return tuple(sorted(str(item) for item in anchor.glob(str(relative))))
+            iterator = anchor.glob(str(relative))
+            return _bounded_paths(iterator, max_results)
         try:
-            return tuple(sorted(str(item) for item in base.glob(pattern)))
+            return _bounded_paths(base.glob(pattern), max_results)
         except (OSError, ValueError):
             return ()
 
@@ -109,6 +120,18 @@ def _resolved_parent(target: Path) -> str:
         return str(target.resolve(strict=False))
     except OSError:
         return str(target)
+
+
+def _bounded_paths(paths: Iterable[Path], max_results: int | None) -> tuple[str, ...]:
+    limit = max_results if max_results is not None and max_results >= 0 else None
+    if limit == 0:
+        return ()
+    collected: list[str] = []
+    for item in paths:
+        collected.append(str(item))
+        if limit is not None and len(collected) >= limit:
+            break
+    return tuple(sorted(collected))
 
 
 def _kind_of(target: Path) -> PathKind:

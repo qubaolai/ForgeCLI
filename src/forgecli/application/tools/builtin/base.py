@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import NamedTuple
 
 from forgecli.application.tools.artifact_store import ArtifactStore
@@ -16,6 +17,7 @@ from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.application.workspace.filesystem_view import PathFacts, PathKind
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.errors import PreparationError, PreparationErrorCode
+from forgecli.domain.tool.hashing import digest
 from forgecli.domain.tool.plan import WorkspaceScope
 from forgecli.domain.tool.result import ArtifactRef, ContentPart
 from forgecli.domain.tool.spec import ToolSpec
@@ -31,6 +33,7 @@ __all__ = [
     "resolve_executable",
     "resolve_target",
     "validate_arguments",
+    "path_state_token",
 ]
 
 
@@ -88,10 +91,16 @@ def filter_globbed(
     include_ignored 之外的另一条逃生通道.
     """
     kept: list[str] = []
-    prefix = root.rstrip("/") + "/"
+    normalized_root = root.replace("\\", "/").rstrip("/")
+    prefix = normalized_root + "/"
     for path in matches:
-        relative = path[len(prefix) :] if path.startswith(prefix) else path
-        segments = relative.split("/")
+        normalized_path = path.replace("\\", "/")
+        relative = (
+            normalized_path[len(prefix) :]
+            if normalized_path.startswith(prefix)
+            else normalized_path
+        )
+        segments = tuple(part for part in relative.split("/") if part)
         if depth is not None and len(segments) > depth:
             continue
         if not include_ignored and any(part in IGNORED_SEGMENTS for part in segments):
@@ -110,6 +119,27 @@ def validate_arguments(
     return PreparationError(
         code=PreparationErrorCode.INVALID_INPUT,
         message="; ".join(errors[:5]),
+    )
+
+
+def path_state_token(facts: PathFacts) -> str:
+    """生成执行前可复核的路径状态令牌。
+
+    工具计划与实际写入之间可能隔着审批。只记路径不够：期间文件可能已被用户或另一个
+    进程替换。令牌故意只含可稳定序列化的事实，perform 必须在副作用前重新读取并比较。
+    """
+    return digest(
+        {
+            "exists": facts.exists,
+            "realpath": facts.realpath,
+            "kind": facts.kind.value,
+            "is_symlink": facts.is_symlink,
+            "link_target": facts.link_target,
+            "file_identity": facts.file_identity,
+            "size": facts.size,
+            "mtime_ns": facts.mtime_ns,
+            "mode": facts.mode,
+        }
     )
 
 
@@ -212,8 +242,10 @@ def emit_text(
             (),
             total,
         )
-    stored = text[: limits.max_artifact_bytes]
+    stored, artifact_truncated = _utf8_prefix(text, limits.max_artifact_bytes)
     ref = artifacts.write(invocation_id=invocation_id, name=artifact_name, data=stored)
+    if artifact_truncated:
+        ref = replace(ref, truncated=True)
     return EmittedText(
         (
             ContentPart(
@@ -226,6 +258,13 @@ def emit_text(
         (ref,),
         total,
     )
+
+
+def _utf8_prefix(text: str, byte_limit: int) -> tuple[str, bool]:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= byte_limit:
+        return text, False
+    return encoded[:byte_limit].decode("utf-8", errors="ignore"), True
 
 
 def joined(lines: Sequence[str]) -> str:

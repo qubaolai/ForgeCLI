@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from forgecli.application.tools.builtin import (
+    CreateDirectoryTool,
     CreateFileTool,
     DeleteTool,
     EditFileTool,
@@ -23,6 +24,7 @@ from forgecli.application.tools.tool import ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.tool.errors import PreparationError
 from forgecli.domain.tool.plan import TargetResolution, ToolPlan
+from forgecli.domain.tool.result import ToolResultStatus
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
 from support.fakes import PROFILE
 
@@ -58,6 +60,39 @@ def _prepare(tool: object, workspace: Path, **arguments: object):  # type: ignor
 
 def _writer(path: str, content: str) -> None:
     Path(path).write_text(content, "utf-8")
+
+
+# ---- fs.create_file ----
+
+
+def test_creating_a_directory_declares_exactly_that_directory(workspace: Path) -> None:
+    plan = _prepare(CreateDirectoryTool(lambda _path: None), workspace, path="src")
+
+    assert isinstance(plan, ToolPlan)
+    assert plan.effects.write_paths == (str(workspace / "src"),)
+
+
+def test_creating_a_directory_requires_its_parent(workspace: Path) -> None:
+    error = _prepare(
+        CreateDirectoryTool(lambda _path: None), workspace, path="missing/src"
+    )
+
+    assert isinstance(error, PreparationError)
+    assert "父目录" in error.message
+
+
+def test_directory_creation_refuses_a_competing_target(workspace: Path) -> None:
+    made: list[str] = []
+    tool = CreateDirectoryTool(made.append)
+    plan = _prepare(tool, workspace, path="src")
+    assert isinstance(plan, ToolPlan)
+    (workspace / "src").mkdir()
+
+    result = tool.perform(plan, _context(workspace))
+
+    assert result.status is ToolResultStatus.TOOL_ERROR
+    assert result.workspace_mutated is False
+    assert made == []
 
 
 # ---- fs.create_file ----
@@ -230,6 +265,65 @@ def test_the_plan_declares_the_write_target(workspace: Path) -> None:
     assert plan.effects.write_paths == (str((workspace / "a.py").resolve()),)
 
 
+def test_edit_refuses_a_file_larger_than_the_complete_read_limit(
+    workspace: Path,
+) -> None:
+    target = workspace / "large.txt"
+    target.write_bytes(b"head\n" + b"x" * (4 * 1024 * 1024))
+
+    error = _prepare(
+        _write_tool(), workspace, path="large.txt", old_string="head", new_string="tail"
+    )
+
+    assert isinstance(error, PreparationError)
+    assert "残缺前缀" in error.message
+    assert target.read_bytes().endswith(b"x" * 100)
+
+
+def test_edit_refuses_to_apply_a_plan_after_the_file_changed(workspace: Path) -> None:
+    target = workspace / "a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    writes: list[tuple[str, str]] = []
+    tool = EditFileTool(lambda path, body: writes.append((path, body)))
+    plan = _prepare(
+        tool, workspace, path="a.py", old_string="x = 1", new_string="x = 2"
+    )
+    assert isinstance(plan, ToolPlan)
+    target.write_text("user change\n", encoding="utf-8")
+
+    result = tool.perform(plan, _context(workspace))
+
+    assert result.status is ToolResultStatus.TOOL_ERROR
+    assert result.error is not None and result.error.code == "target_changed"
+    assert writes == []
+    assert target.read_text(encoding="utf-8") == "user change\n"
+
+
+def test_create_requires_an_existing_parent_directory(workspace: Path) -> None:
+    error = _prepare(
+        CreateFileTool(_writer), workspace, path="missing/a.py", content="x\n"
+    )
+
+    assert isinstance(error, PreparationError)
+    assert "父目录" in error.message
+
+
+def test_mutation_tools_reject_symlinks(workspace: Path) -> None:
+    target = workspace / "target.py"
+    target.write_text("x\n", encoding="utf-8")
+    link = workspace / "link.py"
+    link.symlink_to(target)
+
+    edit = _prepare(
+        _write_tool(), workspace, path="link.py", old_string="x", new_string="y"
+    )
+    delete = _prepare(_delete_tool([]), workspace, path="link.py")
+
+    assert isinstance(edit, PreparationError)
+    assert isinstance(delete, PreparationError)
+    assert target.read_text(encoding="utf-8") == "x\n"
+
+
 # ---- fs.delete ----
 
 
@@ -259,7 +353,7 @@ def test_a_non_empty_directory_needs_an_explicit_recursive_flag(
 
     assert isinstance(error, PreparationError)
     assert "recursive=true" in error.message
-    assert "1 个文件" in error.message
+    assert "1 个对象" in error.message
 
 
 def test_a_recursive_delete_expands_to_every_file(workspace: Path) -> None:
@@ -271,8 +365,10 @@ def test_a_recursive_delete_expands_to_every_file(workspace: Path) -> None:
     plan = _prepare(_delete_tool([]), workspace, path="pkg", recursive=True)
 
     assert isinstance(plan, ToolPlan)
-    # 目标是逐个文件而不是一个目录名: 恢复层按路径存 preimage, 审批界面按路径列清单.
+    # 目录（包括空目录）也必须记录，否则 undo 只能还原文件，不能还原目录结构。
     assert plan.effects.delete_paths == (
+        str(tree.resolve()),
+        str((tree / "sub").resolve()),
         str((tree / "a.py").resolve()),
         str((tree / "sub" / "b.py").resolve()),
     )
@@ -303,6 +399,21 @@ def test_an_empty_directory_needs_no_flag(workspace: Path) -> None:
     (workspace / "empty").mkdir()
     plan = _prepare(_delete_tool([]), workspace, path="empty")
     assert isinstance(plan, ToolPlan)
+    assert plan.effects.delete_paths == (str((workspace / "empty").resolve()),)
+
+
+def test_recursive_delete_rejects_a_symlink_inside_the_tree(workspace: Path) -> None:
+    tree = workspace / "pkg"
+    tree.mkdir()
+    outside = workspace / "outside.txt"
+    outside.write_text("keep", encoding="utf-8")
+    (tree / "link").symlink_to(outside)
+
+    error = _prepare(_delete_tool([]), workspace, path="pkg", recursive=True)
+
+    assert isinstance(error, PreparationError)
+    assert "符号链接" in error.message
+    assert outside.read_text(encoding="utf-8") == "keep"
 
 
 def test_deleting_a_missing_path_is_rejected(workspace: Path) -> None:

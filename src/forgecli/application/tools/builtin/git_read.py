@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
@@ -57,6 +59,11 @@ class _ReadOnlyForm:
     入口": `git diff --ext-diff` / `--textconv` 会跑外部程序, `git diff --output=F`
     会写文件, `git -c core.pager=...` 能指定任意命令. 它们不在任何白名单里, 因此自动
     被拒 —— 这正是白名单的意义.
+
+    **口径必须与 domain/security/shell/commands.py 的 GIT_READ_ONLY_SUBCOMMANDS 一致.**
+    两处是同一类知识的两份, 但分属 tools 与 security, check_arch.py 禁止互相 import
+    (ADR-0004 §2), 因此只能靠这条交叉注释绑住. 这里更严 (还要管选项形状), 那边只回答
+    "这个子命令读还是写" —— 允许这里更严, 不允许那边更严.
     """
 
     flags: frozenset[str] = frozenset()
@@ -182,10 +189,10 @@ _READ_ONLY_FORMS: dict[str, _ReadOnlyForm] = {
             "--show-current",
         },
     ),
-    # `add` / `set-url` / `remove` 都写 .git/config, 所以只认 show 与 get-url.
+    # `show` 可能访问网络并调用凭证帮助器；只保留纯本地的 get-url。
     "remote": _ReadOnlyForm(
         flags=_COMMON_FLAGS | {"-v", "--verbose"},
-        words=frozenset({"show", "get-url"}),
+        words=frozenset({"get-url"}),
         free_positional=True,
     ),
     # 裸 `git stash` 等于 `git stash push`, 会改工作树与 index, 所以必须显式给关键字.
@@ -241,7 +248,7 @@ def _reject_args(subcommand: str, args: list[str]) -> str | None:
 
 _SPEC = ToolSpec(
     name="git.read",
-    version="1",
+    version="2",
     title="读取 git 状态",
     description=(
         "执行只读 git 子命令: status/diff/log/show/blame/branch/remote/stash list."
@@ -250,7 +257,11 @@ _SPEC = ToolSpec(
         "type": "object",
         "properties": {
             "subcommand": {"type": "string"},
-            "args": {"type": "array", "items": {"type": "string"}},
+            "args": {
+                "type": "array",
+                "maxItems": 128,
+                "items": {"type": "string", "maxLength": 4096},
+            },
         },
         "required": ["subcommand"],
         "additionalProperties": False,
@@ -343,19 +354,21 @@ class GitReadTool(Tool):
             CommandRequest(
                 argv=(
                     str(plan.normalized_input["executable"]),
+                    "--no-pager",
+                    "-c",
+                    "core.fsmonitor=false",
                     str(plan.normalized_input["subcommand"]),
+                    *_mandatory_args(str(plan.normalized_input["subcommand"])),
                     *args,
                 ),
                 cwd=context.primary_root,
-                environment=context.environment,
+                environment=_git_environment(context.environment),
                 timeout_seconds=limits.timeout_seconds,
                 max_output_bytes=limits.max_artifact_bytes,
             ),
             cancel,
         )
-        text = (
-            outcome.stdout if outcome.succeeded else f"{outcome.stdout}{outcome.stderr}"
-        )
+        text = _render(outcome.stdout, outcome.stderr, outcome.truncated)
         emitted = emit_text(
             text,
             invocation_id=plan.plan_id,
@@ -399,3 +412,35 @@ def _status_of(timed_out: bool, cancelled: bool) -> ToolResultStatus:
     if cancelled:
         return ToolResultStatus.CANCELLED
     return ToolResultStatus.TOOL_ERROR
+
+
+def _mandatory_args(subcommand: str) -> tuple[str, ...]:
+    if subcommand in {"diff", "show"}:
+        return ("--no-ext-diff", "--no-textconv")
+    if subcommand == "log":
+        return ("--no-ext-diff",)
+    return ()
+
+
+def _git_environment(base: Mapping[str, str]) -> Mapping[str, str]:
+    environment = dict(base)
+    environment.update(
+        {
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_PAGER": "cat",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+        }
+    )
+    return MappingProxyType(environment)
+
+
+def _render(stdout: str, stderr: str, truncated: bool) -> str:
+    body = stdout
+    if stderr:
+        body = f"{body}\n[stderr]\n{stderr}" if body else stderr
+    if truncated:
+        note = "[输出已达到执行器上限，stdout/stderr 与 artifact 都可能不完整]"
+        body = f"{note}\n{body}" if body else note
+    return body

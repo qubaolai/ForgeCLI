@@ -14,6 +14,7 @@ from typing import NamedTuple
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.builtin.base import (
     emit_text,
+    path_state_token,
     read_capability,
     resolve_target,
     validate_arguments,
@@ -32,6 +33,7 @@ from forgecli.domain.tool.plan import (
 )
 from forgecli.domain.tool.result import (
     ContentPart,
+    ToolError,
     ToolMetrics,
     ToolResult,
     ToolResultStatus,
@@ -47,7 +49,7 @@ __all__ = ["ReadFileTool"]
 
 _SPEC = ToolSpec(
     name="fs.read_file",
-    version="2",
+    version="3",
     title="读取文件",
     description=(
         "读取一个文件的文本内容. 默认读全文; "
@@ -60,7 +62,11 @@ _SPEC = ToolSpec(
             "path": {"type": "string"},
             "offset": {"type": "integer", "minimum": 1},
             "limit": {"type": "integer", "minimum": 1},
-            "max_bytes": {"type": "integer", "minimum": 1},
+            "max_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8 * 1024 * 1024,
+            },
         },
         "required": ["path"],
         "additionalProperties": False,
@@ -105,7 +111,14 @@ class ReadFileTool(Tool):
                 field_path="path",
             )
         # 用 realpath 判定归属: 工作区里一个指向 /etc 的软链接, 字面路径看着在区内.
-        scope = context.scope_of(absolute)
+        source_facts = context.filesystem.facts(facts.realpath)
+        if source_facts.kind is not PathKind.FILE:
+            return PreparationError(
+                code=PreparationErrorCode.TARGET_UNREADABLE,
+                message=f"无法读取最终目标: {facts.realpath}",
+                field_path="path",
+            )
+        scope = context.scope_of(facts.realpath)
         return ToolPlan(
             plan_id=request.invocation_id,
             tool_name=_SPEC.name,
@@ -116,6 +129,8 @@ class ReadFileTool(Tool):
                     "offset": request.arguments.get("offset"),
                     "limit": request.arguments.get("limit"),
                     "max_bytes": request.arguments.get("max_bytes"),
+                    "source_size": source_facts.size,
+                    "source_state": path_state_token(source_facts),
                 }
             ),
             capabilities=frozenset({read_capability(scope)}),
@@ -134,13 +149,33 @@ class ReadFileTool(Tool):
     ) -> ToolResult:
         limits = self._governor.limits_for(_SPEC)
         path = str(plan.normalized_input["path"])
+        if path_state_token(context.filesystem.facts(path)) != str(
+            plan.normalized_input["source_state"]
+        ):
+            message = f"文件在计划生成后发生变化，已拒绝读取: {path}"
+            return ToolResult(
+                invocation_id=plan.plan_id,
+                tool_name=_SPEC.name,
+                status=ToolResultStatus.TOOL_ERROR,
+                content_parts=(ContentPart(text=message),),
+                error=ToolError(code="target_changed", message=message, retryable=True),
+            )
         requested = _positive(plan.normalized_input.get("max_bytes"))
         ceiling = min(requested or limits.max_artifact_bytes, limits.max_artifact_bytes)
         text = context.filesystem.read_text(path, max_bytes=ceiling)
+        raw_size = plan.normalized_input.get("source_size", 0)
+        source_size = (
+            raw_size
+            if isinstance(raw_size, int) and not isinstance(raw_size, bool)
+            else 0
+        )
         window = _slice(
             text,
             offset=_positive(plan.normalized_input.get("offset")),
             limit=_positive(plan.normalized_input.get("limit")),
+            complete=source_size <= ceiling,
+            bytes_read=min(ceiling, source_size),
+            source_size=source_size,
         )
         emitted = emit_text(
             window.text,
@@ -172,23 +207,53 @@ def _positive(raw: object) -> int | None:
     return None
 
 
-def _slice(text: str, *, offset: int | None, limit: int | None) -> _Window:
+def _slice(
+    text: str,
+    *,
+    offset: int | None,
+    limit: int | None,
+    complete: bool = True,
+    bytes_read: int = 0,
+    source_size: int = 0,
+) -> _Window:
     """按行取一段, 并如实说明取的是哪一段.
 
     不报位置的话, 模型拿到的是一段没有坐标的文本: 它无从判断上面还有没有内容, 也就
     容易把"这一段里没有"当成"这个文件里没有".
     """
     if offset is None and limit is None:
-        return _Window(text, ())
+        notes = () if complete else (_incomplete_note(bytes_read, source_size),)
+        return _Window(text, notes)
     lines = text.splitlines(keepends=True)
     total = len(lines)
     requested = offset or 1
     if requested > total:
         # 报**请求的** offset 而不是夹紧后的值: 用户和模型要对上的是自己传进来的数,
         # 看到一个自己没写过的行号只会以为工具算错了.
-        note = f"[第 {requested} 行超出文件末尾, 全文共 {total} 行]"
+        note = (
+            f"[第 {requested} 行超出已读取前缀；当前只读到 {total} 行，"
+            "不能据此判断全文末尾]"
+            if not complete
+            else f"[第 {requested} 行超出文件末尾, 全文共 {total} 行]"
+        )
         return _Window("", (ContentPart(text=note),))
     start = requested - 1
     stop = min(start + limit, total) if limit is not None else total
-    note = f"[以上是第 {start + 1}-{stop} 行, 全文共 {total} 行]"
-    return _Window("".join(lines[start:stop]), (ContentPart(text=note),))
+    note = (
+        f"[以上是第 {start + 1}-{stop} 行；仅扫描了文件前缀，全文行数未知]"
+        if not complete
+        else f"[以上是第 {start + 1}-{stop} 行, 全文共 {total} 行]"
+    )
+    result_notes: list[ContentPart] = [ContentPart(text=note)]
+    if not complete:
+        result_notes.append(_incomplete_note(bytes_read, source_size))
+    return _Window("".join(lines[start:stop]), tuple(result_notes))
+
+
+def _incomplete_note(bytes_read: int, source_size: int) -> ContentPart:
+    return ContentPart(
+        text=(
+            f"[内容不完整：读取了前 {bytes_read} 字节，文件共 {source_size} 字节；"
+            "artifact 也只包含这段前缀]"
+        )
+    )

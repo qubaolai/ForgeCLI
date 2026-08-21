@@ -11,9 +11,10 @@ checkpoint 兜底. 有专用工具, 这些事实在 prepare 阶段就是封闭�
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from types import MappingProxyType
 
-from forgecli.application.tools.builtin.base import validate_arguments
+from forgecli.application.tools.builtin.base import path_state_token, validate_arguments
 from forgecli.application.tools.tool import Tool, ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.application.workspace.filesystem_view import PathKind
@@ -43,11 +44,11 @@ __all__ = ["MoveTool"]
 
 _SPEC = ToolSpec(
     name="fs.move",
-    version="1",
+    version="2",
     title="移动或重命名文件",
     description=(
         "把一个工作区文件移动到新路径 (重命名同理). 目标已存在时失败, "
-        "不会静默覆盖. 移动前会记录两端以便撤销."
+        "不会静默覆盖. 目标父目录必须已经存在. 移动前会记录两端以便撤销."
     ),
     input_schema={
         "type": "object",
@@ -100,12 +101,27 @@ class MoveTool(Tool):
                 message=f"只支持移动普通文件: {source}",
                 field_path="source",
             )
-        if context.filesystem.facts(target).exists:
+        if source_facts.is_symlink:
+            return PreparationError(
+                code=PreparationErrorCode.UNSUPPORTED_REQUEST,
+                message=f"fs.move 不跟随也不移动符号链接: {source}",
+                field_path="source",
+            )
+        target_facts = context.filesystem.facts(target)
+        if target_facts.exists:
             # 不静默覆盖: 覆盖是两次写 (删目标 + 写目标), 与"移动"是两回事, 恢复层
             # 存的 preimage 也不一样. 要覆盖请先显式删除.
             return PreparationError(
                 code=PreparationErrorCode.INVALID_INPUT,
                 message=f"目标已存在, 不会覆盖: {target}",
+                field_path="target",
+            )
+        target = target_facts.realpath
+        parent = str(Path(target).parent)
+        if context.filesystem.facts(parent).kind is not PathKind.DIRECTORY:
+            return PreparationError(
+                code=PreparationErrorCode.TARGET_NOT_FOUND,
+                message=f"目标父目录不存在或不是目录: {parent}",
                 field_path="target",
             )
 
@@ -116,7 +132,12 @@ class MoveTool(Tool):
             tool_name=_SPEC.name,
             spec_hash=_SPEC.spec_hash,
             normalized_input=MappingProxyType(
-                {"source": real_source, "target": target}
+                {
+                    "source": real_source,
+                    "target": target,
+                    "source_state": path_state_token(source_facts),
+                    "target_state": path_state_token(target_facts),
+                }
             ),
             capabilities=frozenset({_capability(scope)}),
             effects=PlanEffects(
@@ -136,6 +157,20 @@ class MoveTool(Tool):
     ) -> ToolResult:
         source = str(plan.normalized_input["source"])
         target = str(plan.normalized_input["target"])
+        if path_state_token(context.filesystem.facts(source)) != str(
+            plan.normalized_input["source_state"]
+        ) or path_state_token(context.filesystem.facts(target)) != str(
+            plan.normalized_input["target_state"]
+        ):
+            message = "源或目标在计划生成后发生变化，已拒绝移动"
+            return ToolResult(
+                invocation_id=plan.plan_id,
+                tool_name=_SPEC.name,
+                status=ToolResultStatus.TOOL_ERROR,
+                content_parts=(ContentPart(text=message),),
+                error=ToolError(code="target_changed", message=message, retryable=True),
+                workspace_mutated=False,
+            )
         try:
             self._move(source, target)
         except OSError as exc:
@@ -144,12 +179,14 @@ class MoveTool(Tool):
                 tool_name=_SPEC.name,
                 status=ToolResultStatus.TOOL_ERROR,
                 error=ToolError(code="move_failed", message=str(exc)),
+                workspace_mutated=(False if isinstance(exc, FileExistsError) else None),
             )
         return ToolResult(
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=ToolResultStatus.OK,
             content_parts=(ContentPart(text=f"已移动 {source} -> {target}"),),
+            workspace_mutated=True,
         )
 
     @staticmethod

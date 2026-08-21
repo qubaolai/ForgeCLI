@@ -18,7 +18,7 @@ from forgecli.application.tools.resource_governor import ResourceGovernor
 from forgecli.application.tools.tool import ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.tool.plan import ToolPlan
-from forgecli.domain.tool.result import ToolResult
+from forgecli.domain.tool.result import ToolResult, ToolResultStatus
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
 from support.fakes import PROFILE
 
@@ -96,3 +96,48 @@ def test_offset_alone_reads_to_the_end(workspace: Path) -> None:
     result = _read(workspace, offset=9)
 
     assert result.content_parts[0].text == "line 9\nline 10\n"
+
+
+def test_a_byte_limited_read_explicitly_says_the_artifact_is_incomplete(
+    workspace: Path,
+) -> None:
+    result = _read(workspace, max_bytes=12)
+
+    assert "内容不完整" in result.text
+    assert "artifact" in result.text
+
+
+def test_offset_beyond_a_truncated_prefix_does_not_claim_end_of_file(
+    workspace: Path,
+) -> None:
+    result = _read(workspace, max_bytes=12, offset=9)
+
+    assert "已读取前缀" in result.text
+    assert "不能据此判断全文末尾" in result.text
+
+
+def test_read_refuses_a_file_that_changed_after_prepare(workspace: Path) -> None:
+    tool = ReadFileTool(ResourceGovernor(), NullArtifactStore())
+    context = ExecutionContext(
+        cwd=str(workspace),
+        workspace_roots=(str(workspace),),
+        environment={"PATH": "/usr/bin:/bin"},
+        filesystem=OsFileSystemView(),
+        profile=PROFILE,
+    )
+    plan = tool.prepare(
+        ToolInvocationRequest(
+            invocation_id="inv-changed",
+            tool_name="fs.read_file",
+            arguments={"path": "a.py"},
+            tool_call_id="c-changed",
+        ),
+        context,
+    )
+    assert isinstance(plan, ToolPlan)
+    (workspace / "a.py").write_text("changed\n", encoding="utf-8")
+
+    result = tool.perform(plan, context)
+
+    assert result.status is ToolResultStatus.TOOL_ERROR
+    assert result.error is not None and result.error.code == "target_changed"

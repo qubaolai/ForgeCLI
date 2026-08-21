@@ -24,6 +24,7 @@ from forgecli.domain.security.protected_paths import (
     ProtectedRoot,
 )
 from forgecli.infrastructure.config.paths import config_dir, state_dir
+from forgecli.infrastructure.platform_paths import windows_protected_directories
 
 __all__ = ["build_protected_path_policy"]
 
@@ -259,7 +260,11 @@ def _installed_package_root() -> str:
 
 def _platform_roots() -> list[ProtectedRoot]:
     if os.name == "nt":
-        roots = []
+        roots = [
+            ProtectedRoot(path, ProtectedCategory.PLATFORM_SYSTEM)
+            for path in windows_protected_directories()
+        ]
+        # 环境变量只能扩大保护集合，不能替代上面的 Windows API 结果。
         for variable in _WINDOWS_SYSTEM_VARS:
             value = os.environ.get(variable)
             if value:

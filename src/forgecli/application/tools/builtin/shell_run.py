@@ -91,7 +91,7 @@ _CAPABILITIES = frozenset(
 
 _SPEC = ToolSpec(
     name="shell.run",
-    version="1",
+    version="2",
     title="执行 Shell 命令",
     description="执行一条 Shell 命令. 复合命令, 管道和重定向都支持, 整条命令统一裁决.",
     input_schema={
@@ -99,7 +99,7 @@ _SPEC = ToolSpec(
         "properties": {
             "command": {"type": "string"},
             "shell_kind": {"type": "string", "enum": list(_SHELL_KINDS)},
-            "timeout_seconds": {"type": "number"},
+            "timeout_seconds": {"type": "number", "minimum": 0.1, "maximum": 600},
         },
         "required": ["command"],
         "additionalProperties": False,
@@ -147,7 +147,17 @@ class ShellRunTool(Tool):
                 message="command 不能为空",
                 field_path="command",
             )
-        shell_kind = self._shell_kind(request.arguments.get("shell_kind"), context)
+        shell_kind = self._shell_kind(context)
+        requested_kind = request.arguments.get("shell_kind")
+        if isinstance(requested_kind, str) and requested_kind != shell_kind:
+            return PreparationError(
+                code=PreparationErrorCode.INVALID_INPUT,
+                message=(
+                    f"shell_kind={requested_kind!r} 与当前执行环境 "
+                    f"{shell_kind!r} 不一致"
+                ),
+                field_path="shell_kind",
+            )
         return ToolPlan(
             plan_id=request.invocation_id,
             tool_name=_SPEC.name,
@@ -167,10 +177,7 @@ class ShellRunTool(Tool):
             execution_context=context.to_ref(),
             declaration_confidence=DeclarationConfidence.OPAQUE,
             analysis_subject=ShellSubject(
-                shell_kind=shell_kind,
                 raw_command=command,
-                cwd=context.cwd,
-                env_snapshot_ref=context.environment_hash,
             ),
         )
 
@@ -245,16 +252,9 @@ class ShellRunTool(Tool):
         return (launch.program, *launch.args, str(plan.normalized_input["command"]))
 
     @staticmethod
-    def _shell_kind(raw: object, context: ExecutionContext) -> str:
-        if isinstance(raw, str) and raw in _SHELL_KINDS:
-            return raw
-        # 请求没指定方言时按执行环境的 Shell 选, 不按 POSIX 猜.
-        kind = context.profile.shell_launch.kind
-        if kind == "cmd":
-            return "cmd"
-        if kind in ("pwsh", "powershell"):
-            return "powershell"
-        return "posix"
+    def _shell_kind(context: ExecutionContext) -> str:
+        # 分析方言必须由真实执行环境决定，不能由模型选择。
+        return context.profile.shell_launch.dialect
 
 
 def _timeout_of(plan: ToolPlan) -> float | None:
@@ -286,6 +286,9 @@ def _render(outcome: CommandOutcome) -> str:
     body = outcome.stdout
     if outcome.stderr:
         body = f"{body}\n[stderr]\n{outcome.stderr}" if body else outcome.stderr
+    if outcome.truncated:
+        note = "[输出已达到执行器上限，stdout/stderr 与 artifact 都可能不完整]"
+        body = f"{note}\n{body}" if body else note
     if outcome.exit_code in (0, None):
         return body
     note = f"[退出码 {outcome.exit_code}]"

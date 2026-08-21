@@ -94,6 +94,32 @@ def test_an_illegal_regex_is_rejected_at_prepare(workspace: Path) -> None:
     assert "合法正则" in error.message
 
 
+def test_a_backtracking_regex_is_rejected_before_it_can_block_the_agent(
+    workspace: Path,
+) -> None:
+    tool = SearchTextTool(ResourceGovernor(), NullArtifactStore())
+    context = ExecutionContext(
+        cwd=str(workspace),
+        workspace_roots=(str(workspace),),
+        environment={"PATH": "/usr/bin:/bin"},
+        filesystem=OsFileSystemView(),
+        profile=PROFILE,
+    )
+
+    error = tool.prepare(
+        ToolInvocationRequest(
+            invocation_id="inv-backtrack",
+            tool_name="search.text",
+            arguments={"query": "(a|aa)+$", "regex": True},
+            tool_call_id="c-backtrack",
+        ),
+        context,
+    )
+
+    assert isinstance(error, PreparationError)
+    assert "不可中止的回溯" in error.message
+
+
 def test_context_lines_bring_the_surrounding_code(workspace: Path) -> None:
     output = _run(workspace, query="raise ValueError", context_lines=2)
     assert "2-    if not user:" in output
@@ -176,6 +202,33 @@ def test_the_empty_message_mentions_the_filter(workspace: Path) -> None:
     """空结果要说清"可能是被过滤掉了", 否则模型只会换个 pattern 再搜一次."""
     output = _run(workspace, query="def login", pattern="**/*.kt")
     assert "include_ignored" in output
+
+
+def test_large_file_prefix_never_produces_a_certain_empty_result(
+    workspace: Path,
+) -> None:
+    (workspace / "large.txt").write_text(
+        "x" * (1024 * 1024 + 10) + "needle", encoding="utf-8"
+    )
+
+    output = _run(workspace, query="needle", pattern="**/*.txt")
+
+    assert "结果不完整" in output
+    assert "不能据此断言" in output
+    assert "确定的空结果" not in output
+
+
+def test_search_skips_symlinks_and_reports_that_the_result_is_incomplete(
+    workspace: Path,
+) -> None:
+    outside = workspace.parent / "outside.txt"
+    outside.write_text("secret needle", encoding="utf-8")
+    (workspace / "linked.txt").symlink_to(outside)
+
+    output = _run(workspace, query="needle", pattern="**/*.txt")
+
+    assert "符号链接" in output
+    assert "结果不完整" in output
 
 
 # ---- 进度行的字节数 ----

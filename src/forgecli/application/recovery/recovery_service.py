@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from forgecli.application.recovery.coordinator import RecoveryUnavailableError
+from forgecli.application.recovery.path_state import directory_content_hash
 from forgecli.application.recovery.recovery_store import RecoveryStore
 from forgecli.application.recovery.snapshot_backend import (
     SnapshotHandle,
@@ -29,6 +30,7 @@ from forgecli.domain.recovery.checkpoint import (
 from forgecli.domain.recovery.mutation import (
     ConflictStatus,
     MutationEntry,
+    ObjectType,
     Operation,
 )
 from forgecli.domain.tool.hashing import digest_text
@@ -49,7 +51,11 @@ class RestorePlanItem:
 
     @property
     def applicable(self) -> bool:
-        return self.action in ("restore_content", "delete_created")
+        return self.action in (
+            "restore_content",
+            "restore_directory",
+            "delete_created",
+        )
 
 
 @dataclass(frozen=True)
@@ -85,6 +91,8 @@ class RecoveryService:
         *,
         writer: Callable[[str, bytes], None],
         remover: Callable[[str], None],
+        directory_creator: Callable[[str, int], None] | None = None,
+        mode_setter: Callable[[str, int], None] | None = None,
         snapshots: WorkspaceSnapshotBackend | None = None,
         clock: Callable[[], str] = lambda: "",
     ) -> None:
@@ -92,6 +100,8 @@ class RecoveryService:
         # 真实写盘由调用方注入: 恢复层不自己碰文件系统实现, 便于测试与替换.
         self._write = writer
         self._remove = remover
+        self._create_directory = directory_creator
+        self._set_mode = mode_setter
         # 用整棵工作区快照建立的 checkpoint 要用同一个后端还原.
         self._snapshots = snapshots
         self._clock = clock
@@ -133,7 +143,10 @@ class RecoveryService:
                 continue
             absolute = self._absolute(item.relative_path, context)
             if entry.existed_before:
-                self._restore_content(entry, absolute, checkpoint.workspace_id)
+                if entry.object_type is ObjectType.DIRECTORY:
+                    self._restore_directory(entry, absolute)
+                else:
+                    self._restore_content(entry, absolute, checkpoint.workspace_id)
             else:
                 self._remove(absolute)
             restored.append(item.relative_path)
@@ -225,6 +238,13 @@ class RecoveryService:
                 conflict=ConflictStatus.CLEAN,
                 detail="执行前该对象不存在, 撤销即删除",
             )
+        if entry.object_type is ObjectType.DIRECTORY:
+            return RestorePlanItem(
+                relative_path=entry.relative_path,
+                action="restore_directory",
+                conflict=ConflictStatus.CLEAN,
+                detail="恢复被删除的目录及其权限",
+            )
         if entry.preimage_content_hash is None:
             return RestorePlanItem(
                 relative_path=entry.relative_path,
@@ -247,11 +267,22 @@ class RecoveryService:
             return
         data = self._store.get_blob(workspace_id, entry.preimage_content_hash)
         self._write(absolute, data)
+        if self._set_mode is not None and entry.mode:
+            self._set_mode(absolute, entry.mode)
+
+    def _restore_directory(self, entry: MutationEntry, absolute: str) -> None:
+        if self._create_directory is None:
+            raise RecoveryUnavailableError(
+                f"无法恢复目录 {entry.relative_path}: 未配置目录恢复器"
+            )
+        self._create_directory(absolute, entry.mode)
 
     def _current_hash(self, absolute: str, context: ExecutionContext) -> str | None:
         facts = context.filesystem.facts(absolute)
         if not facts.exists:
             return None
+        if facts.kind.value == "directory":
+            return directory_content_hash(absolute, context)
         return digest_text(context.filesystem.read_text(absolute, max_bytes=_MAX_BYTES))
 
     def _absolute(self, relative: str, context: ExecutionContext) -> str:

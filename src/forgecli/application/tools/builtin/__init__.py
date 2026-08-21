@@ -10,6 +10,7 @@ from forgecli.application.tools.builtin.fs_move import MoveTool
 from forgecli.application.tools.builtin.fs_read_file import ReadFileTool
 from forgecli.application.tools.builtin.fs_scan_tree import ScanTreeTool
 from forgecli.application.tools.builtin.fs_write import (
+    CreateDirectoryTool,
     CreateFileTool,
     DeleteTool,
     EditFileTool,
@@ -27,6 +28,7 @@ from forgecli.application.tools.builtin.shell_run import ShellRunTool
 
 __all__ = [
     "CreateFileTool",
+    "CreateDirectoryTool",
     "DeleteTool",
     "EditFileTool",
     "GitReadTool",

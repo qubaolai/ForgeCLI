@@ -32,13 +32,14 @@ import re
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 
-from forgecli.application.tools.builtin.base import validate_arguments
+from forgecli.application.tools.builtin.base import path_state_token, validate_arguments
 from forgecli.application.tools.builtin.text_edit import Alignment, MatchOutcome, locate
 from forgecli.application.tools.tool import Tool, ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
-from forgecli.application.workspace.filesystem_view import PathKind
+from forgecli.application.workspace.filesystem_view import PathFacts, PathKind
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.errors import PreparationError, PreparationErrorCode
 from forgecli.domain.tool.plan import (
@@ -62,15 +63,37 @@ from forgecli.domain.tool.spec import (
 )
 from forgecli.shared.cancellation import CancelToken
 
-__all__ = ["CreateFileTool", "DeleteTool", "EditFileTool"]
+__all__ = ["CreateDirectoryTool", "CreateFileTool", "DeleteTool", "EditFileTool"]
+
+_CREATE_DIRECTORY_SPEC = ToolSpec(
+    name="fs.create_directory",
+    version="1",
+    title="新建目录",
+    description=(
+        "新建一个空目录. 目标必须尚不存在，父目录必须已经存在；"
+        "创建多层目录时从外到内逐层调用."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+        "additionalProperties": False,
+    },
+    output_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+    declared_capabilities=frozenset(
+        {Capability.WORKSPACE_WRITE, Capability.EXTERNAL_WRITE}
+    ),
+    target_declaration_ability=TargetDeclarationAbility.STATIC,
+    default_timeout_seconds=10.0,
+)
 
 _CREATE_SPEC = ToolSpec(
     name="fs.create_file",
-    version="1",
+    version="2",
     title="新建文件",
     description=(
         "新建一个文件并写入完整内容. 目标必须尚不存在 —— 已存在时调用失败, "
-        "修改已有文件请用 fs.edit_file. 父目录会自动创建."
+        "修改已有文件请用 fs.edit_file. 父目录必须已经存在."
     ),
     input_schema={
         "type": "object",
@@ -91,7 +114,7 @@ _CREATE_SPEC = ToolSpec(
 
 _EDIT_SPEC = ToolSpec(
     name="fs.edit_file",
-    version="1",
+    version="2",
     title="精确替换文件片段",
     description=(
         "把已有文件里的 old_string 替换成 new_string. "
@@ -124,7 +147,7 @@ _EDIT_SPEC = ToolSpec(
 
 _DELETE_SPEC = ToolSpec(
     name="fs.delete",
-    version="2",
+    version="3",
     title="删除文件或目录",
     description=(
         "删除一个工作区文件或目录. 删除前会保存原内容以便撤销. "
@@ -168,7 +191,7 @@ class _WriteTool(Tool):
         arguments: Mapping[str, object],
         *,
         target: str,
-        exists: bool,
+        facts: PathFacts,
         context: ExecutionContext,
     ) -> _Edit | PreparationError:
         """这次调用最终要写进文件的完整内容, 或者一个说明写不成的错误."""
@@ -188,16 +211,31 @@ class _WriteTool(Tool):
             )
         absolute = context.resolve(raw)
         facts = context.filesystem.facts(absolute)
+        if facts.is_symlink:
+            return PreparationError(
+                code=PreparationErrorCode.UNSUPPORTED_REQUEST,
+                message=f"文件变更工具不跟随也不修改符号链接: {absolute}",
+                field_path="path",
+            )
         if facts.exists and facts.kind is not PathKind.FILE:
             return PreparationError(
                 code=PreparationErrorCode.TARGET_UNREADABLE,
                 message=f"目标已存在且不是普通文件: {absolute}",
                 field_path="path",
             )
-        # 不存在的目标用字面绝对路径: realpath 对不存在的对象没有意义.
-        target = facts.realpath if facts.exists else absolute
+        # 不存在对象的 realpath 仍会解析已经存在的祖先符号链接；写入必须绑定最终位置。
+        target = facts.realpath
+        if not facts.exists:
+            parent = str(Path(target).parent)
+            parent_facts = context.filesystem.facts(parent)
+            if parent_facts.kind is not PathKind.DIRECTORY:
+                return PreparationError(
+                    code=PreparationErrorCode.TARGET_NOT_FOUND,
+                    message=f"父目录不存在或不是目录: {parent}",
+                    field_path="path",
+                )
         edit = self._content_for(
-            request.arguments, target=target, exists=facts.exists, context=context
+            request.arguments, target=target, facts=facts, context=context
         )
         if isinstance(edit, PreparationError):
             return edit
@@ -210,7 +248,12 @@ class _WriteTool(Tool):
             # 的是"文件会变成什么样", 而不是一段还要再解释一次的替换意图; 执行阶段也
             # 不必重读文件, 少一个 TOCTOU 窗口.
             normalized_input=MappingProxyType(
-                {"path": target, "content": edit.content, "note": edit.note}
+                {
+                    "path": target,
+                    "content": edit.content,
+                    "note": edit.note,
+                    "expected_state": path_state_token(facts),
+                }
             ),
             # 审批界面要逐字展示"文件会变成什么样". 内容本身已由 normalized_input 绑定,
             # 这里只是把它交出来 —— 工具层不能依赖安全模块, 所以要走一个中立结构.
@@ -231,6 +274,10 @@ class _WriteTool(Tool):
     ) -> ToolResult:
         path = str(plan.normalized_input["path"])
         content = str(plan.normalized_input["content"])
+        if path_state_token(context.filesystem.facts(path)) != str(
+            plan.normalized_input["expected_state"]
+        ):
+            return _changed_result(plan, self.spec.name, path)
         try:
             self._write(path, content)
         except OSError as exc:
@@ -239,6 +286,12 @@ class _WriteTool(Tool):
                 tool_name=self.spec.name,
                 status=ToolResultStatus.TOOL_ERROR,
                 error=ToolError(code="write_failed", message=str(exc)),
+                workspace_mutated=(
+                    False
+                    if self.spec.name == "fs.create_file"
+                    and isinstance(exc, FileExistsError)
+                    else None
+                ),
             )
         # 做过容差的话必须说出来: 模型手里那份 old_string 与文件并不一致, 不告诉它,
         # 它下一次还会照着自己那份去拼, 而下一次未必还落在容差范围内.
@@ -254,6 +307,7 @@ class _WriteTool(Tool):
             # 报**写进去了多少**而不是回给模型的那几个字. 漏填的话进度行上每次写文件都
             # 显示"0 字节", 而这条线正是用户判断这次调用到底干了什么的唯一依据.
             metrics=ToolMetrics(bytes_out=len(content.encode("utf-8"))),
+            workspace_mutated=True,
         )
 
 
@@ -269,10 +323,10 @@ class CreateFileTool(_WriteTool):
         arguments: Mapping[str, object],
         *,
         target: str,
-        exists: bool,
+        facts: PathFacts,
         context: ExecutionContext,
     ) -> _Edit | PreparationError:
-        if exists:
+        if facts.exists:
             # 不允许覆盖已存在的文件. 允许了, 这个工具就成了"全文覆盖"的后门 —— 模型
             # 只要没读全文件就能把它整段换掉, 而丢掉的那部分没人看得见.
             return PreparationError(
@@ -299,10 +353,102 @@ class EditFileTool(_WriteTool):
         arguments: Mapping[str, object],
         *,
         target: str,
-        exists: bool,
+        facts: PathFacts,
         context: ExecutionContext,
     ) -> _Edit | PreparationError:
-        return _apply_replacement(arguments, target, exists, context)
+        if facts.size > _MAX_SOURCE_BYTES:
+            return PreparationError(
+                code=PreparationErrorCode.RESOURCE_LIMIT,
+                message=(
+                    f"文件超过 fs.edit_file 的完整读取上限 "
+                    f"({facts.size} > {_MAX_SOURCE_BYTES} 字节)，拒绝基于残缺前缀改写"
+                ),
+                field_path="path",
+            )
+        return _apply_replacement(arguments, target, facts.exists, context)
+
+
+class CreateDirectoryTool(Tool):
+    def __init__(self, maker: Callable[[str], None]) -> None:
+        self._make = maker
+
+    @property
+    def spec(self) -> ToolSpec:
+        return _CREATE_DIRECTORY_SPEC
+
+    def prepare(
+        self, request: ToolInvocationRequest, context: ExecutionContext
+    ) -> ToolPlan | PreparationError:
+        invalid = validate_arguments(self.spec, request.arguments)
+        if invalid is not None:
+            return invalid
+        raw = request.arguments.get("path")
+        if not isinstance(raw, str) or not raw.strip():
+            return PreparationError(
+                code=PreparationErrorCode.INVALID_INPUT,
+                message="path 必须是非空字符串",
+                field_path="path",
+            )
+        absolute = context.resolve(raw)
+        facts = context.filesystem.facts(absolute)
+        if facts.exists:
+            return PreparationError(
+                code=PreparationErrorCode.INVALID_INPUT,
+                message=f"目标已存在: {absolute}",
+                field_path="path",
+            )
+        target = facts.realpath
+        parent = str(Path(target).parent)
+        if context.filesystem.facts(parent).kind is not PathKind.DIRECTORY:
+            return PreparationError(
+                code=PreparationErrorCode.TARGET_NOT_FOUND,
+                message=f"父目录不存在或不是目录: {parent}",
+                field_path="path",
+            )
+        scope = context.scope_for_write(target)
+        return ToolPlan(
+            plan_id=request.invocation_id,
+            tool_name=self.spec.name,
+            spec_hash=self.spec.spec_hash,
+            normalized_input=MappingProxyType(
+                {"path": target, "expected_state": path_state_token(facts)}
+            ),
+            capabilities=frozenset({_write_capability(scope)}),
+            effects=PlanEffects(write_paths=(target,)),
+            target_resolution=TargetResolution.STATIC,
+            workspace_scope=scope,
+            execution_context=context.to_ref(),
+            declaration_confidence=DeclarationConfidence.DECLARED,
+        )
+
+    def perform(
+        self,
+        plan: ToolPlan,
+        context: ExecutionContext,
+        cancel: CancelToken | None = None,
+    ) -> ToolResult:
+        path = str(plan.normalized_input["path"])
+        if path_state_token(context.filesystem.facts(path)) != str(
+            plan.normalized_input["expected_state"]
+        ):
+            return _changed_result(plan, self.spec.name, path)
+        try:
+            self._make(path)
+        except OSError as exc:
+            return ToolResult(
+                invocation_id=plan.plan_id,
+                tool_name=self.spec.name,
+                status=ToolResultStatus.TOOL_ERROR,
+                error=ToolError(code="mkdir_failed", message=str(exc)),
+                workspace_mutated=(False if isinstance(exc, FileExistsError) else None),
+            )
+        return ToolResult(
+            invocation_id=plan.plan_id,
+            tool_name=self.spec.name,
+            status=ToolResultStatus.OK,
+            content_parts=(ContentPart(text=f"已创建目录 {path}"),),
+            workspace_mutated=True,
+        )
 
 
 class DeleteTool(Tool):
@@ -334,6 +480,12 @@ class DeleteTool(Tool):
                 message=f"路径不存在: {absolute}",
                 field_path="path",
             )
+        if facts.is_symlink:
+            return PreparationError(
+                code=PreparationErrorCode.UNSUPPORTED_REQUEST,
+                message=f"fs.delete 不跟随也不删除符号链接: {absolute}",
+                field_path="path",
+            )
         if facts.kind is PathKind.OTHER:
             # 设备, FIFO, socket: 删它们的后果与删普通文件完全不同, 不在本工具范围内.
             return PreparationError(
@@ -344,14 +496,17 @@ class DeleteTool(Tool):
 
         recursive = bool(request.arguments.get("recursive", False))
         if facts.kind is PathKind.DIRECTORY:
-            targets = _files_under(context, facts.realpath)
-            if targets and not recursive:
+            expanded = _delete_targets(context, facts.realpath)
+            if isinstance(expanded, PreparationError):
+                return expanded
+            targets = expanded
+            if len(targets) > 1 and not recursive:
                 # 目标集合封闭了才知道要删多少. 不给显式 recursive 就停在这里, 而不是
                 # 让一个写错的路径把整棵树带走.
                 return PreparationError(
                     code=PreparationErrorCode.INVALID_INPUT,
                     message=(
-                        f"{facts.realpath} 是非空目录 ({len(targets)} 个文件), "
+                        f"{facts.realpath} 是非空目录 ({len(targets) - 1} 个对象), "
                         "删除它需要显式传 recursive=true"
                     ),
                     field_path="recursive",
@@ -359,8 +514,7 @@ class DeleteTool(Tool):
         else:
             targets = (facts.realpath,)
 
-        # 目标集合是**逐个文件**而不是那一个目录路径: 恢复层按路径存 preimage, 审批
-        # 界面按路径列清单. 只报一个目录名, 两边都不知道到底动了什么.
+        # 文件与目录都逐项声明：空目录同样是需要恢复的用户状态。
         scope = context.scope_for_write_all(targets or (facts.realpath,))
         return ToolPlan(
             plan_id=request.invocation_id,
@@ -370,7 +524,11 @@ class DeleteTool(Tool):
                 {
                     "path": facts.realpath,
                     "directory": facts.kind is PathKind.DIRECTORY,
-                    "files": targets,
+                    "targets": targets,
+                    "expected_states": tuple(
+                        (target, path_state_token(context.filesystem.facts(target)))
+                        for target in targets
+                    ),
                 }
             ),
             capabilities=frozenset({_delete_capability(scope)}),
@@ -393,6 +551,14 @@ class DeleteTool(Tool):
         cancel: CancelToken | None = None,
     ) -> ToolResult:
         path = str(plan.normalized_input["path"])
+        expected = plan.normalized_input.get("expected_states", ())
+        if isinstance(expected, tuple):
+            for item in expected:
+                if not isinstance(item, tuple) or len(item) != 2:
+                    return _changed_result(plan, _DELETE_SPEC.name, path)
+                target, token = str(item[0]), str(item[1])
+                if path_state_token(context.filesystem.facts(target)) != token:
+                    return _changed_result(plan, _DELETE_SPEC.name, target)
         try:
             self._remove(path)
         except OSError as exc:
@@ -407,6 +573,7 @@ class DeleteTool(Tool):
             tool_name=_DELETE_SPEC.name,
             status=ToolResultStatus.OK,
             content_parts=(ContentPart(text=f"已删除 {path}"),),
+            workspace_mutated=True,
         )
 
 
@@ -621,13 +788,16 @@ def _shares_head(line: str, first: str) -> bool:
     return line.startswith(first[:_HEAD_PROBE]) or first.startswith(line[:_HEAD_PROBE])
 
 
-def _files_under(context: ExecutionContext, root: str) -> tuple[str, ...]:
-    """递归列出目录下的全部文件 (不含目录本身).
+def _delete_targets(
+    context: ExecutionContext, root: str
+) -> tuple[str, ...] | PreparationError:
+    """递归列出目录、空目录和文件，符号链接一律拒绝。
 
     走 FileSystemView 而不是直接 os.walk: 展开必须基于这次调用冻结的那一份视图, 否则
     "审批时看到的清单"与"执行时真删的东西"可能不是一回事.
     """
-    found: list[str] = []
+    files: list[str] = []
+    directories: list[str] = [root]
     stack = [root]
     seen: set[str] = set()
     while stack:
@@ -639,11 +809,31 @@ def _files_under(context: ExecutionContext, root: str) -> tuple[str, ...]:
         for name in context.filesystem.list_dir(current):
             child = f"{current}/{name}"
             facts = context.filesystem.facts(child)
+            if facts.is_symlink:
+                return PreparationError(
+                    code=PreparationErrorCode.UNSUPPORTED_REQUEST,
+                    message=f"目录树包含符号链接，拒绝递归删除: {child}",
+                    field_path="path",
+                )
             if facts.kind is PathKind.DIRECTORY:
-                stack.append(facts.realpath or child)
+                directory = facts.realpath or child
+                directories.append(directory)
+                stack.append(directory)
             elif facts.exists:
-                found.append(facts.realpath or child)
-    return tuple(sorted(found))
+                files.append(facts.realpath or child)
+    return (*tuple(sorted(directories)), *tuple(sorted(files)))
+
+
+def _changed_result(plan: ToolPlan, tool_name: str, path: str) -> ToolResult:
+    message = f"目标在计划生成后发生变化，已拒绝写入: {path}"
+    return ToolResult(
+        invocation_id=plan.plan_id,
+        tool_name=tool_name,
+        status=ToolResultStatus.TOOL_ERROR,
+        content_parts=(ContentPart(text=message),),
+        error=ToolError(code="target_changed", message=message, retryable=True),
+        workspace_mutated=False,
+    )
 
 
 def _write_capability(scope: WorkspaceScope) -> Capability:

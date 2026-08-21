@@ -25,6 +25,7 @@ from forgecli.application.tools.command_executor import (
 from forgecli.application.tools.resource_governor import ResourceGovernor
 from forgecli.application.tools.tool import ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
+from forgecli.domain.tool.errors import PreparationError, PreparationErrorCode
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.domain.tool.result import ToolResult, ToolResultStatus
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
@@ -196,3 +197,42 @@ def test_bytes_out_counts_the_full_output_not_the_inlined_slice(
     assert result.metrics.bytes_out == len(huge.encode("utf-8"))
     assert len(result.text.encode("utf-8")) < result.metrics.bytes_out
     assert any(part.truncated for part in result.content_parts)
+
+
+def test_requested_shell_kind_must_match_the_actual_executor(
+    workspace: Path,
+) -> None:
+    tool = ShellRunTool(
+        ScriptedExecutor(CommandOutcome(exit_code=0)),
+        ResourceGovernor(),
+        NullArtifactStore(),
+    )
+    context = ExecutionContext(
+        cwd=str(workspace),
+        workspace_roots=(str(workspace),),
+        environment={"PATH": "/usr/bin:/bin"},
+        filesystem=OsFileSystemView(),
+        profile=PROFILE,
+    )
+
+    invalid = tool.prepare(
+        ToolInvocationRequest(
+            invocation_id="inv-wrong-shell",
+            tool_name="shell.run",
+            arguments={"command": "echo ok", "shell_kind": "powershell"},
+            tool_call_id="c-wrong-shell",
+        ),
+        context,
+    )
+
+    assert isinstance(invalid, PreparationError)
+    assert invalid.code is PreparationErrorCode.INVALID_INPUT
+
+
+def test_executor_truncation_is_visible_to_the_model(workspace: Path) -> None:
+    result = _result(
+        workspace,
+        CommandOutcome(exit_code=0, stdout="partial", truncated=True),
+    )
+
+    assert "可能不完整" in result.text

@@ -41,6 +41,26 @@ _GRACE_SECONDS = 2.0
 _READ_CHUNK_BYTES = 64 * 1024
 
 
+class _OutputBudget:
+    """stdout/stderr 共用一个字节预算，避免两路各拿一份导致上限翻倍。"""
+
+    def __init__(self, limit: int) -> None:
+        self._remaining = max(0, limit)
+        self._lock = threading.Lock()
+        self.overflowed = False
+
+    def take(self, chunk: bytes) -> bytes:
+        with self._lock:
+            if self._remaining <= 0:
+                self.overflowed = self.overflowed or bool(chunk)
+                return b""
+            kept = chunk[: self._remaining]
+            self._remaining -= len(kept)
+            if len(kept) < len(chunk):
+                self.overflowed = True
+            return kept
+
+
 class _BoundedReader(threading.Thread):
     """读一路输出, 累积到上限就不再收集, 但继续把管道读空.
 
@@ -48,13 +68,11 @@ class _BoundedReader(threading.Thread):
     产生输出, 超时之外没有任何东西能结束这次调用.
     """
 
-    def __init__(self, stream: object, limit: int) -> None:
+    def __init__(self, stream: object, budget: _OutputBudget) -> None:
         super().__init__(daemon=True)
         self._stream = stream
-        self._limit = max(0, limit)
+        self._budget = budget
         self._chunks: list[bytes] = []
-        self._size = 0
-        self.overflowed = False
 
     def run(self) -> None:
         read = getattr(self._stream, "read", None)
@@ -65,14 +83,9 @@ class _BoundedReader(threading.Thread):
                 chunk = read(_READ_CHUNK_BYTES)
                 if not chunk:
                     break
-                remaining = self._limit - self._size
-                if remaining <= 0:
-                    self.overflowed = True
-                    continue
-                self._chunks.append(chunk[:remaining])
-                self._size += min(len(chunk), remaining)
-                if len(chunk) > remaining:
-                    self.overflowed = True
+                kept = self._budget.take(chunk)
+                if kept:
+                    self._chunks.append(kept)
 
     @property
     def text(self) -> str:
@@ -105,9 +118,9 @@ class LocalCommandExecutor(CommandExecutor):
                 failure=f"无法启动进程: {exc}",
             )
 
-        limit = request.max_output_bytes
-        out_reader = _BoundedReader(process.stdout, limit)
-        err_reader = _BoundedReader(process.stderr, limit)
+        budget = _OutputBudget(request.max_output_bytes)
+        out_reader = _BoundedReader(process.stdout, budget)
+        err_reader = _BoundedReader(process.stderr, budget)
         out_reader.start()
         err_reader.start()
         self._feed_stdin(process, request.stdin)
@@ -140,7 +153,7 @@ class LocalCommandExecutor(CommandExecutor):
             stderr=err_reader.text,
             timed_out=timed_out,
             cancelled=cancelled,
-            truncated=out_reader.overflowed or err_reader.overflowed,
+            truncated=budget.overflowed,
             duration_seconds=time.monotonic() - started,
             child_process_count=1,
         )
@@ -174,6 +187,13 @@ class LocalCommandExecutor(CommandExecutor):
 
     @staticmethod
     def _signal_group(process: subprocess.Popen[bytes], sig: int) -> None:
+        if not hasattr(os, "killpg") or not hasattr(os, "getpgid"):
+            with contextlib.suppress(ProcessLookupError, OSError):
+                if sig == signal.SIGTERM:
+                    process.terminate()
+                else:
+                    process.kill()
+            return
         try:
             os.killpg(os.getpgid(process.pid), sig)
         except (ProcessLookupError, PermissionError, OSError):
@@ -185,6 +205,8 @@ class LocalCommandExecutor(CommandExecutor):
     def _reap(process: subprocess.Popen[bytes]) -> None:
         if process.poll() is None:
             LocalCommandExecutor._signal_group(process, signal.SIGKILL)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=_GRACE_SECONDS)
         for stream in (process.stdout, process.stderr, process.stdin):
             if stream is not None and not stream.closed:
                 stream.close()

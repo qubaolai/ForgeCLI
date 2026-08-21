@@ -137,3 +137,35 @@ def test_a_name_glob_finds_files_by_name(workspace: Path) -> None:
     """
     entries = _entries(workspace, pattern="**/d*.py")
     assert entries == ["src/deep/deeper/d.py"]
+
+
+def test_entry_limit_is_reported_instead_of_silently_truncating(
+    workspace: Path,
+) -> None:
+    bulk = workspace / "bulk"
+    bulk.mkdir()
+    for index in range(2001):
+        (bulk / f"{index:04}.txt").touch()
+    tool = ListFilesTool(ResourceGovernor(), NullArtifactStore())
+    context = ExecutionContext(
+        cwd=str(workspace),
+        workspace_roots=(str(workspace),),
+        environment={"PATH": "/usr/bin:/bin"},
+        filesystem=OsFileSystemView(),
+        profile=PROFILE,
+    )
+    plan = tool.prepare(
+        ToolInvocationRequest(
+            invocation_id="inv-limit",
+            tool_name="fs.list_files",
+            arguments={"path": "bulk", "pattern": "*"},
+            tool_call_id="c-limit",
+        ),
+        context,
+    )
+    assert isinstance(plan, ToolPlan)
+
+    result = tool.perform(plan, context)
+
+    assert "结果不完整" in result.text
+    assert "2000" in result.text

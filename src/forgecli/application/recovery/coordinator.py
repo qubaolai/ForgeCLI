@@ -21,6 +21,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import PurePath
 
+from forgecli.application.recovery.path_state import directory_content_hash
 from forgecli.application.recovery.recovery_store import RecoveryStore
 from forgecli.application.recovery.snapshot_backend import (
     SnapshotHandle,
@@ -127,6 +128,7 @@ class MutationTransaction:
             existed_before=existed,
             operation=operation,
             file_identity=facts.file_identity,
+            mode=facts.mode,
             link_target=facts.link_target,
             regenerable=regenerable,
             recoverability=(
@@ -147,8 +149,12 @@ class MutationTransaction:
         if entry is None:
             return None
         postimage = None if deleted else self._hash_of(absolute_path)
+        facts = self._context.filesystem.facts(absolute_path)
         updated = replace(
             entry,
+            object_type=(
+                _object_type(facts.kind.value) if facts.exists else entry.object_type
+            ),
             postimage_content_hash=postimage,
             postimage_metadata_hash=self._metadata_hash(absolute_path),
         )
@@ -174,6 +180,13 @@ class MutationTransaction:
         声称可恢复而实际什么都没存, 是恢复层最坏的一种失败.
         """
         facts = self._context.filesystem.facts(absolute_path)
+        if facts.kind is PathKind.DIRECTORY:
+            return replace(
+                entry,
+                preimage_metadata_hash=digest(
+                    {"mode": facts.mode, "file_identity": facts.file_identity}
+                ),
+            )
         if not facts.is_regular_file:
             raise RecoveryUnavailableError(
                 f"无法为 {absolute_path} 保存旧内容: 它不是普通文件 "
@@ -234,6 +247,8 @@ class MutationTransaction:
         facts = self._context.filesystem.facts(absolute_path)
         if not facts.exists:
             return None
+        if facts.kind is PathKind.DIRECTORY:
+            return directory_content_hash(absolute_path, self._context)
         return digest_text(
             self._context.filesystem.read_text(
                 absolute_path, max_bytes=_MAX_PREIMAGE_BYTES

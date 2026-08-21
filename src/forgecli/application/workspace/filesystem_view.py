@@ -2,8 +2,9 @@
 
 为什么需要一层抽象:
 
-- ADR-0004 §2 要求 prepare 只读, 且必须使用 ExecutionContext 中**已经冻结**的文件系统
-  视图 —— 冻结这件事需要一个可以带版本号的对象, 裸 pathlib 做不到.
+- ADR-0004 §2 要求 prepare 只读, 且必须使用 ExecutionContext 中同一个文件系统观察入口。
+  version 标识这次上下文实例；它不是操作系统快照，真正的 TOCTOU 保护由 ToolPlan 中的
+  文件状态绑定和执行前复核完成。
 - 工具 (tools) 与安全模块 (security) 都要读盘, 但两者不能互相 import. 视图放在双方之外
   的中立位置, 是唯一能同时满足"都能用"和"互不依赖"的位置.
 - 测试要能注入内存实现: 路径规范化, 受保护路径和可执行文件身份的用例不该依赖真实磁盘
@@ -36,8 +37,9 @@ class PathFacts:
     macOS /private 别名都会让字符串前缀匹配失效), 而审批展示要让用户看到他原本写的
     那个 path.
 
-    file_identity 是"同一个对象"的判据 (POSIX 下 dev:ino, Windows 下卷序列号 + File
-    ID). 执行前后 identity 变了就说明对象被替换过, 旧授权与旧 preimage 都作废.
+    file_identity 是最终会被读取的对象判据 (POSIX 下 dev:ino, Windows 下卷序列号 + File
+    ID)。链接本身由 is_symlink/link_target 表达；realpath 或 identity 变化时，
+    旧授权与旧 preimage 都作废。
     """
 
     path: str
@@ -60,7 +62,7 @@ class PathFacts:
 
 
 class FileSystemView(ABC):
-    """带版本的只读视图. version 变化即所有基于旧视图的展开与裁决作废."""
+    """带实例版本的只读观察入口；不承诺冻结整个操作系统文件系统。"""
 
     @property
     @abstractmethod
@@ -84,5 +86,7 @@ class FileSystemView(ABC):
         """列目录下的直接子项名 (不递归). 不是目录或不可读时返回空."""
 
     @abstractmethod
-    def expand_glob(self, pattern: str, *, root: str) -> tuple[str, ...]:
-        """按已冻结的视图展开一个 glob, 返回排序后的绝对路径."""
+    def expand_glob(
+        self, pattern: str, *, root: str, max_results: int | None = None
+    ) -> tuple[str, ...]:
+        """按已冻结的视图展开 glob；max_results 用于限制枚举本身的资源消耗。"""

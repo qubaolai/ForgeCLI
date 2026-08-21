@@ -46,10 +46,11 @@ from forgecli.shared.cancellation import CancelToken
 __all__ = ["ListFilesTool"]
 
 _MAX_ENTRIES = 2000
+_MAX_GLOB_CANDIDATES = 10_000
 
 _SPEC = ToolSpec(
     name="fs.list_files",
-    version="2",
+    version="3",
     title="列出文件",
     description=(
         "列出目录下的文件与子目录. pattern 是 glob, 相对给定目录展开. "
@@ -71,7 +72,9 @@ _SPEC = ToolSpec(
         "additionalProperties": False,
     },
     output_schema={"type": "object", "properties": {"entries": {"type": "array"}}},
-    declared_capabilities=frozenset({Capability.WORKSPACE_READ}),
+    declared_capabilities=frozenset(
+        {Capability.WORKSPACE_READ, Capability.EXTERNAL_READ}
+    ),
     target_declaration_ability=TargetDeclarationAbility.EXPANDABLE,
     default_timeout_seconds=15.0,
 )
@@ -119,12 +122,20 @@ class ListFilesTool(Tool):
         raw_depth = request.arguments.get("depth")
         depth = raw_depth if isinstance(raw_depth, int) and raw_depth > 0 else None
         include_ignored = bool(request.arguments.get("include_ignored", False))
-        matches = filter_globbed(
-            context.filesystem.expand_glob(pattern, root=facts.realpath),
+        raw_matches = context.filesystem.expand_glob(
+            pattern,
+            root=facts.realpath,
+            max_results=_MAX_GLOB_CANDIDATES + 1,
+        )
+        expansion_truncated = len(raw_matches) > _MAX_GLOB_CANDIDATES
+        expanded = filter_globbed(
+            raw_matches[:_MAX_GLOB_CANDIDATES],
             root=facts.realpath,
             depth=depth,
             include_ignored=include_ignored,
-        )[:_MAX_ENTRIES]
+        )
+        truncated = len(expanded) > _MAX_ENTRIES
+        matches = expanded[:_MAX_ENTRIES]
         scope = context.scope_of_all((facts.realpath, *matches))
         return ToolPlan(
             plan_id=request.invocation_id,
@@ -137,6 +148,8 @@ class ListFilesTool(Tool):
                     "depth": depth,
                     "include_ignored": include_ignored,
                     "entries": list(matches),
+                    "truncated": truncated,
+                    "expansion_truncated": expansion_truncated,
                 }
             ),
             capabilities=frozenset({read_capability(scope)}),
@@ -159,10 +172,23 @@ class ListFilesTool(Tool):
         root = str(plan.normalized_input["path"])
         pattern = str(plan.normalized_input["pattern"])
         limits = self._governor.limits_for(_SPEC)
+        body = joined(listed) or _empty_message(root, pattern)
+        notices: list[str] = []
+        if plan.normalized_input.get("expansion_truncated"):
+            notices.append(f"glob 枚举超过 {_MAX_GLOB_CANDIDATES} 个候选，未继续展开")
+        if plan.normalized_input.get("truncated"):
+            notices.append(f"仅返回前 {_MAX_ENTRIES} 个匹配项")
+        if notices:
+            body = (
+                "[结果不完整："
+                + "；".join(notices)
+                + "；请缩小 path 或 pattern]\n"
+                + body
+            )
         emitted = emit_text(
             # 空结果要说清"确实没有"而不是只回一句"(无匹配)": 后者与"参数写错了"
             # 长得一样, 模型只能换个写法再试一次, 而目录真空时换多少次都一样.
-            joined(listed) or _empty_message(root, pattern),
+            body,
             invocation_id=plan.plan_id,
             limits=limits,
             artifacts=self._artifacts,

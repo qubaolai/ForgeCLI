@@ -25,6 +25,7 @@ from forgecli.application.tools.builtin import (
 from forgecli.application.tools.tool import Tool, ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.tool.capability import Capability
+from forgecli.domain.tool.errors import PreparationError, PreparationErrorCode
 from forgecli.domain.tool.plan import TargetResolution, ToolPlan
 from forgecli.domain.tool.result import ToolResultStatus, TurnDisposition
 from forgecli.domain.tool.spec import TargetDeclarationAbility
@@ -135,6 +136,24 @@ def test_the_plan_is_static_and_touches_nothing(
     assert plan.target_resolution is TargetResolution.STATIC
     assert plan.effects.read_paths == ()
     assert plan.effects.mutating_targets == ()
+
+
+def test_plan_write_rejects_path_like_plan_id_before_execution(
+    planning: PlanningService, context: ExecutionContext
+) -> None:
+    tool = PlanWriteTool(planning)
+    invalid = tool.prepare(
+        ToolInvocationRequest(
+            invocation_id="inv-escape",
+            tool_name="plan.write",
+            arguments={**_PLAN_ARGS, "plan_id": "/tmp/escaped"},
+            tool_call_id="c-escape",
+        ),
+        context,
+    )
+
+    assert isinstance(invalid, PreparationError)
+    assert invalid.code is PreparationErrorCode.INVALID_INPUT
 
 
 # ---- 行为 ----

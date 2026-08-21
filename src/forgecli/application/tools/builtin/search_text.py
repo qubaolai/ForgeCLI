@@ -16,6 +16,7 @@ from forgecli.application.tools.builtin.base import (
     emit_text,
     filter_globbed,
     joined,
+    path_state_token,
     read_capability,
     resolve_target,
     validate_arguments,
@@ -23,6 +24,7 @@ from forgecli.application.tools.builtin.base import (
 from forgecli.application.tools.resource_governor import ResourceGovernor
 from forgecli.application.tools.tool import Tool, ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
+from forgecli.application.workspace.filesystem_view import PathKind
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.errors import PreparationError, PreparationErrorCode
 from forgecli.domain.tool.plan import (
@@ -32,6 +34,8 @@ from forgecli.domain.tool.plan import (
     ToolPlan,
 )
 from forgecli.domain.tool.result import (
+    ContentPart,
+    ToolError,
     ToolMetrics,
     ToolResult,
     ToolResultStatus,
@@ -47,10 +51,12 @@ __all__ = ["SearchTextTool"]
 _MAX_FILES = 2000
 _MAX_MATCHES = 200
 _MAX_FILE_BYTES = 1024 * 1024
+_MAX_REGEX_LINE_CHARS = 16 * 1024
+_MAX_GLOB_CANDIDATES = 10_000
 
 _SPEC = ToolSpec(
     name="search.text",
-    version="3",
+    version="4",
     title="搜索文本",
     description=(
         "在文件内容里搜索, 按文件分组返回 行号:内容. "
@@ -64,9 +70,9 @@ _SPEC = ToolSpec(
     input_schema={
         "type": "object",
         "properties": {
-            "query": {"type": "string"},
+            "query": {"type": "string", "maxLength": 512},
             "path": {"type": "string"},
-            "pattern": {"type": "string"},
+            "pattern": {"type": "string", "maxLength": 1024},
             "regex": {"type": "boolean"},
             "context_lines": {"type": "integer", "minimum": 0, "maximum": 10},
             "include_ignored": {"type": "boolean"},
@@ -75,7 +81,9 @@ _SPEC = ToolSpec(
         "additionalProperties": False,
     },
     output_schema={"type": "object", "properties": {"matches": {"type": "array"}}},
-    declared_capabilities=frozenset({Capability.WORKSPACE_READ}),
+    declared_capabilities=frozenset(
+        {Capability.WORKSPACE_READ, Capability.EXTERNAL_READ}
+    ),
     target_declaration_ability=TargetDeclarationAbility.EXPANDABLE,
     default_timeout_seconds=30.0,
 )
@@ -91,6 +99,21 @@ def _matcher(query: str, use_regex: bool) -> Callable[[str], bool]:
         return lambda line: query in line
     compiled = re.compile(query)
     return lambda line: compiled.search(line) is not None
+
+
+def _unsafe_regex_reason(query: str) -> str | None:
+    """只允许不会形成嵌套/分支回溯的正则子集。
+
+    Python ``re`` 没有可中止的匹配超时；把任意模型正则放进主进程会让 `(a|aa)+$`
+    这类表达式卡住整个 Agent。高级正则应走受超时约束的 shell/rg 路径。
+    """
+    if any(token in query for token in ("(", ")", "{", "}", "|")):
+        return "分组、分支与花括号量词不在安全正则子集中"
+    if re.search(r"\\[1-9]", query):
+        return "反向引用不在安全正则子集中"
+    if sum(query.count(token) for token in ("*", "+")) > 4:
+        return "无界量词过多"
+    return None
 
 
 def _render_hits(lines: list[str], numbers: list[int], around: int) -> list[str]:
@@ -111,7 +134,7 @@ def _render_hits(lines: list[str], numbers: list[int], around: int) -> list[str]
     return rendered
 
 
-def _empty_message(plan: ToolPlan, scanned: int) -> str:
+def _empty_message(plan: ToolPlan, scanned: int, *, complete: bool) -> str:
     """把"没找到"说清楚: 搜了几个文件, 搜的是什么, 在哪儿搜的.
 
     只回"未找到匹配"时, 模型分不清是"确实没有"还是"搜错地方了", 于是反复换 pattern
@@ -128,9 +151,14 @@ def _empty_message(plan: ToolPlan, scanned: int) -> str:
             "注意 .git, node_modules, target 一类生成目录默认被跳过, "
             "需要它们时传 include_ignored=true."
         )
+    conclusion = (
+        "这是确定的空结果."
+        if complete
+        else "扫描受资源上限影响，结果不完整，不能据此断言全文不存在."
+    )
     return (
         f"在 {root} 下扫描了 {scanned} 个文件 (pattern={pattern}), "
-        f"没有一行包含 {query!r}. 这是确定的空结果."
+        f"没有一行包含 {query!r}. {conclusion}"
     )
 
 
@@ -172,21 +200,57 @@ class SearchTextTool(Tool):
                     message=f"query 不是合法正则: {exc}",
                     field_path="query",
                 )
+            unsafe = _unsafe_regex_reason(query)
+            if unsafe is not None:
+                return PreparationError(
+                    code=PreparationErrorCode.UNSUPPORTED_REQUEST,
+                    message=(
+                        f"该正则可能造成不可中止的回溯: {unsafe}. "
+                        "请改用更简单的正则或经审批的 shell.run/rg."
+                    ),
+                    field_path="query",
+                )
         target = resolve_target(
             request.arguments.get("path", context.primary_root), context
         )
         if isinstance(target, PreparationError):
             return target
         _, facts = target
+        if facts.kind is not PathKind.DIRECTORY:
+            return PreparationError(
+                code=PreparationErrorCode.TARGET_UNREADABLE,
+                message=f"search.text 的 path 必须是目录: {facts.realpath}",
+                field_path="path",
+            )
         pattern = str(request.arguments.get("pattern", "**/*"))
         include_ignored = bool(request.arguments.get("include_ignored", False))
         # 先过滤再截断, 顺序不能换: 反过来的话 target/ 下的几千个 class 文件会先把
         # _MAX_FILES 的额度吃光, 于是"这个词不在代码里"这个结论建立在没扫到源码上.
-        files = filter_globbed(
-            context.filesystem.expand_glob(pattern, root=facts.realpath),
+        raw_candidates = context.filesystem.expand_glob(
+            pattern,
+            root=facts.realpath,
+            max_results=_MAX_GLOB_CANDIDATES + 1,
+        )
+        expansion_truncated = len(raw_candidates) > _MAX_GLOB_CANDIDATES
+        candidates = filter_globbed(
+            raw_candidates[:_MAX_GLOB_CANDIDATES],
             root=facts.realpath,
             include_ignored=include_ignored,
-        )[:_MAX_FILES]
+        )
+        regular: list[str] = []
+        skipped_symlinks = 0
+        for candidate in candidates:
+            candidate_facts = context.filesystem.facts(candidate)
+            if candidate_facts.is_symlink:
+                skipped_symlinks += 1
+                continue
+            if candidate_facts.kind is PathKind.FILE:
+                regular.append(candidate_facts.realpath)
+        files_truncated = len(regular) > _MAX_FILES
+        files = tuple(regular[:_MAX_FILES])
+        large_files = sum(
+            context.filesystem.facts(path).size > _MAX_FILE_BYTES for path in files
+        )
         scope = context.scope_of_all((facts.realpath, *files))
         return ToolPlan(
             plan_id=request.invocation_id,
@@ -201,6 +265,14 @@ class SearchTextTool(Tool):
                     "context_lines": _context_lines(request.arguments),
                     "include_ignored": include_ignored,
                     "files": list(files),
+                    "file_states": tuple(
+                        (path, path_state_token(context.filesystem.facts(path)))
+                        for path in files
+                    ),
+                    "files_truncated": files_truncated,
+                    "large_files": large_files,
+                    "skipped_symlinks": skipped_symlinks,
+                    "expansion_truncated": expansion_truncated,
                 }
             ),
             capabilities=frozenset({read_capability(scope)}),
@@ -225,15 +297,42 @@ class SearchTextTool(Tool):
         hit = _matcher(query, bool(plan.normalized_input.get("regex", False)))
         matches: list[str] = []
         total = 0
+        cancelled = False
+        regex_line_truncated = False
+        use_regex = bool(plan.normalized_input.get("regex", False))
+        expected_states = _state_map(plan.normalized_input.get("file_states", ()))
         for path in files:
-            if cancel is not None and cancel.cancelled or total >= _MAX_MATCHES:
+            if cancel is not None and cancel.cancelled:
+                cancelled = True
                 break
+            if total >= _MAX_MATCHES:
+                break
+            if path_state_token(context.filesystem.facts(path)) != str(
+                expected_states.get(path, "")
+            ):
+                message = f"文件在计划生成后发生变化，已拒绝继续搜索: {path}"
+                return ToolResult(
+                    invocation_id=plan.plan_id,
+                    tool_name=_SPEC.name,
+                    status=ToolResultStatus.TOOL_ERROR,
+                    content_parts=(ContentPart(text=message),),
+                    error=ToolError(
+                        code="target_changed", message=message, retryable=True
+                    ),
+                )
             lines = context.filesystem.read_text(
                 path, max_bytes=_MAX_FILE_BYTES
             ).splitlines()
-            numbers = [index for index, line in enumerate(lines, start=1) if hit(line)][
-                : _MAX_MATCHES - total
-            ]
+            numbers: list[int] = []
+            for index, line in enumerate(lines, start=1):
+                candidate = line
+                if use_regex and len(candidate) > _MAX_REGEX_LINE_CHARS:
+                    candidate = candidate[:_MAX_REGEX_LINE_CHARS]
+                    regex_line_truncated = True
+                if hit(candidate):
+                    numbers.append(index)
+                    if len(numbers) >= _MAX_MATCHES - total:
+                        break
             if not numbers:
                 continue
             total += len(numbers)
@@ -241,8 +340,35 @@ class SearchTextTool(Tool):
             matches.append(f"{path}  ({len(numbers)} 处)")
             matches.extend(_render_hits(lines, numbers, around))
         limits = self._governor.limits_for(_SPEC)
+        incomplete_notes: list[str] = []
+        if plan.normalized_input.get("expansion_truncated"):
+            incomplete_notes.append(
+                f"glob 枚举超过 {_MAX_GLOB_CANDIDATES} 个候选，未继续展开"
+            )
+        if plan.normalized_input.get("files_truncated"):
+            incomplete_notes.append(
+                f"匹配文件超过 {_MAX_FILES} 个，仅扫描前 {_MAX_FILES} 个"
+            )
+        large_files = _int_value(plan.normalized_input.get("large_files", 0))
+        if large_files:
+            incomplete_notes.append(
+                f"{large_files} 个文件超过 {_MAX_FILE_BYTES} 字节，仅扫描其前缀"
+            )
+        skipped_symlinks = _int_value(plan.normalized_input.get("skipped_symlinks", 0))
+        if skipped_symlinks:
+            incomplete_notes.append(f"跳过了 {skipped_symlinks} 个符号链接")
+        if total >= _MAX_MATCHES:
+            incomplete_notes.append(f"命中达到 {_MAX_MATCHES} 条上限")
+        if regex_line_truncated:
+            incomplete_notes.append("正则搜索跳过了超长行的后半段")
+        if cancelled:
+            incomplete_notes.append("搜索被取消")
+        complete = not incomplete_notes
+        body = joined(matches) or _empty_message(plan, len(files), complete=complete)
+        if incomplete_notes:
+            body = "[结果不完整：" + "；".join(incomplete_notes) + "]\n" + body
         emitted = emit_text(
-            joined(matches) or _empty_message(plan, len(files)),
+            body,
             invocation_id=plan.plan_id,
             limits=limits,
             artifacts=self._artifacts,
@@ -251,8 +377,25 @@ class SearchTextTool(Tool):
         return ToolResult(
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
-            status=ToolResultStatus.OK,
+            status=(ToolResultStatus.CANCELLED if cancelled else ToolResultStatus.OK),
             content_parts=emitted.parts,
             artifacts=emitted.artifacts,
             metrics=ToolMetrics(bytes_out=emitted.bytes_out),
+            error=(
+                ToolError(code="cancelled", message="搜索被取消") if cancelled else None
+            ),
         )
+
+
+def _int_value(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _state_map(value: object) -> dict[str, str]:
+    if not isinstance(value, tuple):
+        return {}
+    result: dict[str, str] = {}
+    for item in value:
+        if isinstance(item, tuple) and len(item) == 2:
+            result[str(item[0])] = str(item[1])
+    return result

@@ -24,6 +24,7 @@ from forgecli.domain.execution.environment import (
     sanitize_environment,
 )
 from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
+from forgecli.infrastructure.platform_paths import windows_known_directory
 
 __all__ = ["build_execution_environment", "probe_execution_profile"]
 
@@ -49,17 +50,25 @@ def probe_execution_profile(
     那一步 (阶段 4), 这里只负责如实把它们放进画像, 让 profile hash 能反映这个选择.
     """
     is_windows = os.name == "nt"
-    entries = [entry for entry in toolchain_dirs if entry]
+    toolchains = tuple(
+        dict.fromkeys(
+            str(Path(entry).expanduser().resolve()) for entry in toolchain_dirs if entry
+        )
+    )
+    entries = list(toolchains)
     entries.extend(_platform_path_entries(is_windows))
     trusted_path = tuple(dict.fromkeys(entry for entry in entries if entry != "."))
     return ExecutionProfile(
         platform=f"{platform.system()}-{platform.machine()}",
         isolation_level=IsolationLevel.NO_SANDBOX,
         trusted_path=trusted_path or (str(Path(sys.executable).parent),),
+        writable_toolchain_path=toolchains,
         shell_launch=_shell_launch(is_windows),
         environment_allowlist=DEFAULT_ENV_ALLOWLIST,
+        controlled_environment=_controlled_environment(is_windows),
         protected_roots_hash=protected_roots_hash,
         executable_resolution_version=EXECUTABLE_RESOLUTION_VERSION,
+        path_separator=os.pathsep,
     )
 
 
@@ -71,12 +80,60 @@ def build_execution_environment(
         dict(os.environ if raw is None else raw),
         trusted_path=profile.trusted_path,
         allowlist=profile.environment_allowlist,
+        controlled=dict(profile.controlled_environment),
+        path_separator=profile.path_separator,
     )
+
+
+def _controlled_environment(is_windows: bool) -> tuple[tuple[str, str], ...]:
+    """关闭会改变命令语义的隐式用户配置；值随 profile 一起绑定授权。"""
+    null = "NUL" if is_windows else "/dev/null"
+    home = _account_home(is_windows)
+    temporary = _system_temp(is_windows)
+    values = [
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_CONFIG_GLOBAL", null),
+        ("PYTHONNOUSERSITE", "1"),
+        ("PIP_CONFIG_FILE", null),
+        ("NPM_CONFIG_USERCONFIG", null),
+        ("CURL_HOME", null),
+        ("WGETRC", null),
+        ("HOME", home),
+        ("TMPDIR", temporary),
+        ("TMP", temporary),
+        ("TEMP", temporary),
+    ]
+    if is_windows:
+        values.append(("USERPROFILE", home))
+    return tuple(values)
+
+
+def _account_home(is_windows: bool) -> str:
+    """从账户数据库取 HOME，避免可修改的 HOME 环境变量重定向工具配置。"""
+    if is_windows:
+        known = windows_known_directory("profile")
+        if known:
+            return known
+    if not is_windows:
+        try:
+            import pwd
+
+            return pwd.getpwuid(os.getuid()).pw_dir
+        except (ImportError, KeyError, OSError):
+            pass
+    return str(Path.home().resolve())
+
+
+def _system_temp(is_windows: bool) -> str:
+    if is_windows:
+        root = windows_known_directory("windows") or r"C:\Windows"
+        return str(Path(root) / "Temp")
+    return "/tmp"
 
 
 def _platform_path_entries(is_windows: bool) -> list[str]:
     if is_windows:
-        system_root = os.environ.get("SYSTEMROOT", r"C:\Windows")
+        system_root = windows_known_directory("windows") or r"C:\Windows"
         return [
             str(Path(system_root) / "System32"),
             system_root,
@@ -88,12 +145,9 @@ def _platform_path_entries(is_windows: bool) -> list[str]:
 def _shell_launch(is_windows: bool) -> ShellLaunch:
     """非交互, 非登录, 不加载 profile/rc 的启动方式 (ADR-0014 §4.2)."""
     if is_windows:
+        system_root = windows_known_directory("windows") or r"C:\Windows"
         return ShellLaunch(
-            program=str(
-                Path(os.environ.get("SYSTEMROOT", r"C:\Windows"))
-                / "System32"
-                / "cmd.exe"
-            ),
+            program=str(Path(system_root) / "System32" / "cmd.exe"),
             args=("/D", "/S", "/C"),
             kind="cmd",
         )

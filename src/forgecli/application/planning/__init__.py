@@ -18,6 +18,7 @@ from forgecli.application.planning.planning_service import (
     ActivePlanning,
     PlanningService,
     StatusUpdate,
+    is_safe_plan_id,
 )
 
 __all__ = [
@@ -30,5 +31,6 @@ __all__ = [
     "PlanStoreError",
     "PlanningService",
     "StatusUpdate",
+    "is_safe_plan_id",
     "render_plan",
 ]
