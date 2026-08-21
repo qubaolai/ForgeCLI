@@ -102,6 +102,9 @@ class ToolResult:
     artifacts: tuple[ArtifactRef, ...] = ()
     metrics: ToolMetrics = field(default_factory=ToolMetrics)
     error: ToolError | None = None
+    # None 表示无法证明（例如 shell 超时后可能已部分写入）；False 只用于能证明副作用尚未
+    # 发生的失败。恢复协调器据此避免把竞争者创建的文件误记成 Forge 的 postimage。
+    workspace_mutated: bool | None = None
     turn_disposition: TurnDisposition = TurnDisposition.CONTINUE
 
     def __post_init__(self) -> None:
@@ -139,4 +142,5 @@ class ToolResult:
             "artifact_ids": [artifact.artifact_id for artifact in self.artifacts],
             "truncated": any(part.truncated for part in self.content_parts),
             "error_code": self.error.code if self.error else None,
+            "workspace_mutated": self.workspace_mutated,
         }

@@ -19,6 +19,7 @@ class PreparationErrorCode(Enum):
     INVALID_INPUT = "invalid_input"  # schema 校验不过
     TARGET_NOT_FOUND = "target_not_found"
     TARGET_UNREADABLE = "target_unreadable"
+    RESOURCE_LIMIT = "resource_limit"
     UNSUPPORTED_REQUEST = "unsupported_request"
     CONTEXT_STALE = "context_stale"  # ExecutionContext 已变, 需要重算
 

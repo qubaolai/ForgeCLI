@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import PurePosixPath
 
 from forgecli.domain.security.shell.arguments import classify_arguments
 from forgecli.domain.security.shell.command_plan import CommandPlan, CommandUnit
@@ -48,14 +47,14 @@ class ExpansionResult:
 def expand_targets(
     plan: CommandPlan,
     *,
-    cwd: str,
+    resolve: Callable[[str], str],
     glob: Callable[[str], tuple[str, ...]],
     home: str = "",
 ) -> ExpansionResult:
     """尝试封闭整条命令的写 / 删 / 移目标集合.
 
-    glob 由调用方注入 (通常是冻结的 FileSystemView.expand_glob): 展开是纯函数, 但它需要
-    一份**确定的**文件系统视图, 而视图属于执行上下文, 不属于领域.
+    resolve 与 glob 由执行上下文注入。领域层不再维护第二套路径绝对化规则；文件系统观察
+    入口不是 OS 快照，审批后仍需重新 prepare 与比较目标集合。
     """
     reasons: list[str] = []
     targets: list[str] = []
@@ -75,7 +74,12 @@ def expand_targets(
             dynamic = True
             reasons.extend(unit.opaque_reasons)
         for candidate in _candidate_targets(unit):
-            resolved = _resolve(candidate, cwd, home)
+            expanded_home = expand_home(candidate, home)
+            resolved = (
+                expanded_home
+                if expanded_home.startswith("~")
+                else resolve(expanded_home)
+            )
             if _has_glob(resolved):
                 matched = glob(resolved)
                 if not matched:
@@ -115,22 +119,6 @@ def _candidate_targets(unit: CommandUnit) -> tuple[str, ...]:
     目标, 展开层会拿它去 glob, 去比对受保护路径, 最后在审批框里当成一个文件展示出来.
     """
     return (*classify_arguments(unit).paths, *unit.write_targets)
-
-
-def _resolve(candidate: str, cwd: str, home: str = "") -> str:
-    """把候选目标变成绝对路径.
-
-    `~` 与 `$HOME` 用**冻结环境快照**里的 HOME 展开: 它是已经绑定的事实, 属于
-    ADR-0013 §6.2 允许的受控展开. 不展开的后果更糟 —— `cat ~/.ssh/id_rsa` 会因为
-    "看起来不是路径"而绕过受保护路径检查.
-    """
-    candidate = expand_home(candidate, home)
-    if candidate.startswith("~"):
-        return candidate  # 没有 HOME 可用: 交给 _looks_unresolved 判定
-    path = PurePosixPath(candidate)
-    if path.is_absolute():
-        return str(path)
-    return str(PurePosixPath(cwd) / path) if cwd else candidate
 
 
 def expand_home(candidate: str, home: str) -> str:

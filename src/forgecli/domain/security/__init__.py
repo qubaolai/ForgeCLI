@@ -9,13 +9,14 @@
 from forgecli.domain.security.approval import (
     ApprovalBinding,
     ApprovalOutcome,
-    ApprovalPresentation,
     ApprovalRequest,
     ApprovalResponse,
+    ApprovalView,
 )
 from forgecli.domain.security.context import PolicyContext
-from forgecli.domain.security.decision import AuthorizationDecision, RiskFact
+from forgecli.domain.security.decision import AuthorizationDecision
 from forgecli.domain.security.executable_identity import ExecutableIdentity, TrustZone
+from forgecli.domain.security.findings import AnalysisFindings, RiskFact
 from forgecli.domain.security.hard_deny import (
     HardDenyHit,
     inspect_command,
@@ -46,12 +47,13 @@ from forgecli.domain.security.vocabulary import (
 
 __all__ = [
     "POLICY_VERSION",
+    "AnalysisFindings",
     "ApprovalBinding",
     "ApprovalOutcome",
-    "ApprovalPresentation",
     "ApprovalRequest",
     "ApprovalResponse",
     "ApprovalScope",
+    "ApprovalView",
     "AuthorizationDecision",
     "Decision",
     "DecisionReason",

@@ -41,20 +41,6 @@ def _assert_metadata_safe(metadata: Mapping[str, str]) -> None:
 
 
 @dataclass(frozen=True)
-class BudgetSnapshot:
-    """本轮 / 本会话已用量与上限 (ADR-0011 §8 / §11.3).
-
-    由 AgentTurnService 注入, gateway 只读比对, 不更新. 目前调用方还没开始填它, 所以
-    实际总是 None —— 但 BudgetGuard 已经在消费这个字段, 它不是空位.
-    """
-
-    turn_tokens_used: int = 0
-    turn_tokens_limit: int | None = None
-    session_tokens_used: int = 0
-    session_tokens_limit: int | None = None
-
-
-@dataclass(frozen=True)
 class CacheHint:
     """请求侧 prompt 缓存标注（§14）：标注可缓存前缀（system prompt / 稳定工具定义）。
 
@@ -84,7 +70,6 @@ class ModelRequest:
     tools: tuple[ToolSchema, ...] = ()
     timeout_seconds: float | None = None
     cancel_token: CancelToken | None = None
-    budget_snapshot: BudgetSnapshot | None = None
     cache_hint: CacheHint | None = None
     metadata: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 

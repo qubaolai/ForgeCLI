@@ -1,21 +1,27 @@
-"""人类审批的请求, 展示与绑定事实 (ADR-0013 §4.2 / §14).
+"""人类审批的视图、绑定与响应 (ADR-0013 §4.2 / §14, ADR-0028 规则 B / C).
 
 三件事必须分清:
 
-- ``ApprovalPresentation``: 用户**实际看到**的完整规范化视图. 用户批准的对象是它和它的
-  哈希, 不是终端里那串被截断的命令.
+- ``ApprovalView``: 用户**实际看到**的完整规范化视图. 用户批准的对象是它和它的
+  ``view_hash``, 不是终端里那串被截断的命令.
 - ``ApprovalBinding``: 批准当时绑定的事实快照. 任一项变化, 旧批准立即失效, 请求回到
   prepare -> 分析 -> 裁决, 必要时重新审批.
 - ``ApprovalResponse``: 人类的决定. 它**不是执行授权** —— 批准之后还要重验, 建立恢复
-  绑定, 才由 ToolAuthorizationService 签发一次性信封.
+  绑定, 才由 ToolAuthorizationService.issue 签发一次性 ExecutionAuthorization.
 
 危险字段不做语义截断: 目标集合很大时可以分页或引用清单产物, 但必须给出完整条目数与
 target_set_hash, 不能只显示前几项加一句"还有 N 个文件".
+
+**ADR-0028 之前这里有两个类**: ``ApprovalPresentation`` (30 个字段, 供授权重验) 与
+``HitlApprovalView`` (供界面渲染), 后者是前者唯一的消费方. 拆成两个的理由是"重验要的
+哈希会把人要读的东西淹掉" —— 但那是**渲染**该解决的问题, 不该由类型系统表达成两份
+互相抄写的字段. 合并之后, 界面读什么由渲染函数决定, 而重验读的 ``view_hash`` 与人看到
+的内容之间不再隔着一次字段搬运.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 from forgecli.domain.intents import SessionMode
@@ -23,22 +29,16 @@ from forgecli.domain.security.script_facts import ScriptSnapshot
 from forgecli.domain.security.vocabulary import ApprovalScope
 from forgecli.domain.tool.catalog import ToolCatalog
 from forgecli.domain.tool.hashing import digest
-from forgecli.domain.tool.plan import ContentPreview, ToolPlan
+from forgecli.domain.tool.plan import ContentPreview, ShellSubject, ToolPlan
 
 __all__ = [
     "ApprovalBinding",
     "ApprovalOutcome",
-    "ApprovalPresentation",
     "ApprovalRequest",
     "ApprovalResponse",
-    "HitlApprovalView",
+    "ApprovalView",
     "TargetGroup",
 ]
-
-
-# 已封闭的 target_resolution 取值. 与 TargetResolution.closed 同一口径, 但这里存的是
-# 字符串 —— 展示层不该为了判断封闭性去 import 工具层的枚举.
-_CLOSED_RESOLUTIONS = frozenset({"static", "forge_expanded"})
 
 
 class ApprovalOutcome(Enum):
@@ -51,17 +51,20 @@ class ApprovalOutcome(Enum):
 
 @dataclass(frozen=True)
 class ApprovalBinding:
-    """批准绑定的事实. 用 == 比较即可判断旧批准是否仍然成立."""
+    """批准绑定的事实. 用 == 比较即可判断旧批准是否仍然成立.
 
-    tool_name: str
-    spec_hash: str
+    **只存 plan 之外的事实** (ADR-0028 规则 B). 早先这里还单独存了 tool_name,
+    spec_hash, target_set_hash 与 capability_vocabulary_version —— 四项全部已经在
+    ``ToolPlan._hash_source`` 里, plan_hash 变了它们必然被覆盖. 存第二份不构成第二道
+    防线, 只是多了一份必须与 ``_hash_source`` 手工保持同步的字段清单, 而漏同步不会报错.
+    """
+
     plan_hash: str
-    target_set_hash: str
-    capability_vocabulary_version: str
     catalog_snapshot_hash: str
     execution_profile_hash: str
     policy_version: str
     mode: SessionMode
+    view_hash: str
 
     @classmethod
     def of(
@@ -72,17 +75,15 @@ class ApprovalBinding:
         execution_profile_hash: str,
         policy_version: str,
         mode: SessionMode,
+        view_hash: str,
     ) -> ApprovalBinding:
         return cls(
-            tool_name=plan.tool_name,
-            spec_hash=plan.spec_hash,
             plan_hash=plan.plan_hash,
-            target_set_hash=plan.target_set_hash,
-            capability_vocabulary_version=plan.capability_vocabulary_version,
             catalog_snapshot_hash=catalog.catalog_snapshot_hash,
             execution_profile_hash=execution_profile_hash,
             policy_version=policy_version,
             mode=mode,
+            view_hash=view_hash,
         )
 
     @property
@@ -94,87 +95,15 @@ class ApprovalBinding:
         return tuple(
             name
             for name in (
-                "tool_name",
-                "spec_hash",
                 "plan_hash",
-                "target_set_hash",
-                "capability_vocabulary_version",
                 "catalog_snapshot_hash",
                 "execution_profile_hash",
                 "policy_version",
                 "mode",
+                "view_hash",
             )
             if getattr(self, name) != getattr(other, name)
         )
-
-
-@dataclass(frozen=True)
-class ApprovalPresentation:
-    """审批界面必须展示的完整视图 (ADR-0013 §14).
-
-    字段大多可选, 因为不同能力触发的审批内容不同; 但**一旦某项事实存在就必须展示**,
-    不能因为界面窄而丢掉. 凭证值脱敏, 但凭证类型, 身份范围和目标主机不能隐藏.
-    """
-
-    action_summary: str
-    user_intent_summary: str = ""
-    workspace_roots: tuple[str, ...] = ()
-    raw_command: str | None = None
-    # 安全分析与授权实际绑定的那几份脚本正文. inline -c, heredoc, 临时脚本和脚本文件
-    # 都先解析成它再展示 —— 只给路径等于让用户批准一个他没读过的文件.
-    script_snapshots: tuple[ScriptSnapshot, ...] = ()
-    # 写入目标**将会变成什么**. 只列路径是不够的: "写入 README.md"这句话里没有任何能
-    # 让人做判断的信息.
-    content_previews: tuple[ContentPreview, ...] = ()
-    # 目标集合为什么没封闭. 空表示已封闭.
-    unresolved_reason: str | None = None
-    shell_kind: str | None = None
-    executable_realpath: str | None = None
-    executable_identity_hash: str | None = None
-    interpreter_chain: tuple[str, ...] = ()
-    cwd: str = ""
-    mode: str = ""
-    isolation_level: str = ""
-    read_paths: tuple[str, ...] = ()
-    write_paths: tuple[str, ...] = ()
-    delete_paths: tuple[str, ...] = ()
-    move_pairs: tuple[tuple[str, str], ...] = ()
-    target_set_hash: str = ""
-    target_resolution: str = ""
-    network_targets: tuple[str, ...] = ()
-    credential_scopes: tuple[str, ...] = ()
-    external_effects: tuple[str, ...] = ()
-    resolved_remote_targets: tuple[str, ...] = ()
-    risk_facts: tuple[str, ...] = ()
-    recovery_strategy: str = ""
-    recovery_scope: str = ""
-    checkpoint_id: str | None = None
-    allowed_scopes: tuple[ApprovalScope, ...] = (ApprovalScope.ONCE,)
-    invalidated_by: tuple[str, ...] = ()
-
-    @property
-    def presentation_hash(self) -> str:
-        """用户批准的是这一份视图. 信封绑定它, 确认后不能静默扩大范围."""
-        return digest(self)
-
-
-@dataclass(frozen=True)
-class ApprovalRequest:
-    """一次待人类决定的请求. 创建它不等于允许执行, ShellTool 此时绝不能被调用."""
-
-    approval_id: str
-    binding: ApprovalBinding
-    presentation: ApprovalPresentation
-    mandatory: bool = False
-    risk_facts: tuple[str, ...] = field(default=())
-
-    def __post_init__(self) -> None:
-        if not self.approval_id.strip():
-            raise ValueError("ApprovalRequest.approval_id 不能为空")
-        if self.mandatory and self.presentation.allowed_scopes != (ApprovalScope.ONCE,):
-            # Mandatory Ask 只能创建与本次请求严格绑定的一次性审批: 不支持 session,
-            # workspace 或 always (ADR-0013 §4.1).
-            raise ValueError("Mandatory Ask 只能使用 once 范围")
 
 
 @dataclass(frozen=True)
@@ -190,42 +119,84 @@ class TargetGroup:
 
 
 @dataclass(frozen=True)
-class HitlApprovalView:
-    """人类确认界面的最小 DTO (ADR-0016 §8.4).
+class ApprovalView:
+    """人类确认界面看到的完整视图, 同时是授权重验绑定的对象 (ADR-0013 §14).
 
-    与 ApprovalPresentation 分开的理由: 后者是**授权重验**需要的完整事实, 里面的
-    plan_hash, target_set_hash, 执行画像和失效字段对人做决定毫无帮助, 却会把真正要读的
-    三样东西 (命令, 脚本, 目标) 淹掉. 所以这里做减法 —— 但减的是 hash, 不是效果.
-
-    目标清单一旦要展示就必须完整: 用户批准的是这份效果清单, 不是命令字符串. `rm *.log`
-    展开成 3 个还是 300 个文件, 是决定按不按同意的关键信息 (ADR-0013 §14 的这一条继续
-    适用). 什么时候展示见 `consequential`.
-
-    deny 不是 ApprovalScope 的取值 —— 它是"不授权", 没有范围可言, 因此不进
-    allowed_scopes, 由界面固定提供.
+    路径, 目标封闭度, cwd 与写入内容全部**从 plan 读**, 不在这里另存一份 —— 它们已经
+    由 ``plan_hash`` 绑定, 抄一遍只会制造"视图说写 3 个文件, plan 说写 5 个"这种非法
+    状态. 这里只放 plan 里没有的东西: 人类语境 (用户这句话想干什么, 工作区在哪), 分析
+    结论 (脚本正文, 风险事实, 未封闭原因) 和界面提供的选项.
     """
 
-    mode: str
-    workspace_roots: tuple[str, ...]
-    raw_command: str
-    target_groups: tuple[TargetGroup, ...] = ()
-    target_resolution: str = ""
+    plan: ToolPlan
+    action_summary: str
+    # 展示用. 不进 view_hash: mode 的权威事实在 ApprovalBinding.mode, 那里已经会因为
+    # 模式切换而使旧批准失效. 两处都算等于同一个事实存两遍.
+    mode: str = ""
+    user_intent_summary: str = ""
+    workspace_roots: tuple[str, ...] = ()
+    # 安全分析与授权实际绑定的那几份脚本正文. inline -c, heredoc, 临时脚本和脚本文件
+    # 都先解析成它再展示 —— 只给路径等于让用户批准一个他没读过的文件.
     script_snapshots: tuple[ScriptSnapshot, ...] = ()
-    content_previews: tuple[ContentPreview, ...] = ()
+    risk_facts: tuple[str, ...] = ()
+    # 目标集合为什么没封闭. 空表示已封闭.
     unresolved_reason: str | None = None
-    recovery_strategy: str | None = None
     allowed_scopes: tuple[ApprovalScope, ...] = (ApprovalScope.ONCE,)
+
+    # ---- 从 plan 读出的展示事实 ----
+
+    @property
+    def raw_command(self) -> str:
+        """要执行的命令原文.
+
+        没有原始命令的工具 (fs.edit_file 之类) 用动作摘要顶上, 但绝不留空: 这一行是
+        用户唯一能看懂"要发生什么"的地方.
+        """
+        subject = self.plan.analysis_subject
+        if isinstance(subject, ShellSubject):
+            return subject.raw_command
+        return self.action_summary
+
+    @property
+    def content_previews(self) -> tuple[ContentPreview, ...]:
+        """写入目标**将会变成什么**. 只列路径是不够的.
+
+        不进 view_hash: 内容已由 ``plan.normalized_input`` 绑定, 而那一项在
+        ``plan_hash`` 里.
+        """
+        return self.plan.content_previews
+
+    @property
+    def cwd(self) -> str:
+        return self.plan.execution_context.cwd
+
+    @property
+    def target_resolution(self) -> str:
+        return self.plan.target_resolution.value
+
+    @property
+    def target_set_hash(self) -> str:
+        return self.plan.target_set_hash
 
     @property
     def closed(self) -> bool:
-        """目标集合是否封闭.
+        """目标集合是否封闭. 判据是 plan 自己的 target_resolution, 不是别处的字符串."""
+        return self.plan.target_resolution.closed
 
-        判据是 `target_resolution` 本身, **不是** unresolved_reason 是否为空.
-        后者曾经是判据, 而它是一个只在 `of()` 的关键字参数里出现、没有任何调用方传值的
-        字段 —— 于是 closed 恒为真, 一个 DYNAMIC 的目标集合在界面上显示成已封闭, 未封闭
-        原因与 checkpoint 提示一行都不会出现. 判据要用界面**已经拿到**的事实.
-        """
-        return self.target_resolution in _CLOSED_RESOLUTIONS
+    @property
+    def target_groups(self) -> tuple[TargetGroup, ...]:
+        effects = self.plan.effects
+        return (
+            TargetGroup("读取", effects.read_paths),
+            TargetGroup("写入", effects.write_paths),
+            TargetGroup("删除", effects.delete_paths),
+            TargetGroup(
+                "移动",
+                tuple(f"{pair.source} -> {pair.target}" for pair in effects.move_pairs),
+            ),
+            TargetGroup("网络", effects.network_targets),
+            TargetGroup("外部副作用", effects.external_effects),
+        )
 
     @property
     def counts(self) -> tuple[tuple[str, int], ...]:
@@ -244,42 +215,96 @@ class HitlApprovalView:
             return True
         return any(group.paths for group in self.target_groups if group.label != "读取")
 
-    @classmethod
-    def of(
-        cls,
-        presentation: ApprovalPresentation,
-        *,
-        allowed_scopes: tuple[ApprovalScope, ...] = (ApprovalScope.ONCE,),
-        unresolved_reason: str | None = None,
-    ) -> HitlApprovalView:
-        groups = (
-            TargetGroup("读取", presentation.read_paths),
-            TargetGroup("写入", presentation.write_paths),
-            TargetGroup("删除", presentation.delete_paths),
-            TargetGroup(
-                "移动",
-                tuple(
-                    f"{source} -> {target}"
-                    for source, target in presentation.move_pairs
-                ),
-            ),
-            TargetGroup("网络", presentation.network_targets),
-            TargetGroup("外部副作用", presentation.external_effects),
+    @property
+    def view_hash(self) -> str:
+        """用户批准的是这一份视图. ApprovalBinding 绑定它, 确认后不能静默扩大范围.
+
+        源字段显式列出而不是 ``digest(self)``: plan 的部分只取 ``plan_hash`` ——
+        它已经覆盖工具, spec, 入参, 能力, 效果与目标集合, 再把整个 plan 摊平进来只是
+        重算一遍同样的东西.
+        """
+        return digest(
+            {
+                "plan_hash": self.plan.plan_hash,
+                "action_summary": self.action_summary,
+                "user_intent_summary": self.user_intent_summary,
+                "workspace_roots": self.workspace_roots,
+                "script_snapshots": self.script_snapshots,
+                "risk_facts": self.risk_facts,
+                "unresolved_reason": self.unresolved_reason,
+                "allowed_scopes": self.allowed_scopes,
+            }
         )
-        return cls(
-            mode=presentation.mode,
-            workspace_roots=presentation.workspace_roots,
-            # 没有原始命令的工具 (fs.edit_file 之类) 用动作摘要顶上, 但绝不留空:
-            # 第二行是用户唯一能看懂"要发生什么"的地方.
-            raw_command=presentation.raw_command or presentation.action_summary,
-            target_groups=groups,
-            target_resolution=presentation.target_resolution,
-            script_snapshots=presentation.script_snapshots,
-            content_previews=presentation.content_previews,
-            unresolved_reason=unresolved_reason or presentation.unresolved_reason,
-            recovery_strategy=presentation.recovery_strategy or None,
-            allowed_scopes=allowed_scopes,
-        )
+
+    def to_payload(self) -> dict[str, object]:
+        """交给远程界面的 JSON 形状.
+
+        显式列键, 不反射 dataclass 字段: 反射会把整个 ToolPlan (含 normalized_input
+        与 analysis_subject) 一起送出去, 而界面一项都用不上.
+        """
+        return {
+            "mode": self.mode,
+            "workspace_roots": list(self.workspace_roots),
+            "raw_command": self.raw_command,
+            "target_resolution": self.target_resolution,
+            "target_groups": [
+                {"label": group.label, "paths": list(group.paths)}
+                for group in self.target_groups
+            ],
+            "script_snapshots": [
+                {
+                    "language": snapshot.language,
+                    "origin": snapshot.origin,
+                    "path": snapshot.path,
+                    "source": snapshot.source,
+                }
+                for snapshot in self.script_snapshots
+            ],
+            "content_previews": [
+                {
+                    "path": preview.path,
+                    "content": preview.content,
+                    "truncated": preview.truncated,
+                }
+                for preview in self.content_previews
+            ],
+            "unresolved_reason": self.unresolved_reason,
+            "allowed_scopes": [scope.value for scope in self.allowed_scopes],
+        }
+
+
+@dataclass(frozen=True)
+class ApprovalRequest:
+    """一次待人类决定的请求. 创建它不等于允许执行, ShellTool 此时绝不能被调用."""
+
+    approval_id: str
+    binding: ApprovalBinding
+    view: ApprovalView
+    mandatory: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.approval_id.strip():
+            raise ValueError("ApprovalRequest.approval_id 不能为空")
+        if self.mandatory and self.view.allowed_scopes != (ApprovalScope.ONCE,):
+            # Mandatory Ask 只能创建与本次请求严格绑定的一次性审批: 不支持 session,
+            # workspace 或 always (ADR-0013 §4.1).
+            raise ValueError("Mandatory Ask 只能使用 once 范围")
+        if self.binding.view_hash != self.view.view_hash:
+            raise ValueError("ApprovalBinding 必须绑定同一份审批视图")
+
+    def response_error(self, response: ApprovalResponse) -> str | None:
+        """验证适配器返回的决定确实属于当前审批请求."""
+        if response.approval_id != self.approval_id:
+            return "审批响应 id 与当前请求不一致"
+        if response.approved and response.scope not in self.view.allowed_scopes:
+            return f"审批响应使用了未提供的范围: {response.scope.value}"
+        if (
+            self.mandatory
+            and response.approved
+            and response.scope is not ApprovalScope.ONCE
+        ):
+            return "Mandatory Ask 只能批准本次执行"
+        return None
 
 
 @dataclass(frozen=True)

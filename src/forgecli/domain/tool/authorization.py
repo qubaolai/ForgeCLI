@@ -63,7 +63,7 @@ class ExecutionAuthorization:
     # ADR-0015 的恢复点标识 (需要真实工作区写入时才有).
     recovery_binding: str | None = None
     # ADR-0013 §14: 人类批准时看到的完整视图哈希 (走过 ASK 时才有).
-    approval_presentation_hash: str | None = None
+    approval_view_hash: str | None = None
     # 派生字段: 与 effective_plan.plan_hash 恒等, 显式留字段是为了让审计与事件里
     # 有一个不必展开整个 plan 就能比对的锚点.
     plan_hash: str = field(default="", compare=False)
@@ -84,7 +84,7 @@ class ExecutionAuthorization:
                 "plan_hash": self.plan_hash,
                 "execution_profile_hash": self.execution_profile_hash,
                 "recovery_binding": self.recovery_binding,
-                "approval_presentation_hash": self.approval_presentation_hash,
+                "approval_view_hash": self.approval_view_hash,
                 "expires_at_epoch": self.expires_at_epoch,
             }
         )
@@ -124,6 +124,11 @@ def validate_narrowing(original: ToolPlan, effective: ToolPlan) -> None:
     if not effective.capabilities <= original.capabilities:
         raise AuthorizationError(
             AuthorizationErrorCode.AUTHORIZATION_INVALID, "改写不能新增能力"
+        )
+    if not set(original.file_state_bindings) <= set(effective.file_state_bindings):
+        raise AuthorizationError(
+            AuthorizationErrorCode.AUTHORIZATION_INVALID,
+            "改写不能移除或替换已有的文件状态绑定",
         )
     if original.target_resolution.closed:
         if not effective.target_resolution.closed:

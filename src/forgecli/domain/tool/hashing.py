@@ -22,7 +22,7 @@ from collections.abc import Mapping, Sequence, Set
 from dataclasses import fields, is_dataclass
 from enum import Enum
 
-__all__ = ["canonical", "digest", "digest_text"]
+__all__ = ["canonical", "digest", "digest_bytes", "digest_text"]
 
 _ALGORITHM = "sha256"
 
@@ -60,6 +60,11 @@ def digest(value: object) -> str:
 def digest_text(text: str) -> str:
     """对一段已经规范化的文本取 sha256 (脚本内容, 命令原文等直接用它)."""
     return f"{_ALGORITHM}:{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
+
+
+def digest_bytes(data: bytes) -> str:
+    """直接哈希字节，避免二进制先 decode 后把不同非法序列合并成同一替换字符。"""
+    return f"{_ALGORITHM}:{hashlib.sha256(data).hexdigest()}"
 
 
 def _first(pair: tuple[str, object]) -> str:

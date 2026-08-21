@@ -33,6 +33,7 @@ __all__ = [
     "DeclarationConfidence",
     "ExecutionContextRef",
     "ContentPreview",
+    "FileStateBinding",
     "MovePair",
     "PlanEffects",
     "ShellSubject",
@@ -99,6 +100,23 @@ class ContentPreview:
 
 
 @dataclass(frozen=True)
+class FileStateBinding:
+    """执行必须继续使用的同一份文件输入。
+
+    Shell 分析会读取可执行文件和脚本内容。只把分析结论放在临时 ``findings`` 里，
+    等于允许文件在裁决后、执行前被替换。这个结构把身份与内容哈希放回 ToolPlan，
+    由统一运行时在启动工具前复核；分析器不再各自实现一套 TOCTOU 检查。
+    """
+
+    path: str
+    realpath: str
+    file_identity: str
+    size: int
+    mtime_ns: int
+    content_hash: str
+
+
+@dataclass(frozen=True)
 class PlanEffects:
     """本次调用声明或推导出的副作用事实. 路径一律为规范化后的绝对路径."""
 
@@ -134,10 +152,7 @@ class AnalysisSubject:
 
 @dataclass(frozen=True)
 class ShellSubject(AnalysisSubject):
-    shell_kind: str
     raw_command: str
-    cwd: str
-    env_snapshot_ref: str
 
 
 @dataclass(frozen=True)
@@ -145,7 +160,7 @@ class ExecutionContextRef:
     """冻结的执行上下文引用: prepare 的展开与真实执行必须用同一份.
 
     `filesystem_view_version` 标成 compare=False 且**不进 plan_hash**. 它是每次调用
-    新建的视图版本 (`fs-{time_ns}`), 因此每次都不同; 把它算进 plan 身份的后果是
+    新建的观察入口身份 (`fs-{time_ns}`), 不是文件系统内容哈希; 把它算进 plan 身份会让
     plan_hash 永远不重复 —— 而 plan_hash 正是学习规则与风险缓存的匹配键, 于是
     "以后遇到相同命令直接允许"从来没有生效过, 用户每次都会被重新询问.
 
@@ -178,6 +193,8 @@ class ToolPlan:
     # 写入内容的展示投影. compare=False: 内容本身已由 normalized_input 绑定, 这里只是
     # 为了让审批界面拿得到它而不必去猜每个工具的入参键名.
     content_previews: tuple[ContentPreview, ...] = field(default=(), compare=False)
+    # 安全分析实际读取过的文件。它参与 plan_hash，并在 perform 前统一重验。
+    file_state_bindings: tuple[FileStateBinding, ...] = ()
     # 派生字段.
     target_set_hash: str = field(default="", compare=False)
     plan_hash: str = field(default="", compare=False)
@@ -224,6 +241,7 @@ class ToolPlan:
             "declaration_confidence": self.declaration_confidence,
             "analysis_subject": self.analysis_subject,
             "execution_context": self.execution_context,
+            "file_state_bindings": self.file_state_bindings,
         }
 
 

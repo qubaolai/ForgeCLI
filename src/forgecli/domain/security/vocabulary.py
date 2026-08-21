@@ -22,8 +22,12 @@ __all__ = [
     "DecisionReason",
 ]
 
-# 本地策略版本. 规则表, 优先级或 mode 矩阵变化时递增, 使缓存与学习规则失效.
-POLICY_VERSION = "1"
+# 本地策略版本. 规则表, 优先级, mode 矩阵或 ApprovalBinding 字段集变化时递增,
+# 使缓存与学习规则失效.
+#
+# 3: ADR-0028 收缩 ApprovalBinding 并合并审批视图. 旧规则绑的是旧口径的字段集,
+#    沿用等于拿旧绑定去满足新裁决.
+POLICY_VERSION = "3"
 
 
 class Decision(Enum):
@@ -81,6 +85,7 @@ class DecisionReason(Enum):
     # 这条**不是**安全底线, 是"这台机器上跑不了". 单列一个码而不是复用 HARD_DENY_*:
     # 混进去会让审计里多出一堆假的安全拒绝, 而它们其实只是模型用错了平台的命令.
     EXECUTABLE_NOT_FOUND = "executable_not_found"
+    SCRIPT_CONTENT_UNAVAILABLE = "script_content_unavailable"
     HARD_DENY_DESTRUCTIVE = "hard_deny_destructive"
     HARD_DENY_PRIVILEGE_ESCALATION = "hard_deny_privilege_escalation"
     HARD_DENY_PROTECTED_PATH = "hard_deny_protected_path"

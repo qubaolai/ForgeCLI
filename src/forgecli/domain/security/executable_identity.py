@@ -41,7 +41,10 @@ class ExecutableIdentity:
     absolute_path: str
     realpath: str
     file_identity: str
+    size: int
+    mtime_ns: int
     content_hash: str
+    content_complete: bool
     trust_zone: TrustZone
     interpreter_chain: tuple[str, ...] = ()
     runtime_config_hash: str | None = None
@@ -58,7 +61,7 @@ class ExecutableIdentity:
         Agent 可写的位置一律不行: `./cat`, 被改过的 `venv/bin/python` 和
         `node_modules/.bin/*` 必须按脚本执行分析, 而不是继承同名系统命令的授权.
         """
-        return not self.writable_by_agent
+        return not self.writable_by_agent and self.content_complete
 
     @property
     def identity_hash(self) -> str:
@@ -67,7 +70,10 @@ class ExecutableIdentity:
             {
                 "realpath": self.realpath,
                 "file_identity": self.file_identity,
+                "size": self.size,
+                "mtime_ns": self.mtime_ns,
                 "content_hash": self.content_hash,
+                "content_complete": self.content_complete,
                 "interpreter_chain": self.interpreter_chain,
                 "runtime_config_hash": self.runtime_config_hash,
                 "dependency_hash": self.dependency_hash,
@@ -82,6 +88,9 @@ class ExecutableIdentity:
             absolute_path="",
             realpath="",
             file_identity="",
+            size=0,
+            mtime_ns=0,
             content_hash="",
+            content_complete=False,
             trust_zone=TrustZone.UNKNOWN,
         )

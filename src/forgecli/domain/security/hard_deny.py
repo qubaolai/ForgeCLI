@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from forgecli.domain.security.decision import RiskFact
+from forgecli.domain.security.findings import RiskFact
 from forgecli.domain.security.shell.command_plan import (
     CommandPlan,
     CommandUnit,

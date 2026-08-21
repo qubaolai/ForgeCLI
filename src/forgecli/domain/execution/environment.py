@@ -29,7 +29,7 @@ __all__ = [
 ]
 
 # 净化规则版本. 规则变化会改变 effective_environment_hash, 使旧授权与缓存失效.
-ENVIRONMENT_SANITIZATION_VERSION = "1"
+ENVIRONMENT_SANITIZATION_VERSION = "2"
 
 # 能改变"这条命令实际执行什么"的变量. 清除而不是保留, 因为它们的危害不取决于取值内容,
 # 而取决于它们存在本身.
@@ -106,12 +106,26 @@ class ShellLaunch:
     def descriptor(self) -> str:
         return " ".join((self.program, *self.args))
 
+    @property
+    def dialect(self) -> str:
+        """安全解析使用的三种方言；启动程序别名只在这里归一。"""
+        normalized = self.kind.casefold()
+        if normalized in {"posix", "sh", "bash", "zsh", "dash", "ksh"}:
+            return "posix"
+        if normalized == "cmd":
+            return "cmd"
+        if normalized in {"powershell", "pwsh"}:
+            return "powershell"
+        raise ValueError(f"不支持的 Shell 方言: {self.kind}")
+
 
 def sanitize_environment(
     raw: Mapping[str, str],
     *,
     trusted_path: Sequence[str],
     allowlist: Sequence[str] = DEFAULT_ENV_ALLOWLIST,
+    controlled: Mapping[str, str] | None = None,
+    path_separator: str = ":",
 ) -> dict[str, str]:
     """按 allowlist 过滤环境, 并把 PATH 换成 Forge 构造的受控 PATH.
 
@@ -124,7 +138,12 @@ def sanitize_environment(
         for name, value in raw.items()
         if name.upper() in allowed and not _is_injection(name)
     }
-    result["PATH"] = _join_path(trusted_path)
+    if path_separator not in (":", ";"):
+        raise ValueError("PATH 分隔符只能是 ':' 或 ';'")
+    result["PATH"] = path_separator.join(trusted_path)
+    # 这些值来自冻结的 ExecutionProfile，不来自宿主环境。允许它们覆盖透传值，
+    # 用于关闭 git/pip/npm 等工具的隐式用户级配置入口。
+    result.update(dict(controlled or {}))
     return result
 
 
@@ -138,9 +157,3 @@ def _is_injection(name: str) -> bool:
     if upper in {item.upper() for item in INJECTION_VARIABLES}:
         return True
     return any(upper.startswith(prefix) for prefix in INJECTION_VARIABLE_PREFIXES)
-
-
-def _join_path(entries: Sequence[str]) -> str:
-    # 分隔符按 POSIX 与 Windows 区分由探测器决定; 这里保持传入顺序不做重排.
-    separator = ";" if any("\\" in entry for entry in entries) else ":"
-    return separator.join(entries)

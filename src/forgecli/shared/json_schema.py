@@ -10,10 +10,11 @@ ADR-0004 §3 要求 ToolSpec.input_schema 在运行前强制校验, 工具系统
 classification、title、summary）常用的约束：
 
     type（object/array/string/number/integer/boolean/null）、properties、
-    required、enum、items、additionalProperties=false。
+    required、enum、items、additionalProperties=false、minimum/maximum、
+    minLength/maxLength、minItems/maxItems。
 
-未覆盖的关键字（pattern、format、min/max 等）被忽略——校验做「必要而非充分」
-判定：违反已支持关键字一定报错，未支持关键字不误报。返回错误列表而非抛异常，
+未覆盖的关键字（pattern、format 等）被忽略——校验做「必要而非充分」判定：
+违反已支持关键字一定报错，未支持关键字不误报。返回错误列表而非抛异常，
 由 gateway 决定 strict 语义（strict=True 归一化为 ModelResponseParseError，
 strict=False 填入 StructuredModelResponse.validation_errors）。
 """
@@ -21,6 +22,7 @@ strict=False 填入 StructuredModelResponse.validation_errors）。
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TypeGuard
 
 _TYPE_CHECKS: dict[str, type | tuple[type, ...]] = {
     "object": dict,
@@ -64,6 +66,7 @@ def validate_json_schema(
                 errors.append(f"{path}: 不允许额外字段 {name!r}")
 
     if isinstance(data, list):
+        errors.extend(_length_errors(data, schema, path, "Items", "元素"))
         items = schema.get("items")
         if isinstance(items, Mapping):
             for index, item in enumerate(data):
@@ -71,7 +74,47 @@ def validate_json_schema(
                     validate_json_schema(item, items, path=f"{path}[{index}]")
                 )
 
+    if isinstance(data, str):
+        errors.extend(_length_errors(data, schema, path, "Length", "字符"))
+
+    if not isinstance(data, bool) and isinstance(data, int | float):
+        minimum = schema.get("minimum")
+        if _is_number(minimum) and data < minimum:
+            errors.append(f"{path}: 数值 {data!r} 小于 minimum {minimum!r}")
+        maximum = schema.get("maximum")
+        if _is_number(maximum) and data > maximum:
+            errors.append(f"{path}: 数值 {data!r} 大于 maximum {maximum!r}")
+
     return errors
+
+
+def _length_errors(
+    value: str | list[object],
+    schema: Mapping[str, object],
+    path: str,
+    suffix: str,
+    unit: str,
+) -> list[str]:
+    errors: list[str] = []
+    minimum = schema.get(f"min{suffix}")
+    if (
+        isinstance(minimum, int)
+        and not isinstance(minimum, bool)
+        and len(value) < minimum
+    ):
+        errors.append(f"{path}: {unit}数 {len(value)} 小于 min{suffix} {minimum}")
+    maximum = schema.get(f"max{suffix}")
+    if (
+        isinstance(maximum, int)
+        and not isinstance(maximum, bool)
+        and len(value) > maximum
+    ):
+        errors.append(f"{path}: {unit}数 {len(value)} 大于 max{suffix} {maximum}")
+    return errors
+
+
+def _is_number(value: object) -> TypeGuard[int | float]:
+    return not isinstance(value, bool) and isinstance(value, int | float)
 
 
 def _check_type(data: object, expected: str) -> bool:

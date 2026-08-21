@@ -97,6 +97,7 @@ class MutationEntry:
     source_path: str | None = None
     target_path: str | None = None
     file_identity: str = ""
+    mode: int = 0
     link_target: str | None = None
     recoverability: Recoverability = Recoverability.FULL
     conflict_status: ConflictStatus = ConflictStatus.CLEAN
@@ -135,6 +136,7 @@ class MutationSet:
             source_path=existing.source_path,
             target_path=entry.target_path or existing.target_path,
             file_identity=entry.file_identity or existing.file_identity,
+            mode=existing.mode,
             link_target=entry.link_target or existing.link_target,
             recoverability=existing.recoverability,
             conflict_status=entry.conflict_status,

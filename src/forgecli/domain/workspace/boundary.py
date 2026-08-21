@@ -14,7 +14,7 @@ from pathlib import PurePath
 
 __all__ = ["PATH_NORMALIZATION_VERSION", "is_within"]
 
-PATH_NORMALIZATION_VERSION = "1"
+PATH_NORMALIZATION_VERSION = "2"
 
 
 def is_within(target: str | PurePath, root: str | PurePath) -> bool:

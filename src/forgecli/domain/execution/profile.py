@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from forgecli.domain.execution.environment import (
     ENVIRONMENT_SANITIZATION_VERSION,
@@ -23,7 +24,7 @@ from forgecli.domain.workspace.boundary import PATH_NORMALIZATION_VERSION
 
 __all__ = ["ExecutionProfile", "IsolationLevel"]
 
-PROFILE_VERSION = "1"
+PROFILE_VERSION = "2"
 
 
 class IsolationLevel(Enum):
@@ -49,6 +50,10 @@ class ExecutionProfile:
     environment_allowlist: tuple[str, ...]
     protected_roots_hash: str
     executable_resolution_version: str
+    path_separator: str
+    # PATH 中用户显式配置、可能由 Agent 修改的工具链目录；不能按系统二进制信任。
+    writable_toolchain_path: tuple[str, ...] = ()
+    controlled_environment: tuple[tuple[str, str], ...] = ()
     path_normalization_version: str = PATH_NORMALIZATION_VERSION
     environment_sanitization_version: str = ENVIRONMENT_SANITIZATION_VERSION
     profile_version: str = PROFILE_VERSION
@@ -59,6 +64,12 @@ class ExecutionProfile:
         if any(entry in (".", "") for entry in self.trusted_path):
             # PATH 里的 "." 会让"当前目录下有个同名文件"变成一次代码执行.
             raise ValueError("受控 PATH 不能包含当前目录")
+        if any(not Path(entry).is_absolute() for entry in self.trusted_path):
+            raise ValueError("受控 PATH 只能包含绝对目录")
+        if self.path_separator not in (":", ";"):
+            raise ValueError("ExecutionProfile.path_separator 非法")
+        # 解析方言与真实启动程序的映射必须在画像构造期确定，不能执行时猜 POSIX。
+        _ = self.shell_launch.dialect
 
     @property
     def trusted_path_hash(self) -> str:

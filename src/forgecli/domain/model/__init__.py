@@ -8,7 +8,6 @@ from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.params import ModelParams, ThinkingConfig
 from forgecli.domain.model.provider_spec import ProviderSpec, ThinkingDialect
 from forgecli.domain.model.request import (
-    BudgetSnapshot,
     CacheHint,
     ModelRequest,
     StructuredModelRequest,
@@ -41,7 +40,6 @@ from forgecli.domain.model.thinking_override import ThinkingOverride
 from forgecli.domain.model.usage import UnitPrices, UsageRecordDraft
 
 __all__ = [
-    "BudgetSnapshot",
     "CacheHint",
     "Credential",
     "CurrentModelSelection",
