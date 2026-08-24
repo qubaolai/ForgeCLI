@@ -10,11 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.planning import (
-    PLAN_TEMPLATE_VERSION,
-    PlanningService,
-    StatusUpdate,
-)
+from forgecli.application.planning.plan_template import PLAN_TEMPLATE_VERSION
+from forgecli.application.planning.planning_service import PlanningService, StatusUpdate
 from forgecli.domain.planning import PlanStatus, PlanStep, TodoStatus
 from forgecli.infrastructure.planning import FsPlanStore
 

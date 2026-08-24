@@ -43,7 +43,6 @@ INVERTED_PACKAGE_BOUNDARIES: frozenset[str] = frozenset(
         "ToolRunObserver",
         "ToolAuditSink",
         "LlmGateway",
-        "ModelSelectionResolver",
     }
 )
 

@@ -35,11 +35,12 @@ sys.path.insert(0, {src!r})
 from rich.console import Console
 
 from forgecli.application.intent_router import IntentRouter
-from forgecli.application.manual_shell import ManualShellContext, ManualShellService
-from forgecli.application.slash_commands import CommandRegistry
+from forgecli.application.manual_shell.provider import ManualShellContext
+from forgecli.application.manual_shell.service import ManualShellService
+from forgecli.application.slash_commands.registry import CommandRegistry
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.manual_shell.request import ManualShellRequest
-from forgecli.application.manual_shell import InteractiveShellResolver
+from forgecli.application.manual_shell.provider import InteractiveShellResolver
 from forgecli.infrastructure.manual_shell import build_interactive_shell_provider
 from forgecli.interfaces.cli import repl as repl_module
 from forgecli.interfaces.cli.output import RichOutput

@@ -14,11 +14,11 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.planning import (
-    PlanningService,
+from forgecli.application.planning.plan_review import (
     PlanReviewChoice,
     PlanReviewService,
 )
+from forgecli.application.planning.planning_service import PlanningService
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.planning import PlanDocument, PlanStatus, PlanStep
 from forgecli.infrastructure.planning import FsPlanStore

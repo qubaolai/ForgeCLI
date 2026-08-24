@@ -25,7 +25,7 @@ from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_run.tool_observer import EventBusToolRunObserver
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
-from forgecli.application.planning import PlanningService
+from forgecli.application.planning.planning_service import PlanningService
 from forgecli.application.recovery.coordinator import WorkspaceMutationCoordinator
 from forgecli.application.recovery.recovery_service import RecoveryService
 from forgecli.application.security.approval_service import ApprovalService
@@ -34,24 +34,24 @@ from forgecli.application.security.learned_rules import LearnedRuleService
 from forgecli.application.security.policy_engine import PolicyEngine
 from forgecli.application.security.wiring import build_analyzer_registry
 from forgecli.application.security.workspace_grants import WorkspaceGrants
-from forgecli.application.session import SessionService
+from forgecli.application.session.session_service import SessionService
 from forgecli.application.session.tool_audit import SessionToolAudit
 from forgecli.application.tool_request.coordinator import ToolRequestCoordinator
 from forgecli.application.tool_request.dispatcher import CoordinatorToolDispatcher
 from forgecli.application.tools.artifact_store import ArtifactStore
-from forgecli.application.tools.builtin import (
-    ApplyPatchTool,
-    FindTool,
-    GitReadTool,
+from forgecli.application.tools.builtin.fs_apply_patch import ApplyPatchTool
+from forgecli.application.tools.builtin.fs_find import FindTool
+from forgecli.application.tools.builtin.fs_read import ReadFileTool
+from forgecli.application.tools.builtin.git_read import GitReadTool
+from forgecli.application.tools.builtin.planning_tools import (
     PlanReadTool,
     PlanWriteTool,
-    ReadFileTool,
-    SearchTextTool,
-    ShellRunTool,
     TodoReadTool,
     TodoSetStatusTool,
     TodoWriteTool,
 )
+from forgecli.application.tools.builtin.search_text import SearchTextTool
+from forgecli.application.tools.builtin.shell_run import ShellRunTool
 from forgecli.application.tools.command_executor import CommandExecutor
 from forgecli.application.tools.registry import ToolRegistry
 from forgecli.application.tools.resource_governor import ResourceGovernor
@@ -73,7 +73,7 @@ from forgecli.infrastructure.execution.environment_probe import (
 from forgecli.infrastructure.execution.local_command_executor import (
     LocalCommandExecutor,
 )
-from forgecli.infrastructure.execution.sandbox import select_provider
+from forgecli.infrastructure.execution.sandbox.selection import select_provider
 from forgecli.infrastructure.execution.sandboxed_command_executor import (
     SandboxedCommandExecutor,
 )

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from forgecli.application.planning import ActivePlanning
+from forgecli.application.planning.planning_service import ActivePlanning
 from forgecli.application.prompt.project_instruction_reader import ProjectInstruction
 from forgecli.application.prompt.runtime_facts import RuntimeFacts
 from forgecli.application.prompt.system_prompt_builder import (

@@ -14,8 +14,8 @@ plan 档看起来也能写文件.
 from __future__ import annotations
 
 from forgecli.application.interaction_ports import UserOutput
-from forgecli.application.session import SessionService
-from forgecli.application.slash_commands import CommandHandler
+from forgecli.application.session.session_service import SessionService
+from forgecli.application.slash_commands.base import CommandHandler
 from forgecli.application.tool_request.catalog_predicates import catalog_query_for_mode
 from forgecli.application.tools.registry import ToolRegistry
 from forgecli.domain.intents import SlashCommand

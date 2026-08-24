@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from forgecli.application.interaction_ports import MenuPresenter, UserOutput
 from forgecli.application.menu import Choice, Menu
-from forgecli.application.session import SessionService
-from forgecli.application.slash_commands import CommandHandler
+from forgecli.application.session.session_service import SessionService
+from forgecli.application.slash_commands.base import CommandHandler
 from forgecli.domain.intents import SessionMode, SlashCommand
 
 __all__ = ["ModeCommand", "ModeSelectCommand"]

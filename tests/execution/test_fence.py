@@ -20,11 +20,11 @@ from forgecli.domain.intents import SessionMode
 from forgecli.infrastructure.execution.local_command_executor import (
     LocalCommandExecutor,
 )
-from forgecli.infrastructure.execution.sandbox import (
-    NoSandboxProvider,
-    SeatbeltProvider,
+from forgecli.infrastructure.execution.sandbox.none import NoSandboxProvider
+from forgecli.infrastructure.execution.sandbox.seatbelt import SeatbeltProvider
+from forgecli.infrastructure.execution.sandbox.selection import select_provider
+from forgecli.infrastructure.execution.sandbox.wsl2 import (
     Wsl2Provider,
-    select_provider,
     windows_to_wsl_path,
 )
 from forgecli.infrastructure.execution.sandboxed_command_executor import (

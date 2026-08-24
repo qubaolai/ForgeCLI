@@ -1,35 +1,48 @@
-"""模型选择的解析语义（ADR-0011 §2 / §3.4）。
+"""模型选择的解析 (ADR-0011 §2 / §3.4 / §5 运行期装配)。
 
-把当前模型或显式选择解析成具体 provider/model，并在调用前经 ModelCatalogService
-完成存在性与能力校验。依赖方向（§2，均只读）：
+把当前模型或显式选择解析成具体 provider/model, 并在调用前经 ModelCatalogService
+完成存在性与能力校验。依赖方向 (§2, 均只读):
 
-    LlmGateway -> ConfigBackedSelectionResolver -> ModelCatalogService
+    DefaultLlmGateway -> ConfigBackedSelectionResolver -> ModelCatalogService
 
-语义（照 ADR §决策 / §3.4）：
-    - ExplicitModelSelection：单次显式指定 provider/model，直接采用，
+语义 (照 ADR §决策 / §3.4):
+    - ExplicitModelSelection: 单次显式指定 provider/model, 直接采用,
       **不套用 origin 覆盖、不做模型 fallback**。
-    - CurrentModelSelection：origin 命中按用途覆盖则用覆盖模型，否则用当前主模型；
+    - CurrentModelSelection: origin 命中按用途覆盖则用覆盖模型, 否则用当前主模型;
       两者都不 fallback。未配置当前模型且该 origin 无覆盖 -> ModelBadRequestError。
-    - origin 只作用途标签，不选择模型；resolver 不解析 TOML，覆盖表由外部注入。
+    - origin 只作用途标签, 不选择模型; 解析不读 TOML, 覆盖表由外部注入。
 
-能力校验只做*静态*比对（§4）：按 required_capabilities 比对条目的 supports_* 标志、
-按 min_context_window 比对 context_window。**不**由 messages 推算 token 数——真实
-token 估算是 07-06 的 TokenEstimator，本切片仅把这两个字段作为已给定诉求前置校验。
+能力校验只做*静态*比对 (§4): 按 required_capabilities 比对条目的 supports_* 标志、
+按 min_context_window 比对 context_window。**不**由 messages 推算 token 数 —— 真实
+token 估算是 ApproximateTokenEstimator。
 
-ADR-0028: 这里曾经是一个类, 而 ConfigBackedSelectionResolver 每次 resolve 都新建
-一个它再委托过去 —— 两个类, 一套语义, 加一个只有它们两个实现的抽象基类. 现在解析
-语义是一个纯函数, 唯一的解析器类只负责「每次现读哪三个来源」.
+当前模型 (/model)、按用途覆盖 (/config) 与模型目录 (llm.json) 都可能在会话中被改,
+因此不能在启动时把它们冻进解析器: ConfigBackedSelectionResolver 每次 resolve 现读
+这三个来源, 再交给纯函数 resolve_selection。
+
+ADR-0028: 这里曾经是三个文件 —— 一个纯函数模块, 一个只负责"现读哪三个来源"的类,
+以及一个只有那个类实现的 ModelSelectionResolver 抽象。抽象存在的唯一理由是断开
+gateway -> 解析器 -> catalog_builder -> gateway 的 import 环; 环的真正成因是
+gateway/__init__ 的急切转导出, 而不是这里缺一层间接。成因修掉之后, 抽象没有第二个
+实现, 也不跨任何机器守得住的边界, 按规则 A 删除。
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
-from forgecli.application.llm.gateway.catalog import ModelCatalogService
+from forgecli.application.config.config_service import ConfigService
+from forgecli.application.llm.catalog import ModelCatalogService
+from forgecli.application.llm.catalog_builder import build_catalog
+from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.gateway.errors import (
     ModelBadRequestError,
     ModelContextOverflowError,
+)
+from forgecli.application.llm.thinking_runtime import (
+    ThinkingOverlayCatalog,
+    ThinkingRuntimeState,
 )
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
@@ -48,8 +61,45 @@ _CAPABILITY_FLAGS: dict[str, str] = {
     "tool_calling": "supports_tool_calling",
 }
 
+__all__ = ["ConfigBackedSelectionResolver", "resolve_selection"]
 
-__all__ = ["resolve_selection"]
+
+class ConfigBackedSelectionResolver:
+    """每次 resolve 现读配置（当前模型 / 覆盖表 / 目录）的动态解析器。"""
+
+    def __init__(
+        self,
+        *,
+        config_service: ConfigService,
+        llm_config_service: LlmConfigService,
+        overrides_loader: Callable[[], Mapping[RequestOrigin, ModelRef]],
+        thinking_state: ThinkingRuntimeState | None = None,
+    ) -> None:
+        self._config = config_service
+        self._llm = llm_config_service
+        self._load_overrides = overrides_loader
+        self._thinking_state = thinking_state
+
+    def resolve(
+        self,
+        selection: ModelSelection,
+        *,
+        origin: RequestOrigin,
+        required_capabilities: tuple[str, ...] = (),
+        min_context_window: int | None = None,
+    ) -> ResolvedModel:
+        catalog: ModelCatalogService = build_catalog(self._llm.config())
+        if self._thinking_state is not None:
+            catalog = ThinkingOverlayCatalog(catalog, self._thinking_state)
+        return resolve_selection(
+            selection,
+            catalog=catalog,
+            current_model=self._config.effective().default_model,
+            overrides=self._load_overrides(),
+            origin=origin,
+            required_capabilities=required_capabilities,
+            min_context_window=min_context_window,
+        )
 
 
 def resolve_selection(

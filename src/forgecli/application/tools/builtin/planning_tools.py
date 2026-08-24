@@ -24,7 +24,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 
-from forgecli.application.planning import (
+from forgecli.application.planning.planning_service import (
     PlanningService,
     StatusUpdate,
     is_safe_plan_id,

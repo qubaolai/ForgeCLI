@@ -11,7 +11,7 @@ SessionService._append), 所以退出不需要做一次收尾刷盘 —— 需�
 from __future__ import annotations
 
 from forgecli.application.interaction_ports import UserOutput
-from forgecli.application.slash_commands import CommandHandler
+from forgecli.application.slash_commands.base import CommandHandler
 from forgecli.domain.intents import SlashCommand
 from forgecli.interfaces.cli.session_exit import SessionExit
 

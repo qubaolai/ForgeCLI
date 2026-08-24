@@ -22,7 +22,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forgecli.application.llm import providers as provider_registry
-from forgecli.application.planning import PlanReviewChoice
+from forgecli.application.planning.plan_review import PlanReviewChoice
 from forgecli.application.security.workspace_grants import GrantError
 from forgecli.domain.agent.run_events import AgentRunEventKind
 from forgecli.domain.config import config_keys

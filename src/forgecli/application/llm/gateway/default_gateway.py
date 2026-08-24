@@ -71,11 +71,11 @@ from forgecli.application.llm.gateway.provider_settings import (
     ProviderRuntimeSettings,
     ProviderSettingsSource,
 )
-from forgecli.application.llm.gateway.selection_resolver import (
-    ModelSelectionResolver,
-)
 from forgecli.application.llm.gateway.token_estimator import (
     ApproximateTokenEstimator,
+)
+from forgecli.application.llm.selection import (
+    ConfigBackedSelectionResolver,
 )
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.credentials import Credential
@@ -126,7 +126,7 @@ class DefaultLlmGateway(LlmGateway):
         self,
         registry: ProviderRegistry,
         *,
-        resolver: ModelSelectionResolver,
+        resolver: ConfigBackedSelectionResolver,
         timer: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
         token_estimator: ApproximateTokenEstimator | None = None,

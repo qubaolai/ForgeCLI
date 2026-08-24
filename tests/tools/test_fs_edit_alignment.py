@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.tools.builtin import ApplyPatchTool
+from forgecli.application.tools.builtin.fs_apply_patch import ApplyPatchTool
 from forgecli.application.tools.tool import ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.tool.errors import PreparationError

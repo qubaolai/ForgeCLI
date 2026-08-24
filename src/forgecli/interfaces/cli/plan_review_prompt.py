@@ -19,12 +19,12 @@ from __future__ import annotations
 
 from rich.console import Console
 
-from forgecli.application.planning import (
-    PlanningService,
+from forgecli.application.planning.plan_review import (
     PlanReviewChoice,
     PlanReviewOutcome,
     PlanReviewService,
 )
+from forgecli.application.planning.planning_service import PlanningService
 from forgecli.domain.intents import SessionMode
 from forgecli.interfaces.cli.tty.select import (
     SelectOption,

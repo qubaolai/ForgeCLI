@@ -16,8 +16,8 @@ from forgecli.application.agent_run.events import (
     AgentRunEventBus,
     AgentRunEventSubscriber,
 )
+from forgecli.application.llm.catalog import InMemoryModelCatalog
 from forgecli.application.llm.gateway.gateway import LlmGateway
-from forgecli.application.llm.gateway.in_memory_catalog import InMemoryModelCatalog
 from forgecli.application.llm.metering import CostEstimator, UsageMeter
 from forgecli.application.prompt.system_prompt_builder import ToolBrief
 from forgecli.domain.agent.run_events import AgentRunEvent, AgentRunEventKind

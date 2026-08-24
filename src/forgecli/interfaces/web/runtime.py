@@ -17,12 +17,17 @@ from forgecli.application.llm.availability import EnvProviderAvailability
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
-from forgecli.application.planning import PlanReviewChoice, PlanReviewService
-from forgecli.application.project import ProjectContext, ProjectService
+from forgecli.application.planning.plan_review import (
+    PlanReviewChoice,
+    PlanReviewService,
+)
+from forgecli.application.project.project import ProjectContext
+from forgecli.application.project.project_service import ProjectService
 from forgecli.application.prompt.runtime_facts import RuntimeFacts
 from forgecli.application.prompt.system_prompt_builder import SystemPromptBuilder
 from forgecli.application.security.workspace_grants import GrantAccess
-from forgecli.application.session import ResumeService, SessionService
+from forgecli.application.session.resume_service import ResumeService
+from forgecli.application.session.session_service import SessionService
 from forgecli.domain.conversation.turn import AssistantResponse, TurnPause
 from forgecli.domain.intents import InputOrigin, SessionMode
 from forgecli.domain.model.catalog import ModelCatalogEntry
@@ -38,11 +43,9 @@ from forgecli.infrastructure.config import JsonConfigStore, config_dir, config_f
 from forgecli.infrastructure.llm import JsonLlmConfigStore
 from forgecli.infrastructure.project import JsonProjectConfigStore, ProcessLock
 from forgecli.infrastructure.prompt import FsProjectInstructionReader
-from forgecli.infrastructure.session import (
-    FsSessionCatalog,
-    JsonlEventStore,
-    JsonStateStore,
-)
+from forgecli.infrastructure.session.fs_session_catalog import FsSessionCatalog
+from forgecli.infrastructure.session.json_state_store import JsonStateStore
+from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
 from forgecli.interfaces.runtime.llm_wiring import LlmRuntime, build_llm_runtime
 from forgecli.interfaces.runtime.tool_wiring import ToolStack, build_tool_stack
 from forgecli.interfaces.web.approval import WebApprovalBroker

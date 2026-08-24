@@ -7,9 +7,9 @@ session id / event id / 读取 state 文件属于 27 日，不在此处。
 from __future__ import annotations
 
 from forgecli.application.interaction_ports import UserOutput
-from forgecli.application.project import ProjectContext
+from forgecli.application.project.project import ProjectContext
 from forgecli.application.session.session_service import SessionService
-from forgecli.application.slash_commands import CommandHandler
+from forgecli.application.slash_commands.base import CommandHandler
 from forgecli.domain.intents import SlashCommand
 
 

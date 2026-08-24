@@ -12,7 +12,7 @@ import pytest
 from rich.console import Console
 
 from forgecli.application.intent_router import IntentRouter
-from forgecli.application.slash_commands import CommandRegistry, CommandSpec
+from forgecli.application.slash_commands.registry import CommandRegistry, CommandSpec
 from forgecli.domain.intents import SessionMode, SlashCommand
 from forgecli.interfaces.cli import repl as repl_module
 from forgecli.interfaces.cli.commands.exit_command import ExitCommand

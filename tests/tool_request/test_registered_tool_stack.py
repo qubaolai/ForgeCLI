@@ -19,7 +19,7 @@ import pytest
 
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.llm.gateway.gateway import LlmGateway
-from forgecli.application.session import SessionService
+from forgecli.application.session.session_service import SessionService
 from forgecli.application.tool_request.observations import ObservationKind
 from forgecli.domain.agent.actions import ToolRequest
 from forgecli.domain.intents import SessionMode

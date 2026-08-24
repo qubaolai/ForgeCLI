@@ -22,19 +22,17 @@ from forgecli.application.intent_router import IntentRouter
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
-from forgecli.application.manual_shell import (
-    ManualShellContext,
-    ManualShellService,
-)
-from forgecli.application.planning import PlanReviewService
-from forgecli.application.project import (
-    ProjectContext,
+from forgecli.application.manual_shell.provider import ManualShellContext
+from forgecli.application.manual_shell.service import ManualShellService
+from forgecli.application.planning.plan_review import PlanReviewService
+from forgecli.application.project.project import ProjectContext
+from forgecli.application.project.project_service import (
     ProjectService,
     WorkspaceStartup,
 )
 from forgecli.application.prompt.runtime_facts import RuntimeFacts
 from forgecli.application.prompt.system_prompt_builder import SystemPromptBuilder
-from forgecli.application.session import SessionService
+from forgecli.application.session.session_service import SessionService
 from forgecli.domain.manual_shell.request import TerminalSize
 from forgecli.domain.model.thinking import ThinkingMode
 from forgecli.infrastructure.config import JsonConfigStore, config_dir, config_file
@@ -50,7 +48,8 @@ from forgecli.infrastructure.project import (
     ProjectLockedError,
 )
 from forgecli.infrastructure.prompt import FsProjectInstructionReader
-from forgecli.infrastructure.session import JsonlEventStore, JsonStateStore
+from forgecli.infrastructure.session.json_state_store import JsonStateStore
+from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
 from forgecli.interfaces.cli.banner import render_banner
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput

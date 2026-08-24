@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from forgecli.application.session import SessionService
+from forgecli.application.session.session_service import SessionService
 from forgecli.application.tool_request.audit import ToolAuditSink
 from forgecli.domain.security.decision import AuthorizationDecision
 from forgecli.domain.session.events import EventType

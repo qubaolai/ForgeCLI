@@ -25,7 +25,10 @@ from dataclasses import dataclass
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
-from forgecli.application.planning import ActivePlanning, PlanningService
+from forgecli.application.planning.planning_service import (
+    ActivePlanning,
+    PlanningService,
+)
 from forgecli.application.prompt.project_instruction_reader import (
     ProjectInstructionReader,
 )
@@ -35,7 +38,7 @@ from forgecli.application.prompt.system_prompt_builder import (
     SystemPromptBuilder,
     ToolBrief,
 )
-from forgecli.application.session import SessionService
+from forgecli.application.session.session_service import SessionService
 from forgecli.application.tool_request.dispatcher import (
     CoordinatorToolDispatcher,
 )

@@ -11,11 +11,11 @@ from __future__ import annotations
 from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
 from forgecli.application.interaction_ports import MenuPresenter, UserOutput
 from forgecli.application.menu import Choice, Menu
-from forgecli.application.planning import PlanningService
-from forgecli.application.project import ProjectContext
-from forgecli.application.session import SessionService
+from forgecli.application.planning.planning_service import PlanningService
+from forgecli.application.project.project import ProjectContext
 from forgecli.application.session.resume_service import ResumeService
-from forgecli.application.slash_commands import CommandHandler
+from forgecli.application.session.session_service import SessionService
+from forgecli.application.slash_commands.base import CommandHandler
 from forgecli.domain.intents import SlashCommand
 from forgecli.domain.session.snapshot import SessionSnapshot
 

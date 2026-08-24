@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
-from forgecli.application.llm.gateway.catalog import ModelCatalogService
+from forgecli.application.llm.catalog import ModelCatalogService
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.request import ModelRequest
 from forgecli.domain.model.response import ModelResponse, ModelUsage

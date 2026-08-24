@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from forgecli.application.llm.gateway.catalog import ModelCatalogService
+from forgecli.application.llm.catalog import ModelCatalogService
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.thinking import (

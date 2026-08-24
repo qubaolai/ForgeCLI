@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.tools.builtin import FindTool
+from forgecli.application.tools.builtin.fs_find import FindTool
 from forgecli.application.tools.resource_governor import ResourceGovernor
 from forgecli.application.tools.tool import ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext

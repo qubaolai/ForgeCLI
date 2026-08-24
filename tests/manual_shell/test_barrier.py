@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from forgecli.application.manual_shell import ManualMutationBarrier
+from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
 
 # ---- 基本行为 ----
 

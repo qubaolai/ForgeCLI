@@ -9,8 +9,8 @@
 from __future__ import annotations
 
 from forgecli.application.interaction_ports import UserOutput
-from forgecli.application.planning import PlanningService
-from forgecli.application.slash_commands import CommandHandler
+from forgecli.application.planning.planning_service import PlanningService
+from forgecli.application.slash_commands.base import CommandHandler
 from forgecli.domain.intents import SlashCommand
 
 __all__ = ["PlanCommand", "TodoCommand"]

@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from forgecli.application.intent_router import IntentRouter
-from forgecli.application.slash_commands import CommandRegistry, CommandSpec
+from forgecli.application.slash_commands.registry import CommandRegistry, CommandSpec
 from forgecli.domain.intents import (
     InputOrigin,
     ManualShellIntent,

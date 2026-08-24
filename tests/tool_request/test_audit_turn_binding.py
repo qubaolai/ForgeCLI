@@ -18,7 +18,7 @@ from forgecli.application.security.wiring import build_analyzer_registry
 from forgecli.application.tool_request.audit import ToolAuditSink
 from forgecli.application.tool_request.coordinator import ToolRequestCoordinator
 from forgecli.application.tool_request.observations import ObservationKind
-from forgecli.application.tools.builtin import ReadFileTool
+from forgecli.application.tools.builtin.fs_read import ReadFileTool
 from forgecli.application.tools.registry import ToolRegistry
 from forgecli.application.tools.resource_governor import ResourceGovernor
 from forgecli.application.tools.runtime import ToolRuntime

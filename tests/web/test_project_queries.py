@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from forgecli.application.project import ProjectService
+from forgecli.application.project.project_service import ProjectService
 from forgecli.application.project.project_store import (
     ProjectConfigStore,
     ProjectIndexStore,

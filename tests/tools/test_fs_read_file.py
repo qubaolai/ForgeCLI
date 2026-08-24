@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.tools.builtin import ReadFileTool
+from forgecli.application.tools.builtin.fs_read import ReadFileTool
 from forgecli.application.tools.resource_governor import ResourceGovernor
 from forgecli.application.tools.tool import ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext

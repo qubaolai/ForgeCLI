@@ -21,7 +21,7 @@ from datetime import datetime
 
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.security.learned_rules import LearnedRuleService
-from forgecli.application.slash_commands import CommandHandler
+from forgecli.application.slash_commands.base import CommandHandler
 from forgecli.domain.execution.profile import ExecutionProfile
 from forgecli.domain.intents import SlashCommand
 from forgecli.domain.security.rules import LearnedAllowRule

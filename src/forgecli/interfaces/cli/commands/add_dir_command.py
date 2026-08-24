@@ -21,18 +21,16 @@ from datetime import datetime
 from pathlib import Path
 
 from forgecli.application.interaction_ports import UserOutput
-from forgecli.application.project import (
-    ProjectContext,
-    ProjectService,
-    WorkspaceError,
-)
+from forgecli.application.project.project import ProjectContext
+from forgecli.application.project.project_service import ProjectService
 from forgecli.application.security.workspace_grants import (
     GrantAccess,
     GrantError,
     WorkspaceGrants,
 )
-from forgecli.application.slash_commands import CommandHandler
+from forgecli.application.slash_commands.base import CommandHandler
 from forgecli.domain.intents import SlashCommand
+from forgecli.domain.workspace.project import WorkspaceError
 
 __all__ = ["AddDirCommand"]
 

@@ -178,7 +178,7 @@ def test_the_provider_refuses_without_a_terminal(tmp_path: Path) -> None:
     这条在**当前进程**里跑就够 —— pytest 捕获下 stdin/stdout 都不是 TTY, 正是要拒绝
     的那种环境.
     """
-    from forgecli.application.manual_shell import ManualShellUnavailable
+    from forgecli.application.manual_shell.provider import ManualShellUnavailable
     from forgecli.domain.manual_shell.request import ManualShellRequest
     from forgecli.infrastructure.manual_shell.posix_pty import (
         PosixInteractiveShellProvider,

@@ -24,8 +24,8 @@ from rich.panel import Panel
 from forgecli.application.agent_turn.agent_turn_service import AgentTurnService
 from forgecli.application.agent_turn.cancellation import TurnCancelSource
 from forgecli.application.intent_router import IntentRouter
-from forgecli.application.session import SessionService
-from forgecli.application.slash_commands import CommandRegistry
+from forgecli.application.session.session_service import SessionService
+from forgecli.application.slash_commands.registry import CommandRegistry
 from forgecli.domain.conversation.turn import (
     AssistantResponse,
     TurnPause,

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.planning import PlanningService
+from forgecli.application.planning.planning_service import PlanningService
 from forgecli.domain.planning import PlanStep
 from forgecli.domain.session.events import EventType
 from forgecli.infrastructure.planning import FsPlanStore
@@ -62,7 +62,7 @@ def test_a_status_update_changes_the_todo_identity(
     planning: PlanningService,
 ) -> None:
     """打一个勾也要发事件: 审计要能回答"这一步是什么时候完成的"."""
-    from forgecli.application.planning import StatusUpdate
+    from forgecli.application.planning.planning_service import StatusUpdate
     from forgecli.domain.planning import TodoStatus
 
     before = planning.write_todo(["一", "二"])

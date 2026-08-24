@@ -16,7 +16,7 @@ from collections.abc import Callable
 
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.recovery.recovery_service import RecoveryService
-from forgecli.application.slash_commands import CommandHandler
+from forgecli.application.slash_commands.base import CommandHandler
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.intents import SlashCommand
 from forgecli.domain.recovery.checkpoint import RecoveryCheckpoint

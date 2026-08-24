@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from forgecli.application.llm.catalog import InMemoryModelCatalog
 from forgecli.application.llm.config.llm_config import LlmConfig, ModelSpec
 from forgecli.application.llm.errors import ConfigValidationError
-from forgecli.application.llm.gateway.in_memory_catalog import InMemoryModelCatalog
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.thinking import (
     ModelThinkingCapabilities,

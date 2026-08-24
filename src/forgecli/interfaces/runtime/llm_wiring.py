@@ -25,22 +25,20 @@ from pathlib import Path
 
 from forgecli.application.config.config_service import ConfigService
 from forgecli.application.llm import providers as provider_registry
+from forgecli.application.llm.catalog import ModelCatalogService
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
-from forgecli.application.llm.gateway import (
-    DefaultLlmGateway,
-    InMemoryResponseCache,
-    InProcessGatewayMetrics,
-    LlmGateway,
-    ModelCatalogEntry,
-    ModelCatalogService,
-    ProviderRegistry,
-    SlidingWindowHealthRegistry,
-)
+from forgecli.application.llm.gateway.cache import InMemoryResponseCache
+from forgecli.application.llm.gateway.default_gateway import DefaultLlmGateway
+from forgecli.application.llm.gateway.gateway import LlmGateway
+from forgecli.application.llm.gateway.governance import SlidingWindowHealthRegistry
+from forgecli.application.llm.gateway.observability import InProcessGatewayMetrics
+from forgecli.application.llm.gateway.provider_registry import ProviderRegistry
 from forgecli.application.llm.metering import CostEstimator, UsageMeter
 from forgecli.application.llm.overrides_service import ModelOverridesService
-from forgecli.application.llm.runtime_resolver import ConfigBackedSelectionResolver
+from forgecli.application.llm.selection import ConfigBackedSelectionResolver
 from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
+from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.infrastructure.llm.adapters import OpenAICompatibleProvider
 from forgecli.infrastructure.llm.credentials import (

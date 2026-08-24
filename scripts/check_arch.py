@@ -11,6 +11,17 @@
    SDK / HTTP 客户端. 终端与协议细节留在 interfaces / infrastructure.
 3. **工具与安全互不相识** (ADR-0004 §2): application/tools 不 import
    application/security, 反之亦然; 唯一装配点是 application/tool_request.
+4. **无 import 环**: 模块级 import 图必须是有向无环的.
+
+第 4 条为什么值得一个检查: import 环不一定会炸. 只要有一条 import 顺序恰好把每个
+模块在被回头引用前初始化完, 环就一直静默存在 —— 直到有人动了某个 __init__ 或换了
+第一个 import 它的入口. 已经吃过两次: application/llm/config 与 application/llm/gateway
+的包门面各自藏了一个环, 都是靠顺序活着的. 顺序是运气, 不是设计.
+
+环最常见的成因就是**急切转导出的包门面**: `a/__init__.py` import 了 `a.b`, 而 `a.c`
+import `a.b` —— 于是 import `a.c` 会先跑 `a/__init__`, 再回头要还没初始化完的 `a.c`.
+所以检查把"import a.b.c"记成同时指向 `a`, `a.b`, `a.b.c` 三条边: 包门面里的每一条
+import 都是图上的真实边, 不是注释.
 """
 
 from __future__ import annotations
@@ -170,12 +181,106 @@ def _check_file(path: Path) -> list[str]:
     return problems
 
 
+def _module_name(relative: Path) -> str:
+    """`application/llm/gateway/__init__.py` -> `forgecli.application.llm.gateway`."""
+    parts = relative.with_suffix("").parts
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join((ROOT, *parts))
+
+
+def _source_modules() -> list[tuple[str, Path]]:
+    found: list[tuple[str, Path]] = []
+    for path in sorted(SRC.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        found.append((_module_name(path.relative_to(SRC)), path))
+    return found
+
+
+def _import_graph() -> dict[str, set[str]]:
+    """模块 -> 它 import 的模块. import a.b.c 同时记 a 与 a.b: 包 __init__ 会先跑."""
+    known = {name for name, _ in _source_modules()}
+    graph: dict[str, set[str]] = {}
+    for me, path in _source_modules():
+        targets: set[str] = set()
+        for module, _ in _imported_modules(ast.parse(path.read_text("utf-8"), path)):
+            if not module.startswith(f"{ROOT}."):
+                continue
+            prefix = ROOT
+            for part in module.split(".")[1:]:
+                prefix = f"{prefix}.{part}"
+                if prefix in known and prefix != me:
+                    targets.add(prefix)
+        graph[me] = targets
+    return graph
+
+
+def _cycles(graph: dict[str, set[str]]) -> list[list[str]]:
+    """迭代式 Tarjan 求强连通分量; 元素数 > 1 的分量就是一个 import 环."""
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    found: list[list[str]] = []
+    counter = 0
+
+    for root in sorted(graph):
+        if root in index:
+            continue
+        work: list[tuple[str, list[str]]] = [(root, sorted(graph[root]))]
+        index[root] = low[root] = counter
+        counter += 1
+        stack.append(root)
+        on_stack.add(root)
+        while work:
+            node, pending = work[-1]
+            descended = False
+            while pending:
+                target = pending.pop(0)
+                if target not in index:
+                    index[target] = low[target] = counter
+                    counter += 1
+                    stack.append(target)
+                    on_stack.add(target)
+                    work.append((target, sorted(graph.get(target, ()))))
+                    descended = True
+                    break
+                if target in on_stack:
+                    low[node] = min(low[node], index[target])
+            if descended:
+                continue
+            work.pop()
+            if work:
+                low[work[-1][0]] = min(low[work[-1][0]], low[node])
+            if low[node] == index[node]:
+                component = []
+                while True:
+                    member = stack.pop()
+                    on_stack.discard(member)
+                    component.append(member)
+                    if member == node:
+                        break
+                if len(component) > 1:
+                    found.append(sorted(component))
+    return found
+
+
+def _check_cycles() -> list[str]:
+    problems: list[str] = []
+    for component in sorted(_cycles(_import_graph())):
+        members = " <-> ".join(name[len(ROOT) + 1 :] for name in component)
+        problems.append(f"import 环: {members}")
+    return problems
+
+
 def main() -> int:
     problems: list[str] = []
     for path in sorted(SRC.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
         problems.extend(_check_file(path))
+    problems.extend(_check_cycles())
 
     if problems:
         print("依赖方向检查未通过:", file=sys.stderr)

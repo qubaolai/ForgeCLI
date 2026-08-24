@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.planning import PlanningService
-from forgecli.application.tools.builtin import (
+from forgecli.application.planning.planning_service import PlanningService
+from forgecli.application.tools.builtin.planning_tools import (
     PlanReadTool,
     PlanWriteTool,
     TodoReadTool,

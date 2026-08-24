@@ -14,9 +14,7 @@ import pytest
 from rich.console import Console
 
 from forgecli.application.intent_router import IntentRouter
-from forgecli.application.manual_shell import (
-    ManualShellContext,
-)
+from forgecli.application.manual_shell.provider import ManualShellContext
 from forgecli.domain.intents import InputOrigin, ManualShellIntent, UserMessage
 from forgecli.domain.manual_shell.request import ManualShellRequest
 from forgecli.domain.manual_shell.result import ManualShellResult
@@ -31,7 +29,7 @@ from support.fakes import PROFILE
 
 
 def _route(text: str, origin: InputOrigin = InputOrigin.TTY_USER) -> object:
-    from forgecli.application.slash_commands import CommandRegistry
+    from forgecli.application.slash_commands.registry import CommandRegistry
 
     return IntentRouter(registry=CommandRegistry()).route(text, origin=origin)
 

@@ -7,15 +7,17 @@ from contextlib import contextmanager
 
 import pytest
 
-from forgecli.application.manual_shell import (
+from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
+from forgecli.application.manual_shell.provider import (
     InteractiveShellProvider,
     InteractiveShellResolver,
-    ManualMutationBarrier,
     ManualShellContext,
-    ManualShellPhase,
-    ManualShellService,
     ManualShellUnavailable,
     TerminalLease,
+)
+from forgecli.application.manual_shell.service import (
+    ManualShellPhase,
+    ManualShellService,
 )
 from forgecli.domain.intents import ManualShellIntent
 from forgecli.domain.manual_shell.request import ManualShellRequest

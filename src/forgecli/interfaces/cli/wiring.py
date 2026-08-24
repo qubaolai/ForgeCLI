@@ -12,18 +12,18 @@ from forgecli.application.interaction_ports import DirectoryPicker
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.overrides_service import ModelOverridesService
 from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
-from forgecli.application.project import ProjectContext, ProjectService
-from forgecli.application.session import ResumeService, SessionService
-from forgecli.application.slash_commands import CommandRegistry, CommandSpec
+from forgecli.application.project.project import ProjectContext
+from forgecli.application.project.project_service import ProjectService
+from forgecli.application.session.resume_service import ResumeService
+from forgecli.application.session.session_service import SessionService
+from forgecli.application.slash_commands.registry import CommandRegistry, CommandSpec
 from forgecli.domain.intents import SessionMode
 from forgecli.infrastructure.config import JsonConfigStore, config_dir, config_file
 from forgecli.infrastructure.llm import JsonLlmConfigStore
 from forgecli.infrastructure.llm.overrides_json_store import JsonModelOverridesStore
-from forgecli.infrastructure.session import (
-    FsSessionCatalog,
-    JsonlEventStore,
-    JsonStateStore,
-)
+from forgecli.infrastructure.session.fs_session_catalog import FsSessionCatalog
+from forgecli.infrastructure.session.json_state_store import JsonStateStore
+from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
 from forgecli.interfaces.cli.commands.add_dir_command import AddDirCommand
 from forgecli.interfaces.cli.commands.config_command import ConfigCommand
 from forgecli.interfaces.cli.commands.exit_command import ExitCommand
