@@ -1,8 +1,8 @@
-"""fs.read_file: 读一个文件 (ADR-0004 §14).
+"""fs.read: 读一个文件 (ADR-0004 §14).
 
 上界是 WORKSPACE_READ + EXTERNAL_READ, 但**每次调用只声明其中一个**: 读工作区内文件是
 WORKSPACE_READ, 读工作区外文件是 EXTERNAL_READ. 这个区分是整套解耦的关键示例 —— 安全
-模块不认识 "fs.read_file" 这个名字, 它只看到"这次要读区外路径", 于是按 mode 预算落
+模块不认识 "fs.read" 这个名字, 它只看到"这次要读区外路径", 于是按 mode 预算落
 ASK. 读 ~/.ssh/id_rsa 和读 src/main.py 因此得到不同待遇, 而工具本身没有一行策略代码.
 """
 
@@ -48,7 +48,7 @@ from forgecli.shared.cancellation import CancelToken
 __all__ = ["ReadFileTool"]
 
 _SPEC = ToolSpec(
-    name="fs.read_file",
+    name="fs.read",
     version="3",
     title="读取文件",
     description=(
@@ -189,7 +189,7 @@ class ReadFileTool(Tool):
             tool_name=_SPEC.name,
             status=ToolResultStatus.OK,
             # 位置说明单独一个 part, 不拼进正文: 拼进去模型照抄一段内容当 old_string 时
-            # 会把它一起抄走, 于是 fs.edit_file 逐字比对必然对不上.
+            # 会把它一起抄走, 于是 fs.apply_patch 的 FIND 段 逐字比对必然对不上.
             content_parts=emitted.parts + window.notes,
             artifacts=emitted.artifacts,
             metrics=ToolMetrics(bytes_out=emitted.bytes_out),

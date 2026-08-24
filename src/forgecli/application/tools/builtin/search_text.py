@@ -60,12 +60,14 @@ _SPEC = ToolSpec(
     title="搜索文本",
     description=(
         "在文件内容里搜索, 按文件分组返回 行号:内容. "
+        "path 可以是目录, 也可以是单个文件. "
         "默认递归扫描 path 下的整棵树 (pattern 默认 '**/*'), 不需要先列目录. "
         "pattern 是文件名 glob, 用来把扫描范围缩窄, 例如 pattern='**/*.java'. "
         "默认按子串匹配, 传 regex=true 时 query 作为 Python 正则. "
         "context_lines 给出每个命中的前后文行数. "
         "默认跳过 .git, node_modules, target 一类生成目录, "
-        "需要它们时传 include_ignored=true."
+        "需要它们时传 include_ignored=true. "
+        "结果按源码优先排序, 日志与构建输出靠后."
     ),
     input_schema={
         "type": "object",
@@ -87,6 +89,34 @@ _SPEC = ToolSpec(
     target_declaration_ability=TargetDeclarationAbility.EXPANDABLE,
     default_timeout_seconds=30.0,
 )
+
+
+# 靠后的文件类型: 命中它们几乎总是噪音, 而它们的数量常常比源码多一个数量级.
+_LOW_VALUE_SUFFIXES = (
+    ".log",
+    ".min.js",
+    ".min.css",
+    ".map",
+    ".lock",
+    ".snap",
+    ".po",
+    ".mo",
+)
+_LOW_VALUE_SEGMENTS = ("dist", "build", "target", "out", "vendor", "coverage")
+
+
+def _rank(path: str) -> tuple[int, str]:
+    """排序键: 0 是源码, 1 是低价值文件. 同档内按路径, 保证同一次调用结果稳定.
+
+    稳定很要紧: 顺序一变 plan_hash 就变, 上一次批准也就绑不住这一次.
+    """
+    lowered = path.casefold()
+    if any(lowered.endswith(suffix) for suffix in _LOW_VALUE_SUFFIXES):
+        return (1, path)
+    segments = lowered.replace("\\", "/").split("/")
+    if any(segment in _LOW_VALUE_SEGMENTS for segment in segments):
+        return (1, path)
+    return (0, path)
 
 
 def _context_lines(arguments: Mapping[str, object]) -> int:
@@ -216,14 +246,35 @@ class SearchTextTool(Tool):
         if isinstance(target, PreparationError):
             return target
         _, facts = target
+        pattern = str(request.arguments.get("pattern", "**/*"))
+        include_ignored = bool(request.arguments.get("include_ignored", False))
+        if facts.kind is PathKind.FILE:
+            # 收一个文件就是 files = [它] (ADR-0029 A 类). 早先这里直接返回
+            # target_unreadable, 而那条规则没有安全理由 —— 能力声明与扫一个目录完全
+            # 一样. **这是删一条规则, 不是加一个参数.**
+            if facts.is_symlink:
+                return PreparationError(
+                    code=PreparationErrorCode.UNSUPPORTED_REQUEST,
+                    message=f"search.text 不跟随符号链接: {facts.realpath}",
+                    field_path="path",
+                )
+            return self._plan_for(
+                request,
+                context,
+                root=facts.realpath,
+                pattern=pattern,
+                include_ignored=include_ignored,
+                files=(facts.realpath,),
+                expansion_truncated=False,
+                files_truncated=False,
+                skipped_symlinks=0,
+            )
         if facts.kind is not PathKind.DIRECTORY:
             return PreparationError(
                 code=PreparationErrorCode.TARGET_UNREADABLE,
-                message=f"search.text 的 path 必须是目录: {facts.realpath}",
+                message=f"search.text 的 path 必须是文件或目录: {facts.realpath}",
                 field_path="path",
             )
-        pattern = str(request.arguments.get("pattern", "**/*"))
-        include_ignored = bool(request.arguments.get("include_ignored", False))
         # 先过滤再截断, 顺序不能换: 反过来的话 target/ 下的几千个 class 文件会先把
         # _MAX_FILES 的额度吃光, 于是"这个词不在代码里"这个结论建立在没扫到源码上.
         raw_candidates = context.filesystem.expand_glob(
@@ -246,12 +297,42 @@ class SearchTextTool(Tool):
                 continue
             if candidate_facts.kind is PathKind.FILE:
                 regular.append(candidate_facts.realpath)
-        files_truncated = len(regular) > _MAX_FILES
-        files = tuple(regular[:_MAX_FILES])
+        # 先排序再截断: 命中额度被 .log 与 .min.js 吃光时, "这个词不在代码里"这个结论
+        # 建立在没扫到源码上. 零参数, 纯输出改进 (ADR-0029 A 类).
+        ranked = sorted(regular, key=_rank)
+        files_truncated = len(ranked) > _MAX_FILES
+        files = tuple(ranked[:_MAX_FILES])
+        return self._plan_for(
+            request,
+            context,
+            root=facts.realpath,
+            pattern=pattern,
+            include_ignored=include_ignored,
+            files=files,
+            expansion_truncated=expansion_truncated,
+            files_truncated=files_truncated,
+            skipped_symlinks=skipped_symlinks,
+        )
+
+    def _plan_for(
+        self,
+        request: ToolInvocationRequest,
+        context: ExecutionContext,
+        *,
+        root: str,
+        pattern: str,
+        include_ignored: bool,
+        files: tuple[str, ...],
+        expansion_truncated: bool,
+        files_truncated: bool,
+        skipped_symlinks: int,
+    ) -> ToolPlan:
+        query = str(request.arguments["query"])
+        use_regex = bool(request.arguments.get("regex", False))
         large_files = sum(
             context.filesystem.facts(path).size > _MAX_FILE_BYTES for path in files
         )
-        scope = context.scope_of_all((facts.realpath, *files))
+        scope = context.scope_of_all((root, *files))
         return ToolPlan(
             plan_id=request.invocation_id,
             tool_name=_SPEC.name,
@@ -259,7 +340,7 @@ class SearchTextTool(Tool):
             normalized_input=MappingProxyType(
                 {
                     "query": query,
-                    "path": facts.realpath,
+                    "path": root,
                     "pattern": pattern,
                     "regex": use_regex,
                     "context_lines": _context_lines(request.arguments),
@@ -276,7 +357,7 @@ class SearchTextTool(Tool):
                 }
             ),
             capabilities=frozenset({read_capability(scope)}),
-            effects=PlanEffects(read_paths=files or (facts.realpath,)),
+            effects=PlanEffects(read_paths=files or (root,)),
             target_resolution=TargetResolution.FORGE_EXPANDED,
             workspace_scope=scope,
             execution_context=context.to_ref(),

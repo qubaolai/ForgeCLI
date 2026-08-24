@@ -148,7 +148,7 @@ def test_a_preparation_failure_also_leaves_a_terminal_event(tmp_path: Path) -> N
     coordinator, context, audit, collector = _build(tmp_path)
 
     observation = coordinator.handle(
-        ToolRequest(name="fs.read_file", arguments={}),
+        ToolRequest(name="fs.read", arguments={}),
         context=context,
         policy=_policy(),
     )
@@ -157,7 +157,7 @@ def test_a_preparation_failure_also_leaves_a_terminal_event(tmp_path: Path) -> N
     assert any(
         event.kind is AgentRunEventKind.TOOL_COMPLETED for event in collector.events
     )
-    assert audit.rejected and audit.rejected[0][0] == "fs.read_file"
+    assert audit.rejected and audit.rejected[0][0] == "fs.read"
 
 
 def test_a_successful_call_reports_exactly_one_terminal_event(tmp_path: Path) -> None:
@@ -165,7 +165,7 @@ def test_a_successful_call_reports_exactly_one_terminal_event(tmp_path: Path) ->
     coordinator, context, audit, collector = _build(tmp_path)
 
     observation = coordinator.handle(
-        ToolRequest(name="fs.read_file", arguments={"path": "main.py"}),
+        ToolRequest(name="fs.read", arguments={"path": "main.py"}),
         context=context,
         policy=_policy(),
     )
@@ -190,7 +190,7 @@ def test_a_terminal_event_says_whether_the_call_ever_ran(tmp_path: Path) -> None
         policy=_policy(),
     )
     coordinator.handle(
-        ToolRequest(name="fs.read_file", arguments={"path": "main.py"}),
+        ToolRequest(name="fs.read", arguments={"path": "main.py"}),
         context=context,
         policy=_policy(),
     )
@@ -209,7 +209,7 @@ def test_the_prepared_event_names_the_paths_it_will_touch(tmp_path: Path) -> Non
     coordinator, context, _, collector = _build(tmp_path)
 
     coordinator.handle(
-        ToolRequest(name="fs.read_file", arguments={"path": "main.py"}),
+        ToolRequest(name="fs.read", arguments={"path": "main.py"}),
         context=context,
         policy=_policy(),
     )
@@ -229,7 +229,7 @@ def test_a_finished_call_reports_structured_mechanics(tmp_path: Path) -> None:
     coordinator, context, _, collector = _build(tmp_path)
 
     coordinator.handle(
-        ToolRequest(name="fs.read_file", arguments={"path": "main.py"}),
+        ToolRequest(name="fs.read", arguments={"path": "main.py"}),
         context=context,
         policy=_policy(),
     )

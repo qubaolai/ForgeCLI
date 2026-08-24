@@ -29,7 +29,7 @@ __all__ = [
     "ToolSpec",
 ]
 
-# 命名空间化的稳定名: fs.read_file / mcp.github.search_issues. 至少两段, 全小写.
+# 命名空间化的稳定名: fs.read / mcp.github.search_issues. 至少两段, 全小写.
 _NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$")
 
 

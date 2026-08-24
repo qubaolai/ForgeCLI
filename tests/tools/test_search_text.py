@@ -39,6 +39,24 @@ def workspace(tmp_path: Path) -> Path:
     return root
 
 
+def _prepare(workspace: Path, **arguments: object) -> ToolPlan | PreparationError:
+    return SearchTextTool(ResourceGovernor(), NullArtifactStore()).prepare(
+        ToolInvocationRequest(
+            invocation_id="inv-1",
+            tool_name="search.text",
+            arguments=arguments,
+            tool_call_id="c1",
+        ),
+        ExecutionContext(
+            cwd=str(workspace),
+            workspace_roots=(str(workspace),),
+            environment={"PATH": "/usr/bin:/bin"},
+            filesystem=OsFileSystemView(),
+            profile=PROFILE,
+        ),
+    )
+
+
 def _run(workspace: Path, **arguments: object) -> str:
     tool = SearchTextTool(ResourceGovernor(), NullArtifactStore())
     context = ExecutionContext(
@@ -266,3 +284,43 @@ def test_the_result_reports_how_many_bytes_it_produced(workspace: Path) -> None:
 
     assert result.metrics.bytes_out > 0  # type: ignore[attr-defined]
     assert result.metrics.bytes_out == len(result.text.encode("utf-8"))  # type: ignore[attr-defined]
+
+
+def test_a_single_file_is_a_valid_path(workspace: Path) -> None:
+    """收一个文件就是 files = [它] (ADR-0029 A 类).
+
+    早先这里直接 target_unreadable, 而那条规则没有安全理由 —— 能力声明与扫一个目录
+    完全一样. 删一条规则, 不是加一个参数.
+    """
+    (workspace / "src").mkdir(exist_ok=True)
+    (workspace / "src" / "a.py").write_text("needle\n", encoding="utf-8")
+
+    plan = _prepare(workspace, query="needle", path="src/a.py")
+
+    assert isinstance(plan, ToolPlan)
+    assert plan.effects.read_paths == (str(workspace / "src" / "a.py"),)
+
+
+def test_source_files_are_ranked_before_logs_and_build_output(
+    workspace: Path,
+) -> None:
+    """命中额度被 .log 与 dist/ 吃光时, "这个词不在代码里"建立在没扫到源码上.
+
+    零参数, 纯输出改进: 排序只影响先扫谁与截断时谁活下来.
+    """
+    (workspace / "src").mkdir(exist_ok=True)
+    (workspace / "dist").mkdir()
+    (workspace / "z.log").write_text("needle\n", encoding="utf-8")
+    (workspace / "dist" / "bundle.js").write_text("needle\n", encoding="utf-8")
+    (workspace / "src" / "zzz.py").write_text("needle\n", encoding="utf-8")
+
+    plan = _prepare(workspace, query="needle")
+
+    assert isinstance(plan, ToolPlan)
+    listed = [str(path) for path in plan.effects.read_paths]
+    source_positions = [i for i, p in enumerate(listed) if p.endswith("zzz.py")]
+    noise_positions = [
+        i for i, p in enumerate(listed) if p.endswith((".log", "bundle.js"))
+    ]
+    assert source_positions and noise_positions
+    assert max(source_positions) < min(noise_positions)

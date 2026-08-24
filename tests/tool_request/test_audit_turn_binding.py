@@ -114,7 +114,7 @@ def _policy(turn_id: str) -> PolicyContext:
 
 def _read(coordinator: ToolRequestCoordinator, context: ExecutionContext, turn: str):  # type: ignore[no-untyped-def]
     return coordinator.handle(
-        ToolRequest(name="fs.read_file", arguments={"path": "main.py"}),
+        ToolRequest(name="fs.read", arguments={"path": "main.py"}),
         context=context,
         policy=_policy(turn),
     )

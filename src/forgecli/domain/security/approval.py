@@ -149,7 +149,7 @@ class ApprovalView:
     def raw_command(self) -> str:
         """要执行的命令原文.
 
-        没有原始命令的工具 (fs.edit_file 之类) 用动作摘要顶上, 但绝不留空: 这一行是
+        没有原始命令的工具 (fs.apply_patch 之类) 用动作摘要顶上, 但绝不留空: 这一行是
         用户唯一能看懂"要发生什么"的地方.
         """
         subject = self.plan.analysis_subject

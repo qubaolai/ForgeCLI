@@ -34,17 +34,12 @@ from forgecli.interfaces.runtime.tool_wiring import ToolStack, build_tool_stack
 # 一个动作一个工具. 左边是用户会说的话, 右边是模型在工具表里能找到的名字 —— 两者对不
 # 上的时候, 模型不会退回去问, 它会自己编一个名字或者改用 shell.
 EXPECTED_TOOLS = {
-    "扫描目录结构": "fs.scan_tree",
-    "读取文件": "fs.read_file",
-    "列出文件": "fs.list_files",
+    "定位文件与认识目录": "fs.find",
+    "读取文件": "fs.read",
     "搜索内容": "search.text",
-    "新建目录": "fs.create_directory",
-    "新建文件": "fs.create_file",
-    "精确替换": "fs.edit_file",
-    "移动文件": "fs.move",
-    "删除文件": "fs.delete",
-    "执行命令": "shell.run",
     "读取 git": "git.read",
+    "改文件 (新建/更新/删除/移动)": "fs.apply_patch",
+    "执行命令": "shell.run",
 }
 
 
@@ -123,12 +118,7 @@ def test_the_model_sees_the_new_tools_in_its_catalog(stack: ToolStack) -> None:
             execution_profile_hash=stack.profile.execution_profile_hash,
         )
     )
-    for name in (
-        "fs.scan_tree",
-        "fs.create_directory",
-        "fs.create_file",
-        "fs.edit_file",
-    ):
+    for name in ("fs.find", "fs.read", "fs.apply_patch"):
         assert catalog.contains(name), f"{name} 不在模型看得到的目录里"
 
 
@@ -138,17 +128,19 @@ def test_creating_then_editing_a_file_goes_through_the_whole_pipeline(
     """建 -> 改 -> 读: 三次都要真的落盘, 而且走的是裁决与恢复那条链路."""
     target = tmp_path / "ws" / "notes.txt"
 
-    created = _call(stack, "fs.create_file", path="notes.txt", content="v = 1\n")
+    created = _call(stack, "fs.apply_patch", patch="*** NEW notes.txt\nv = 1\n")
     assert created.kind is ObservationKind.TOOL_RESULT
     assert target.read_text(encoding="utf-8") == "v = 1\n"
 
     edited = _call(
-        stack, "fs.edit_file", path="notes.txt", old_string="v = 1", new_string="v = 2"
+        stack,
+        "fs.apply_patch",
+        patch="*** UPDATE notes.txt\n*** FIND\nv = 1\n*** REPLACE\nv = 2",
     )
     assert edited.kind is ObservationKind.TOOL_RESULT
     assert target.read_text(encoding="utf-8") == "v = 2\n"
 
-    read = _call(stack, "fs.read_file", path="notes.txt")
+    read = _call(stack, "fs.read", path="notes.txt")
     assert read.kind is ObservationKind.TOOL_RESULT
     assert read.result is not None
     assert "v = 2" in read.result.text
@@ -157,19 +149,18 @@ def test_creating_then_editing_a_file_goes_through_the_whole_pipeline(
 def test_creating_over_an_existing_file_fails_and_says_which_tool_to_use(
     stack: ToolStack,
 ) -> None:
-    _call(stack, "fs.create_file", path="a.txt", content="原内容\n")
+    _call(stack, "fs.apply_patch", patch="*** NEW a.txt\n原内容\n")
 
-    again = _call(stack, "fs.create_file", path="a.txt", content="覆盖\n")
+    again = _call(stack, "fs.apply_patch", patch="*** NEW a.txt\n覆盖\n")
 
     assert again.kind is ObservationKind.PREPARATION_FAILED
-    assert "fs.edit_file" in again.message
+    assert "UPDATE" in again.message
 
 
 def test_scanning_the_workspace_returns_a_tree(stack: ToolStack) -> None:
-    _call(stack, "fs.create_directory", path="src")
-    _call(stack, "fs.create_file", path="src/main.py", content="print(1)\n")
+    _call(stack, "fs.apply_patch", patch="*** NEW src/main.py\nprint(1)\n")
 
-    scanned = _call(stack, "fs.scan_tree")
+    scanned = _call(stack, "fs.find")
 
     assert scanned.kind is ObservationKind.TOOL_RESULT
     assert scanned.result is not None

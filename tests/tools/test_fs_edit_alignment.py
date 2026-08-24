@@ -1,4 +1,8 @@
-"""fs.edit_file 的容差边界: 容忍不携带信息的差异, 不容忍携带信息的差异.
+"""补丁 UPDATE 段的容差边界: 容忍不携带信息的差异, 不容忍携带信息的差异.
+
+工具从 `fs.edit_file` 换成了 `fs.apply_patch` (ADR-0029 C 类), 但**容差判据一条不改** ——
+下面每条用例的输入输出都与合并前一致, 只是 old_string/new_string 改成信封里的
+FIND/REPLACE 段.
 
 `old_string` 来自模型上一次读到的内容, 而中间隔着一层它看不见的东西 —— 文件是 CRLF 还是
 LF, 行尾有没有多余空格, 它复述这段代码时把整块的基准缩进带上了没有. 这几样都不改变代码
@@ -15,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.tools.builtin import EditFileTool
+from forgecli.application.tools.builtin import ApplyPatchTool
 from forgecli.application.tools.tool import ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.tool.errors import PreparationError
@@ -31,13 +35,31 @@ def workspace(tmp_path: Path) -> Path:
     return root
 
 
+def _envelope(path: object, old: object, new: object, every: object = False) -> str:
+    """把一次替换写成信封. 保留旧用例的调用形状, 只换入参编码方式."""
+    marker = "*** FIND ALL" if every else "*** FIND"
+    return f"*** UPDATE {path}\n{marker}\n{old}\n*** REPLACE\n{new}"
+
+
 def _edit(workspace: Path, **arguments: object) -> ToolPlan | PreparationError:
-    tool = EditFileTool(lambda path, content: Path(path).write_text(content, "utf-8"))
+    tool = ApplyPatchTool(
+        lambda path, content: Path(path).write_text(content, "utf-8"),
+        lambda path, content: Path(path).write_text(content, "utf-8"),
+        lambda path: Path(path).unlink(),
+        lambda source, target: Path(source).rename(target),
+        lambda path: Path(path).mkdir(parents=True, exist_ok=True),
+    )
+    patch = _envelope(
+        arguments["path"],
+        arguments.get("old_string", ""),
+        arguments.get("new_string", ""),
+        arguments.get("replace_all", False),
+    )
     return tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="fs.edit_file",
-            arguments=arguments,
+            tool_name="fs.apply_patch",
+            arguments={"patch": patch},
             tool_call_id="c1",
         ),
         ExecutionContext(
@@ -48,6 +70,13 @@ def _edit(workspace: Path, **arguments: object) -> ToolPlan | PreparationError:
             profile=PROFILE,
         ),
     )
+
+
+def _first(plan: ToolPlan) -> dict[str, object]:
+    """信封里的第一个操作. 旧用例只改一个文件, 所以永远看第一个就够."""
+    operations = plan.normalized_input["operations"]
+    assert isinstance(operations, tuple)
+    return dict(operations[0])
 
 
 def _write(workspace: Path, name: str, text: str) -> Path:
@@ -71,7 +100,7 @@ def test_a_crlf_file_edits_with_lf_input(workspace: Path) -> None:
     )
 
     assert isinstance(plan, ToolPlan)
-    content = str(plan.normalized_input["content"])
+    content = str(_first(plan)["content"])
     assert "int y = 2;" in content
     # 没碰到的那些行必须逐字节不变 —— 顺手把整个文件换行统一了, 等于改了没打算改的地方.
     assert content.startswith("class A {\r\n")
@@ -91,7 +120,7 @@ def test_trailing_whitespace_in_the_file_does_not_block_the_edit(
     )
 
     assert isinstance(plan, ToolPlan)
-    assert str(plan.normalized_input["content"]).startswith("def g():")
+    assert str(_first(plan)["content"]).startswith("def g():")
 
 
 def test_a_block_written_without_its_leading_indent_is_aligned(
@@ -112,7 +141,7 @@ def test_a_block_written_without_its_leading_indent_is_aligned(
     )
 
     assert isinstance(plan, ToolPlan)
-    assert str(plan.normalized_input["content"]) == (
+    assert str(_first(plan)["content"]) == (
         "class A {\n    void f() {\n        int x = 1;\n        int y = 2;\n    }\n}\n"
     )
 
@@ -129,7 +158,7 @@ def test_the_same_shift_is_applied_to_the_replacement(workspace: Path) -> None:
     )
 
     assert isinstance(plan, ToolPlan)
-    assert str(plan.normalized_input["content"]) == (
+    assert str(_first(plan)["content"]) == (
         "class C:\n    def f(self):\n        value = 1\n        return value\n"
     )
 
@@ -145,7 +174,7 @@ def test_an_over_indented_fragment_is_aligned_too(workspace: Path) -> None:
     )
 
     assert isinstance(plan, ToolPlan)
-    assert str(plan.normalized_input["content"]) == "def f():\n    return 2\n"
+    assert str(_first(plan)["content"]) == "def f():\n    return 2\n"
 
 
 def test_the_model_is_told_that_its_copy_was_out_of_date(workspace: Path) -> None:
@@ -160,7 +189,7 @@ def test_the_model_is_told_that_its_copy_was_out_of_date(workspace: Path) -> Non
     )
 
     assert isinstance(plan, ToolPlan)
-    note = str(plan.normalized_input["note"])
+    note = str(_first(plan)["note"])
     assert "缩进" in note
     assert "重新读一遍" in note
 
@@ -174,8 +203,8 @@ def test_a_single_unindented_line_still_matches_as_a_substring(
     plan = _edit(workspace, path="a.py", old_string="x = 1\n", new_string="x = 2\n")
 
     assert isinstance(plan, ToolPlan)
-    assert str(plan.normalized_input["content"]) == "class C:\n    x = 2\n"
-    assert plan.normalized_input["note"] == ""
+    assert str(_first(plan)["content"]) == "class C:\n    x = 2\n"
+    assert _first(plan)["note"] == ""
 
 
 def test_an_exact_match_carries_no_note(workspace: Path) -> None:
@@ -184,7 +213,7 @@ def test_an_exact_match_carries_no_note(workspace: Path) -> None:
     plan = _edit(workspace, path="a.py", old_string="x = 1", new_string="x = 2")
 
     assert isinstance(plan, ToolPlan)
-    assert plan.normalized_input["note"] == ""
+    assert _first(plan)["note"] == ""
 
 
 # ---- 该拦的 ----
@@ -220,18 +249,22 @@ def test_a_fragment_whose_inner_indent_differs_is_refused(workspace: Path) -> No
     assert isinstance(error, PreparationError)
 
 
-def test_two_aligned_matches_still_need_replace_all(workspace: Path) -> None:
-    """容差不放宽唯一性: 命中多处时模型想改的几乎总是其中一处."""
+def test_two_aligned_matches_still_need_find_all(workspace: Path) -> None:
+    """容差不放宽唯一性: 命中多处时模型想改的几乎总是其中一处.
+
+    表达方式从 `replace_all=true` 换成 `*** FIND ALL` (ADR-0029: 变化在信封语法里
+    表达, 不加参数), 判据不变 —— 命中多处又没明说要全改, 就是报错.
+    """
     _write(workspace, "a.py", "class A:\n    x = 1\nclass B:\n    x = 1\n")
 
     error = _edit(workspace, path="a.py", old_string="x = 1\n", new_string="x = 2\n")
 
     assert isinstance(error, PreparationError)
     assert "2 次" in error.message
-    assert "replace_all" in error.message
+    assert "FIND ALL" in error.message
 
 
-def test_replace_all_applies_to_every_aligned_match(workspace: Path) -> None:
+def test_find_all_applies_to_every_aligned_match(workspace: Path) -> None:
     _write(workspace, "a.py", "class A:\n    x = 1\nclass B:\n    x = 1\n")
 
     plan = _edit(
@@ -243,7 +276,7 @@ def test_replace_all_applies_to_every_aligned_match(workspace: Path) -> None:
     )
 
     assert isinstance(plan, ToolPlan)
-    assert str(plan.normalized_input["content"]) == (
+    assert str(_first(plan)["content"]) == (
         "class A:\n    x = 2\nclass B:\n    x = 2\n"
     )
 
@@ -264,7 +297,7 @@ def test_matching_never_swallows_the_following_line(workspace: Path) -> None:
     plan = _edit(workspace, path="a.py", old_string="x = 1", new_string="x = 9")
 
     assert isinstance(plan, ToolPlan)
-    assert str(plan.normalized_input["content"]) == "class C:\n    x = 9\n    y = 2\n"
+    assert str(_first(plan)["content"]) == "class C:\n    x = 9\n    y = 2\n"
 
 
 def test_a_lone_lf_file_is_not_given_crlf(workspace: Path) -> None:
@@ -279,4 +312,4 @@ def test_a_lone_lf_file_is_not_given_crlf(workspace: Path) -> None:
     )
 
     assert isinstance(plan, ToolPlan)
-    assert "\r" not in str(plan.normalized_input["content"])
+    assert "\r" not in str(_first(plan)["content"])

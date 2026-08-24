@@ -1,20 +1,21 @@
-"""内置工具 (ADR-0004 §14).
+"""内置工具 (ADR-0004 §14, ADR-0029 规则三).
 
-每个工具的能力上界都尽量窄: 窄上界让它们在 plan 档目录过滤和确定性快速裁决中受益,
-只有 shell.run 的上界最宽, 因此它几乎每次调用都会进能力分析器 —— 那是设计意图,
-不是缺陷.
+七个工具, 五类动作:
+
+    定位  fs.find, search.text
+    读取  fs.read, git.read
+    写入  fs.apply_patch
+    执行  shell.run
+    过程  plan.* / todo.*
+
+每个工具的能力上界都尽量窄: 窄上界让它们在 plan 档目录过滤中受益 —— 上界里带写能力
+的工具在那一档根本不进 ToolCatalog. 只有 shell.run 的上界最宽, 那是设计意图: 长尾都
+走它 (ADR-0029 规则二).
 """
 
-from forgecli.application.tools.builtin.fs_list_files import ListFilesTool
-from forgecli.application.tools.builtin.fs_move import MoveTool
-from forgecli.application.tools.builtin.fs_read_file import ReadFileTool
-from forgecli.application.tools.builtin.fs_scan_tree import ScanTreeTool
-from forgecli.application.tools.builtin.fs_write import (
-    CreateDirectoryTool,
-    CreateFileTool,
-    DeleteTool,
-    EditFileTool,
-)
+from forgecli.application.tools.builtin.fs_apply_patch import ApplyPatchTool
+from forgecli.application.tools.builtin.fs_find import FindTool
+from forgecli.application.tools.builtin.fs_read import ReadFileTool
 from forgecli.application.tools.builtin.git_read import GitReadTool
 from forgecli.application.tools.builtin.planning_tools import (
     PlanReadTool,
@@ -27,17 +28,12 @@ from forgecli.application.tools.builtin.search_text import SearchTextTool
 from forgecli.application.tools.builtin.shell_run import ShellRunTool
 
 __all__ = [
-    "CreateFileTool",
-    "CreateDirectoryTool",
-    "DeleteTool",
-    "EditFileTool",
+    "ApplyPatchTool",
+    "FindTool",
     "GitReadTool",
-    "ListFilesTool",
-    "MoveTool",
     "PlanReadTool",
     "PlanWriteTool",
     "ReadFileTool",
-    "ScanTreeTool",
     "SearchTextTool",
     "ShellRunTool",
     "TodoReadTool",

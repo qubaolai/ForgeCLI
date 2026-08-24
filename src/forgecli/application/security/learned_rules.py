@@ -3,7 +3,7 @@
 三条边界, 每条都对应一种"看起来方便但实际上是后门"的做法:
 
 1. **只有 `shell.run` 能学.** 规则要绑定可执行文件身份, 而只有 shell 分析器解析得出它.
-   其余工具的 `plan_hash` 里含 normalized_input —— 对 `fs.edit_file` 那就是替换后的
+   其余工具的 `plan_hash` 里含 normalized_input —— 对 `fs.apply_patch` 那就是替换后的
    完整文件内容, 规则只会在下次写入逐字节相同内容时命中, 给了也没用.
 2. **命中规则不跳过 Hard Deny.** 查规则发生在策略引擎出结论**之后**, 且只把 ASK 抬成
    ALLOW. DENY 永远到不了这一步, 所以"先学一条规则再触发 Hard Deny"这条路不存在.
