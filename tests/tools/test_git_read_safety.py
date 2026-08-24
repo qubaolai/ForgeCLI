@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from forgecli.application.tools.artifact_store import NullArtifactStore
 from forgecli.application.tools.builtin.git_read import GitReadTool
 from forgecli.application.tools.command_executor import (
     CommandExecutor,
@@ -16,7 +15,7 @@ from forgecli.domain.tool.errors import PreparationError
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
 from forgecli.shared.cancellation import CancelToken
-from support.fakes import PROFILE
+from support.fakes import PROFILE, NullArtifactStore
 
 
 class _CapturingExecutor(CommandExecutor):

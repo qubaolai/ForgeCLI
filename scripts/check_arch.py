@@ -57,13 +57,13 @@ SIBLING_BANS: tuple[tuple[str, str, str], ...] = (
     # "人工 Shell 顺便记一条 learned allow rule" 看着贴心, 实际是让用户手敲的命令
     # 替 Agent 拿到授权 (ADR-0017 §2).
     # 上游只认识 LlmGateway 端口, 不认识网关实现 (ADR-0011 §3.1, ADR-0028 规则 A1).
-    # DefaultLlmGateway 拖着 provider 注册表, 凭证池, 重试环与治理件; 让 security 或
-    # agent_loop 直接 import 它, 一个分类器用例就要装配整个 LLM 子系统.
-    (
-        "application.security",
-        "application.llm.gateway.default_gateway",
-        "安全侧只依赖 LlmGateway 端口, 不依赖网关实现 (ADR-0028 规则 A1)",
-    ),
+    # DefaultLlmGateway 拖着 provider 注册表, 凭证池, 重试环与治理件; 让 agent_loop
+    # 直接 import 它, 一个循环用例就要装配整个 LLM 子系统.
+    #
+    # 2026-08-24: 原先还有一条 application.security -> llm.gateway.default_gateway,
+    # 理由是"一个分类器用例就要装配整个 LLM 子系统". ADR-0030 删掉了 LLM 安全分类器,
+    # security 现在零 llm 引用, 那条禁令的理由随之消失, 已删除 —— 留一条理由已经不成立
+    # 的规则, 下一个读它的人会照着那条不存在的依赖去理解架构.
     (
         "application.agent_loop",
         "application.llm.gateway.default_gateway",

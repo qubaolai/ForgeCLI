@@ -15,12 +15,12 @@ from forgecli.application.manual_shell import (
     ManualShellPhase,
     ManualShellService,
     ManualShellUnavailable,
-    NullManualShellObserver,
     TerminalLease,
 )
 from forgecli.domain.intents import ManualShellIntent
 from forgecli.domain.manual_shell.request import ManualShellRequest
 from forgecli.domain.manual_shell.result import ManualShellResult
+from support.fakes import NullManualShellObserver
 
 INTENT = ManualShellIntent(raw_text="#")
 CONTEXT = ManualShellContext(cwd="/ws")

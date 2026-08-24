@@ -3,10 +3,14 @@
 缓存分两层，都由 gateway 统一管理，Agent 层无需感知：
 
 Prompt 缓存（降低重复前缀成本）：
-    请求侧用 `CacheHint` 标注可缓存前缀（system prompt / 稳定工具定义），provider
-    adapter 翻译成各供应商机制；OpenAI-compatible 自动前缀缓存下「静默忽略 +
-    归一化命中信息」即为其正确翻译（ADR-0012 §4），不报错。命中信息由 adapter
-    归一化到 ModelUsage.cached_input_tokens 与 raw_metadata["cache_hit"]。
+    当前唯一的 adapter 是 OpenAI-compatible，它走自动前缀缓存，请求侧不需要标注任何
+    东西。命中信息由 adapter 归一化到 ModelUsage.cached_input_tokens 与
+    raw_metadata["cache_hit"]。
+
+    早先这里有一个 `CacheHint`（两个布尔）供请求侧标注可缓存前缀，但**没有任何地方
+    构造它**。接 Anthropic 这类需要显式 cache_control breakpoint 的 adapter 时，
+    按那时的真实需要设计字段形状再接线 —— 两个布尔也表达不了「断点在第几块之后」，
+    而那正是 PromptSnapshot 里已经有的信息。
 
 响应缓存（可选，默认关闭）：
     对确定性、幂等的内部调用按归一化请求指纹缓存响应。指纹排除易变字段

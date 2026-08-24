@@ -113,7 +113,6 @@ class LoopDecision:
 
     reason_summary: str | None = None
     next_action: LoopAction | None = None
-    continue_reason: str | None = None
 
 
 @dataclass(frozen=True)

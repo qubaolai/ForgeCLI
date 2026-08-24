@@ -29,7 +29,6 @@ __all__ = [
     "ManualShellContext",
     "ManualShellObserver",
     "ManualShellUnavailable",
-    "NullManualShellObserver",
     "TerminalLease",
 ]
 
@@ -101,11 +100,3 @@ class ManualShellObserver(ABC):
 
     @abstractmethod
     def exited(self, result: ManualShellResult) -> None: ...
-
-
-class NullManualShellObserver(ManualShellObserver):
-    def entered(self, request: ManualShellRequest) -> None:
-        return None
-
-    def exited(self, result: ManualShellResult) -> None:
-        return None

@@ -19,7 +19,6 @@ import pytest
 from forgecli.application.security.authorization_service import ToolAuthorizationService
 from forgecli.application.security.policy_engine import PolicyEngine
 from forgecli.application.security.wiring import build_analyzer_registry
-from forgecli.application.tools.artifact_store import NullArtifactStore
 from forgecli.application.tools.builtin.shell_run import ShellRunTool
 from forgecli.application.tools.command_executor import (
     CommandExecutor,
@@ -38,7 +37,7 @@ from forgecli.domain.security.vocabulary import Decision, DecisionReason
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
 from forgecli.shared.cancellation import CancelToken
-from support.fakes import PROFILE
+from support.fakes import PROFILE, NullArtifactStore
 
 
 class _NeverRuns(CommandExecutor):

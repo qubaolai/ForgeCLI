@@ -729,11 +729,8 @@ class BuiltinAgentLoop:
             params=ModelParams(),
             system_prompt=self._prompt.text if self._prompt is not None else None,
             tools=self._tools,
-            # 不设 cache_hint: 当前唯一的 adapter 是 OpenAI-compatible, 它走自动前缀
-            # 缓存, 标不标一样. 而 CacheHint 的两个布尔也表达不了"断点在第几块之后" ——
-            # 那正是 PromptSnapshot 里已经有的信息. 等接 Anthropic 这类需要显式
-            # cache_control breakpoint 的 adapter 时, 按真实需要设计字段形状再接线,
-            # 比现在摆一个没人读的字段强.
+            # 没有 cache_hint 这类字段: 当前唯一的 adapter 走自动前缀缓存, 标不标
+            # 一样. 原先那个字段已按此删除, 理由见 llm/gateway/cache.py 的模块注释.
             cancel_token=self._new_cancel_token(),
         )
 

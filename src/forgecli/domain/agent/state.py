@@ -1,6 +1,5 @@
-"""循环输入域状态: LoopInput / LoopState 及其协作值对象（ADR-0010 §4.1 / §4.2 / §12）。
+"""循环输入域状态: LoopInput 及其协作值对象（ADR-0010 §4.1 / §4.2 / §12）。
 
-关键约束（§4.2）：LoopState 可由实现重建或裁剪，**不能替代 events.jsonl + state.json**；
 不保存 raw chain-of-thought；observations 只保存工具结果 / 用户反馈 / 错误 / 安全摘要 /
 context 信息。
 
@@ -12,14 +11,11 @@ LoopInput 多出一条"mode 与 mode_policy.mode 必须一致"的自洽校验。
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
-from types import MappingProxyType
 
-from forgecli.domain.agent.actions import LoopAction, LoopObservation
 from forgecli.domain.agent.prompt import PromptSnapshot
 from forgecli.domain.conversation.message import ChatMessage
-from forgecli.domain.intents import SessionMode, UserIntent
+from forgecli.domain.intents import SessionMode
 from forgecli.domain.tool.catalog import ToolCatalog
 
 
@@ -45,73 +41,41 @@ class ContextPackage:
 
 @dataclass(frozen=True)
 class LoopBudgets:
-    """一轮 / 一任务的硬停止预算（§12）。全部可空，None 表示该维度不设限。"""
+    """一轮内的硬停止预算. None 表示该维度不设限, 由循环里的兜底常量兜住.
 
-    max_steps_per_turn: int | None = None
+    **只留真正被执行的两项.** 早先还有 max_steps_per_turn / max_wall_clock_seconds /
+    max_input_tokens / max_output_tokens / max_cost 五项, 它们在 __post_init__ 里被
+    校验, 然后**没有任何地方读它们** —— 而 docstring 写着"硬停止预算", 读代码的人会
+    以为超时能停住一个失控的循环. 一个不生效的安全阀比没有安全阀更危险 (ADR-0028
+    规则 C).
+
+    需要按时间或成本停的时候, 按真实需要设计字段形状再接线, 比现在摆着强.
+    """
+
     max_tool_calls_per_turn: int | None = None
     max_model_calls_per_turn: int | None = None
-    max_wall_clock_seconds: float | None = None
-    max_input_tokens: int | None = None
-    max_output_tokens: int | None = None
-    max_cost: float | None = None
 
     def __post_init__(self) -> None:
-        for name in (
-            "max_steps_per_turn",
-            "max_tool_calls_per_turn",
-            "max_model_calls_per_turn",
-            "max_wall_clock_seconds",
-            "max_input_tokens",
-            "max_output_tokens",
-            "max_cost",
-        ):
+        for name in ("max_tool_calls_per_turn", "max_model_calls_per_turn"):
             value = getattr(self, name)
             if value is not None and value < 0:
                 raise ValueError(f"{name} 不能为负")
 
 
 @dataclass(frozen=True)
-class LoopState:
-    """循环内存状态（§4.2）。frozen：状态推进用 dataclasses.replace 产生新值。
-
-    不是唯一恢复源——可由 events.jsonl + state.json 重建或裁剪。不保存 raw CoT。
-    """
-
-    turn_id: str
-    step_index: int = 0
-    mode: SessionMode = SessionMode.ACCEPT_EDITS
-    # 可空而不是 default_factory: ContextPackage 现在必须带提示词, 造不出空实例了.
-    context_package: ContextPackage | None = None
-    observations: tuple[LoopObservation, ...] = ()
-    pending_actions: tuple[LoopAction, ...] = ()
-    budgets: LoopBudgets = field(default_factory=LoopBudgets)
-    # 每类失败的重试计数（键为失败归类，值为已重试次数）。
-    retry_state: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
-
-    def __post_init__(self) -> None:
-        if not self.turn_id.strip():
-            raise ValueError("LoopState.turn_id 不能为空")
-        if self.step_index < 0:
-            raise ValueError("LoopState.step_index 不能为负")
-
-
-@dataclass(frozen=True)
 class LoopInput:
     """AgentLoop 的入口输入（§4.1）。
 
-    user_intent 来自 IntentRouter；tool_catalog 只含当前模式与配置允许暴露给模型的工具；
-    resume_state 由 events.jsonl + state.json 还原，不依赖第三方 checkpoint。
+    tool_catalog 只含当前模式与配置允许暴露给模型的工具。
     """
 
     turn_id: str
     session_id: str
-    user_intent: UserIntent
     mode: SessionMode
     # 必填: 一轮没有上下文包等于没有提示词, 而那必须在类型层面就不可表达.
     context_package: ContextPackage
     tool_catalog: ToolCatalog | None = None
     budgets: LoopBudgets = field(default_factory=LoopBudgets)
-    resume_state: LoopState | None = None
 
     def __post_init__(self) -> None:
         if not self.turn_id.strip():

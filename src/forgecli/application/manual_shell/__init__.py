@@ -10,7 +10,6 @@ from forgecli.application.manual_shell.provider import (
     ManualShellContext,
     ManualShellObserver,
     ManualShellUnavailable,
-    NullManualShellObserver,
     TerminalLease,
 )
 from forgecli.application.manual_shell.service import (
@@ -28,6 +27,5 @@ __all__ = [
     "ManualShellPhase",
     "ManualShellService",
     "ManualShellUnavailable",
-    "NullManualShellObserver",
     "TerminalLease",
 ]

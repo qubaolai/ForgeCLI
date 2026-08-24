@@ -62,7 +62,7 @@ from forgecli.domain.conversation.turn import (
     TurnPause,
     TurnStatus,
 )
-from forgecli.domain.intents import InputOrigin, SessionMode, UserMessage
+from forgecli.domain.intents import InputOrigin, SessionMode
 from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.session.events import EventType, SessionEvent
 from forgecli.domain.tool.catalog import ToolCatalog
@@ -251,7 +251,6 @@ class AgentTurnService:
             LoopInput(
                 turn_id=turn_id,
                 session_id=self._session.current().session_id,
-                user_intent=UserMessage(raw_text=text),
                 mode=mode,
                 context_package=ContextPackage(
                     prompt=self._compile_prompt(mode, catalog),

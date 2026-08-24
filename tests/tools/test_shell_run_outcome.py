@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.tools.artifact_store import NullArtifactStore
 from forgecli.application.tools.builtin.shell_run import ShellRunTool
 from forgecli.application.tools.command_executor import (
     CommandExecutor,
@@ -30,7 +29,7 @@ from forgecli.domain.tool.plan import ToolPlan
 from forgecli.domain.tool.result import ToolResult, ToolResultStatus
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
 from forgecli.shared.cancellation import CancelToken
-from support.fakes import PROFILE
+from support.fakes import PROFILE, NullArtifactStore
 
 
 class ScriptedExecutor(CommandExecutor):

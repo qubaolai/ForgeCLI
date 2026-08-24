@@ -46,20 +46,6 @@ def test_the_prompt_is_identical_across_every_call_in_one_turn() -> None:
     assert first.system_prompt == second.system_prompt
 
 
-def test_no_cache_hint_is_set() -> None:
-    """当前唯一的 adapter 走自动前缀缓存, 标了也没人读.
-
-    这条断言的用途是钉住这个**决定**: 将来接 Anthropic 这类需要显式 cache_control
-    breakpoint 的 adapter 时, 它会红, 那正是该重新设计 CacheHint 形状的时刻.
-    """
-    gateway = ScriptedGateway(responses=[response("好的")])
-    loop, _ = loop_with(gateway)
-
-    loop.start(loop_input())
-
-    assert gateway.requests[0].cache_hint is None
-
-
 def test_the_prompt_lists_the_same_tools_the_provider_receives() -> None:
     """提示词里的工具名与 tool schema 来自同一份 catalog 快照 (ADR-0018 §2.1)."""
     gateway = ScriptedGateway(responses=[response("好的")])

@@ -4,11 +4,3 @@
 ScriptAnalyzer, WORKSPACE_* 交给路径与受保护路径检查, UNKNOWN 走 Hard Deny 预扫描加
 风险分类器. 分派的键是能力, 不是工具名.
 """
-
-from forgecli.application.security.analyzers.registry import (
-    AnalysisFindings,
-    CapabilityAnalyzer,
-    CapabilityAnalyzerRegistry,
-)
-
-__all__ = ["AnalysisFindings", "CapabilityAnalyzer", "CapabilityAnalyzerRegistry"]

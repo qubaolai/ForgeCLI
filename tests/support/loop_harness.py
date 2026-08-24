@@ -177,7 +177,6 @@ def loop_input(*, with_tools: bool = True) -> LoopInput:
     return LoopInput(
         turn_id="turn-1",
         session_id="sess-1",
-        user_intent=None,
         mode=SessionMode.ACCEPT_EDITS,
         context_package=ContextPackage(
             prompt=prompt(

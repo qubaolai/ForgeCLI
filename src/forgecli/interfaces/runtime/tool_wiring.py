@@ -60,7 +60,6 @@ from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.execution.fence import FencePolicy, fence_for
 from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
 from forgecli.domain.intents import SessionMode
-from forgecli.domain.security.protected_paths import ProtectedPathPolicy
 from forgecli.infrastructure.config.paths import (
     artifacts_dir,
     learned_rules_file,
@@ -104,7 +103,6 @@ class ToolStack:
     dispatcher: CoordinatorToolDispatcher
     recovery: RecoveryService
     grants: WorkspaceGrants
-    protected_paths: ProtectedPathPolicy
     learned: LearnedRuleService
     profile: ExecutionProfile
     workspace_id: str
@@ -277,7 +275,6 @@ def build_tool_stack(
         ),
         recovery=recovery,
         grants=grants,
-        protected_paths=protected,
         learned=learned,
         profile=profile,
         workspace_id=workspace_id,

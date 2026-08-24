@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from forgecli.application.manual_shell.provider import ManualShellObserver
 from forgecli.application.prompt.project_instruction_reader import (
     ProjectInstruction,
     ProjectInstructionReader,
@@ -20,6 +21,7 @@ from forgecli.application.security.executable_resolver import (
     EXECUTABLE_RESOLUTION_VERSION,
 )
 from forgecli.application.tool_request.run_observer import ToolRunObserver
+from forgecli.application.tools.artifact_store import ArtifactRef, ArtifactStore
 from forgecli.domain.agent.prompt import PromptSnapshot
 from forgecli.domain.execution.environment import (
     DEFAULT_ENV_ALLOWLIST,
@@ -27,7 +29,10 @@ from forgecli.domain.execution.environment import (
 )
 from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
 from forgecli.domain.intents import SessionMode
+from forgecli.domain.manual_shell.request import ManualShellRequest
+from forgecli.domain.manual_shell.result import ManualShellResult
 from forgecli.domain.tool.capability import Capability
+from forgecli.domain.tool.hashing import digest_text
 from forgecli.domain.tool.plan import (
     ExecutionContextRef,
     PlanEffects,
@@ -156,3 +161,42 @@ def tool_plan(
         ),
         analysis_subject=ShellSubject(raw_command=raw_command) if raw_command else None,
     )
+
+
+class NullArtifactStore(ArtifactStore):
+    """不落盘的产物库: 内容直接丢弃, 只保留大小与哈希.
+
+    **只在测试里存在.** 它原先住在 `application/tools/artifact_store.py`, docstring 里
+    写着两个用途: 纯内存测试, 以及"用户明确不想留产物". 后一个从来没有接线 —— 组合根
+    永远装的是 FsArtifactStore, 而所有工具的 artifacts 参数本来就接受 None.
+    一个只有测试构造的类不该住在生产代码里 (ADR-0028 规则 C).
+
+    它仍然如实报告 truncated, 不会假装输出完整: 丢内容可以, 骗调用方不行.
+    """
+
+    def write(self, *, invocation_id: str, name: str, data: str) -> ArtifactRef:
+        return ArtifactRef(
+            artifact_id=f"{invocation_id}:{name}",
+            path="",
+            size=len(data.encode("utf-8")),
+            content_hash=digest_text(data),
+            truncated=True,
+        )
+
+    def read(self, artifact_id: str) -> str:
+        raise KeyError(f"NullArtifactStore 不保存内容: {artifact_id}")
+
+
+class NullManualShellObserver(ManualShellObserver):
+    """什么都不打的人工 Shell 观察者.
+
+    **只在测试里存在.** ManualShellService 把 observer 声明成**必填**, 理由写在它的
+    构造函数注释里: 给它默认值就意味着漏接 observer 的组合根不会报错. 生产代码里再
+    放一个空实现, 等于把那条理由绕开了.
+    """
+
+    def entered(self, request: ManualShellRequest) -> None:
+        return None
+
+    def exited(self, result: ManualShellResult) -> None:
+        return None

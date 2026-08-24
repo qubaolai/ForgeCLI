@@ -65,7 +65,7 @@ class ManualShellService:
         ADR §4 与 §6.2 把进入提示定成硬性要求 (尤其是那行 cwd —— 用户会误以为继承了
         上一次人工 Shell 的目录), 而那行字是 observer 打的. 给它一个默认值就意味着漏接
         的后果是"界面少一行"这种没人会注意到的静默降级. 真不想要通知的调用方显式传
-        NullManualShellObserver.
+        一个不打字的观察者(测试替身住在 tests/support).
         """
         self._resolver = resolver
         self._provider = provider

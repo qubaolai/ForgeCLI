@@ -982,8 +982,3 @@ def create_app(
     assets = static_dir or Path(__file__).with_name("static")
     app.mount("/", StaticFiles(directory=assets, html=True), name="web")
     return app
-
-
-def create_default_app() -> FastAPI:
-    """Uvicorn import-string 入口，主要用于诊断；正常启动由 ``forge`` 传 token。"""
-    return create_app()

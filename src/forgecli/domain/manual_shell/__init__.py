@@ -4,8 +4,3 @@
 安全策略, 终端框架, subprocess 与任何平台模块 —— 人工 Shell 之所以是独立信任通道,
 第一步就是它在类型上碰不到那些东西.
 """
-
-from forgecli.domain.manual_shell.request import ManualShellRequest, TerminalSize
-from forgecli.domain.manual_shell.result import ManualShellResult
-
-__all__ = ["ManualShellRequest", "ManualShellResult", "TerminalSize"]

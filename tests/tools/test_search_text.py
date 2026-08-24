@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-from forgecli.application.tools.artifact_store import NullArtifactStore
 from forgecli.application.tools.builtin import SearchTextTool
 from forgecli.application.tools.resource_governor import ResourceGovernor
 from forgecli.application.tools.tool import ToolInvocationRequest
@@ -18,7 +17,7 @@ from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.tool.errors import PreparationError
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
-from support.fakes import PROFILE
+from support.fakes import PROFILE, NullArtifactStore
 
 SOURCE = """def login(user):
     if not user:

@@ -75,7 +75,6 @@ from forgecli.domain.model.params import (
     ThinkingConfig,
 )
 from forgecli.domain.model.request import (
-    CacheHint,
     ModelRequest,
     StructuredModelRequest,
 )
@@ -117,7 +116,6 @@ __all__ = [
     "ModelRequest",
     "StructuredModelRequest",
     "CancelToken",
-    "CacheHint",
     # 用途 / 选择
     "RequestOrigin",
     "ModelSelection",

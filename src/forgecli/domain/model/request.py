@@ -41,18 +41,6 @@ def _assert_metadata_safe(metadata: Mapping[str, str]) -> None:
 
 
 @dataclass(frozen=True)
-class CacheHint:
-    """请求侧 prompt 缓存标注（§14）：标注可缓存前缀（system prompt / 稳定工具定义）。
-
-    provider adapter 把它翻译成各供应商缓存机制（显式 breakpoint 或自动前缀缓存）；
-    不支持 prompt 缓存的 provider 静默忽略，不报错。
-    """
-
-    cache_system_prompt: bool = False
-    cache_tools: bool = False
-
-
-@dataclass(frozen=True)
 class ModelRequest:
     """所有模型调用的统一请求（§3.3）。非流式 / 流式 / 结构化共用同一结构。"""
 
@@ -63,14 +51,12 @@ class ModelRequest:
     model_selection: ModelSelection
     messages: tuple[ChatMessage, ...]
     params: ModelParams
-    loop_step_id: str | None = None
     required_capabilities: tuple[str, ...] = ()
     min_context_window: int | None = None
     system_prompt: str | None = None
     tools: tuple[ToolSchema, ...] = ()
     timeout_seconds: float | None = None
     cancel_token: CancelToken | None = None
-    cache_hint: CacheHint | None = None
     metadata: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:

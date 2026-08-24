@@ -21,7 +21,6 @@ class ResourceLimits:
     timeout_seconds: float
     max_inline_bytes: int
     max_artifact_bytes: int
-    max_child_processes: int = 64
 
     def __post_init__(self) -> None:
         if self.timeout_seconds <= 0:
