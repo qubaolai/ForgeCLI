@@ -27,6 +27,7 @@ from forgecli.domain.execution.environment import (
     sanitize_environment,
 )
 from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
+from forgecli.infrastructure.execution.sandbox.wsl2 import wsl2_bubblewrap_available
 from forgecli.infrastructure.platform_paths import windows_known_directory
 
 __all__ = ["build_execution_environment", "probe_execution_profile"]
@@ -149,6 +150,18 @@ def _shell_launch(is_windows: bool) -> ShellLaunch:
     """非交互, 非登录, 不加载 profile/rc 的启动方式 (ADR-0014 §4.2)."""
     if is_windows:
         system_root = windows_known_directory("windows") or r"C:\Windows"
+        if wsl2_bubblewrap_available():
+            # 有 WSL2 就走它: 那是 Windows 上唯一能拿到真围栏的路径 (ADR-0030 决策 5).
+            #
+            # 这也意味着命令跑在 **Linux** 里 —— `python` / `node` / `git` 是 WSL
+            # 那一套, `.exe` 与 PowerShell 脚本在这条路径上跑不了. 这个取舍是明确的:
+            # 用一个真围栏换掉原生 Windows shell, 而不是留着原生 shell 靠静态分析
+            # 假装安全.
+            return ShellLaunch(
+                program=str(Path(system_root) / "System32" / "wsl.exe"),
+                args=("-e", "/bin/bash", "--noprofile", "--norc", "-c"),
+                kind="bash",
+            )
         return ShellLaunch(
             program=str(Path(system_root) / "System32" / "cmd.exe"),
             args=("/D", "/S", "/C"),

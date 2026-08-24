@@ -12,6 +12,7 @@ from forgecli.application.tools.sandbox_provider import SandboxProvider, SelfTes
 from forgecli.infrastructure.execution.sandbox.bubblewrap import BubblewrapProvider
 from forgecli.infrastructure.execution.sandbox.none import NoSandboxProvider
 from forgecli.infrastructure.execution.sandbox.seatbelt import SeatbeltProvider
+from forgecli.infrastructure.execution.sandbox.wsl2 import Wsl2Provider
 
 __all__ = ["select_provider"]
 
@@ -31,6 +32,10 @@ def select_provider(
         candidate = SeatbeltProvider()
     elif name == "linux":
         candidate = BubblewrapProvider()
+    elif name == "windows":
+        # 原生 Windows 没有可用的围栏原语, 经 WSL2 借 bubblewrap (ADR-0030 决策 5).
+        # WSL2 没装就是 UNCONFINED —— 不退化成"用静态分析补偿".
+        candidate = Wsl2Provider()
     else:
         candidate = NoSandboxProvider()
 

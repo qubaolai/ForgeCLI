@@ -23,7 +23,9 @@ from forgecli.infrastructure.execution.local_command_executor import (
 from forgecli.infrastructure.execution.sandbox import (
     NoSandboxProvider,
     SeatbeltProvider,
+    Wsl2Provider,
     select_provider,
+    windows_to_wsl_path,
 )
 from forgecli.infrastructure.execution.sandboxed_command_executor import (
     SandboxedCommandExecutor,
@@ -218,3 +220,85 @@ def test_executor_applies_the_fence_end_to_end() -> None:
         )
         assert outcome.exit_code != 0
         assert not escaped.exists()
+
+
+# ---- WSL2 (Windows 上的围栏路径) ----
+
+
+@pytest.mark.parametrize(
+    ("windows", "wsl"),
+    [
+        ("C:\\Users\\x\\proj", "/mnt/c/Users/x/proj"),
+        ("D:/data/repo", "/mnt/d/data/repo"),
+        ("c:\\a\\b\\c", "/mnt/c/a/b/c"),
+        # 已经是 Linux 形态的原样返回: 再翻一次会得到 /mnt//home/...
+        ("/home/u/proj", "/home/u/proj"),
+        ("", ""),
+    ],
+)
+def test_windows_paths_translate_into_the_wsl_mount_layout(
+    windows: str, wsl: str
+) -> None:
+    assert windows_to_wsl_path(windows) == wsl
+
+
+def test_an_untranslatable_path_is_not_guessed_at() -> None:
+    """UNC 路径翻不了就原样给出去, 让 bwrap 报错.
+
+    猜一个路径比报错危险 —— 猜错的那个可能正好是个存在的目录, 于是被 bind 成可写.
+    """
+    assert windows_to_wsl_path("\\\\server\\share\\x") == "//server/share/x"
+
+
+def test_wsl_wrapper_refuses_an_argv_it_does_not_recognise() -> None:
+    """形状对不上就抛错, 不硬拼.
+
+    拼错的后果是命令在**没有围栏**的 WSL 里跑起来, 而调用方以为它被围住了 ——
+    这比拒绝执行糟得多.
+    """
+    provider = Wsl2Provider(executable="C:\\Windows\\System32\\wsl.exe")
+    with pytest.raises(OSError, match="argv 形如"):
+        provider.wrap(("cmd.exe", "/C", "dir"), FencePolicy())
+
+
+def test_wsl_wrapper_inserts_bubblewrap_with_translated_paths() -> None:
+    provider = Wsl2Provider(executable="C:\\Windows\\System32\\wsl.exe")
+    policy = FencePolicy(
+        writable_roots=("C:\\proj",),
+        denied_read_paths=("C:\\Users\\x\\.ssh",),
+        network_allowed=False,
+    )
+    argv = provider.wrap(
+        ("C:\\Windows\\System32\\wsl.exe", "-e", "/bin/bash", "-c", "ls"), policy
+    )
+
+    assert argv[0] == "C:\\Windows\\System32\\wsl.exe"
+    assert argv[1] == "-e"
+    assert argv[2] == "bwrap"
+    assert "--bind" in argv
+    assert "/mnt/c/proj" in argv
+    assert "/mnt/c/Users/x/.ssh" in argv
+    assert "--unshare-net" in argv
+    assert "--unshare-pid" in argv
+    # 内层命令原样保留在 -- 之后.
+    assert argv[argv.index("--") + 1 :] == ("/bin/bash", "-c", "ls")
+
+
+def test_full_access_leaves_the_network_alone_in_wsl() -> None:
+    provider = Wsl2Provider(executable="wsl.exe")
+    argv = provider.wrap(
+        ("wsl.exe", "-e", "/bin/sh", "-c", "curl x"),
+        FencePolicy(writable_roots=("C:\\proj",), network_allowed=True),
+    )
+    assert "--unshare-net" not in argv
+
+
+def test_selection_on_windows_without_wsl2_falls_back_to_unconfined() -> None:
+    """用户选定的兜底: WSL2 没装就是 UNCONFINED, 跨栏一律 ASK.
+
+    不退化成"用静态分析补偿" —— 那条路本 ADR 明确否决过 (决策 5).
+    """
+    provider, report = select_provider(system="Windows")
+    # 本机是 macOS, 必然没有 wsl.exe.
+    assert provider.name == "none"
+    assert report.confined is False
