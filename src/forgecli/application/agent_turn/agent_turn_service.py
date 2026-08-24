@@ -42,6 +42,7 @@ from forgecli.application.session.session_service import SessionService
 from forgecli.application.tool_request.dispatcher import (
     CoordinatorToolDispatcher,
 )
+from forgecli.application.tool_request.observations import ObservationKind
 from forgecli.domain.agent.actions import (
     AnswerAction,
     LoopObservation,
@@ -49,7 +50,6 @@ from forgecli.domain.agent.actions import (
     ObservationSource,
     ToolRequestAction,
 )
-from forgecli.domain.agent.prompt import PromptSnapshot
 from forgecli.domain.agent.run_events import (
     AgentRunEventKind,
     PlanProposedPayload,
@@ -67,16 +67,14 @@ from forgecli.domain.conversation.turn import (
 )
 from forgecli.domain.intents import InputOrigin, SessionMode
 from forgecli.domain.model.usage import UsageRecordDraft
+from forgecli.domain.prompt import text as prompt_text
+from forgecli.domain.prompt.blocks import PromptSnapshot
 from forgecli.domain.session.events import EventType, SessionEvent
 from forgecli.domain.tool.catalog import ToolCatalog
 
 # 单轮驱动的安全步数上限. 工具调用开放后一轮会跑很多步 (每次工具调用都是一次
 # observe), 因此按 LoopBudgets 给的预算走, 这个常量只是兜底.
 _DEFAULT_MAX_LOOP_STEPS = 99999
-
-_CANCEL_NOTICE = "（本轮回复已被用户取消）"
-
-_REVIEW_NOTICE = "已提交一份计划, 等待你的决定。"
 
 
 @dataclass(frozen=True)
@@ -290,12 +288,12 @@ class AgentTurnService:
             else:
                 # ask_user / approval / compaction 属后续切片.
                 return _TurnOutcome(
-                    text="该动作类型尚未支持。",
+                    text=prompt_text.UNSUPPORTED_ACTION_STOP,
                     status=TurnStatus.FAILED,
                     usage_drafts=_drafts_of(loop),
                 )
         return _TurnOutcome(
-            text="循环步数超出安全上限，本轮中止。",
+            text=prompt_text.LOOP_STEPS_EXCEEDED_STOP,
             status=TurnStatus.FAILED,
             usage_drafts=_drafts_of(loop),
         )
@@ -423,7 +421,11 @@ class AgentTurnService:
         """
         if self._tools is None:
             return LoopObservation(
-                content="[tool_unavailable] 当前会话未装配工具系统",
+                # 前缀取自 ObservationKind, 不手写: 手写一遍就是第二份会漂的格式.
+                content=(
+                    f"[{ObservationKind.TOOL_UNAVAILABLE.value}] "
+                    f"{prompt_text.TOOLS_NOT_WIRED}"
+                ),
                 source=ObservationSource.ERROR,
                 is_error=True,
             )
@@ -443,7 +445,7 @@ class AgentTurnService:
         if stop.reason is LoopStopReason.FINAL_ANSWER:
             if answer is None:
                 return _TurnOutcome(
-                    text="循环未产出回复。",
+                    text=prompt_text.NO_ANSWER_STOP,
                     status=TurnStatus.FAILED,
                     usage_drafts=drafts,
                     stop_reason=stop.reason.value,
@@ -460,7 +462,7 @@ class AgentTurnService:
             # text 取模型这一轮说过的话 (通常是一句"我拟了个方案"), 计划正文由 CLI 从
             # PlanningService 现取 —— 让它跟着回复文本走, 就会有两份可能不一致的正文.
             return _TurnOutcome(
-                text=answer or _REVIEW_NOTICE,
+                text=answer or prompt_text.REVIEW_NOTICE,
                 status=TurnStatus.COMPLETED,
                 usage_drafts=drafts,
                 stop_reason=stop.reason.value,
@@ -468,7 +470,8 @@ class AgentTurnService:
             )
         if stop.reason is LoopStopReason.USER_CANCELLED:
             partial = _partial_answer_of(loop)
-            text = f"{partial}\n{_CANCEL_NOTICE}" if partial else _CANCEL_NOTICE
+            notice = prompt_text.CANCEL_NOTICE
+            text = f"{partial}\n{notice}" if partial else notice
             return _TurnOutcome(
                 text=text,
                 status=TurnStatus.FAILED,
@@ -476,7 +479,7 @@ class AgentTurnService:
                 stop_reason=stop.reason.value,
             )
         return _TurnOutcome(
-            text=stop.message or "模型调用失败。",
+            text=stop.message or prompt_text.MODEL_CALL_FAILED_STOP,
             status=TurnStatus.FAILED,
             usage_drafts=drafts,
             stop_reason=stop.reason.value,

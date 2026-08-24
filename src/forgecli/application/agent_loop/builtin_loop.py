@@ -55,7 +55,6 @@ from forgecli.domain.agent.actions import (
     ToolRequest,
     ToolRequestAction,
 )
-from forgecli.domain.agent.prompt import PromptSnapshot
 from forgecli.domain.agent.run_events import (
     AgentRunEventKind,
     DecisionSummaryPayload,
@@ -92,6 +91,8 @@ from forgecli.domain.model.response import (
 from forgecli.domain.model.selection import CurrentModelSelection
 from forgecli.domain.model.streaming import ModelStreamChunk
 from forgecli.domain.model.usage import UsageRecordDraft
+from forgecli.domain.prompt import text as prompt_text
+from forgecli.domain.prompt.blocks import PromptSnapshot
 from forgecli.domain.tool.catalog import ToolCatalog
 from forgecli.domain.tool.tool_call import ToolCall, ToolSchema
 from forgecli.shared.cancellation import CancelToken
@@ -161,37 +162,6 @@ _TURN_END_KINDS: dict[StopClassification, AgentRunEventKind] = {
 def _new_request_id() -> str:
     return f"req_{uuid.uuid4().hex[:12]}"
 
-
-_HALT_NOTICE = (
-    "本轮工具调用已停止: 上一次请求未获授权. "
-    "不要尝试用别的命令或工具达成同一目的 —— 那是在绕过刚才那个决定. "
-    "请说明你原本想做什么以及为什么, 然后等待用户的下一步指示."
-)
-
-_HALT_STOP_MESSAGE = "上一次请求未获授权, 本轮已停止执行工具。"
-
-_BLOCKED_NOTICE = (
-    "本轮工具调用已停止: 已被安全策略拒绝 {count} 次. "
-    "继续换写法只会继续被拒. 请说明你想达成什么, 以及被挡住的是哪一步, "
-    "然后等待用户指示."
-)
-
-_MALFORMED_NOTICE = (
-    "上一次回复里的工具调用无法使用: {detail}. "
-    "工具调用只能走结构化的 tool_calls 字段, 不要把 <tool_call>, <arg_key>, "
-    "</think> 一类标记写进正文或参数值里. 请重新给出这次调用."
-)
-
-_MALFORMED_STOP_MESSAGE = "模型连续 {count} 次产出无法使用的工具调用，本轮中止。"
-
-_REVIEW_ABANDON_NOTICE = "未执行: 本轮已停下等待用户对上一步产出做决定."
-
-_BARREN_NOTICE = (
-    "刚才连续 {count} 次工具调用没有带回新信息: 要么是空结果, 要么与上一次完全相同. "
-    "换个写法再试一次多半还是这个结果. "
-    "如果这几次是在找同一样东西, 那么找不到本身就是结论, 直接说出来; "
-    "否则换一条思路 —— 换个入口文件, 换个关键词, 或者问用户."
-)
 
 # 模型侧工具调用 markup. 它出现在**参数值或工具名**里, 说明供应商没能把模型的工具调用
 # 解析干净, 把标记连同内容一起塞进了参数.
@@ -403,7 +373,7 @@ class BuiltinAgentLoop:
             return outcome
         if outcome.empty:
             return self._stop(
-                LoopStopReason.MODEL_ERROR_BLOCKING, "模型既没有回复也没有请求工具。"
+                LoopStopReason.MODEL_ERROR_BLOCKING, prompt_text.EMPTY_RESPONSE_STOP
             )
 
         # markup 检查必须在 _remember_assistant 之前: 这批调用一个都不会派发, 把带
@@ -412,14 +382,16 @@ class BuiltinAgentLoop:
         for call in outcome.tool_calls:
             marker = _protocol_markup_in(call)
             if marker is not None:
-                return self._retry_malformed(f"{call.name} 的内容里混进了 {marker}")
+                return self._retry_malformed(
+                    prompt_text.MALFORMED_DETAIL.format(tool=call.name, marker=marker)
+                )
 
         if self._tools_closed and outcome.tool_calls:
             # 目录已经收掉了, 模型还在要工具. 靠"没给你看你就不会要"不算强制 —— 真正
             # 的强制是这里不派发. 这些 tool_calls 也不写进 transcript: 写进去就欠一份
             # 配对的 tool result, 而本轮不会再有执行了.
             if not outcome.text.strip():
-                return self._stop(LoopStopReason.POLICY_DENIED, _HALT_STOP_MESSAGE)
+                return self._stop(LoopStopReason.POLICY_DENIED, prompt_text.HALT_STOP)
             outcome = _ModelOutcome(text=outcome.text)
 
         self._remember_assistant(outcome)
@@ -491,10 +463,8 @@ class BuiltinAgentLoop:
                 content=(
                     ToolResultBlock(
                         tool_call_id=call.tool_call_id,
-                        content=(
-                            f"重复调用已被拦截: {_render_call(call)} 在本轮已经调用过 "
-                            f"{_MAX_IDENTICAL_CALLS} 次, 参数完全相同, 结果不会变. "
-                            "请换一个做法, 或者基于已有结果直接作答."
+                        content=prompt_text.REPEAT_CALL_NOTICE.format(
+                            call=_render_call(call), limit=_MAX_IDENTICAL_CALLS
                         ),
                         is_error=True,
                     ),
@@ -542,7 +512,7 @@ class BuiltinAgentLoop:
             # 排队中的调用仍然补上配对的 tool result. 本轮的 transcript 到此为止,
             # 但它仍然是这一轮的完整记录, 而一份缺了配对结果的记录在任何后续消费者
             # 眼里都是残缺的.
-            self._abandon_pending(_REVIEW_ABANDON_NOTICE)
+            self._abandon_pending(prompt_text.REVIEW_ABANDON_NOTICE)
             self._pending_calls = []
             return self._stop(LoopStopReason.WAIT_PLAN_REVIEW, None)
         halt = self._weigh(observation)
@@ -583,7 +553,7 @@ class BuiltinAgentLoop:
             return None
         count = self._barren_streak
         self._barren_streak = 0
-        notice = _BARREN_NOTICE.format(count=count)
+        notice = prompt_text.BARREN_NOTICE.format(count=count)
         self._publish(
             AgentRunEventKind.DECISION_SUMMARY,
             DecisionSummaryPayload(reason_summary=f"连续 {count} 次调用没有新信息"),
@@ -598,11 +568,11 @@ class BuiltinAgentLoop:
         这是本轮收, 不是永久禁: 下一句话该由人说, 他可以纠正也可以换个要求.
         """
         if observation.disposition is ObservationDisposition.HALT:
-            return _HALT_NOTICE
+            return prompt_text.HALT_NOTICE
         if observation.disposition is ObservationDisposition.BLOCKED:
             self._blocked_calls += 1
             if self._blocked_calls >= _MAX_BLOCKED_CALLS:
-                return _BLOCKED_NOTICE.format(count=self._blocked_calls)
+                return prompt_text.BLOCKED_NOTICE.format(count=self._blocked_calls)
         return None
 
     def _close_tools(self, notice: str) -> LoopStepResult:
@@ -640,9 +610,9 @@ class BuiltinAgentLoop:
         if self._malformed_responses > _MAX_MALFORMED_RESPONSES:
             return self._stop(
                 LoopStopReason.MODEL_ERROR_BLOCKING,
-                _MALFORMED_STOP_MESSAGE.format(count=self._malformed_responses),
+                prompt_text.MALFORMED_STOP.format(count=self._malformed_responses),
             )
-        notice = _MALFORMED_NOTICE.format(detail=detail)
+        notice = prompt_text.MALFORMED_NOTICE.format(detail=detail)
         self._messages = (
             *self._messages,
             ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)),
@@ -667,7 +637,7 @@ class BuiltinAgentLoop:
                     content=(
                         ToolResultBlock(
                             tool_call_id=call.tool_call_id,
-                            content=f"未执行: {notice}",
+                            content=prompt_text.ABANDONED_CALL.format(notice=notice),
                             is_error=True,
                         ),
                     ),
@@ -681,7 +651,7 @@ class BuiltinAgentLoop:
         if self._model_calls >= limit:
             return self._stop(
                 LoopStopReason.BUDGET_EXHAUSTED,
-                f"本轮模型调用已达上限 {limit}。",
+                prompt_text.MODEL_BUDGET_STOP.format(limit=limit),
             )
         return None
 
@@ -690,7 +660,7 @@ class BuiltinAgentLoop:
         if self._tool_calls >= limit:
             return self._stop(
                 LoopStopReason.BUDGET_EXHAUSTED,
-                f"本轮工具调用已达上限 {limit}。",
+                prompt_text.TOOL_BUDGET_STOP.format(limit=limit),
             )
         return None
 
@@ -791,17 +761,21 @@ class BuiltinAgentLoop:
             # 会停在"正在思考"上等一个永远不来的结束事件 (ADR-0016 §5).
             if tail.finish_reason is FinishReason.USER_CANCELLED:
                 self._fail_model_call(
-                    request, "user_cancelled", "本轮回复已取消。", retryable=True
+                    request,
+                    "user_cancelled",
+                    prompt_text.CANCELLED_STOP,
+                    retryable=True,
                 )
                 return LoopStop.of(
-                    LoopStopReason.USER_CANCELLED, message="本轮回复已取消。"
+                    LoopStopReason.USER_CANCELLED,
+                    message=prompt_text.CANCELLED_STOP,
                 )
             self._fail_model_call(
-                request, "stream_interrupted", "流式响应中断，本轮回复失败。"
+                request, "stream_interrupted", prompt_text.STREAM_INTERRUPTED_STOP
             )
             return LoopStop.of(
                 LoopStopReason.MODEL_ERROR_BLOCKING,
-                message="流式响应中断，本轮回复失败。",
+                message=prompt_text.STREAM_INTERRUPTED_STOP,
             )
         if accumulator.has_partial_tool_calls():
             # 半截的 tool call delta: 流没断但参数不完整, 补全它等于替模型编参数.
@@ -809,8 +783,10 @@ class BuiltinAgentLoop:
             # 这次模型调用确实失败了, 所以照常 _fail_model_call 收尾; 但本轮不一定要
             # 结束, 所以抛而不是 return —— 由 _advance 的统一处理决定重试还是中止,
             # 与非流式路径走同一条判断.
-            self._fail_model_call(request, "partial_tool_call", "工具调用参数不完整。")
-            raise MalformedToolCallError("工具调用参数不完整")
+            self._fail_model_call(
+                request, "partial_tool_call", prompt_text.PARTIAL_TOOL_CALL_STOP
+            )
+            raise MalformedToolCallError(prompt_text.PARTIAL_TOOL_CALL_STOP)
         tool_calls = accumulator.tool_calls()
         self._finish_model_call(
             request,

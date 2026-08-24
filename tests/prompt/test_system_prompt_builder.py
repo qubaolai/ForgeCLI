@@ -13,12 +13,10 @@ from forgecli.application.planning.planning_service import ActivePlanning
 from forgecli.application.prompt.project_instruction_reader import ProjectInstruction
 from forgecli.application.prompt.runtime_facts import RuntimeFacts
 from forgecli.application.prompt.system_prompt_builder import (
-    MAIN_AGENT_PROMPT_VERSION,
     PromptBuildInput,
     SystemPromptBuilder,
     ToolBrief,
 )
-from forgecli.domain.agent.prompt import PromptBlockId, PromptSnapshot
 from forgecli.domain.execution.fence import fence_for
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.planning import (
@@ -29,6 +27,7 @@ from forgecli.domain.planning import (
     TodoList,
     TodoStatus,
 )
+from forgecli.domain.prompt.blocks import PromptBlockId, PromptSnapshot
 from forgecli.domain.security.budget import fence_allowed_capabilities
 from forgecli.domain.tool.capability import Capability
 from support.fakes import FACTS, PROFILE, prompt
@@ -77,9 +76,9 @@ def test_the_same_input_renders_byte_identical_text_and_fingerprint() -> None:
 def test_the_builtin_profile_is_pinned_by_fingerprint() -> None:
     """内置文本的快照测试 (ADR-0018 §15.3).
 
-    指纹就是快照: 任何一个字的改动都会让它变. 改内置文本时**必须**同时升
-    MAIN_AGENT_PROMPT_VERSION 并更新这里 —— 提示词变了模型行为就会变, 这件事不该
-    悄悄发生.
+    这一条只钉**编排**: 块顺序, 条件性块的取舍, 工具表与运行事实的渲染形状.
+    正文本身由 tests/prompt/test_prompt_text.py 钉住 —— 两个快照分开, 是因为改措辞
+    和改编排是两件事, 混在一条断言里就分不清刚才动的是哪一件.
     """
     snapshot = prompt(
         SessionMode.ACCEPT_EDITS,
@@ -90,9 +89,8 @@ def test_the_builtin_profile_is_pinned_by_fingerprint() -> None:
         ),
     )
 
-    assert MAIN_AGENT_PROMPT_VERSION == 5
     assert snapshot.fingerprint == (
-        "sha256:b463f87465912f8c72db4f892c9bcd9ef14edccb12383bc469daedbf1b309c9f"
+        "sha256:ebcf649cc33754dc09f3a669490d5e7c4bcc11500d24c8cf657cc7c691273b43"
     )
 
 

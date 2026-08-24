@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from forgecli.domain.agent.prompt import PromptBlock, PromptBlockId, PromptSnapshot
+from forgecli.domain.prompt.blocks import PromptBlock, PromptBlockId, PromptSnapshot
 
 
 def _block(

@@ -9,8 +9,10 @@
 TOML 是权威格式, Markdown 是派生物, 单向. 反向解析 Markdown 会把模板变成一门需要 parser
 的语言, 而它的全部价值恰恰在于不需要.
 
-改动本文件里的任何一段模板文本, 都必须同时升 PLAN_TEMPLATE_VERSION 并更新快照测试 ——
-与 MAIN_AGENT_PROMPT_VERSION 同一条规矩.
+本文件**不**并入 domain/prompt/text.py (ADR-0031 决策 2): 它是 PlanDocument 的渲染器,
+正文由模型给, 这里只给格式. 改动任何一段模板文本, 都要同时升 PLAN_TEMPLATE_VERSION
+并更新快照测试 ——
+与 PROMPT_TEXT_VERSION 同一条规矩.
 """
 
 from __future__ import annotations

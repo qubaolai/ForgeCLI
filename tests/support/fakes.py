@@ -22,7 +22,6 @@ from forgecli.application.security.executable_resolver import (
 )
 from forgecli.application.tool_request.run_observer import ToolRunObserver
 from forgecli.application.tools.artifact_store import ArtifactRef, ArtifactStore
-from forgecli.domain.agent.prompt import PromptSnapshot
 from forgecli.domain.execution.environment import (
     DEFAULT_ENV_ALLOWLIST,
     ShellLaunch,
@@ -31,6 +30,7 @@ from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.manual_shell.request import ManualShellRequest
 from forgecli.domain.manual_shell.result import ManualShellResult
+from forgecli.domain.prompt.blocks import PromptSnapshot
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.hashing import digest_text
 from forgecli.domain.tool.plan import (

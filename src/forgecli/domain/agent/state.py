@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from forgecli.domain.agent.prompt import PromptSnapshot
 from forgecli.domain.conversation.message import ChatMessage
 from forgecli.domain.intents import SessionMode
+from forgecli.domain.prompt.blocks import PromptSnapshot
 from forgecli.domain.tool.catalog import ToolCatalog
 
 

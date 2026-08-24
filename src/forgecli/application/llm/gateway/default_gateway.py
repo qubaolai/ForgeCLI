@@ -93,6 +93,7 @@ from forgecli.domain.model.response import (
 )
 from forgecli.domain.model.streaming import ModelStreamChunk, ProviderStreamChunk
 from forgecli.domain.model.thinking import ThinkingMode
+from forgecli.domain.prompt import text as prompt_text
 from forgecli.shared.json_schema import validate_json_schema
 
 # settings_source 未注入时的 provider 默认（与配置切片默认一致）。
@@ -749,9 +750,8 @@ class DefaultLlmGateway(LlmGateway):
         schema_text = json.dumps(
             dict(request.schema), ensure_ascii=False, sort_keys=True
         )
-        instruction = (
-            f"你必须只输出一个符合 JSON Schema {request.schema_name!r} 的 JSON 对象，"
-            f"不得输出任何其他文本或代码块外说明。Schema: {schema_text}"
+        instruction = prompt_text.SCHEMA_INSTRUCTION.format(
+            name=request.schema_name, schema=schema_text
         )
         system_prompt = (
             f"{base.system_prompt}\n\n{instruction}"
