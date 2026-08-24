@@ -12,9 +12,9 @@ import pytest
 from forgecli.application.security.analyzers.executable_binding import (
     _identity_chain,
 )
-from forgecli.application.security.analyzers.script_analyzer import (
-    _MAX_SCRIPT_BYTES,
-    ScriptExecutionAnalyzer,
+from forgecli.application.security.analyzers.script_binding import (
+    _MAX_BINDING_BYTES,
+    ScriptBindingAnalyzer,
 )
 from forgecli.application.security.executable_resolver import ExecutableResolver
 from forgecli.application.tools.registry import ToolRegistry
@@ -35,7 +35,7 @@ from forgecli.domain.security.executable_identity import TrustZone
 from forgecli.domain.security.findings import AnalysisFindings
 from forgecli.domain.security.shell.command_plan import ShellKind
 from forgecli.domain.security.shell.parser import parse_command
-from forgecli.domain.security.vocabulary import ApprovalScope, DecisionReason
+from forgecli.domain.security.vocabulary import ApprovalScope
 from forgecli.domain.tool.authorization import (
     AuthorizationError,
     ExecutionAuthorization,
@@ -59,7 +59,7 @@ from forgecli.infrastructure.execution.environment_probe import (
 )
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
 from forgecli.shared.cancellation import CancelToken
-from support.fakes import tool_plan, unavailable_classifier
+from support.fakes import tool_plan
 
 _SPEC = ToolSpec(
     name="security.probe",
@@ -319,7 +319,7 @@ def _script_findings(path: Path, context: ExecutionContext) -> AnalysisFindings:
         declared_capabilities=plan.capabilities,
         command_plan=command,
     )
-    return ScriptExecutionAnalyzer(unavailable_classifier()).analyze(
+    return ScriptBindingAnalyzer().analyze(
         findings,
         PolicyContext(
             mode=SessionMode.AUTO,
@@ -340,15 +340,24 @@ def test_script_analysis_binds_the_exact_file_content(tmp_path: Path) -> None:
     assert findings.plan.file_state_bindings[0].path == str(script)
 
 
-def test_script_larger_than_the_analysis_limit_is_not_approvable(
+def test_a_script_too_large_to_hash_loses_its_binding_but_still_runs(
     tmp_path: Path,
 ) -> None:
+    """行为随 ADR-0030 改变: 超限不再是拒绝, 而是"没有锚点"并如实记下来.
+
+    旧行为是 DENY, 理由是"超过安全分析上限". 那条上限属于**分析器的实现限制**, 不是
+    那条命令的性质 —— 一个 1MB 的脚本跑起来完全正常. 围栏之后不必分析它做什么, 只需要
+    记住读到的是哪一份; 记不住就说记不住, 不该顺手把命令也拒掉.
+    """
     script = tmp_path / "large.py"
-    script.write_bytes(b"x" * (_MAX_SCRIPT_BYTES + 1))
+    script.write_bytes(b"x" * (_MAX_BINDING_BYTES + 1))
     findings = _script_findings(script, _context(tmp_path))
 
-    assert findings.unrunnable is DecisionReason.SCRIPT_CONTENT_UNAVAILABLE
+    assert findings.unrunnable is None, "超限不该让命令变得不可执行"
     assert findings.plan.file_state_bindings == ()
+    assert any(
+        fact.code == "script_binding_unavailable" for fact in findings.risk_facts
+    )
 
 
 def _approval_request(*, scopes: tuple[ApprovalScope, ...]) -> ApprovalRequest:

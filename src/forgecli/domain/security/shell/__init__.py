@@ -23,12 +23,10 @@ from forgecli.domain.security.shell.parser import parse_command
 from forgecli.domain.security.shell.powershell import decode_encoded_command
 from forgecli.domain.security.shell.tokens import ScanError
 from forgecli.domain.security.shell.wrappers import (
-    INDIRECT_EXECUTORS,
     PRIVILEGE_ESCALATORS,
 )
 
 __all__ = [
-    "INDIRECT_EXECUTORS",
     "PRIVILEGE_ESCALATORS",
     "CommandPlan",
     "CommandUnit",

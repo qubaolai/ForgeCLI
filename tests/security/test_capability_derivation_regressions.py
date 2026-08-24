@@ -2,13 +2,14 @@
 
 共同形态是"事实被算出来了, 然后被静默丢掉". 这类缺陷不会报错, 只会让某一层再也看不到
 它本该拦住的东西, 所以每条都要有断言钉住.
+
+其中两条 (脚本正文里的网络访问进能力集, 以及它不得突破工具上界) 随 ADR-0030 一起删除:
+从脚本正文推导能力这件事本身没有了 —— 脚本跑在围栏里, 它想联网会被内核拒绝, 不需要
+先读正文猜它想不想.
 """
 
 from __future__ import annotations
 
-from forgecli.application.security.analyzers.script_analyzer import (
-    _with_script_capabilities,
-)
 from forgecli.application.security.policy_engine import PolicyEngine
 from forgecli.application.security.workspace_grants import GrantAccess, WorkspaceGrants
 from forgecli.application.tools.builtin.shell_run import ShellRunTool
@@ -18,13 +19,10 @@ from forgecli.application.workspace.filesystem_view import (
     PathFacts,
     PathKind,
 )
-from forgecli.domain.execution.fence import fence_for
 from forgecli.domain.intents import SessionMode
-from forgecli.domain.security.budget import capabilities_requiring_approval
 from forgecli.domain.security.context import PolicyContext
 from forgecli.domain.security.findings import AnalysisFindings
 from forgecli.domain.security.protected_paths import ProtectedPathPolicy
-from forgecli.domain.security.script_patterns import analyze_script_source
 from forgecli.domain.security.vocabulary import Decision
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.plan import (
@@ -64,42 +62,6 @@ def _plan(capabilities: frozenset[Capability]) -> ToolPlan:
 
 def _declared() -> frozenset[Capability]:
     return ShellRunTool(None, None).spec.declared_capabilities  # type: ignore[arg-type]
-
-
-def test_script_network_access_reaches_the_capability_set() -> None:
-    """脚本里的网络访问必须变成 NETWORK_ACCESS.
-
-    早先这里是 `并集 & plan.capabilities`, 而并集就是从 plan.capabilities 起算的 ——
-    恒等交集, 四个事实一个也进不去. 后果不是少一项能力: 脚本的网络访问与凭证读取从此
-    对模式预算和 NetworkAnalyzer 完全不可见.
-    """
-    facts = analyze_script_source(
-        'import urllib.request\nurllib.request.urlopen("https://x.example")\n',
-        "python",
-    )
-    assert facts.network_access is True
-
-    narrowed = _with_script_capabilities(_plan(_NARROWED), facts, _declared())
-
-    assert Capability.NETWORK_ACCESS in narrowed.capabilities
-    # auto 档的围栏断网, 所以这条脚本在 auto 下必须落 ASK.
-    fence = fence_for(SessionMode.AUTO, workspace_roots=("/ws",))
-    assert capabilities_requiring_approval(
-        narrowed.capabilities, fence, confined=True
-    ) == frozenset({Capability.NETWORK_ACCESS})
-
-
-def test_the_upper_bound_is_still_respected() -> None:
-    """恢复能力不等于可以突破工具声明的上界: 界是 spec, 不是收缩后的计划."""
-    facts = analyze_script_source(
-        'import urllib.request\nurllib.request.urlopen("https://x.example")\n',
-        "python",
-    )
-    narrow_bound = frozenset({Capability.EXECUTE_SHELL, Capability.EXECUTE_SCRIPT})
-
-    narrowed = _with_script_capabilities(_plan(_NARROWED), facts, narrow_bound)
-
-    assert narrowed.capabilities <= narrow_bound
 
 
 def test_shell_run_declares_the_capabilities_its_analyzers_can_derive() -> None:

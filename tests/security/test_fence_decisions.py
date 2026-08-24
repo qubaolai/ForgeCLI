@@ -38,7 +38,7 @@ from forgecli.domain.security.vocabulary import Decision, DecisionReason
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
 from forgecli.shared.cancellation import CancelToken
-from support.fakes import PROFILE, unavailable_classifier
+from support.fakes import PROFILE
 
 
 class _NeverRuns(CommandExecutor):
@@ -87,9 +87,7 @@ def _decide(
     )
     assert isinstance(plan, ToolPlan), plan
     service = ToolAuthorizationService(
-        build_analyzer_registry(
-            ProtectedPathPolicy(roots=()), classifier=unavailable_classifier()
-        ),
+        build_analyzer_registry(ProtectedPathPolicy(roots=())),
         PolicyEngine(),
     )
     return service.evaluate(

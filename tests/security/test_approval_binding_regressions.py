@@ -13,7 +13,7 @@ from forgecli.domain.security.approval import ApprovalBinding, ApprovalView
 from forgecli.domain.security.context import PolicyContext
 from forgecli.domain.security.decision import AuthorizationDecision
 from forgecli.domain.security.findings import AnalysisFindings
-from forgecli.domain.security.script_facts import ScriptSnapshot
+from forgecli.domain.security.scripts import ScriptSnapshot
 from forgecli.domain.security.vocabulary import ApprovalScope, Decision, DecisionReason
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.plan import (

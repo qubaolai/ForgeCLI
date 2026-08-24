@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from forgecli.domain.security.findings import AnalysisFindings, RiskFact
-from forgecli.domain.security.script_facts import ScriptSnapshot
+from forgecli.domain.security.scripts import ScriptSnapshot
 from forgecli.domain.security.vocabulary import Decision, DecisionReason
 from forgecli.domain.tool.plan import ToolPlan
 

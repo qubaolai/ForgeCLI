@@ -16,11 +16,6 @@ from forgecli.application.prompt.system_prompt_builder import (
     SystemPromptBuilder,
     ToolBrief,
 )
-from forgecli.application.security.classifier import (
-    ClassifierRequest,
-    FailSafeClassifier,
-    LlmSafetyClassifier,
-)
 from forgecli.application.security.executable_resolver import (
     EXECUTABLE_RESOLUTION_VERSION,
 )
@@ -32,7 +27,6 @@ from forgecli.domain.execution.environment import (
 )
 from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
 from forgecli.domain.intents import SessionMode
-from forgecli.domain.security.risk import RiskLevel, RiskReport
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.plan import (
     ExecutionContextRef,
@@ -96,42 +90,6 @@ def prompt(
             project_instructions=instructions,
         )
     )
-
-
-class StubSafetyClassifier(LlmSafetyClassifier):
-    """不联网的分类器替身. 结论由构造参数决定, 确定性输出.
-
-    只在测试里存在. 生产代码里放一个默认返回 LOW / allow 的 fake, 一旦被误装进组合根
-    就是整条链路上最隐蔽的一处 fail-open —— "没接分类器"会变成"分类器说没问题".
-    """
-
-    def __init__(
-        self, report: RiskReport | None = None, *, raises: Exception | None = None
-    ) -> None:
-        # 不调父类 __init__: 它要一个真的 LlmGateway, 而这里根本不发请求.
-        self._report = report
-        self._raises = raises
-        self.calls: list[ClassifierRequest] = []
-
-    def classify(self, request: ClassifierRequest) -> RiskReport:
-        self.calls.append(request)
-        if self._raises is not None:
-            raise self._raises
-        return self._report or RiskReport(
-            risk_level=RiskLevel.LOW,
-            confidence=0.95,
-            intent_aligned=True,
-            summary="stub: 未发现风险",
-            recommendation="allow",
-        )
-
-
-def unavailable_classifier() -> FailSafeClassifier:
-    """给不关心分类器的用例用: 任何调用都归"不可用", 也就是 ASK.
-
-    方向与生产一致 —— 拿不到结论时落 ASK, 而不是放行.
-    """
-    return FailSafeClassifier(StubSafetyClassifier(raises=TimeoutError("stub")))
 
 
 class SilentToolRunObserver(ToolRunObserver):

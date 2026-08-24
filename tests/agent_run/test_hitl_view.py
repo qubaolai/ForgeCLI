@@ -24,7 +24,7 @@ from forgecli.domain.security.approval import (
     ApprovalRequest,
     ApprovalView,
 )
-from forgecli.domain.security.script_facts import ScriptSnapshot
+from forgecli.domain.security.scripts import ScriptSnapshot
 from forgecli.domain.security.vocabulary import ApprovalScope
 from forgecli.domain.tool.catalog import ToolCatalog
 from forgecli.domain.tool.plan import ContentPreview, TargetResolution

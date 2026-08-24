@@ -32,7 +32,6 @@ from forgecli.domain.security.shell.command_plan import (
 )
 
 __all__ = [
-    "INDIRECT_EXECUTORS",
     "PRIVILEGE_ESCALATORS",
     "FlagStyle",
     "Interpreter",
@@ -170,10 +169,6 @@ PRIVILEGE_ESCALATORS: frozenset[str] = frozenset(
 # 做的是同一件事; 而按名字判会给它扣上 EXECUTE_SCRIPT, 于是一条纯列举命令永远要人
 # 点头。这与 ADR-0024 拒绝"只读命令白名单"是同一条理由的两个方向: 判据一旦作用在命令名
 # 上, 两个方向都会错。
-INDIRECT_EXECUTORS: frozenset[str] = frozenset(
-    {"xargs", "find", "eval", "watch", "parallel", "entr", "Invoke-Expression"}
-)
-
 # 这些命令的存在本身就是为了跑别的东西, 没有"不委托"的形态.
 _ALWAYS_INDIRECT: frozenset[str] = frozenset(
     {"xargs", "eval", "watch", "parallel", "entr", "Invoke-Expression"}

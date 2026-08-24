@@ -36,7 +36,6 @@ from forgecli.application.security.analyzers.shell_effects import (
     irreversible_detail,
     may_write,
     mentions_irreversible,
-    proven_read_only,
     unproven_units,
     unresolved_targets,
 )
@@ -128,8 +127,6 @@ class ShellCapabilityAnalyzer(CapabilityAnalyzer):
         result = self._check_target_closure(
             result, command, expansion, home, confined=policy.confined
         )
-        if proven_read_only(command, effects):
-            result = replace(result, proven_read_only=True)
         return result
 
     # ---- 各段 ----

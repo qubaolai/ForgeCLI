@@ -22,7 +22,6 @@ from forgecli.domain.security.shell.commands import (
 __all__ = [
     "EffectKind",
     "effect_kind_of",
-    "proven_read_only_command",
     "runs_arbitrary_code",
 ]
 
@@ -35,18 +34,6 @@ def effect_kind_of(unit: CommandUnit) -> EffectKind:
     if _writes_in_place(facts.write_flags, unit.argv):
         return EffectKind.WRITE
     return facts.effect
-
-
-def proven_read_only_command(unit: CommandUnit) -> bool:
-    """这条命令进不进 ADR-0024 快速放行的核心集 (放行方向, 见 commands.py).
-
-    与 `effect_kind_of(unit) is READ` **不是同一件事**: 表外与非核心集的只读命令仍然
-    按读取记账, 但不免掉那次人类确认.
-    """
-    if unit.name in GIT_LIKE:
-        return _git_is_read_only(unit.argv)
-    facts = facts_for(unit.name)
-    return facts.proven_read_only and not _writes_in_place(facts.write_flags, unit.argv)
 
 
 def runs_arbitrary_code(unit: CommandUnit) -> bool:

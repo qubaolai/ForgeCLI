@@ -30,13 +30,8 @@ from forgecli.application.recovery.coordinator import WorkspaceMutationCoordinat
 from forgecli.application.recovery.recovery_service import RecoveryService
 from forgecli.application.security.approval_service import ApprovalService
 from forgecli.application.security.authorization_service import ToolAuthorizationService
-from forgecli.application.security.classifier import (
-    FailSafeClassifier,
-    LlmSafetyClassifier,
-)
 from forgecli.application.security.learned_rules import LearnedRuleService
 from forgecli.application.security.policy_engine import PolicyEngine
-from forgecli.application.security.risk_cache import RiskCache
 from forgecli.application.security.wiring import build_analyzer_registry
 from forgecli.application.security.workspace_grants import WorkspaceGrants
 from forgecli.application.session import SessionService
@@ -232,30 +227,17 @@ def build_tool_stack(
         )
     )
 
-    # 4. 安全层. 有 gateway 才有分类器; 没有就是 UnavailableSafetyClassifier ——
-    #    脚本执行会因 CLASSIFIER_UNAVAILABLE 落 ASK. 这里绝不能放测试用的
-    #    FakeSafetyClassifier: 它默认返回 LOW / allow, 会让"没接分类器"变成
-    #    "分类器说没问题", 从而在生产里静默放行脚本.
-    #
-    #    session id 用 lambda 延迟取: 这个函数跑在组合根里, 那时 REPL 还没
-    #    session.start(), 组合期读 current() 会直接抛 SessionStateError.
-    classifier = FailSafeClassifier(
-        LlmSafetyClassifier(
-            gateway=gateway, session_id=lambda: session.current().session_id
-        )
-    )
-    #    风险缓存显式持有: 人工 Shell 回来后必须清掉它 —— 缓存键里有脚本内容哈希,
-    #    但用户可能改的是脚本**依赖**的文件, 那不在键里 (ADR-0017 §10).
-    risk_cache = RiskCache()
+    # 4. 安全层. ADR-0030 之后没有 LLM 分类器与风险缓存了: 它们的唯一调用点是脚本正文
+    #    的风险分析, 而那一层随围栏落地整体删除. 裁决改由围栏边界决定, 不由"分类器说
+    #    没问题"决定 —— 后者本来就带着非确定性与提示词注入两个问题.
     barrier = ManualMutationBarrier()
-    barrier.register("risk_cache", risk_cache.clear)
     #    学习规则 (always) 由授权服务查, 由协调器写 —— 共用同一个实例.
     learned = LearnedRuleService(
         JsonLearnedRuleStore(learned_rules_file(workspace_id)),
         workspace_id=workspace_id,
     )
     authorization = ToolAuthorizationService(
-        build_analyzer_registry(protected, classifier=classifier, cache=risk_cache),
+        build_analyzer_registry(protected),
         PolicyEngine(),
         learned=learned,
     )

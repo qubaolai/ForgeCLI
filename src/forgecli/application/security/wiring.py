@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from forgecli.application.security.analyzers.network_analyzer import NetworkAnalyzer
 from forgecli.application.security.analyzers.registry import CapabilityAnalyzerRegistry
-from forgecli.application.security.analyzers.script_analyzer import (
-    ScriptExecutionAnalyzer,
+from forgecli.application.security.analyzers.script_binding import (
+    ScriptBindingAnalyzer,
 )
 from forgecli.application.security.analyzers.shell_analyzer import (
     ShellCapabilityAnalyzer,
@@ -20,11 +20,7 @@ from forgecli.application.security.analyzers.unknown_analyzer import (
 from forgecli.application.security.analyzers.workspace_analyzer import (
     WorkspacePathAnalyzer,
 )
-from forgecli.application.security.classifier import (
-    FailSafeClassifier,
-)
 from forgecli.application.security.executable_resolver import ExecutableResolver
-from forgecli.application.security.risk_cache import RiskCache
 from forgecli.domain.security.protected_paths import ProtectedPathPolicy
 
 __all__ = ["build_analyzer_registry"]
@@ -34,23 +30,18 @@ def build_analyzer_registry(
     protected_paths: ProtectedPathPolicy,
     *,
     resolver: ExecutableResolver | None = None,
-    classifier: FailSafeClassifier,
-    cache: RiskCache | None = None,
 ) -> CapabilityAnalyzerRegistry:
     """装配全部分析器.
 
-    classifier 缺省是 UnavailableSafetyClassifier: **没接分类器等于分类器不可用**,
-    结论是 ASK, 不是"没发现问题所以放行". 真实部署由组合根注入
-    GatewaySafetyClassifier; 需要确定的低风险结论的测试自己注入 FakeSafetyClassifier.
+    ADR-0030 之后这里没有 LLM 分类器了: 它的唯一调用点是脚本正文的风险分析, 而那一层
+    随围栏落地整体删除 (ADR-0020 因此转 Superseded). 剩下的五个分析器只产出事实 ——
+    命令结构, 脚本正文快照, 路径归属, 网络目标, 未知能力 —— 裁决由围栏边界决定.
     """
     registry = CapabilityAnalyzerRegistry()
     registry.register_all(
         (
             ShellCapabilityAnalyzer(resolver or ExecutableResolver()),
-            ScriptExecutionAnalyzer(
-                classifier,
-                cache=cache,
-            ),
+            ScriptBindingAnalyzer(),
             WorkspacePathAnalyzer(protected_paths),
             NetworkAnalyzer(),
             UnknownCapabilityAnalyzer(),

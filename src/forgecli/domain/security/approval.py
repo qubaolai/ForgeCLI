@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from forgecli.domain.intents import SessionMode
-from forgecli.domain.security.script_facts import ScriptSnapshot
+from forgecli.domain.security.scripts import ScriptSnapshot
 from forgecli.domain.security.vocabulary import ApprovalScope
 from forgecli.domain.tool.catalog import ToolCatalog
 from forgecli.domain.tool.hashing import digest

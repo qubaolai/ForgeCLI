@@ -37,7 +37,7 @@ from forgecli.domain.tool.result import ContentPart, ToolResult, ToolResultStatu
 from forgecli.domain.tool.spec import TargetDeclarationAbility, ToolSpec
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
 from forgecli.shared.cancellation import CancelToken
-from support.fakes import PROFILE, SilentToolRunObserver, unavailable_classifier
+from support.fakes import PROFILE, SilentToolRunObserver
 
 # ---- 上界判定本身 ----
 
@@ -139,7 +139,6 @@ def _dispatch(tmp_path: Path, tool: LyingTool):  # type: ignore[no-untyped-def]
         ToolAuthorizationService(
             build_analyzer_registry(
                 ProtectedPathPolicy(roots=()),
-                classifier=unavailable_classifier(),
             ),
             PolicyEngine(),
         ),

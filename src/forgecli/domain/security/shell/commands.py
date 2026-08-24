@@ -11,13 +11,12 @@
 `sed -i`, `chmod 777`, `tar -x` 同理. 判错的代价不只是少一项能力: 恢复层看
 `mutates_workspace` 决定要不要建恢复点, 于是这些命令连恢复点都没有.
 
-`proven_read_only` 默认 `False`: **这是 ADR-0024 快速放行唯一的放行方向的表**, 进表
-等于少一道人类确认. 因此它收在一个能一次审计完的核心集里 (当前 29 条命令名, 外加
-git 只读子命令), 而不是跟着 READ 走 —— READ 的作用是"位置参数按读取记", 它只影响
-审批清单准不准, 漏了是多问一次; 而 proven_read_only 漏了是少问一次.
+本表**整张都是记账方向的**, 没有放行方向的字段 (ADR-0030 决策 6). 原先有一个
+`proven_read_only` 标记 29 条命令名进 ADR-0024 的快速放行, 那是唯一一处"进表等于少一道
+人类确认"的地方 —— 它随 ADR-0024 一起作废: 放行现在由围栏决定, 不由命令名决定.
 
-两个字段因此不能合并成一个 `is_read_only`. 表外的 `wc`, `sort`, `xxd` 仍然是
-`effect=READ` (审批清单照常准确), 但不进快速放行.
+于是这张表的错法只剩一种: 漏一条 = 审批清单少一项, 或者快照多打一次. **不会少问一次.**
+这正是 ADR-0030 决策 1 那条判定规则要的形状.
 
 ## 参数结构
 
@@ -105,8 +104,6 @@ class CommandFacts:
     # 无条件写的命令直接登记 effect=WRITE, 不走这里: 用空元组表达「总是写」会与
     # 「没登记过」撞成同一个值.
     write_flags: tuple[str, ...] = ()
-    # 进 ADR-0024 快速放行的核心集. 见模块说明的"两个默认值".
-    proven_read_only: bool = False
 
 
 _COMMANDS: dict[str, CommandFacts] = {}
@@ -384,14 +381,13 @@ _register(
         "realpath",
         "pwd",
     ),
-    CommandFacts(effect=EffectKind.READ, proven_read_only=True),
+    CommandFacts(effect=EffectKind.READ),
 )
 # grep 家族: 第一个位置参数是模式, 除非 -e / -f 已经给过模式.
 _register(
     ("grep", "egrep", "fgrep", "rg", "ripgrep"),
     CommandFacts(
         effect=EffectKind.READ,
-        proven_read_only=True,
         arguments=ArgumentModel(
             value_options=frozenset(
                 {
@@ -427,7 +423,6 @@ _register(
     ("find", "fd"),
     CommandFacts(
         effect=EffectKind.READ,
-        proven_read_only=True,
         arguments=ArgumentModel(
             value_options=frozenset(
                 {
@@ -452,9 +447,9 @@ _register(
 # 参数与文件系统无关的只读命令: `echo hello` 不该记一条 /ws/hello.
 _register(
     ("echo", "printf", "which", "uname", "whoami", "date"),
-    CommandFacts(effect=EffectKind.READ, proven_read_only=True, arguments=_NO_PATHS),
+    CommandFacts(effect=EffectKind.READ, arguments=_NO_PATHS),
 )
-_register(("jq",), CommandFacts(effect=EffectKind.READ, proven_read_only=True))
+_register(("jq",), CommandFacts(effect=EffectKind.READ))
 
 # ---- 只读但不进快速放行 ----
 #
