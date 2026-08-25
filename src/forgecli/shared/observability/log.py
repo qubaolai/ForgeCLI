@@ -3,7 +3,7 @@
 为什么不直接用 `logging.getLogger(__name__).info("...")`:
 
 - **格式统一才查得动.** 自由格式的日志半年后就是一堆各写各的句子, `grep exit_code=`
-  查不到任何东西. 固定成 `键=值` 之后, 从"哪次 shell.run 非零退出"到"哪个 provider
+  查不到任何东西. 固定成 `键=值` 之后, 从"哪次 shell_run 非零退出"到"哪个 provider
   在超时", 都是一条 grep.
 - **上下文自动带上.** 每一行自动拼进当前 `RunContext` 的 session / turn / step /
   req / inv / tool. 调用点不为了写日志在方法签名上多带参数.
@@ -44,7 +44,7 @@ ROOT_LOGGER_NAME = "forgecli"
 
 # 单个值渲染后的字符上限. 0 表示不截断.
 #
-# 4000 是"够看清一次调用"与"一行不至于把编辑器拖死"之间的取舍: 一次 fs.read_file
+# 4000 是"够看清一次调用"与"一行不至于把编辑器拖死"之间的取舍: 一次 fs_read
 # 可能回来 500KB, 全写进日志之后再想翻这个文件就得靠 sed. 需要全文时用
 # FORGE_LOG_MAX_VALUE=0 关掉截断, 它是给"这一次一定要看到全部"准备的.
 _DEFAULT_MAX_VALUE_CHARS = 4000
@@ -121,7 +121,7 @@ def _compose(event: str, fields: Mapping[str, object]) -> str:
     """`event ctx=... 调用字段=...`. 上下文在前: 同一轮的行看起来对得齐.
 
     同名时**调用点的值赢**, 且只出现一次. 这不是细节: 工具链路会把 tool 同时放进
-    运行上下文和那一行的字段里, 两边各打一遍就成了 `tool=fs.find tool=fs.find`,
+    运行上下文和那一行的字段里, 两边各打一遍就成了 `tool=fs_find tool=fs_find`,
     而按 `tool=` 切分的解析会读到一个它没预料到的重复键.
     """
     merged: dict[str, object] = dict(current().fields())

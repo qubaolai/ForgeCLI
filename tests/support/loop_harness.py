@@ -70,7 +70,7 @@ def _spec(name: str) -> ToolSpec:
 
 # 有目录才能断言"目录被收掉了" —— 一开始就是空的话, 那个断言恒真.
 CATALOG = ToolCatalog(
-    entries=(_spec("fs.read_file"), _spec("search.text"), _spec("shell.run")),
+    entries=(_spec("fs_read"), _spec("search_text"), _spec("shell_run")),
     reason_tag="test",
 )
 

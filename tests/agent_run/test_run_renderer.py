@@ -86,11 +86,11 @@ def test_rendered_text_tracks_what_was_committed(harness: Harness) -> None:
 
 def test_tool_call_and_result_land_on_the_timeline(harness: Harness) -> None:
     with harness.renderer.turn():
-        harness.send(K.TOOL_QUEUED, ToolQueuedPayload(tool_name="search.text"))
+        harness.send(K.TOOL_QUEUED, ToolQueuedPayload(tool_name="search_text"))
         harness.send(
             K.TOOL_COMPLETED,
             ToolCompletedPayload(
-                tool_name="search.text",
+                tool_name="search_text",
                 status="ok",
                 elapsed_ms=84.0,
                 result_summary="12 处匹配",
@@ -98,7 +98,7 @@ def test_tool_call_and_result_land_on_the_timeline(harness: Harness) -> None:
         )
         harness.renderer.finish()
     output = harness.text()
-    assert "调用 search.text" in output
+    assert "调用 search_text" in output
     assert "12 处匹配" in output
     assert "84 ms" in output
 
@@ -109,7 +109,7 @@ def test_prepared_shows_every_argument_verbatim(harness: Harness) -> None:
         harness.send(
             K.TOOL_PREPARED,
             ToolPreparedPayload(
-                tool_name="search.text",
+                tool_name="search_text",
                 arguments=(("path", "src"), ("query", "login")),
             ),
         )
@@ -124,7 +124,7 @@ def test_side_effect_unknown_is_not_shown_as_a_plain_failure(harness: Harness) -
         harness.send(
             K.TOOL_CANCELLED,
             ToolCompletedPayload(
-                tool_name="shell.run", status="cancelled", side_effect_unknown=True
+                tool_name="shell_run", status="cancelled", side_effect_unknown=True
             ),
         )
         harness.renderer.finish()
@@ -153,7 +153,7 @@ def test_a_denied_policy_is_always_visible(harness: Harness) -> None:
         harness.send(
             K.POLICY_RESOLVED,
             PolicyResolvedPayload(
-                tool_name="shell.run", decision="deny", reason="hard_deny"
+                tool_name="shell_run", decision="deny", reason="hard_deny"
             ),
         )
         harness.renderer.finish()
@@ -176,7 +176,7 @@ def test_control_sequences_in_an_argument_are_stripped(harness: Harness) -> None
         harness.send(
             K.TOOL_PREPARED,
             ToolPreparedPayload(
-                tool_name="shell.run",
+                tool_name="shell_run",
                 arguments=(("command", "rm -rf /tmp/x\x1b[2K\x1b[1A"),),
             ),
         )
@@ -191,7 +191,7 @@ def test_allow_decisions_are_quiet(harness: Harness) -> None:
         harness.send(
             K.POLICY_RESOLVED,
             PolicyResolvedPayload(
-                tool_name="fs.read_file", decision="allow", reason="fast_path"
+                tool_name="fs_read", decision="allow", reason="fast_path"
             ),
         )
         harness.renderer.finish()
@@ -204,7 +204,7 @@ def test_allow_decisions_are_quiet(harness: Harness) -> None:
 def test_control_sequences_from_a_tool_name_are_stripped(harness: Harness) -> None:
     with harness.renderer.turn():
         harness.send(
-            K.TOOL_QUEUED, ToolQueuedPayload(tool_name="shell.run\x1b[2K\x1b[1A")
+            K.TOOL_QUEUED, ToolQueuedPayload(tool_name="shell_run\x1b[2K\x1b[1A")
         )
         harness.renderer.finish()
     assert "\x1b" not in harness.text()
@@ -241,7 +241,7 @@ def test_approval_takes_the_terminal_and_gives_it_back(harness: Harness) -> None
         harness.send(K.MODEL_OUTPUT_DELTA, TextDeltaPayload("我先看看"))
         harness.send(
             K.APPROVAL_REQUESTED,
-            ApprovalRequestedPayload(tool_name="shell.run", mandatory=True),
+            ApprovalRequestedPayload(tool_name="shell_run", mandatory=True),
         )
         # 交接时半行正文已经定稿提交, 不会留在 Live 里被审批提示覆盖.
         assert harness.renderer.rendered_text == "我先看看"

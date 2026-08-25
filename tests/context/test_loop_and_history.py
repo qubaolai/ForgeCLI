@@ -109,10 +109,10 @@ def test_a_tool_call_leaves_one_line_not_its_output() -> None:
         kind=ObservationKind.TOOL_RESULT,
         message="",
         invocation_id="c1",
-        tool_name="fs.read",
+        tool_name="fs_read",
         result=ToolResult(
             invocation_id="c1",
-            tool_name="fs.read",
+            tool_name="fs_read",
             status=ToolResultStatus.OK,
             content_parts=(ContentPart(text="第一行\n第二行\n第三行"),),
             provenance=ResultProvenance(artifact_id="0123456789abcdef"),
@@ -130,7 +130,7 @@ def test_a_failed_call_keeps_its_status_in_the_line() -> None:
         kind=ObservationKind.POLICY_DENIED,
         message="不许",
         invocation_id="c1",
-        tool_name="shell.run",
+        tool_name="shell_run",
     )
 
     assert observation.digest_line() == "policy_denied"

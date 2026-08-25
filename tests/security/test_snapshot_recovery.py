@@ -50,7 +50,7 @@ def _full_plan() -> ToolPlan:
     """会写但推不出目标 -> FULL. `npm test` 就是这个形状."""
     return ToolPlan(
         plan_id="inv_1",
-        tool_name="shell.run",
+        tool_name="shell_run",
         spec_hash="spec",
         normalized_input={"command": "npm test"},
         capabilities=frozenset({Capability.WORKSPACE_WRITE}),
@@ -243,7 +243,7 @@ def test_only_full_captures_a_snapshot(
     )
     plan = ToolPlan(
         plan_id="inv_2",
-        tool_name="fs.edit_file",
+        tool_name="fs_edit_file",
         spec_hash="spec",
         normalized_input={},
         capabilities=frozenset({Capability.WORKSPACE_WRITE}),
@@ -263,7 +263,7 @@ def test_only_full_captures_a_snapshot(
     if strategy is SnapshotStrategy.NONE:
         plan = ToolPlan(
             plan_id="inv_3",
-            tool_name="fs.read_file",
+            tool_name="fs_read",
             spec_hash="spec",
             normalized_input={},
             capabilities=frozenset({Capability.WORKSPACE_READ}),

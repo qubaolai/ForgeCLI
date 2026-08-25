@@ -43,7 +43,7 @@ def plan_rewrites(
     for slot in slots:
         provenance = slot.block.provenance
         if provenance is None or not provenance.dedupable:
-            # shell.run 一类填不出来源身份. 它们的输出不是某个路径在某个状态下的快照,
+            # shell_run 一类填不出来源身份. 它们的输出不是某个路径在某个状态下的快照,
             # 重跑一次也不保证一样, 所以不参与去重 —— 但仍然可以被降级.
             continue
         anchor = anchors.get(provenance.source_path)

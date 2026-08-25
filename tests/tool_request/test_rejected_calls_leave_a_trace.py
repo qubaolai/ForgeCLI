@@ -1,6 +1,6 @@
 """没有执行的工具调用也必须留下终态与审计.
 
-回归来自一次真实故障: 模型请求了不存在的 `fs.write_file`, 协调器把"未注册"回填给模型
+回归来自一次真实故障: 模型请求了不存在的 `fs_write_file`, 协调器把"未注册"回填给模型
 就直接返回了 —— 既没有运行事件也没有会话事件. 于是 Web 上那次调用永远停在"未完成",
 `events.jsonl` 里也查不到它发生过, 而模型其实早就收到了结论并改用 shell 绕路.
 
@@ -124,7 +124,7 @@ def test_an_unregistered_tool_still_reaches_a_terminal_event(tmp_path: Path) -> 
     coordinator, context, audit, collector = _build(tmp_path)
 
     observation = coordinator.handle(
-        ToolRequest(name="fs.write_file", arguments={"path": "a.txt"}),
+        ToolRequest(name="fs_write_file", arguments={"path": "a.txt"}),
         context=context,
         policy=_policy(),
     )
@@ -136,10 +136,10 @@ def test_an_unregistered_tool_still_reaches_a_terminal_event(tmp_path: Path) -> 
         if event.kind is AgentRunEventKind.TOOL_COMPLETED
     ]
     assert len(completed) == 1, "未注册的工具也要发终态, 否则展示层停在未完成"
-    assert completed[0].payload.tool_name == "fs.write_file"  # type: ignore[attr-defined]
+    assert completed[0].payload.tool_name == "fs_write_file"  # type: ignore[attr-defined]
     assert completed[0].payload.status == "tool_unavailable"  # type: ignore[attr-defined]
     assert "未注册" in completed[0].payload.error_summary  # type: ignore[attr-defined]
-    assert audit.rejected == [("fs.write_file", "tool_unavailable")]
+    assert audit.rejected == [("fs_write_file", "tool_unavailable")]
 
 
 def test_a_preparation_failure_also_leaves_a_terminal_event(tmp_path: Path) -> None:
@@ -147,7 +147,7 @@ def test_a_preparation_failure_also_leaves_a_terminal_event(tmp_path: Path) -> N
     coordinator, context, audit, collector = _build(tmp_path)
 
     observation = coordinator.handle(
-        ToolRequest(name="fs.read", arguments={}),
+        ToolRequest(name="fs_read", arguments={}),
         context=context,
         policy=_policy(),
     )
@@ -156,7 +156,7 @@ def test_a_preparation_failure_also_leaves_a_terminal_event(tmp_path: Path) -> N
     assert any(
         event.kind is AgentRunEventKind.TOOL_COMPLETED for event in collector.events
     )
-    assert audit.rejected and audit.rejected[0][0] == "fs.read"
+    assert audit.rejected and audit.rejected[0][0] == "fs_read"
 
 
 def test_a_successful_call_reports_exactly_one_terminal_event(tmp_path: Path) -> None:
@@ -164,7 +164,7 @@ def test_a_successful_call_reports_exactly_one_terminal_event(tmp_path: Path) ->
     coordinator, context, audit, collector = _build(tmp_path)
 
     observation = coordinator.handle(
-        ToolRequest(name="fs.read", arguments={"path": "main.py"}),
+        ToolRequest(name="fs_read", arguments={"path": "main.py"}),
         context=context,
         policy=_policy(),
     )
@@ -184,12 +184,12 @@ def test_a_terminal_event_says_whether_the_call_ever_ran(tmp_path: Path) -> None
     coordinator, context, _, collector = _build(tmp_path)
 
     coordinator.handle(
-        ToolRequest(name="fs.write_file", arguments={"path": "a.txt"}),
+        ToolRequest(name="fs_write_file", arguments={"path": "a.txt"}),
         context=context,
         policy=_policy(),
     )
     coordinator.handle(
-        ToolRequest(name="fs.read", arguments={"path": "main.py"}),
+        ToolRequest(name="fs_read", arguments={"path": "main.py"}),
         context=context,
         policy=_policy(),
     )
@@ -208,7 +208,7 @@ def test_the_prepared_event_names_the_paths_it_will_touch(tmp_path: Path) -> Non
     coordinator, context, _, collector = _build(tmp_path)
 
     coordinator.handle(
-        ToolRequest(name="fs.read", arguments={"path": "main.py"}),
+        ToolRequest(name="fs_read", arguments={"path": "main.py"}),
         context=context,
         policy=_policy(),
     )
@@ -228,7 +228,7 @@ def test_a_finished_call_reports_structured_mechanics(tmp_path: Path) -> None:
     coordinator, context, _, collector = _build(tmp_path)
 
     coordinator.handle(
-        ToolRequest(name="fs.read", arguments={"path": "main.py"}),
+        ToolRequest(name="fs_read", arguments={"path": "main.py"}),
         context=context,
         policy=_policy(),
     )

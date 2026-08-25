@@ -294,8 +294,8 @@ def test_the_archive_directory_stays_unreadable_through_the_normal_tools(
 ) -> None:
     """ADR-0032 决策 6.2 那条论证的另一半.
 
-    artifact.read 之所以不用绕过任何东西, 是因为它的 ToolPlan 不声明路径; 而 fs.read
-    与 shell.run 声明了, 所以它们指向归档目录时仍然是 Hard Deny —— 全量落盘之后这里
+    artifact_read 之所以不用绕过任何东西, 是因为它的 ToolPlan 不声明路径; 而 fs_read
+    与 shell_run 声明了, 所以它们指向归档目录时仍然是 Hard Deny —— 全量落盘之后这里
     躺着每一次工具调用的完整输出, 放开等于给了一条读取全部历史的旁路.
     """
     monkeypatch.setenv("FORGE_CONFIG_DIR", str(tmp_path / "forge"))

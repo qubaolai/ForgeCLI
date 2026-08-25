@@ -1,4 +1,4 @@
-"""memory.write / memory.forget: 跨会话记忆的写入 (ADR-0033 决策 9).
+"""memory_write / memory_forget: 跨会话记忆的写入 (ADR-0033 决策 9).
 
 走工具管线的收益是**全套机制免费继承**: TOOL_REQUESTED / TOOL_COMPLETED 审计, 运行
 事件, 目录谓词, mode 门 —— 不用为记忆再造一套.
@@ -166,7 +166,7 @@ class _MemoryTool(Tool):
 
 class MemoryWriteTool(_MemoryTool):
     _SPEC = _spec(
-        "memory.write",
+        "memory_write",
         "记住一件事",
         "把一条**脱离本次对话之后依然成立**的事实记下来, 供以后的会话使用. "
         "只记可验证的事实与用户明确说过的偏好; "
@@ -213,7 +213,7 @@ class MemoryWriteTool(_MemoryTool):
 
 class MemoryForgetTool(_MemoryTool):
     _SPEC = _spec(
-        "memory.forget",
+        "memory_forget",
         "忘掉一件事",
         "删掉一条不再成立的记忆. 发现记忆与当前事实不符时用它.",
         {

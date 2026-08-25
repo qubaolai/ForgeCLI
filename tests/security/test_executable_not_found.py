@@ -66,7 +66,7 @@ def _context(workspace: Path, shell_kind: str) -> ExecutionContext:
 def _plan(command: str, cwd: str, shell_kind: str) -> ToolPlan:
     return ToolPlan(
         plan_id="inv-1",
-        tool_name="shell.run",
+        tool_name="shell_run",
         spec_hash="spec",
         normalized_input=MappingProxyType({"command": command}),
         capabilities=frozenset({Capability.EXECUTE_SHELL}),

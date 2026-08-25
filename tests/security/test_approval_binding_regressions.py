@@ -32,7 +32,7 @@ IDENTITY = "sha256:binary"
 def _plan(*, command: str = "bash deploy.sh") -> ToolPlan:
     return ToolPlan(
         plan_id="inv_1",
-        tool_name="shell.run",
+        tool_name="shell_run",
         spec_hash="spec",
         normalized_input={"command": command},
         capabilities=frozenset({Capability.EXECUTE_SHELL}),
@@ -101,7 +101,7 @@ def test_the_same_script_still_hits() -> None:
 def _view(*snapshots: ScriptSnapshot, plan: ToolPlan | None = None) -> ApprovalView:
     return ApprovalView(
         plan=plan or _plan(),
-        action_summary="shell.run: 需要确认",
+        action_summary="shell_run: 需要确认",
         script_snapshots=snapshots,
     )
 

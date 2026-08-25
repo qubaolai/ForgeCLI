@@ -478,7 +478,7 @@ def _set_mode(path: str, mode: int) -> None:
 def _delete_file(path: str) -> None:
     """删文件或目录.
 
-    原来只有 unlink, 目录会抛 IsADirectoryError —— fs.delete 因此永远删不掉目录.
+    原来只有 unlink, 目录会抛 IsADirectoryError —— fs_delete 因此永远删不掉目录.
     目录走 rmtree: 计划里已经把它展开成逐个文件并存过 preimage, 到这一步该删什么是
     确定的.
     """

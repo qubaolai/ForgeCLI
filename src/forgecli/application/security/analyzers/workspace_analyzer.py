@@ -1,6 +1,6 @@
 """WORKSPACE_* / EXTERNAL_* 能力的路径检查 (ADR-0014 §5.1).
 
-Shell 分析器已经对命令做过一遍受保护路径检查, 但 `fs.apply_patch` 这类工具**不经过
+Shell 分析器已经对命令做过一遍受保护路径检查, 但 `fs_apply_patch` 这类工具**不经过
 Shell**: 它们直接在 prepare 里声明目标路径. 那条路径同样要过保护策略, 否则"用 fs 工具
 写 ~/.ssh/authorized_keys"就成了绕过 Shell 检查的捷径.
 

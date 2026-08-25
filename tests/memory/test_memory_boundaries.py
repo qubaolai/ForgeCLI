@@ -59,7 +59,7 @@ def test_the_loop_never_reaches_memory() -> None:
 def test_memory_lives_outside_the_workspace() -> None:
     """决策 4: 落工作区会污染用户仓库, 还会被下一轮 Agent 当成项目内容读回上下文.
 
-    附带后果是 fs.* 工具够不到它 —— 这正是想要的隔离.
+    附带后果是 fs_* 工具够不到它 —— 这正是想要的隔离.
     """
     from forgecli.infrastructure.config.paths import (
         config_dir,

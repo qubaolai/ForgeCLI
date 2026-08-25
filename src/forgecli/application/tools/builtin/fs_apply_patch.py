@@ -1,14 +1,14 @@
-"""fs.apply_patch: 一个信封替掉五个写工具 (ADR-0029 规则三 C 类).
+"""fs_apply_patch: 一个信封替掉五个写工具 (ADR-0029 规则三 C 类).
 
-原先是 `fs.create_file` / `fs.edit_file` / `fs.delete` / `fs.create_directory` /
-`fs.move` 五个入口. 合并的理由不是"少几个文件", 而是**契约面**与**审批粒度**:
+原先是 `fs_create_file` / `fs_edit_file` / `fs_delete` / `fs_create_directory` /
+`fs_move` 五个入口. 合并的理由不是"少几个文件", 而是**契约面**与**审批粒度**:
 
 - 一个信封天然对应**一次审批, 一个恢复点**. 五个工具时, 一次跨文件的逻辑改动会产生
   四五次独立审批, 用户逐条点头却看不到整体.
 - 五个入口意味着五套 prepare / plan / content_previews 逻辑, 那是 865 行的由来.
 - 未来所有写入场景的变化都在信封语法里表达, **不占新工具位, 不加新参数**.
 
-`fs.create_directory` 没有对应的段: `*** NEW` 会按需建父目录, 于是那个操作本身消失了
+`fs_create_directory` 没有对应的段: `*** NEW` 会按需建父目录, 于是那个操作本身消失了
 (ADR-0029 约束 1 只列了新建 / 更新 / 删除 / 移动四种).
 
 **安全性质一条不减** (ADR-0029): 每个文件段各自绑定 `expected_state`, 计划生成后文件
@@ -64,7 +64,7 @@ from forgecli.shared.cancellation import CancelToken
 __all__ = ["ApplyPatchTool"]
 
 _SPEC = ToolSpec(
-    name="fs.apply_patch",
+    name="fs_apply_patch",
     version="1",
     title="按补丁信封改文件",
     description=(
@@ -454,7 +454,7 @@ def _resolve(
 def _missing_parents(absolute: str, context: ExecutionContext) -> tuple[str, ...]:
     """从外到内列出需要创建的父目录.
 
-    `fs.create_directory` 因此不需要存在: 新建文件时按需建父目录是同一个动作的一部分,
+    `fs_create_directory` 因此不需要存在: 新建文件时按需建父目录是同一个动作的一部分,
     单独一个工具位换不来任何东西 (ADR-0029 规则一).
     """
     missing: list[str] = []

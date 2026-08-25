@@ -1,4 +1,4 @@
-"""search.text: 在工作区文件里找子串 (ADR-0004 §14).
+"""search_text: 在工作区文件里找子串 (ADR-0004 §14).
 
 不 shell out 到 grep/rg: 那会把一次纯读取变成 EXECUTE_SHELL, 让搜索这种最常用的动作
 每次都去撞 Shell 分析路径. 纯 Python 扫描慢一点, 但能力窄, 目标集合可封闭, 在 plan
@@ -55,7 +55,7 @@ _MAX_REGEX_LINE_CHARS = 16 * 1024
 _MAX_GLOB_CANDIDATES = 10_000
 
 _SPEC = ToolSpec(
-    name="search.text",
+    name="search_text",
     version="4",
     title="搜索文本",
     description=(
@@ -236,7 +236,7 @@ class SearchTextTool(Tool):
                     code=PreparationErrorCode.UNSUPPORTED_REQUEST,
                     message=(
                         f"该正则可能造成不可中止的回溯: {unsafe}. "
-                        "请改用更简单的正则或经审批的 shell.run/rg."
+                        "请改用更简单的正则或经审批的 shell_run/rg."
                     ),
                     field_path="query",
                 )
@@ -255,7 +255,7 @@ class SearchTextTool(Tool):
             if facts.is_symlink:
                 return PreparationError(
                     code=PreparationErrorCode.UNSUPPORTED_REQUEST,
-                    message=f"search.text 不跟随符号链接: {facts.realpath}",
+                    message=f"search_text 不跟随符号链接: {facts.realpath}",
                     field_path="path",
                 )
             return self._plan_for(
@@ -272,7 +272,7 @@ class SearchTextTool(Tool):
         if facts.kind is not PathKind.DIRECTORY:
             return PreparationError(
                 code=PreparationErrorCode.TARGET_UNREADABLE,
-                message=f"search.text 的 path 必须是文件或目录: {facts.realpath}",
+                message=f"search_text 的 path 必须是文件或目录: {facts.realpath}",
                 field_path="path",
             )
         # 先过滤再截断, 顺序不能换: 反过来的话 target/ 下的几千个 class 文件会先把

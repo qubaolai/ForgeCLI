@@ -298,7 +298,7 @@ const OTHER_TOOLS: ToolCategory = { id: "other", label: "其他工具" };
 /**
  * 按"做了哪一类事"归并, 判据是**这次调用声明的能力**而不是工具名。
  *
- * 名字清单会悄悄过期: `fs.search_text` 在这份清单里躺了很久, 而真名是 `search.text`,
+ * 名字清单会悄悄过期: `fs.search_text` 在这份清单里躺了很久, 而真名是 `search_text`,
  * 于是每一次搜索都被归进"其他工具", 没有任何东西会因此报错。能力是后端裁决用的同一
  * 组事实, 新增工具自动落到对的那一类。
  */
@@ -312,14 +312,17 @@ const CAPABILITY_CATEGORIES: Array<{ id: string; label: string; capabilities: st
 /**
  * 连 prepare 都没走到的调用没有能力可看, 只能按名字认 —— 而且只认**确切认识**的那些。
  *
- * 不按命名空间猜: 模型编出来的 `fs.write_file` 也以 `fs.` 开头, 猜成"读取文件"就是在
+ * 不按命名空间猜: 模型编出来的 `fs_write_file` 也以 `fs_` 开头, 猜成"读取文件"就是在
  * 替一次没发生过的写入洗白。归到"其他工具"才是实话 —— 那次调用是什么, 我们确实不知道。
+ *
+ * 名字随 ADR-0036 从点号改成下划线; 清单同时清掉了 ADR-0029 就删掉的 fs.create_file /
+ * fs.list_files 之类 —— 正是上面那段注释警告过的"悄悄过期"。
  */
 const NAME_CATEGORIES: Array<{ id: string; label: string; match: (name: string) => boolean }> = [
-  { id: "shell", label: "执行命令", match: (name) => name.startsWith("shell.") },
-  { id: "write", label: "修改文件", match: (name) => ["fs.create_file", "fs.edit_file", "fs.move", "fs.delete"].includes(name) },
-  { id: "read", label: "读取文件", match: (name) => ["fs.read_file", "fs.list_files", "fs.scan_tree", "search.text", "git.read"].includes(name) },
-  { id: "planning", label: "计划与待办", match: (name) => name.startsWith("plan.") || name.startsWith("todo.") },
+  { id: "shell", label: "执行命令", match: (name) => name.startsWith("shell_") },
+  { id: "write", label: "修改文件", match: (name) => ["fs_apply_patch"].includes(name) },
+  { id: "read", label: "读取文件", match: (name) => ["fs_read", "fs_find", "search_text", "git_read", "artifact_read"].includes(name) },
+  { id: "planning", label: "计划与待办", match: (name) => name.startsWith("plan_") || name.startsWith("todo_") },
 ];
 
 export function categoryOf(toolName: string, capabilities: string[] = []): ToolCategory {

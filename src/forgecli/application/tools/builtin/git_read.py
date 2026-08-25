@@ -1,4 +1,4 @@
-"""git.read: 只读 git 查询 (ADR-0004 §14).
+"""git_read: 只读 git 查询 (ADR-0004 §14).
 
 它声明 SPAWN_PROCESS 但**不**声明 EXECUTE_SHELL: 子命令来自固定白名单, argv 直接交给
 执行器, 不经过任何 shell 解释器, 因此没有管道, 重定向和命令替换的攻击面. 这也是它能出
@@ -80,7 +80,7 @@ class _ReadOnlyForm:
 _COMMON_FLAGS = frozenset({"--no-color", "-q", "--quiet"})
 
 # 只读子命令. 不含 add/commit/push/checkout/reset/clean —— 那些是写操作, 应当由
-# fs.* 或 shell.run 走各自的裁决路径, 不能借"git 是只读工具"的壳混进来.
+# fs_* 或 shell_run 走各自的裁决路径, 不能借"git 是只读工具"的壳混进来.
 _READ_ONLY_FORMS: dict[str, _ReadOnlyForm] = {
     "status": _ReadOnlyForm(
         flags=_COMMON_FLAGS
@@ -247,7 +247,7 @@ def _reject_args(subcommand: str, args: list[str]) -> str | None:
 
 
 _SPEC = ToolSpec(
-    name="git.read",
+    name="git_read",
     version="2",
     title="读取 git 状态",
     description=(
@@ -300,7 +300,7 @@ class GitReadTool(Tool):
         if subcommand not in READ_ONLY_SUBCOMMANDS:
             return PreparationError(
                 code=PreparationErrorCode.UNSUPPORTED_REQUEST,
-                message=f"git.read 只支持只读子命令: {sorted(READ_ONLY_SUBCOMMANDS)}",
+                message=f"git_read 只支持只读子命令: {sorted(READ_ONLY_SUBCOMMANDS)}",
                 field_path="subcommand",
             )
         raw_args = request.arguments.get("args", [])
@@ -309,7 +309,7 @@ class GitReadTool(Tool):
         if rejected is not None:
             return PreparationError(
                 code=PreparationErrorCode.UNSUPPORTED_REQUEST,
-                message=f"git.read 只接受确定只读的参数: {rejected}",
+                message=f"git_read 只接受确定只读的参数: {rejected}",
                 field_path="args",
             )
         executable = resolve_executable("git", context)

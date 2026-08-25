@@ -137,8 +137,8 @@ ForgeCLI 按企业级产品节奏推进，采用“核心闭环先行、能力�
 主要工作：
 
 - `ToolRegistry`、`ToolExecutor`、`ToolResultNormalizer`。
-- `fs.read_file`、`fs.write_patch`、`search.text`。
-- `shell.run`、`git.status`、`git.diff`、`test.run`。
+- `fs_read`、`fs.write_patch`、`search_text`。
+- `shell_run`、`git.status`、`git.diff`、`test.run`。
 - `ApprovalService`。
 - 工具 stdout/stderr 长输出落 artifact。
 - 工具事件全量记录。

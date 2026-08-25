@@ -70,12 +70,12 @@ class ResultProvenance:
     - ``source_path`` + ``source_state`` 让这条结果可以**去重**: 同一个路径在同一个
       状态下被读第二次, 后一次回一行引用就够了.
     - ``artifact_id`` 让这条结果可以**降级**: transcript 里的正文换成引用, 完整内容
-      仍在 ArtifactStore 里, 用 artifact.read 取回.
+      仍在 ArtifactStore 里, 用 artifact_read 取回.
 
     ``source_state`` 取 ``path_state_token``, 与 ADR-0027 执行前复核用的是**同一个
     函数**. 两套判据会让安全层说"没变"而去重层说"变了", 而这种分歧不会报错.
 
-    只有读文件的工具填得出 ``source_*``. ``shell.run`` 填不出 —— 它的输出不是某个路径
+    只有读文件的工具填得出 ``source_*``. ``shell_run`` 填不出 —— 它的输出不是某个路径
     在某个状态下的快照, 重跑一次也不保证一样. 于是它的结果不参与去重, 但仍然可以降级.
     """
 

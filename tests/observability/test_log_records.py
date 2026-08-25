@@ -16,10 +16,10 @@ from forgecli.shared.observability.metrics import METRICS
 
 
 def test_fields_render_as_key_value(records: pytest.LogCaptureFixture) -> None:
-    get_log("t").info("tool.requested", tool="shell.run", exit_code=0, ok=True)
+    get_log("t").info("tool.requested", tool="shell_run", exit_code=0, ok=True)
 
     message = records.records[-1].getMessage()
-    assert message == "tool.requested tool=shell.run exit_code=0 ok=True"
+    assert message == "tool.requested tool=shell_run exit_code=0 ok=True"
 
 
 def test_multiline_values_stay_on_one_line(records: pytest.LogCaptureFixture) -> None:
@@ -44,9 +44,9 @@ def test_run_context_is_attached_without_passing_it(
 
 def test_bind_restores_exactly_on_exit() -> None:
     with bind(session_id="s_1"):
-        with bind(turn_id="t_1", tool="fs.read_file"):
+        with bind(turn_id="t_1", tool="fs_read"):
             assert current().session_id == "s_1"  # 嵌套是累加, 不是覆盖
-            assert current().tool == "fs.read_file"
+            assert current().tool == "fs_read"
         assert current().tool == ""
     assert current().session_id == ""
 
@@ -94,7 +94,7 @@ def test_span_records_duration_and_outcome(
     METRICS.reset()
     log = get_log("t")
 
-    with log.span("tool.execute", tool="shell.run") as span:
+    with log.span("tool.execute", tool="shell_run") as span:
         span.set(exit_code=0)
 
     message = records.records[-1].getMessage()

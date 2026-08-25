@@ -378,7 +378,7 @@ class WorkspaceMutationCoordinator:
                     f"恢复预算不足: 这次调用可能写到工作区任何位置, 需要保护 "
                     f"{len(targets)} 个对象, 超出 {self._policy.max_checkpoint_files} "
                     "的上限. 复制式 preimage 存不下这么大的范围, 而这个工作区所在的"
-                    "文件系统不支持写时复制快照 —— 要么把写入目标写明确 (改用 fs.* "
+                    "文件系统不支持写时复制快照 —— 要么把写入目标写明确 (改用 fs_* "
                     "或给出具体路径), 要么把工作区放到支持 reflink / clonefile 的卷上."
                 )
 

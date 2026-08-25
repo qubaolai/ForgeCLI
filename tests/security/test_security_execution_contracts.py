@@ -62,7 +62,7 @@ from forgecli.shared.cancellation import CancelToken
 from support.fakes import tool_plan
 
 _SPEC = ToolSpec(
-    name="security.probe",
+    name="security_probe",
     version="1",
     title="安全契约替身",
     description="只用于运行时绑定测试",
@@ -305,7 +305,7 @@ def _script_findings(path: Path, context: ExecutionContext) -> AnalysisFindings:
     command = parse_command(f"python3 {path.name}", ShellKind.POSIX, cwd=context.cwd)
     plan = ToolPlan(
         plan_id="inv-script",
-        tool_name="shell.run",
+        tool_name="shell_run",
         spec_hash="shell-spec",
         normalized_input=MappingProxyType({"command": command.raw_command}),
         capabilities=frozenset({Capability.EXECUTE_SHELL, Capability.EXECUTE_SCRIPT}),

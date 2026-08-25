@@ -5,7 +5,7 @@ ToolAuthorizationService.issue 签发一次性 ExecutionAuthorization. ASK 更�
 只是创建一个待人类决定的请求.
 
 effective_plan 允许与原计划不同, 但只能收缩; 校验在
-domain.tool.authorization.validate_narrowing. 分析器把 shell.run 的 UNKNOWN 目标冻结成
+domain.tool.authorization.validate_narrowing. 分析器把 shell_run 的 UNKNOWN 目标冻结成
 FORGE_EXPANDED 就走这条通道.
 
 **分析事实只持有引用, 不逐字段抄写.** 早先这里有 executable_identity_hash,

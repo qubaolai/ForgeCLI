@@ -47,7 +47,7 @@ _NARROWED = frozenset(
 def _plan(capabilities: frozenset[Capability]) -> ToolPlan:
     return ToolPlan(
         plan_id="inv_1",
-        tool_name="shell.run",
+        tool_name="shell_run",
         spec_hash="spec",
         normalized_input=empty_input(),
         capabilities=capabilities,

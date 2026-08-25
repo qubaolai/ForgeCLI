@@ -1,6 +1,6 @@
 """EXECUTE_SHELL 能力分析器 (ADR-0013 §5 / §6).
 
-它是整套解耦的落点: **注册在 EXECUTE_SHELL 这个能力上, 不是注册在 shell.run 这个工具
+它是整套解耦的落点: **注册在 EXECUTE_SHELL 这个能力上, 不是注册在 shell_run 这个工具
 上**. 任何工具只要声明 EXECUTE_SHELL 并交出 ShellSubject, 就走同一条分析路径.
 
 一次分析做六件事:
@@ -8,7 +8,7 @@
 1. 按方言解析. 解析失败走 Hard Deny 预扫描, 再落 ASK —— 解析不出来绝不等于放行.
 2. 结构化 Hard Deny 判定.
 3. 展开并冻结目标集合. 展不开就标 DYNAMIC, 由策略层决定怎么办.
-4. 从命令事实推导本次**实际**用到的能力, 把 shell.run 声明的最宽上界收缩到这些.
+4. 从命令事实推导本次**实际**用到的能力, 把 shell_run 声明的最宽上界收缩到这些.
 5. 解析每个可执行文件的身份. Agent 可写目录里的 executable 不能凭名字命中普通 Allow.
 6. 受保护路径检查: 写入直接 Hard Deny, 凭证读取直接 Hard Deny.
 
@@ -264,7 +264,7 @@ class ShellCapabilityAnalyzer(CapabilityAnalyzer):
         resolution: TargetResolution,
         context: ExecutionContext,
     ) -> ToolPlan:
-        """把 shell.run 的最宽上界收缩到本次实际的事实."""
+        """把 shell_run 的最宽上界收缩到本次实际的事实."""
         touched = (*effects.read_paths, *effects.mutating_targets)
         scope = (
             context.scope_of_all(touched) if touched else WorkspaceScope.IN_WORKSPACE

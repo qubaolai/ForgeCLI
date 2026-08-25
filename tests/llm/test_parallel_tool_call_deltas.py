@@ -50,12 +50,12 @@ def test_one_chunk_with_two_tool_calls_keeps_both() -> None:
                     {
                         "index": 0,
                         "id": "call_a",
-                        "function": {"name": "fs.read_file", "arguments": '{"path"'},
+                        "function": {"name": "fs_read", "arguments": '{"path"'},
                     },
                     {
                         "index": 1,
                         "id": "call_b",
-                        "function": {"name": "search.text", "arguments": '{"query"'},
+                        "function": {"name": "search_text", "arguments": '{"query"'},
                     },
                 ]
             }
@@ -63,8 +63,8 @@ def test_one_chunk_with_two_tool_calls_keeps_both() -> None:
     )
     assert [delta.index for delta in chunk.tool_call_deltas] == [0, 1]
     assert [delta.name for delta in chunk.tool_call_deltas] == [
-        "fs.read_file",
-        "search.text",
+        "fs_read",
+        "search_text",
     ]
 
 
@@ -108,8 +108,8 @@ def test_accumulator_aggregates_two_calls_split_across_chunks() -> None:
     accumulator.add(
         _chunk(
             0,
-            ToolCallDelta(index=0, tool_call_id="a", name="fs.read_file"),
-            ToolCallDelta(index=1, tool_call_id="b", name="search.text"),
+            ToolCallDelta(index=0, tool_call_id="a", name="fs_read"),
+            ToolCallDelta(index=1, tool_call_id="b", name="search_text"),
         )
     )
     accumulator.add(
@@ -121,7 +121,7 @@ def test_accumulator_aggregates_two_calls_split_across_chunks() -> None:
     )
 
     calls = accumulator.tool_calls()
-    assert [call.name for call in calls] == ["fs.read_file", "search.text"]
+    assert [call.name for call in calls] == ["fs_read", "search_text"]
     assert dict(calls[0].arguments) == {"path": "main.py"}
     assert dict(calls[1].arguments) == {"query": "login"}
     assert not accumulator.has_partial_tool_calls()

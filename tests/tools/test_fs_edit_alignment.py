@@ -1,6 +1,6 @@
 """补丁 UPDATE 段的容差边界: 容忍不携带信息的差异, 不容忍携带信息的差异.
 
-工具从 `fs.edit_file` 换成了 `fs.apply_patch` (ADR-0029 C 类), 但**容差判据一条不改** ——
+工具从 `fs_edit_file` 换成了 `fs_apply_patch` (ADR-0029 C 类), 但**容差判据一条不改** ——
 下面每条用例的输入输出都与合并前一致, 只是 old_string/new_string 改成信封里的
 FIND/REPLACE 段.
 
@@ -58,7 +58,7 @@ def _edit(workspace: Path, **arguments: object) -> ToolPlan | PreparationError:
     return tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="fs.apply_patch",
+            tool_name="fs_apply_patch",
             arguments={"patch": patch},
             tool_call_id="c1",
         ),

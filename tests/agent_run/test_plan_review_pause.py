@@ -8,7 +8,7 @@
       -> LoopStopReason.WAIT_PLAN_REVIEW (RESUMABLE_PAUSE)
 
 这组用例最要紧的一条是最后那个: **循环实现里不出现任何具体工具名**. 出现了, 这套机制
-就只为 plan.write 服务, 将来的 ask_user 一类工具得再改一次循环.
+就只为 plan_write 服务, 将来的 ask_user 一类工具得再改一次循环.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ from support.loop_harness import (
 def _review_observation() -> object:
     result = ToolResult(
         invocation_id="inv-1",
-        tool_name="plan.write",
+        tool_name="plan_write",
         status=ToolResultStatus.OK,
         content_parts=(ContentPart(text="# 一份计划"),),
         turn_disposition=TurnDisposition.AWAIT_USER_DECISION,
@@ -56,7 +56,7 @@ def _review_observation() -> object:
         kind=ObservationKind.PLAN_REVIEW_REQUIRED,
         message="ok",
         invocation_id="inv-1",
-        tool_name="plan.write",
+        tool_name="plan_write",
         result=result,
     ).to_loop_observation()
 
@@ -94,7 +94,7 @@ def test_the_stop_reason_is_a_resumable_pause() -> None:
 
 def test_the_loop_stops_at_the_turn_boundary() -> None:
     gateway = ScriptedGateway(
-        responses=[response(tool_calls=(call("plan.write", "c1"),))]
+        responses=[response(tool_calls=(call("plan_write", "c1"),))]
     )
     loop, _ = loop_with(gateway)
     step = loop.start(loop_input())
@@ -112,7 +112,7 @@ def test_the_loop_does_not_call_the_model_again() -> None:
     再跑一轮只会在评审界面上方多出一段没人读的文字.
     """
     gateway = ScriptedGateway(
-        responses=[response(tool_calls=(call("plan.write", "c1"),))]
+        responses=[response(tool_calls=(call("plan_write", "c1"),))]
     )
     loop, _ = loop_with(gateway)
     loop.start(loop_input())
@@ -127,13 +127,13 @@ def test_the_loop_does_not_call_the_model_again() -> None:
 
 
 def test_the_loop_never_names_a_planning_tool() -> None:
-    """出现了工具名, 这套机制就只为 plan.write 服务.
+    """出现了工具名, 这套机制就只为 plan_write 服务.
 
     将来的 ask_user 一类工具得再改一次循环, 而循环恰恰是最不该认识工具语义的一层.
     """
     source = inspect.getsource(builtin_loop)
 
-    for name in ("plan.write", "plan.read", "todo.write", "todo.set_status"):
+    for name in ("plan_write", "plan_read", "todo_write", "todo_set_status"):
         assert name not in source
 
 
@@ -141,7 +141,7 @@ def test_a_plain_result_still_continues() -> None:
     """没声明的工具照常继续. 停顿是工具主动要的, 不是默认行为."""
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("fs.read_file", "c1"),)),
+            response(tool_calls=(call("fs_read", "c1"),)),
             response(text="读完了"),
         ]
     )
@@ -153,7 +153,7 @@ def test_a_plain_result_still_continues() -> None:
             kind=ObservationKind.TOOL_RESULT,
             message="ok",
             invocation_id="inv-1",
-            tool_name="fs.read_file",
+            tool_name="fs_read",
         ).to_loop_observation()
     )
 
@@ -168,7 +168,7 @@ def test_a_failed_result_cannot_ask_for_a_decision() -> None:
     with pytest.raises(ValueError, match="只有成功的结果"):
         ToolResult(
             invocation_id="inv-1",
-            tool_name="plan.write",
+            tool_name="plan_write",
             status=ToolResultStatus.TOOL_ERROR,
             error=ToolError(code="boom", message="失败了"),
             turn_disposition=TurnDisposition.AWAIT_USER_DECISION,

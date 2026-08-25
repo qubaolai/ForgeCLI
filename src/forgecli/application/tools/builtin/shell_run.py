@@ -1,4 +1,4 @@
-"""shell.run: 唯一的 Shell 执行入口, 且**不是**安全决策者 (ADR-0013 §2).
+"""shell_run: 唯一的 Shell 执行入口, 且**不是**安全决策者 (ADR-0013 §2).
 
 这个工具刻意什么都不判断: 不解析命令, 不匹配规则, 不读 mode, 不调分类器. 它只做三件事
 —— 声明"我可能干任何事", 把原始命令交出去让安全侧分析, 以及执行已经授权的那份计划.
@@ -90,7 +90,7 @@ _CAPABILITIES = frozenset(
 )
 
 _SPEC = ToolSpec(
-    name="shell.run",
+    name="shell_run",
     version="2",
     title="执行 Shell 命令",
     description="执行一条 Shell 命令. 复合命令, 管道和重定向都支持, 整条命令统一裁决.",

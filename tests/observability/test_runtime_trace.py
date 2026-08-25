@@ -52,7 +52,7 @@ def test_a_tool_turn_leaves_a_readable_trail(
 ) -> None:
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(_call("fs.read_file", path="a.py"),)),
+            response(tool_calls=(_call("fs_read", path="a.py"),)),
             response(text="读完了"),
         ]
     )
@@ -79,7 +79,7 @@ def test_tool_arguments_are_logged_unredacted(
     """终端要脱敏是为了不刷屏; 日志不脱敏是为了排查 —— 两者不是同一件事."""
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(_call("shell.run", command="echo hunter2"),)),
+            response(tool_calls=(_call("shell_run", command="echo hunter2"),)),
             response(text="好了"),
         ]
     )
@@ -110,7 +110,7 @@ def test_repeated_identical_calls_are_logged_as_a_guard(
     records: pytest.LogCaptureFixture,
 ) -> None:
     """原地打转是最难从结果上看出来的一类故障: 每次调用本身都是合法的."""
-    repeated = tuple(_call("fs.find", pattern="*.py") for _ in range(3))
+    repeated = tuple(_call("fs_find", pattern="*.py") for _ in range(3))
     gateway = ScriptedGateway(
         responses=[response(tool_calls=repeated), response(text="停")]
     )

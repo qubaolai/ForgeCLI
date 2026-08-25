@@ -4,7 +4,7 @@
 工具不经过审批"这条决策的全部支点: 写入位置由 Forge 从项目 id 算出来, 模型无法指定写到
 哪里, 于是没有可裁决的内容.
 
-有人日后为了"方便"给 plan.write 加一个 path 参数, 这条决策就地失效 —— 而且不会有任何一层
+有人日后为了"方便"给 plan_write 加一个 path 参数, 这条决策就地失效 —— 而且不会有任何一层
 报错. 所以只能正面钉住.
 """
 
@@ -125,7 +125,7 @@ def test_the_plan_is_static_and_touches_nothing(
     plan = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="plan.write",
+            tool_name="plan_write",
             arguments=_PLAN_ARGS,
             tool_call_id="c1",
         ),
@@ -145,7 +145,7 @@ def test_plan_write_rejects_path_like_plan_id_before_execution(
     invalid = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-escape",
-            tool_name="plan.write",
+            tool_name="plan_write",
             arguments={**_PLAN_ARGS, "plan_id": "/tmp/escaped"},
             tool_call_id="c-escape",
         ),
@@ -280,4 +280,4 @@ def test_set_status_without_a_list_says_what_to_do(
         {"updates": [{"index": 0, "status": "done"}]},
     )
 
-    assert "todo.write" in result.text
+    assert "todo_write" in result.text

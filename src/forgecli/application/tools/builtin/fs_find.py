@@ -1,6 +1,6 @@
-"""fs.find: 定位文件与认识目录, 一个入口 (ADR-0029 A 类).
+"""fs_find: 定位文件与认识目录, 一个入口 (ADR-0029 A 类).
 
-合并了原先的 `fs.scan_tree` 与 `fs.list_files`. 它们是**同一个动作的两个入口** ——
+合并了原先的 `fs_scan_tree` 与 `fs_list_files`. 它们是**同一个动作的两个入口** ——
 都在走目录, 差别只在渲染成树还是渲染成清单. 让模型在两个工具之间选一次, 换不来任何
 东西, 只多一次选错的机会.
 
@@ -61,7 +61,7 @@ _MAX_ENTRIES = 2000
 _MAX_GLOB_CANDIDATES = 10_000
 
 _SPEC = ToolSpec(
-    name="fs.find",
+    name="fs_find",
     version="1",
     title="定位文件与认识目录",
     description=(
@@ -125,7 +125,7 @@ class FindTool(Tool):
         if facts.kind is not PathKind.DIRECTORY:
             return PreparationError(
                 code=PreparationErrorCode.TARGET_UNREADABLE,
-                message=f"不是目录: {facts.realpath}. 读单个文件请用 fs.read.",
+                message=f"不是目录: {facts.realpath}. 读单个文件请用 fs_read.",
                 field_path="path",
             )
 

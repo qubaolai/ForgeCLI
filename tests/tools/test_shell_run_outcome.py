@@ -1,4 +1,4 @@
-"""shell.run 怎么把子进程的结局翻译成 ToolResult.
+"""shell_run 怎么把子进程的结局翻译成 ToolResult.
 
 分界线是**工具有没有正常工作**, 不是**命令有没有干成**:
 
@@ -65,7 +65,7 @@ def _result(workspace: Path, outcome: CommandOutcome) -> ToolResult:
     plan = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="shell.run",
+            tool_name="shell_run",
             arguments={"command": "grep -r x .", "shell_kind": "posix"},
             tool_call_id="c1",
         ),
@@ -217,7 +217,7 @@ def test_requested_shell_kind_must_match_the_actual_executor(
     invalid = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-wrong-shell",
-            tool_name="shell.run",
+            tool_name="shell_run",
             arguments={"command": "echo ok", "shell_kind": "powershell"},
             tool_call_id="c-wrong-shell",
         ),

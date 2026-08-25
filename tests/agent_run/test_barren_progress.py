@@ -46,7 +46,7 @@ def _varied_call(index: int) -> ToolCall:
     """
     return ToolCall(
         tool_call_id=f"c{index}",
-        name="search.text",
+        name="search_text",
         arguments=MappingProxyType({"query": f"关键词{index}"}),
     )
 

@@ -103,7 +103,7 @@ class FsArtifactStore(ArtifactStore):
     def _path_of(self, artifact_id: str) -> Path:
         """id 一律先校验再拼路径.
 
-        ``artifact_id`` 到了 ADR-0032 决策 6.2 之后是**模型可控**的 (``artifact.read``
+        ``artifact_id`` 到了 ADR-0032 决策 6.2 之后是**模型可控**的 (``artifact_read``
         的入参). 不校验的话, ``".."`` 会让 ``self._root / artifact_id[:2]`` 直接跳出
         artifacts 目录, 而这条路径绕开的恰好是受保护路径那道 Hard Deny —— 工具内部走
         ArtifactStore, 不经 workspace_analyzer.

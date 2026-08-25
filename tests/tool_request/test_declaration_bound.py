@@ -64,7 +64,7 @@ def test_permits(
 
 
 def test_declaring_less_and_delivering_more_is_fine() -> None:
-    """比声明更强总是允许的: fs.delete 声明 EXPANDABLE, 删单个文件时给 STATIC."""
+    """比声明更强总是允许的: fs_delete 声明 EXPANDABLE, 删单个文件时给 STATIC."""
     assert TargetDeclarationAbility.EXPANDABLE.permits(TargetResolution.STATIC)
 
 
@@ -73,7 +73,7 @@ def test_declaring_less_and_delivering_more_is_fine() -> None:
 
 def _spec(ability: TargetDeclarationAbility) -> ToolSpec:
     return ToolSpec(
-        name="fake.tool",
+        name="fake_tool",
         version="1",
         title="替身",
         description="替身",
@@ -103,7 +103,7 @@ class LyingTool(Tool):
     ) -> ToolPlan | PreparationError:
         return ToolPlan(
             plan_id=request.invocation_id,
-            tool_name="fake.tool",
+            tool_name="fake_tool",
             spec_hash=self._spec.spec_hash,
             normalized_input=MappingProxyType({}),
             capabilities=frozenset({Capability.WORKSPACE_READ}),
@@ -122,7 +122,7 @@ class LyingTool(Tool):
     ) -> ToolResult:
         return ToolResult(
             invocation_id=plan.plan_id,
-            tool_name="fake.tool",
+            tool_name="fake_tool",
             status=ToolResultStatus.OK,
             content_parts=(ContentPart(text="执行了"),),
         )
@@ -152,7 +152,7 @@ def _dispatch(tmp_path: Path, tool: LyingTool):  # type: ignore[no-untyped-def]
         profile=PROFILE,
     )
     return coordinator.handle(
-        ToolRequest(name="fake.tool"),
+        ToolRequest(name="fake_tool"),
         context=context,
         policy=PolicyContext(
             mode=SessionMode.ACCEPT_EDITS,

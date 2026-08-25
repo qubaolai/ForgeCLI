@@ -30,7 +30,7 @@ def test_the_prompt_is_identical_across_every_call_in_one_turn() -> None:
     """
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("fs.read_file", "c1"),)),
+            response(tool_calls=(call("fs_read", "c1"),)),
             response("读完了"),
         ]
     )
@@ -75,7 +75,7 @@ def test_closing_the_catalog_does_not_recompile_the_prompt() -> None:
     """本轮收回工具目录时只追加受控运行通知, 不重编核心提示词 (ADR-0018 §6.2)."""
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("fs.read_file", "c1"),)),
+            response(tool_calls=(call("fs_read", "c1"),)),
             response("那我说明一下"),
         ]
     )

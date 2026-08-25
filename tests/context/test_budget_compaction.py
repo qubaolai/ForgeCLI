@@ -126,7 +126,7 @@ def test_a_tight_budget_downgrades_the_oldest_results_first(
     ]
     assert _BIG not in bodies[0], "最旧的应该被降级"
     assert bodies[-1] == _BIG, "最近的两条留着不动"
-    assert "artifact.read" in bodies[0], "占位必须说清怎么取回来"
+    assert "artifact_read" in bodies[0], "占位必须说清怎么取回来"
 
 
 def test_downgrade_runs_before_summary(store: MemoryArtifactStore) -> None:
@@ -233,7 +233,7 @@ def test_a_collected_artifact_says_so_instead_of_promising_a_retrieval(
         if isinstance(block, ToolResultBlock)
     ]
     assert "已过期回收" in bodies[0]
-    assert "artifact.read" not in bodies[0]
+    assert "artifact_read" not in bodies[0]
 
 
 def test_twenty_sixteen_kib_reads_fit_in_the_default_window(
@@ -241,7 +241,7 @@ def test_twenty_sixteen_kib_reads_fit_in_the_default_window(
 ) -> None:
     """ADR-0032 背景第 1 条那个场景.
 
-    fs.read 单次内联上限 16 KiB, 按 4 字符折 1 token 约 4096; 用户没配 context_window
+    fs_read 单次内联上限 16 KiB, 按 4 字符折 1 token 约 4096; 用户没配 context_window
     时目录取的保守默认是 32768. 也就是说读六七个文件就到顶 —— 而这不是长任务才碰得到
     的天花板, 是日常.
     """

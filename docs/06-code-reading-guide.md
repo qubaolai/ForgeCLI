@@ -182,7 +182,7 @@ bind_turn -> catalog_for(mode) -> _check_availability -> _prepare
 **读完能回答**:
 - 人类批准之后为什么还要重新 prepare 一遍?
 - `plan_hash` 里为什么不含 `filesystem_view_version`?
-- plan 档下模型硬要调 `shell.run` 会发生什么? 有几道防线?
+- plan 档下模型硬要调 `shell_run` 会发生什么? 有几道防线?
 
 ### 3.3 工具实现 (`application/tools/`)
 
@@ -198,11 +198,11 @@ fs_write.py       看"唯一性是硬约束"那段, 以及为什么不允许全�
 shell_run.py      最复杂. OPAQUE + UNKNOWN, 12 个能力上界
 ```
 
-**读完能回答**: 同样是读文件, 为什么 `fs.read_file` 在 plan 档可见而 `shell.run` 不可见?
+**读完能回答**: 同样是读文件, 为什么 `fs_read` 在 plan 档可见而 `shell_run` 不可见?
 
 ## 4. 主线三: 一条 Shell 命令是怎么被分析的
 
-这条线可以晚一点走, 但不能不走 —— 它是 `shell.run` 能存在的全部理由.
+这条线可以晚一点走, 但不能不走 —— 它是 `shell_run` 能存在的全部理由.
 
 | # | 文件 | 看什么 |
 |---|---|---|
@@ -292,7 +292,7 @@ tests/support/       共享替身
 | `LoopHook` 从未被调用 | 同上, 控制流扩展点未启用 |
 | `LoopInput.resume_state` 恒为 None | 同上 |
 | `plan` 档没有计划评审 (补充/拒绝/同意/同意并执行) | ADR-0023 已设计, 未实现 |
-| 没有 `plan.read` / `todo.write` 等工具 | ADR-0022 已设计, 未实现 |
+| 没有 `plan_read` / `todo_write` 等工具 | ADR-0022 已设计, 未实现 |
 | 沙箱恒为 `NO_SANDBOX` | ADR-0014 / 0019 已设计, 未实现. `IsolationLevel` 三档是为它预留 |
 | `SessionMode` 不落盘 | 刻意的: `state.json` 必须能从 `events.jsonl` 重建, 而 mode 没有对应事件 |
 | `docs/02-detailed-design.md` §3.5 列了六种模式 | 文档漂移. 以四档 (`PLAN`/`ACCEPT_EDITS`/`AUTO`/`FULL_ACCESS`) 为准 |

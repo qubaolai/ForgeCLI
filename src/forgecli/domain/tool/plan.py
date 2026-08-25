@@ -4,8 +4,8 @@
 
 - **声明只能缩小信任, 不能证明安全.** effects 为空或 declaration_confidence=OPAQUE 不
   等于无副作用, 只表示工具无法自证, 按 ADR-0013 的 UNKNOWN / OPAQUE 路径处理.
-- **谁能证明目标集合, 谁就负责冻结它.** fs.* 在 prepare 里给出 STATIC /
-  FORGE_EXPANDED 和 target_set_hash; shell.run 给 UNKNOWN 加 analysis_subject, 由安全侧
+- **谁能证明目标集合, 谁就负责冻结它.** fs_* 在 prepare 里给出 STATIC /
+  FORGE_EXPANDED 和 target_set_hash; shell_run 给 UNKNOWN 加 analysis_subject, 由安全侧
   的 Shell 分析器冻结后经 effective_plan 回写. 两条路径产出同构证据, 下游不区分冻结
   发生在哪一侧.
 

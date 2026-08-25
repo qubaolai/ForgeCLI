@@ -47,7 +47,7 @@ def _context(root: Path) -> ExecutionContext:
 def _plan(capabilities: frozenset[Capability], effects: PlanEffects) -> ToolPlan:
     return ToolPlan(
         plan_id="inv_1",
-        tool_name="shell.run",
+        tool_name="shell_run",
         spec_hash="spec",
         normalized_input={},
         capabilities=capabilities,

@@ -1,4 +1,4 @@
-"""fs.find 的两种形态: 不给 pattern 走目录树, 给了 pattern 走扁平清单.
+"""fs_find 的两种形态: 不给 pattern 走目录树, 给了 pattern 走扁平清单.
 
 合并自原先的 `test_fs_list_files.py` 与 `test_fs_scan_tree.py` —— 那两个工具是同一个
 动作的两个入口 (ADR-0029 A 类), 合并之后**行为一条不减**, 只是入口从两个变成一个,
@@ -51,7 +51,7 @@ def _entries(workspace: Path, **arguments: object) -> list[str]:
     plan = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="fs.find",
+            tool_name="fs_find",
             arguments={"pattern": "**/*", **arguments},
             tool_call_id="c1",
         ),
@@ -100,7 +100,7 @@ def test_the_filtered_paths_never_reach_the_plan_targets(workspace: Path) -> Non
     plan = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="fs.find",
+            tool_name="fs_find",
             arguments={"pattern": "**/*"},
             tool_call_id="c1",
         ),
@@ -113,13 +113,13 @@ def test_the_filtered_paths_never_reach_the_plan_targets(workspace: Path) -> Non
 # ---- description 承诺的两条写法 ----
 #
 # description 是模型唯一能看到的工具说明. 它写下的每个例子都是承诺, 承诺失效时没有任何
-# 东西会报错 —— 提示词照常渲染, 模型照常按它去调, 只是拿不到东西, 然后退回 shell.run.
+# 东西会报错 —— 提示词照常渲染, 模型照常按它去调, 只是拿不到东西, 然后退回 shell_run.
 
 
 def test_the_default_pattern_lists_only_one_level(workspace: Path) -> None:
     """默认 '*' 只列当前一层. 这条要钉住, 因为它是逐层遍历的成因.
 
-    与 search.text 相反 (那个默认 '**/*' 递归), 两个默认值不一致本身就是陷阱, 所以
+    与 search_text 相反 (那个默认 '**/*' 递归), 两个默认值不一致本身就是陷阱, 所以
     两边的 description 都必须写明自己的默认值.
     """
     entries = _entries(workspace, pattern="*")
@@ -137,7 +137,7 @@ def test_a_suffix_glob_reaches_the_whole_tree(workspace: Path) -> None:
 def test_a_name_glob_finds_files_by_name(workspace: Path) -> None:
     """description 里 '**/application*.yml' 那个例子的等价形式.
 
-    这是全仓找文件名的唯一一条专用工具通道; 它不成立的话, 模型只剩 shell.run 的 find.
+    这是全仓找文件名的唯一一条专用工具通道; 它不成立的话, 模型只剩 shell_run 的 find.
     """
     entries = _entries(workspace, pattern="**/d*.py")
     assert entries == ["src/deep/deeper/d.py"]
@@ -161,7 +161,7 @@ def test_entry_limit_is_reported_instead_of_silently_truncating(
     plan = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-limit",
-            tool_name="fs.find",
+            tool_name="fs_find",
             arguments={"path": "bulk", "pattern": "*"},
             tool_call_id="c-limit",
         ),
@@ -209,7 +209,7 @@ def _run(tree_workspace: Path, **arguments: object) -> str:
     plan = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="fs.find",
+            tool_name="fs_find",
             arguments=arguments,
             tool_call_id="c1",
         ),
@@ -223,7 +223,7 @@ def _prepare(tree_workspace: Path, **arguments: object) -> ToolPlan | Preparatio
     return _tool().prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="fs.find",
+            tool_name="fs_find",
             arguments=arguments,
             tool_call_id="c1",
         ),
@@ -298,4 +298,4 @@ def test_pointing_at_a_file_says_which_tool_to_use(tree_workspace: Path) -> None
     error = _prepare(tree_workspace, path="README.md")
 
     assert isinstance(error, PreparationError)
-    assert "fs.read" in error.message
+    assert "fs_read" in error.message

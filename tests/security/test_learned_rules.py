@@ -1,7 +1,7 @@
 """渐进式授权: always 沉淀成一条受限 Allow 规则 (ADR-0013 §5.1).
 
 三条边界最要紧, 每条都对应一种"看起来方便但实际是后门"的做法:
-只有 shell.run 能学; 命中规则不跳过 Hard Deny; 规则不泛化.
+只有 shell_run 能学; 命中规则不跳过 Hard Deny; 规则不泛化.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ IDENTITY = "sha256:abc123"
 def _plan(command: str = "poetry run pytest") -> ToolPlan:
     return ToolPlan(
         plan_id="inv-1",
-        tool_name="shell.run",
+        tool_name="shell_run",
         spec_hash="spec",
         normalized_input=MappingProxyType({"command": command}),
         capabilities=frozenset({Capability.EXECUTE_SHELL}),

@@ -32,7 +32,7 @@ from forgecli.domain.tool.capability import Capability
 
 __all__ = ["PromptBuildInput", "SystemPromptBuilder", "ToolBrief"]
 
-_SHELL_TOOL = "shell.run"
+_SHELL_TOOL = "shell_run"
 
 
 @dataclass(frozen=True)
@@ -87,7 +87,7 @@ class SystemPromptBuilder:
         todo_state = _todo_state(build_input)
         if todo_state is not None:
             blocks.append(todo_state)
-        # 记忆排在最后, 同属易变尾部: 模型可能在会话中途用 memory.write 改写它.
+        # 记忆排在最后, 同属易变尾部: 模型可能在会话中途用 memory_write 改写它.
         memory_state = _memory_state(build_input)
         if memory_state is not None:
             blocks.append(memory_state)
@@ -114,7 +114,7 @@ def _tool_contract(build_input: PromptBuildInput) -> PromptBlock:
     sections = [prompt_text.TOOL_CONTRACT]
     table = _tool_table(build_input.available_tools)
     if table:
-        # 引导语也跟着目录走: shell.run 不在本轮目录里就不该提它的名字, 否则等于告诉
+        # 引导语也跟着目录走: shell_run 不在本轮目录里就不该提它的名字, 否则等于告诉
         # 模型有个它看不见的工具, 而模型会去请求.
         lead = (
             prompt_text.TOOL_TABLE_LEAD_WITH_SHELL
@@ -202,7 +202,7 @@ def _plan_state(build_input: PromptBuildInput) -> PromptBlock | None:
     """只放一行引用, 不放正文.
 
     计划正文可能很长而模型只在部分轮次需要它 —— ADR-0018 §4.4 的两条判据各命中一条,
-    所以它走工具 (`plan.read`) 而不是每轮重述一遍.
+    所以它走工具 (`plan_read`) 而不是每轮重述一遍.
     """
     plan = build_input.planning.live_plan
     if plan is None:
@@ -265,7 +265,7 @@ def _tool_table(tools: tuple[ToolBrief, ...]) -> str:
     名字在前是因为模型要用它发起调用; 而且左对齐的一列名字比左对齐的一列中文标题更好扫.
     与"当前运行事实"那一块的 `name: value` 同一种形状, 不另立一种.
 
-    分隔符曾经在一次重构里丢过, 于是渲染出来的是 `读取文件fs.read_file` 这样粘在一起的
+    分隔符曾经在一次重构里丢过, 于是渲染出来的是 `读取文件fs_read` 这样粘在一起的
     一行. 它不会让任何测试失败 —— 提示词照常渲染, 指纹照常稳定, 只是模型读到的工具表
     是一坨. 这正是提示词类缺陷的典型形态: 没有任何一层会说话.
     """

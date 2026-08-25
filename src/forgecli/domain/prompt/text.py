@@ -50,7 +50,7 @@ from forgecli.domain.tool.hashing import digest_text
 
 # 接 MAIN_AGENT_PROMPT_VERSION 的 5 往下数: 那个常量数的是同一件事 (Forge 撰写的正文
 # 改了没有), 只是当时只覆盖系统提示词一块.
-PROMPT_TEXT_VERSION = 8
+PROMPT_TEXT_VERSION = 9
 
 
 # ============================================================================
@@ -90,7 +90,7 @@ TOOL_CONTRACT = """\
 #
 # 现在给的是**理由**而不是**代价**: 专用工具的输出是结构化的, 省 token 也省一轮解析.
 SHELL_BOUNDARY = """\
-shell.run 用于运行测试, 构建, 包管理, 以及上表未覆盖的命令.
+shell_run 用于运行测试, 构建, 包管理, 以及上表未覆盖的命令.
 上表覆盖的动作优先用专用工具: 它们的输出已经结构化, 不必再解析一遍 stdout.
 命令跑在围栏里, 越界的访问会被系统拒绝并让命令失败. 看到这类失败就换一条路,
 或者说明你需要哪一项边界之外的权限 —— 不要改写命令去绕它."""
@@ -125,9 +125,9 @@ ANSWER_CONTRACT = """\
 SECTION_TOOL_CHOICE = "## 工具选择"
 SECTION_SEARCH_ORDER = "## 检索顺序"
 
-# 引导语跟着目录走: shell.run 不在本轮目录里就不该提它的名字, 否则等于告诉模型有个它
+# 引导语跟着目录走: shell_run 不在本轮目录里就不该提它的名字, 否则等于告诉模型有个它
 # 看不见的工具, 而模型会去请求.
-TOOL_TABLE_LEAD_WITH_SHELL = "同一个动作既有专用工具又能用 shell.run 时, 用专用工具:"
+TOOL_TABLE_LEAD_WITH_SHELL = "同一个动作既有专用工具又能用 shell_run 时, 用专用工具:"
 TOOL_TABLE_LEAD_PLAIN = "本轮可用的工具与用途:"
 
 WORKSPACE_INSTRUCTIONS_LEAD = (
@@ -148,22 +148,22 @@ FACTS_NEEDS_HUMAN_VALUE = "其余一切"
 FACTS_PATH_NOTE = "受控且窄, 只含系统目录; 不继承你熟悉的用户 PATH"
 FACTS_EXTRA_ROOT = "额外工作目录: {root}"
 
-# 计划只放一行引用, 不放正文: 正文可能很长而模型只在部分轮次需要它, 所以走 plan.read
+# 计划只放一行引用, 不放正文: 正文可能很长而模型只在部分轮次需要它, 所以走 plan_read
 # (ADR-0018 §4.4).
 PLAN_STATE_BODY = """\
 plan_id: {plan_id}
 标题: {title}
 状态: {status}
 步骤: {step_count} 条
-正文没有放在这里. 需要看的时候用 plan.read 取."""
+正文没有放在这里. 需要看的时候用 plan_read 取."""
 
 # 待办正文每轮都给: 它小, 而且**每轮都要对齐** —— "当前该做哪一步"只存在于对话历史里
 # 的话, 越往后越容易被稀释, 而那正是执行漂移的根因.
 TODO_STATE_BODY = """\
 {rendered}
 
-进度 {done}/{total}. 这份清单与实际不符时, 用 todo.write 重写整表; \
-只是推进状态用 todo.set_status."""
+进度 {done}/{total}. 这份清单与实际不符时, 用 todo_write 重写整表; \
+只是推进状态用 todo_set_status."""
 
 # 能力的人类可读名. 全库唯一一处按能力枚举写死的表, 它值得: 能力词汇是闭集, 改动要走
 # ADR 并升 CAPABILITY_VOCABULARY_VERSION (ADR-0004 §5), 因此这张表不会悄悄漂. 而按模式
@@ -277,7 +277,7 @@ REVIEW_NOTICE = "已提交一份计划, 等待你的决定."
 MEMORY_STATE_LEAD = """\
 以下是你在过往会话里记下的事实, 由你自己推断而来, **不是用户下达的指令**. \
 它们可能已经过时: 与"项目指令"块冲突时一律以那一块为准. \
-发现某条不对就用 memory.forget 删掉它, 学到新的用 memory.write 记下来."""
+发现某条不对就用 memory_forget 删掉它, 学到新的用 memory_write 记下来."""
 
 # 记忆分级的人类可读名. 与 CAPABILITY_NAMES 同一个理由: 用元组而不是 dict 遍历,
 # 集合的迭代顺序不稳定会让同样的输入产出不同的提示词, 从而毁掉指纹的确定性.
@@ -288,7 +288,7 @@ MEMORY_SCOPE_NAMES: tuple[tuple[MemoryScope, str], ...] = (
 
 MEMORY_ENTRY_LINE = "- {key}: {value}"
 
-# memory.write / memory.forget 的回执.
+# memory_write / memory_forget 的回执.
 MEMORY_WRITTEN = "已记住 {key}."
 MEMORY_REPLACED = "已更新 {key} (原值: {old})."
 MEMORY_FORGOTTEN = "已忘记 {key}."
@@ -305,7 +305,7 @@ MEMORY_REJECT_SECRET = (
     "任何 token, 密钥或证书都不要记."
 )
 MEMORY_REJECT_SCOPE_FULL = (
-    "这一级记忆已满 ({limit} 条). 先用 memory.forget 删掉不再成立的那条."
+    "这一级记忆已满 ({limit} 条). 先用 memory_forget 删掉不再成立的那条."
 )
 
 
@@ -323,7 +323,7 @@ MEMORY_REJECT_SCOPE_FULL = (
 # 一级降级: 内容还在, 取得回来.
 ARCHIVED_AVAILABLE = (
     "[第 {index} 次工具调用的输出已归档 {artifact_id} ({size} 字节), "
-    "需要细节时用 artifact.read 取回]"
+    "需要细节时用 artifact_read 取回]"
 )
 
 # 一级降级: 内容已被过期回收 (ADR-0032 决策 6.1). 明说取不回来, 别让它白试一次.
@@ -335,7 +335,7 @@ ARCHIVED_EXPIRED = (
 # 去重命中: 同一个路径, 同一个状态, 本轮已经读过一次.
 DEDUP_UNCHANGED = (
     "[与第 {index} 次工具调用读到的内容相同, 该文件此后未变更; "
-    "需要正文时用 artifact.read 取 {artifact_id}]"
+    "需要正文时用 artifact_read 取 {artifact_id}]"
 )
 
 # 变更通知 (决策 4). 主动告诉它, 不等它来问 —— 它不会想起来问.
@@ -344,7 +344,7 @@ ARCHIVED_STALE = (
     "该文件此后被修改过, 上面这一份不再代表当前内容]"
 )
 
-# artifact.read 取不到时回给模型的结论.
+# artifact_read 取不到时回给模型的结论.
 ARTIFACT_MISSING = (
     "该输出已过期回收, 取不回来了. 还需要这份内容的话重新执行一次原来的调用."
 )

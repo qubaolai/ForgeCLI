@@ -144,7 +144,7 @@ class AgentTurnService:
         # 计划与待办缺省为 None: 没接时两个提示词块整块不渲染, 链路照常工作.
         self._planning = planning
         # 计划与待办的运行事件发在这里 (ADR-0022 §7): 服务独家持有 turn_id 且是唯一的
-        # 驱动方. 换成协调器发, 就得让协调器认识"plan.write 这个名字意味着要发事件".
+        # 驱动方. 换成协调器发, 就得让协调器认识"plan_write 这个名字意味着要发事件".
         self._run_bus = run_bus
         # 每 turn 经工厂取新 loop 实例（BuiltinAgentLoop 持有 per-turn 状态）。
         self._loop_factory = loop_factory
@@ -202,7 +202,7 @@ class AgentTurnService:
             )
         self._session.record_user_message(text, turn_id=turn_id, origin=origin)
         if self._memory is not None:
-            # 记一次"当前是哪一轮", 供本轮内 memory.write 取来源 (ADR-0033 决策 7).
+            # 记一次"当前是哪一轮", 供本轮内 memory_write 取来源 (ADR-0033 决策 7).
             # 工具的 perform 拿不到会话身份, 而把它塞进 normalized_input 会进
             # plan_hash, 破掉"内容相同的调用哈希相同"那条不变量.
             self._memory.begin_turn(
@@ -302,14 +302,14 @@ class AgentTurnService:
                 # 本轮读一次. 工具在本轮改了 FORGE.md, 新内容从下一轮生效 (§6.2).
                 project_instructions=self._instructions.read(facts.workspace_roots),
                 # 同样每轮现读: 待办的全部价值就在于它反映**此刻**的执行状态, 而模型
-                # 上一轮刚用 todo.set_status 打过勾.
+                # 上一轮刚用 todo_set_status 打过勾.
                 planning=(
                     ActivePlanning()
                     if self._planning is None
                     else self._planning.load()
                 ),
                 # 同样每轮现读, 轮内冻结 (ADR-0033 决策 8): 模型可能在上一轮刚用
-                # memory.write 记下一条, 这一轮就该看见.
+                # memory_write 记下一条, 这一轮就该看见.
                 memory=() if self._memory is None else self._memory.load(),
             )
         )
@@ -429,7 +429,7 @@ class AgentTurnService:
     ) -> LoopObservation:
         """跑一次工具, 顺带比对计划与待办的 revision, 变了就发事件.
 
-        **按 revision 比对, 不按工具名判断** (ADR-0022 §7). 换成"看到 plan.write 就发
+        **按 revision 比对, 不按工具名判断** (ADR-0022 §7). 换成"看到 plan_write 就发
         PLAN_CREATED"的话, 这一层就认识了工具名, 而将来任何一条别的路径改了计划 (斜杠
         命令, 恢复, 将来的子 Agent) 都不会有事件.
 

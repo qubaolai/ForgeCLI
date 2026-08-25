@@ -34,12 +34,12 @@ class PromptBlockId(Enum):
     # 变, 进稳定前缀就等于前缀不再稳定.
     #
     # 分成两块而不是一块, 是因为**通道不同**: 待办清单小且每轮都要对齐, 所以正文进块;
-    # 计划正文大且按需查阅, 所以这里只放一行引用, 正文由模型用 plan.read 取
+    # 计划正文大且按需查阅, 所以这里只放一行引用, 正文由模型用 plan_read 取
     # (ADR-0018 §4.4 的两条判据).
     PLAN_STATE = "plan_state"
     TODO_STATE = "todo_state"
     # 跨会话记忆 (ADR-0033 决策 8). 同样在缓存断点之后: 模型可能在会话中途用
-    # memory.write 改写它, 进稳定前缀就等于前缀不再稳定.
+    # memory_write 改写它, 进稳定前缀就等于前缀不再稳定.
     MEMORY_STATE = "memory_state"
 
 

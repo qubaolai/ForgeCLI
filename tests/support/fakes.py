@@ -138,7 +138,7 @@ class SilentToolRunObserver(ToolRunObserver):
 
 def tool_plan(
     *,
-    tool_name: str = "shell.run",
+    tool_name: str = "shell_run",
     raw_command: str | None = "poetry run pytest tests/agent_loop -q",
     capabilities: frozenset[Capability] = frozenset({Capability.EXECUTE_SHELL}),
     target_resolution: TargetResolution = TargetResolution.FORGE_EXPANDED,

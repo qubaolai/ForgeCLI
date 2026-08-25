@@ -4,7 +4,7 @@
 于是"实现了一个工具"和"模型能调到它"之间没有任何东西负责对齐 —— 新写的工具忘了加进
 build_tool_stack, 一行代码都不会报错, 只有真跑一轮才发现模型看不见它.
 
-模型请求一个不存在的 fs.write_file 就是这条缝的后果之一: 它想建文件, 工具表里找不到
+模型请求一个不存在的 fs_write_file 就是这条缝的后果之一: 它想建文件, 工具表里找不到
 叫"建文件"的东西, 自己编了一个名字, 拿回"未注册", 转头去用 shell 写 —— 绕开了恢复层
 与逐次裁决. 所以这里同时钉住两件事: 常用动作各自都有专用工具, 以及它们真的接上了.
 """
@@ -34,12 +34,12 @@ from forgecli.interfaces.runtime.tool_wiring import ToolStack, build_tool_stack
 # 一个动作一个工具. 左边是用户会说的话, 右边是模型在工具表里能找到的名字 —— 两者对不
 # 上的时候, 模型不会退回去问, 它会自己编一个名字或者改用 shell.
 EXPECTED_TOOLS = {
-    "定位文件与认识目录": "fs.find",
-    "读取文件": "fs.read",
-    "搜索内容": "search.text",
-    "读取 git": "git.read",
-    "改文件 (新建/更新/删除/移动)": "fs.apply_patch",
-    "执行命令": "shell.run",
+    "定位文件与认识目录": "fs_find",
+    "读取文件": "fs_read",
+    "搜索内容": "search_text",
+    "读取 git": "git_read",
+    "改文件 (新建/更新/删除/移动)": "fs_apply_patch",
+    "执行命令": "shell_run",
 }
 
 
@@ -118,7 +118,7 @@ def test_the_model_sees_the_new_tools_in_its_catalog(stack: ToolStack) -> None:
             execution_profile_hash=stack.profile.execution_profile_hash,
         )
     )
-    for name in ("fs.find", "fs.read", "fs.apply_patch"):
+    for name in ("fs_find", "fs_read", "fs_apply_patch"):
         assert catalog.contains(name), f"{name} 不在模型看得到的目录里"
 
 
@@ -128,19 +128,19 @@ def test_creating_then_editing_a_file_goes_through_the_whole_pipeline(
     """建 -> 改 -> 读: 三次都要真的落盘, 而且走的是裁决与恢复那条链路."""
     target = tmp_path / "ws" / "notes.txt"
 
-    created = _call(stack, "fs.apply_patch", patch="*** NEW notes.txt\nv = 1\n")
+    created = _call(stack, "fs_apply_patch", patch="*** NEW notes.txt\nv = 1\n")
     assert created.kind is ObservationKind.TOOL_RESULT
     assert target.read_text(encoding="utf-8") == "v = 1\n"
 
     edited = _call(
         stack,
-        "fs.apply_patch",
+        "fs_apply_patch",
         patch="*** UPDATE notes.txt\n*** FIND\nv = 1\n*** REPLACE\nv = 2",
     )
     assert edited.kind is ObservationKind.TOOL_RESULT
     assert target.read_text(encoding="utf-8") == "v = 2\n"
 
-    read = _call(stack, "fs.read", path="notes.txt")
+    read = _call(stack, "fs_read", path="notes.txt")
     assert read.kind is ObservationKind.TOOL_RESULT
     assert read.result is not None
     assert "v = 2" in read.result.text
@@ -149,18 +149,18 @@ def test_creating_then_editing_a_file_goes_through_the_whole_pipeline(
 def test_creating_over_an_existing_file_fails_and_says_which_tool_to_use(
     stack: ToolStack,
 ) -> None:
-    _call(stack, "fs.apply_patch", patch="*** NEW a.txt\n原内容\n")
+    _call(stack, "fs_apply_patch", patch="*** NEW a.txt\n原内容\n")
 
-    again = _call(stack, "fs.apply_patch", patch="*** NEW a.txt\n覆盖\n")
+    again = _call(stack, "fs_apply_patch", patch="*** NEW a.txt\n覆盖\n")
 
     assert again.kind is ObservationKind.PREPARATION_FAILED
     assert "UPDATE" in again.message
 
 
 def test_scanning_the_workspace_returns_a_tree(stack: ToolStack) -> None:
-    _call(stack, "fs.apply_patch", patch="*** NEW src/main.py\nprint(1)\n")
+    _call(stack, "fs_apply_patch", patch="*** NEW src/main.py\nprint(1)\n")
 
-    scanned = _call(stack, "fs.find")
+    scanned = _call(stack, "fs_find")
 
     assert scanned.kind is ObservationKind.TOOL_RESULT
     assert scanned.result is not None
@@ -172,8 +172,8 @@ def test_scanning_the_workspace_returns_a_tree(stack: ToolStack) -> None:
 def test_a_tool_name_the_model_made_up_still_leaves_a_terminal_trace(
     stack: ToolStack,
 ) -> None:
-    """回归: fs.write_file 曾经悄悄结束 —— 模型拿到了结论, 页面上却永远停在"未完成"."""
-    observation = _call(stack, "fs.write_file", path="a.txt", content="x")
+    """回归: fs_write_file 曾经悄悄结束 —— 模型拿到了结论, 页面上却永远停在"未完成"."""
+    observation = _call(stack, "fs_write_file", path="a.txt", content="x")
 
     assert observation.kind is ObservationKind.TOOL_UNAVAILABLE
     assert observation.reason_code == "tool_unavailable"

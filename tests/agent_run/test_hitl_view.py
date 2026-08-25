@@ -58,7 +58,7 @@ def _view(**overrides: object) -> ApprovalView:
         "read_paths": ("/workspace/forge/tests", "/workspace/forge/pyproject.toml"),
     }
     view_args: dict[str, object] = {
-        "action_summary": "shell.run: 需要确认",
+        "action_summary": "shell_run: 需要确认",
         "mode": "accept_edits",
         "workspace_roots": ("/workspace/forge", "/workspace/shared"),
         "risk_facts": ("执行了脚本",),
@@ -94,7 +94,7 @@ def test_counts_include_empty_categories() -> None:
 
 
 def test_a_tool_without_a_raw_command_falls_back_to_the_action_summary() -> None:
-    assert _view(raw_command=None).raw_command == "shell.run: 需要确认"
+    assert _view(raw_command=None).raw_command == "shell_run: 需要确认"
 
 
 def test_unresolved_targets_mark_the_view_as_not_closed() -> None:
@@ -154,7 +154,7 @@ def test_write_content_is_shown_not_just_the_path() -> None:
     output = _render(
         _view(
             raw_command=None,
-            action_summary="fs.edit_file: 写入 README.md",
+            action_summary="fs_edit_file: 写入 README.md",
             write_paths=("/workspace/forge/README.md",),
             content_previews=(
                 ContentPreview(

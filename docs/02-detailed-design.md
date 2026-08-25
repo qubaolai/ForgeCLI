@@ -543,7 +543,7 @@ AutoGen 更适合 V2 的完整 Multi-Agent 能力，不进入 MVP。
   "created_at": "2026-06-16T10:31:20Z",
   "payload": {
     "invocation_id": "tool_01",
-    "tool_name": "shell.run",
+    "tool_name": "shell_run",
     "status": "succeeded",
     "stdout_artifact": "artifacts/tool-output/tool_01.stdout",
     "stderr_artifact": "artifacts/tool-output/tool_01.stderr",
@@ -618,7 +618,7 @@ Web 会话内，用户输入与控制动作分开：
 
 - 普通自然语言：以 `InputOrigin.WEB_USER` 进入 Agent Turn。
 - 模式、配置、恢复、审批和计划评审：调用版本化 REST API，不转成模型文本。
-- `#` 没有人工 Shell 语义；Web 不提供 PTY，Agent `shell.run` 仍走完整安全链。
+- `#` 没有人工 Shell 语义；Web 不提供 PTY，Agent `shell_run` 仍走完整安全链。
 
 ```mermaid
 sequenceDiagram
@@ -848,14 +848,14 @@ git 写不做硬性限制，按普通命令走。高危 deny 穿透所有模式�
 以 ADR-0004 §14 的清单为准，那张表带能力上界、目标声明能力和"是否已注册"，并由
 `tests/tool_request/test_registered_tool_stack.py` 对组合根的产物断言。这里只列名字：
 
-- 读：`fs.scan_tree`、`fs.read_file`、`fs.list_files`、`search.text`、`git.read`
+- 读：`fs.scan_tree`、`fs_read`、`fs.list_files`、`search_text`、`git_read`
 - 写：`fs.create_file`、`fs.edit_file`、`fs.move`、`fs.delete`
-- 执行：`shell.run`
-- 计划与待办：`plan.read`、`plan.write`、`todo.read`、`todo.write`、`todo.set_status`
+- 执行：`shell_run`
+- 计划与待办：`plan_read`、`plan_write`、`todo_read`、`todo_write`、`todo_set_status`
 
 > 2026-08-20 修订：本节此前列的是首版设想（`fs.write_patch`、`git.status`、`git.diff`、
-> `git.show`、`test.run`），其中后四个从未实现——git 只读查询合并成了一个 `git.read`，
-> 跑测试走 `shell.run`。列一份没人维护的清单，比不列更容易让人以为工具已经存在。
+> `git.show`、`test.run`），其中后四个从未实现——git 只读查询合并成了一个 `git_read`，
+> 跑测试走 `shell_run`。列一份没人维护的清单，比不列更容易让人以为工具已经存在。
 - `artifact.write`
 
 文件修改应优先通过 patch 语义执行，便于审计和回滚。
@@ -904,7 +904,7 @@ allowed_tools = ["search_issues", "get_pr"]
   "description": "Diagnose and fix CI failures",
   "triggers": ["ci failed", "fix checks", "workflow failed"],
   "instructions": "Read CI logs first, identify failing job, reproduce locally when possible.",
-  "allowed_tools": ["git.diff", "shell.run", "test.run"],
+  "allowed_tools": ["git.diff", "shell_run", "test.run"],
   "risk_policy": {
     "network": "ask",
     "write": "allow_in_act"

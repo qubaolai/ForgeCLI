@@ -2,7 +2,7 @@
 
 日志回答"这一次发生了什么", 指标回答"这一类调用一共发生了多少次, 花了多久". 排查
 单次 bug 靠前者, 找优化点靠后者 —— 一次 turn 走了 40 秒, 日志能让你逐行读出来,
-但"40 秒里 31 秒在等 provider, 6 秒在跑 shell.run"要靠聚合才看得见.
+但"40 秒里 31 秒在等 provider, 6 秒在跑 shell_run"要靠聚合才看得见.
 
 刻意做成**纯内存, 进程内, 无采样**: Forge 是本机单进程 CLI, 不存在需要抽样的量级,
 也没有可以推送指标的服务端. 想看就现场 dump (`/diagnostics`), 进程退出即丢弃.
@@ -22,7 +22,7 @@ __all__ = ["METRICS", "Metrics"]
 # 每个耗时序列最多留多少个样本. 只用来算分位数, 超出后丢最旧的.
 #
 # 1024 是刻意的小数字: 它不是为了统计严谨, 是为了让一次会话里"最近这些调用有多慢"
-# 看得见. 留全量会让一次长任务的 shell.run 攒出几十万个 float.
+# 看得见. 留全量会让一次长任务的 shell_run 攒出几十万个 float.
 _SAMPLE_LIMIT = 1024
 
 
@@ -83,7 +83,7 @@ class Metrics:
         self._durations: dict[str, _Durations] = {}
 
     def count(self, name: str, amount: int = 1, **labels: str) -> None:
-        """给一个计数器加数. 例: `count("tool.denied", tool="shell.run")`."""
+        """给一个计数器加数. 例: `count("tool.denied", tool="shell_run")`."""
         key = _key(name, labels)
         with self._lock:
             self._counters[key] = self._counters.get(key, 0) + amount

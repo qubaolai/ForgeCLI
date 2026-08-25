@@ -78,7 +78,7 @@ def _decide(
     plan = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="shell.run",
+            tool_name="shell_run",
             arguments={"command": command, "shell_kind": "posix"},
             tool_call_id="c1",
         ),
@@ -167,7 +167,7 @@ def test_without_a_fence_everything_falls_back_to_ask(
 def test_plan_mode_does_not_auto_allow_workspace_writes(workspace: Path) -> None:
     """plan 档的围栏没有可写工作区根.
 
-    正常路径下模型根本看不见 shell.run (目录门, catalog_predicates.py), 这条钉的是
+    正常路径下模型根本看不见 shell_run (目录门, catalog_predicates.py), 这条钉的是
     裁决层不依赖目录过滤兜底.
     """
     decision = _decide(workspace, "rm -rf src/", mode=SessionMode.PLAN)

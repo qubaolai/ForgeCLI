@@ -1,6 +1,6 @@
 """计划与待办的五个专用工具 (ADR-0022 决策 5).
 
-`plan.read` / `plan.write` / `todo.read` / `todo.write` / `todo.set_status`.
+`plan_read` / `plan_write` / `todo_read` / `todo_write` / `todo_set_status`.
 
 **这五个工具不经过审批, 而理由不是"计划这件事不重要".**
 
@@ -8,10 +8,10 @@
   `PolicyEngine` 另有 `PLAN_ONLY_FAST_PATH`. "不经 ASK"不是为它们新开的特例.
 - 真正的原因: **它们的 input_schema 里没有路径字段.** 写入位置由 Forge 从项目 id 与
   plan_id 算出来, 模型无法指定写到哪里. 没有可由模型影响的目标, 就没有可裁决的内容.
-  对照 `fs.apply_patch` —— 它的路径来自模型, 所以必须逐次裁决. **是"模型能不能选目标"
+  对照 `fs_apply_patch` —— 它的路径来自模型, 所以必须逐次裁决. **是"模型能不能选目标"
   决定要不要审批, 不是"这件事重不重要".**
 
-顺带回答"为什么不直接用 fs.* 读写计划文件": 计划目录在任何工作区根之外, 那条路会落
+顺带回答"为什么不直接用 fs_* 读写计划文件": 计划目录在任何工作区根之外, 那条路会落
 EXTERNAL_READ / EXTERNAL_WRITE 从而逐次 ASK; 更要紧的是它把 `~/.forge` 下的**任意位置**
 暴露给一个由模型填写的路径参数. 专用工具是更窄的通道, 不是更宽的.
 
@@ -160,7 +160,7 @@ class _PlanningTool(Tool):
 
 class PlanReadTool(_PlanningTool):
     _SPEC = _spec(
-        "plan.read",
+        "plan_read",
         "读取计划",
         "读当前生效计划的正文. 传 plan_id 可以读指定的一份.",
         {"plan_id": {"type": "string"}},
@@ -190,14 +190,14 @@ class PlanReadTool(_PlanningTool):
             # 说清是"没有"而不是"读失败": 前者该去提一份计划, 后者该找人.
             return self._ok(
                 plan,
-                "当前没有生效的计划. 需要先对齐大方向时用 plan.write 提一份.",
+                "当前没有生效的计划. 需要先对齐大方向时用 plan_write 提一份.",
             )
         return self._ok(plan, body)
 
 
 class PlanWriteTool(_PlanningTool):
     _SPEC = _spec(
-        "plan.write",
+        "plan_write",
         "提交计划",
         (
             "提交一份计划供用户裁决. 传 plan_id 表示为已有计划提交新的一版. "
@@ -296,7 +296,7 @@ class PlanWriteTool(_PlanningTool):
         )
         body = self._planning.read_plan(document.plan_id) or ""
         # 声明"本次输出需要人裁决". 循环据此在回合边界停下 (ADR-0023 决策 1) —— 它不认识
-        # plan.write 这个名字, 只看这个字段.
+        # plan_write 这个名字, 只看这个字段.
         return self._ok(plan, body, disposition=TurnDisposition.AWAIT_USER_DECISION)
 
 
@@ -304,7 +304,7 @@ class PlanWriteTool(_PlanningTool):
 
 
 class TodoReadTool(_PlanningTool):
-    _SPEC = _spec("todo.read", "读取待办", "读当前待办清单.", {})
+    _SPEC = _spec("todo_read", "读取待办", "读当前待办清单.", {})
 
     def perform(
         self,
@@ -320,11 +320,11 @@ class TodoReadTool(_PlanningTool):
 
 class TodoWriteTool(_PlanningTool):
     _SPEC = _spec(
-        "todo.write",
+        "todo_write",
         "重写待办",
         (
             "用一份新清单整表替换当前待办. 用于步骤拆错, 顺序不对或需要增删时纠正内容; "
-            "全部状态会重置为 pending. 只改状态请用 todo.set_status."
+            "全部状态会重置为 pending. 只改状态请用 todo_set_status."
         ),
         {
             "name": {
@@ -359,10 +359,10 @@ class TodoWriteTool(_PlanningTool):
 
 class TodoSetStatusTool(_PlanningTool):
     _SPEC = _spec(
-        "todo.set_status",
+        "todo_set_status",
         "更新待办状态",
         (
-            "改一项或多项待办的状态. index 从 0 起, 与 todo.read 打印的序号一致. "
+            "改一项或多项待办的状态. index 从 0 起, 与 todo_read 打印的序号一致. "
             "同一时刻最多一条 in_progress."
         ),
         {
@@ -411,7 +411,7 @@ class TodoSetStatusTool(_PlanningTool):
                 ),
             )
         if todo is None:
-            return self._ok(plan, "当前没有待办清单, 先用 todo.write 建一份.")
+            return self._ok(plan, "当前没有待办清单, 先用 todo_write 建一份.")
         return self._ok(plan, todo.render())
 
 

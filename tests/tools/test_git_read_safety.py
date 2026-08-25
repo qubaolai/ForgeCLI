@@ -53,7 +53,7 @@ def _prepare(
     return tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-git",
-            tool_name="git.read",
+            tool_name="git_read",
             arguments={"subcommand": subcommand, "args": args},
             tool_call_id="call-git",
         ),

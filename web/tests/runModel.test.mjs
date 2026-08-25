@@ -55,9 +55,9 @@ test("tool events are grouped by invocation and metrics retain CLI usage fields"
   const events = [
     event("model_started", 1),
     event("model_usage", 2, { input_tokens: 10, output_tokens: 4, reasoning_tokens: 2, cached_tokens: 3, total_tokens: 14, estimated: true }),
-    event("tool_queued", 3, { tool_name: "shell.run" }, { tool_call_id: "provider-call-1" }),
-    event("tool_started", 4, { tool_name: "shell.run" }, { invocation_id: "i1" }),
-    event("tool_completed", 5, { tool_name: "shell.run", elapsed_ms: 80 }, { invocation_id: "i1" }),
+    event("tool_queued", 3, { tool_name: "shell_run" }, { tool_call_id: "provider-call-1" }),
+    event("tool_started", 4, { tool_name: "shell_run" }, { invocation_id: "i1" }),
+    event("tool_completed", 5, { tool_name: "shell_run", elapsed_ms: 80 }, { invocation_id: "i1" }),
     event("turn_completed", 6, { elapsed_ms: 420, model_calls: 1, tool_calls: 1 }),
   ];
   assert.equal(groupToolEvents(events).length, 1);
@@ -135,7 +135,7 @@ test("a server snapshot rebuilds a finished process so a refreshed page can stil
     turn_id: "turn-1",
     events: [
       event("model_started", 1, {}, { request_id: "r1" }),
-      event("tool_completed", 2, { tool_name: "fs.read", status: "ok", elapsed_ms: 12 }, { invocation_id: "i1" }),
+      event("tool_completed", 2, { tool_name: "fs_read", status: "ok", elapsed_ms: 12 }, { invocation_id: "i1" }),
       event("turn_completed", 3, { elapsed_ms: 900, model_calls: 1, tool_calls: 1 }),
     ],
     outputs: { r1: "中间正文" },
@@ -209,19 +209,20 @@ function toolCall(base, name, invocation, capabilities = ["workspace_read"]) {
 }
 
 test("a tool is categorised by the capabilities it declared, not by its name", () => {
-  // 回归: 分类靠一份写死的工具名清单, 里面的 fs.search_text 从来就不是真名 (search.text),
+  // 回归: 分类靠一份写死的工具名清单, 里面的 fs.search_text 从来就不是真名 (search_text),
   // 于是每次搜索都被归进"其他工具" —— 而没有任何东西会因此报错。
-  assert.equal(categoryOf("search.text", ["workspace_read"]).id, "read");
-  assert.equal(categoryOf("mcp.acme.fetch_doc", ["external_read"]).id, "read");
-  assert.equal(categoryOf("fs.edit_file", ["workspace_write"]).id, "write");
+  assert.equal(categoryOf("search_text", ["workspace_read"]).id, "read");
+  assert.equal(categoryOf("mcp_acme_fetch_doc", ["external_read"]).id, "read");
+  assert.equal(categoryOf("fs_edit_file", ["workspace_write"]).id, "write");
   // 同时声明读和写的调用算写入: 它的后果是写。
-  assert.equal(categoryOf("fs.move", ["workspace_read", "path_move"]).id, "write");
-  assert.equal(categoryOf("shell.run", ["execute_shell", "workspace_write"]).id, "shell");
-  // 连 prepare 都没走到就没有能力可看, 退回按名字猜。
-  assert.equal(categoryOf("fs.create_file", []).id, "write");
-  assert.equal(categoryOf("something.odd", []).id, "other");
-  // 模型编出来的名字也以 fs. 开头; 猜成"读取文件"就是在替一次没发生的写入洗白。
-  assert.equal(categoryOf("fs.write_file", []).id, "other");
+  assert.equal(categoryOf("fs_move", ["workspace_read", "path_move"]).id, "write");
+  assert.equal(categoryOf("shell_run", ["execute_shell", "workspace_write"]).id, "shell");
+  // 连 prepare 都没走到就没有能力可看, 退回按名字猜。清单只收**当前真实存在**的工具:
+  // 早先它躺着 fs.create_file / fs.list_files 这些 ADR-0029 就删掉的名字。
+  assert.equal(categoryOf("fs_apply_patch", []).id, "write");
+  assert.equal(categoryOf("something_odd", []).id, "other");
+  // 模型编出来的名字也以 fs_ 开头; 猜成"读取文件"就是在替一次没发生的写入洗白。
+  assert.equal(categoryOf("fs_write_file", []).id, "other");
 });
 
 test("consecutive same-kind tool calls aggregate even with a decision between them", () => {
@@ -230,10 +231,10 @@ test("consecutive same-kind tool calls aggregate even with a decision between th
   const events = [
     event("model_started", 1, {}, { request_id: "r1" }),
     event("model_completed", 2, { tool_call_count: 3 }, { request_id: "r1" }),
-    ...toolCall(10, "fs.read_file", "i1"),
-    ...toolCall(20, "fs.read_file", "i2"),
-    ...toolCall(30, "fs.scan_tree", "i3"),
-    ...toolCall(40, "shell.run", "i4", ["execute_shell"]),
+    ...toolCall(10, "fs_read", "i1"),
+    ...toolCall(20, "fs_read", "i2"),
+    ...toolCall(30, "fs_scan_tree", "i3"),
+    ...toolCall(40, "shell_run", "i4", ["execute_shell"]),
   ];
   const timeline = buildTimeline(events);
   assert.deepEqual(
@@ -248,20 +249,20 @@ test("tool calls separated by a model call are not merged across it", () => {
   // 只在"工具列表"里判相邻, 会把隔着一次模型调用的两次读文件也合起来, 合出来的那段
   // 还带着更早的 sequence, 于是排到模型调用前面 —— 时间线说了假话。
   const events = [
-    ...toolCall(10, "fs.read_file", "i1"),
+    ...toolCall(10, "fs_read", "i1"),
     event("model_started", 20, {}, { request_id: "r2" }),
     event("model_completed", 21, { tool_call_count: 1 }, { request_id: "r2" }),
-    ...toolCall(30, "fs.read_file", "i2"),
+    ...toolCall(30, "fs_read", "i2"),
   ];
   assert.deepEqual(buildTimeline(events).map((item) => item.kind), ["tools", "model", "tools"]);
 });
 
 test("an unregistered tool still shows what the model passed in", () => {
-  // 回归: fs.write_file 连 prepare 都没走到, 页面上只剩一个工具名 —— 而"模型到底传了
+  // 回归: fs_write_file 连 prepare 都没走到, 页面上只剩一个工具名 —— 而"模型到底传了
   // 什么"正是这类失败唯一值得看的东西。
   const events = [
-    event("tool_queued", 1, { tool_name: "fs.write_file", arguments: [["path", "a.py"], ["content", "x"]] }, { tool_call_id: "c1" }),
-    event("tool_completed", 2, { tool_name: "fs.write_file", status: "tool_unavailable", executed: false, error_code: "tool_unavailable" }, { invocation_id: "i1" }),
+    event("tool_queued", 1, { tool_name: "fs_write_file", arguments: [["path", "a.py"], ["content", "x"]] }, { tool_call_id: "c1" }),
+    event("tool_completed", 2, { tool_name: "fs_write_file", status: "tool_unavailable", executed: false, error_code: "tool_unavailable" }, { invocation_id: "i1" }),
   ];
   const timeline = buildTimeline(events);
   assert.equal(timeline.length, 1);

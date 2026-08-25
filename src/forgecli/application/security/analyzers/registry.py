@@ -33,7 +33,7 @@ class AnalyzerStage(Enum):
     """分析器分两轮跑, 顺序不能反.
 
     DERIVE 的输入是不透明材料 (一条命令串), 输出是事实; CHECK 的输入是**已经确定的**
-    事实, 输出是判断. 先 CHECK 后 DERIVE 会让检查器对着 shell.run 那个"什么都可能"的
+    事实, 输出是判断. 先 CHECK 后 DERIVE 会让检查器对着 shell_run 那个"什么都可能"的
     最宽上界报警 —— 每条 `ls` 都会被问一遍"网络目标是什么", 而它根本不联网.
     """
 

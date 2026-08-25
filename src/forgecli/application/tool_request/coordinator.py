@@ -668,7 +668,7 @@ class ToolRequestCoordinator:
     ) -> ToolObservation:
         return ToolObservation(
             # 按**字段**置 kind, 不按工具名 (ADR-0023 决策 1). 协调器因此不需要认识
-            # plan.write, 而机制对将来的 ask_user 一类工具同样成立.
+            # plan_write, 而机制对将来的 ask_user 一类工具同样成立.
             kind=(
                 ObservationKind.PLAN_REVIEW_REQUIRED
                 if result.turn_disposition is TurnDisposition.AWAIT_USER_DECISION

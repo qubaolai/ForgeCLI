@@ -1,9 +1,9 @@
-"""fs.read_file 的按行取段.
+"""fs_read 的按行取段.
 
 大文件整篇读回来会把上下文吃光, 所以要能只取一段. 但"只取一段"有个隐藏代价: 模型拿到
 的是一段没有坐标的文本, 它无从判断上面还有没有内容, 于是把"这一段里没有"当成"这个文件
 里没有". 位置说明就是为这个而存在的, 而且必须单独成一个 part —— 拼进正文的话, 模型
-照抄一段当 old_string 时会把它一起抄走, fs.edit_file 的逐字比对必然对不上.
+照抄一段当 old_string 时会把它一起抄走, fs_edit_file 的逐字比对必然对不上.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ def _read(workspace: Path, **arguments: object) -> ToolResult:
     plan = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="fs.read_file",
+            tool_name="fs_read",
             arguments={"path": "a.py", **arguments},
             tool_call_id="c1",
         ),
@@ -127,7 +127,7 @@ def test_read_refuses_a_file_that_changed_after_prepare(workspace: Path) -> None
     plan = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-changed",
-            tool_name="fs.read_file",
+            tool_name="fs_read",
             arguments={"path": "a.py"},
             tool_call_id="c-changed",
         ),

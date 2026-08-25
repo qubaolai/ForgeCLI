@@ -82,10 +82,10 @@ def test_two_model_calls_are_two_blocks(harness: Harness) -> None:
     with harness.renderer.turn():
         harness.say("我先看看这个文件", request_id="req-1")
         harness.model_done(request_id="req-1")
-        harness.send(K.TOOL_QUEUED, ToolQueuedPayload(tool_name="fs.read_file"))
+        harness.send(K.TOOL_QUEUED, ToolQueuedPayload(tool_name="fs_read"))
         harness.send(
             K.TOOL_COMPLETED,
-            ToolCompletedPayload(tool_name="fs.read_file", status="ok"),
+            ToolCompletedPayload(tool_name="fs_read", status="ok"),
         )
         harness.say("看完了, 问题在第 3 行", request_id="req-2")
         harness.model_done(request_id="req-2")
@@ -149,22 +149,22 @@ def test_the_answer_lands_above_the_tool_line(harness: Harness) -> None:
     with harness.renderer.turn():
         harness.say("我去读一下文件", request_id="req-1")
         harness.model_done(request_id="req-1")
-        harness.send(K.TOOL_QUEUED, ToolQueuedPayload(tool_name="fs.read_file"))
+        harness.send(K.TOOL_QUEUED, ToolQueuedPayload(tool_name="fs_read"))
         harness.renderer.finish()
 
     output = harness.text()
-    assert output.index("我去读一下文件") < output.index("调用 fs.read_file")
+    assert output.index("我去读一下文件") < output.index("调用 fs_read")
 
 
 def test_a_tool_line_alone_is_enough_to_commit(harness: Harness) -> None:
     """不依赖循环的事件顺序: 没有 MODEL_COMPLETED, 第一条 TOOL_QUEUED 也要先收块."""
     with harness.renderer.turn():
         harness.say("我去读一下文件", request_id="req-1")
-        harness.send(K.TOOL_QUEUED, ToolQueuedPayload(tool_name="fs.read_file"))
+        harness.send(K.TOOL_QUEUED, ToolQueuedPayload(tool_name="fs_read"))
         harness.renderer.finish()
 
     output = harness.text()
-    assert output.index("我去读一下文件") < output.index("调用 fs.read_file")
+    assert output.index("我去读一下文件") < output.index("调用 fs_read")
 
 
 def test_the_answer_lands_above_the_turn_summary(harness: Harness) -> None:
@@ -187,7 +187,7 @@ def test_committed_text_is_not_repeated_in_the_active_area(harness: Harness) -> 
     with harness.renderer.turn():
         harness.say("只说一次", request_id="req-1")
         harness.model_done(request_id="req-1")
-        harness.send(K.TOOL_QUEUED, ToolQueuedPayload(tool_name="shell.run"))
+        harness.send(K.TOOL_QUEUED, ToolQueuedPayload(tool_name="shell_run"))
         harness.renderer.finish()
 
     assert harness.text().count("只说一次") == 1
@@ -218,7 +218,7 @@ def test_rendered_text_is_the_last_block_only(harness: Harness) -> None:
     with harness.renderer.turn():
         harness.say("第一次调用说的", request_id="req-1")
         harness.model_done(request_id="req-1")
-        harness.send(K.TOOL_QUEUED, ToolQueuedPayload(tool_name="shell.run"))
+        harness.send(K.TOOL_QUEUED, ToolQueuedPayload(tool_name="shell_run"))
         harness.say("第二次调用说的", request_id="req-2")
         harness.renderer.finish()
 

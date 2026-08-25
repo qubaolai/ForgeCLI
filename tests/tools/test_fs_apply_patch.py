@@ -1,9 +1,9 @@
-"""fs.apply_patch: 一个信封替掉五个写工具 (ADR-0029 C 类).
+"""fs_apply_patch: 一个信封替掉五个写工具 (ADR-0029 C 类).
 
 替代了 `test_fs_write_and_delete.py` 与 `test_fs_move.py`. 覆盖的行为一条不减, 但两处
 判据随合并发生了**有意的**变化, 各有一条用例专门钉住:
 
-- `fs.create_directory` 没有对应的段: `*** NEW` 按需建父目录.
+- `fs_create_directory` 没有对应的段: `*** NEW` 按需建父目录.
 - 删目录不再需要 `recursive=true`: 信封里路径是明写的, 展开后的清单进审批与恢复层,
   再要一个布尔开关买不到新信息.
 
@@ -61,7 +61,7 @@ def _prepare(workspace: Path, patch: str) -> ToolPlan | PreparationError:
     return _tool().prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="fs.apply_patch",
+            tool_name="fs_apply_patch",
             arguments={"patch": patch},
             tool_call_id="c1",
         ),
@@ -106,7 +106,7 @@ def test_creating_over_an_existing_file_is_refused(workspace: Path) -> None:
 
 
 def test_a_new_file_creates_its_missing_parents(workspace: Path) -> None:
-    """`fs.create_directory` 因此不需要存在 (ADR-0029 C 类).
+    """`fs_create_directory` 因此不需要存在 (ADR-0029 C 类).
 
     建父目录是"新建文件"这个动作的一部分, 单独占一个工具位换不来任何东西. 目录逐个
     进 write_paths —— 空目录同样是需要恢复的用户状态.

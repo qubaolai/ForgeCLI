@@ -118,7 +118,7 @@ def test_usage_is_reported_per_request() -> None:
 def test_a_tool_round_emits_queued_then_a_second_model_call() -> None:
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("fs.read_file", "c1"),)),
+            response(tool_calls=(call("fs_read", "c1"),)),
             response("读完了"),
         ]
     )
@@ -139,7 +139,7 @@ def test_a_tool_round_emits_queued_then_a_second_model_call() -> None:
 def test_each_model_call_has_its_own_request_id() -> None:
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("fs.read_file", "c1"),)),
+            response(tool_calls=(call("fs_read", "c1"),)),
             response("好"),
         ]
     )
@@ -161,7 +161,7 @@ def test_each_model_call_has_its_own_request_id() -> None:
 def test_tool_queued_carries_the_tool_call_id_and_queue_depth() -> None:
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("fs.read_file", "c1"), call("search.text", "c2")))
+            response(tool_calls=(call("fs_read", "c1"), call("search_text", "c2")))
         ]
     )
     loop, collector = loop_with(gateway)
@@ -171,16 +171,14 @@ def test_tool_queued_carries_the_tool_call_id_and_queue_depth() -> None:
     assert queued.tool_call_id == "c1"
     payload = queued.payload
     assert isinstance(payload, ToolQueuedPayload)
-    assert payload.tool_name == "fs.read_file"
+    assert payload.tool_name == "fs_read"
     assert payload.queue_position == 1, "还有一个在排队"
 
 
 def test_two_tool_calls_are_queued_one_at_a_time() -> None:
     gateway = ScriptedGateway(
         responses=[
-            response(
-                tool_calls=(call("fs.read_file", "c1"), call("search.text", "c2"))
-            ),
+            response(tool_calls=(call("fs_read", "c1"), call("search_text", "c2"))),
             response("都读完了"),
         ]
     )
@@ -196,7 +194,7 @@ def test_the_loop_never_claims_a_tool_finished() -> None:
     """执行结论归协调器. 循环只看到一段回填文本, 用它冒充执行结果会与真相脱节."""
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("fs.read_file", "c1"),)),
+            response(tool_calls=(call("fs_read", "c1"),)),
             response("好"),
         ]
     )
@@ -220,7 +218,7 @@ def test_the_loop_never_claims_a_tool_finished() -> None:
 def test_step_phases_follow_thinking_tool_thinking_answer() -> None:
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("fs.read_file", "c1"),)),
+            response(tool_calls=(call("fs_read", "c1"),)),
             response("好"),
         ]
     )
@@ -244,7 +242,7 @@ def test_step_phases_follow_thinking_tool_thinking_answer() -> None:
 def test_turn_completed_summarises_the_round() -> None:
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("fs.read_file", "c1"),)),
+            response(tool_calls=(call("fs_read", "c1"),)),
             response("好"),
         ]
     )
@@ -273,7 +271,7 @@ def test_a_blocking_stop_ends_the_turn_as_failed() -> None:
 def test_model_completed_reports_finish_reason_and_tool_count() -> None:
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("fs.read_file", "c1"),)),
+            response(tool_calls=(call("fs_read", "c1"),)),
             response("好"),
         ]
     )
@@ -289,7 +287,7 @@ def test_model_completed_reports_finish_reason_and_tool_count() -> None:
 def test_sequence_is_strictly_increasing_across_the_whole_turn() -> None:
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("fs.read_file", "c1"),)),
+            response(tool_calls=(call("fs_read", "c1"),)),
             response("好"),
         ]
     )
@@ -305,17 +303,17 @@ def test_sequence_is_strictly_increasing_across_the_whole_turn() -> None:
 
 
 def test_the_same_call_with_the_same_arguments_is_blocked_after_two_tries() -> None:
-    """回归: fs.list_files 曾被用完全相同的参数连着调上百次.
+    """回归: fs_list_files 曾被用完全相同的参数连着调上百次.
 
     每次结果都一样, 模型却读不出该换个做法. 总预算再大也只是让它多转几百圈, 所以拦的
     不是"活干得多", 是"同一件事重复做".
     """
-    repeat = response(tool_calls=(call("fs.list_files", "c1"),))
+    repeat = response(tool_calls=(call("fs_list_files", "c1"),))
     gateway = ScriptedGateway(
         responses=[
             repeat,
-            response(tool_calls=(call("fs.list_files", "c2"),)),
-            response(tool_calls=(call("fs.list_files", "c3"),)),
+            response(tool_calls=(call("fs_list_files", "c2"),)),
+            response(tool_calls=(call("fs_list_files", "c3"),)),
             response("好, 我换个做法"),
         ]
     )
@@ -333,7 +331,7 @@ def test_different_arguments_are_not_treated_as_a_repeat() -> None:
     def _read(path: str, call_id: str) -> ToolCall:
         return ToolCall(
             tool_call_id=call_id,
-            name="fs.read_file",
+            name="fs_read",
             arguments=MappingProxyType({"path": path}),
         )
 
@@ -355,7 +353,7 @@ def test_different_arguments_are_not_treated_as_a_repeat() -> None:
 def test_argument_order_does_not_make_a_call_look_new() -> None:
     def _search(call_id: str, **kwargs: str) -> ToolCall:
         return ToolCall(
-            tool_call_id=call_id, name="search.text", arguments=MappingProxyType(kwargs)
+            tool_call_id=call_id, name="search_text", arguments=MappingProxyType(kwargs)
         )
 
     gateway = ScriptedGateway(

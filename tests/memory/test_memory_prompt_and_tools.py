@@ -84,7 +84,7 @@ def test_no_memory_renders_no_block_at_all() -> None:
 
 
 def test_the_block_sits_after_the_cache_breakpoint() -> None:
-    """模型可能在会话中途用 memory.write 改写它, 进稳定前缀就等于前缀不再稳定.
+    """模型可能在会话中途用 memory_write 改写它, 进稳定前缀就等于前缀不再稳定.
 
     PromptSnapshot 会在构造时自己校验这条划分, 所以这里断言的是它确实被标成易变的 ——
     构造成功只说明顺序对, 不说明标对了.
@@ -145,14 +145,18 @@ def test_adding_the_capability_did_not_invalidate_existing_authorizations() -> N
     这个哈希是**钉住**的. 它一变说明有人动了 plan_hash 的构成 —— 而 plan_hash 是
     always 学习规则的匹配键, 所以那会让用户已经批准过的每一条一次性失效, 全部重新问
     一遍. 那件事可以做, 但必须是有人明确决定要做, 不是加个枚举值顺手带出来的.
+
+    2026-08-25 明确决定过一次: ADR-0036 把工具名从 `fs.read` 改成 `fs_read`, 而
+    tool_name 进 plan_hash, 所以此前学到的 always 规则全部作废. 代价是可接受的 ——
+    规则匹配不上时回落到 ASK, 是失败向安全的方向.
     """
     plan = tool_plan(
-        tool_name="fs.read", capabilities=frozenset({Capability.WORKSPACE_READ})
+        tool_name="fs_read", capabilities=frozenset({Capability.WORKSPACE_READ})
     )
 
     assert CAPABILITY_VOCABULARY_VERSION == "1"
     assert plan.plan_hash == (
-        "sha256:a8b9d304f1bf77d0b90b093f54f7db64b6855acc49f72c254bfd729f2df498fb"
+        "sha256:465d42e4335b3d9f4a27cf96ae044b86fb2c6873518b37b7f384f99734ec3136"
     )
 
 
@@ -193,7 +197,7 @@ def test_the_write_tool_declares_no_paths(service: MemoryService, tmp_path) -> N
 
     plan = tool.prepare(
         ToolInvocationRequest(
-            tool_name="memory.write",
+            tool_name="memory_write",
             invocation_id="call-1",
             arguments={"scope": "project", "key": "k", "value": "v"},
         ),

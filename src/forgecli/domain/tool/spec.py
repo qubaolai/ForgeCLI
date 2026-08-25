@@ -29,8 +29,15 @@ __all__ = [
     "ToolSpec",
 ]
 
-# 命名空间化的稳定名: fs.read / mcp.github.search_issues. 至少两段, 全小写.
-_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$")
+# 命名空间化的稳定名: fs_read / mcp_github_search_issues. 至少两段, 全小写, 下划线分段.
+#
+# 分隔符从点号换成下划线 (ADR-0036): OpenAI 的 function name 只收 [A-Za-z0-9_-],
+# 带点的名字在部分兼容端点上会被整条请求拒掉.
+#
+# 仍然要求**至少两段**: 名字要自带归属 (fs / git / shell / mcp_<server>), 否则一个
+# 叫 run 的工具与另一个叫 read 的工具放在同一张表里, 模型分不出谁管什么.
+# 段内不允许空段, 所以 `fs__read` 与 `fs_read_` 都不合法.
+_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
 
 
 class TargetDeclarationAbility(Enum):

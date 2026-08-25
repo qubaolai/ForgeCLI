@@ -150,7 +150,7 @@ def test_an_empty_list_is_not_finished() -> None:
 
 
 def test_rendering_numbers_from_zero_to_match_the_tool_input() -> None:
-    """序号与 todo.set_status 的入参必须同一套. 差一位的清单比没有清单更危险."""
+    """序号与 todo_set_status 的入参必须同一套. 差一位的清单比没有清单更危险."""
     rendered = _todo(TodoStatus.DONE, TodoStatus.IN_PROGRESS).render()
 
     assert rendered.splitlines()[0].startswith("0. [x]")

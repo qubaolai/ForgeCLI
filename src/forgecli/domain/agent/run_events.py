@@ -246,7 +246,7 @@ class ToolQueuedPayload(RunEventPayload):
     这里的入参没经过 prepare 归一化, 所以展示时要让位给 TOOL_PREPARED 的那一份. 但它
     必须发出来: 一次连 prepare 都没走到的调用 (工具名不存在, schema 不合法) 只有排队
     和终态两条事件, 入参在别处一次都不会出现 —— 而"模型到底传了什么"正是这类失败唯一
-    值得看的东西. 之前少了它, 一个 fs.write_file 的悬空调用在页面上只剩一个工具名.
+    值得看的东西. 之前少了它, 一个 fs_write_file 的悬空调用在页面上只剩一个工具名.
     """
 
     tool_name: str

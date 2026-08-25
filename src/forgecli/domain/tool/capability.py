@@ -65,7 +65,7 @@ class Capability(Enum):
 # 会改变状态或触达工具自身边界之外的能力. 能力门 (application 侧的目录谓词) 用它把
 # 写, 删, 执行, 网络和未知挡在 plan 档之外.
 #
-# SPAWN_PROCESS 不在其中: git.read 这类工具靠子进程读数据, 但上界窄且
+# SPAWN_PROCESS 不在其中: git_read 这类工具靠子进程读数据, 但上界窄且
 # 只读, 挡掉它会让 ADR-0013 §1 明确要求出现在 plan 档的 GitReadTool
 # 反而进不去. 真正危险的子进程一定同时声明 EXECUTE_SHELL / EXECUTE_SCRIPT.
 MUTATING_CAPABILITIES = frozenset(

@@ -40,7 +40,7 @@ from support.loop_harness import (
 
 def _observation(kind: ObservationKind) -> LoopObservation:
     return ToolObservation(
-        kind=kind, message="测试", invocation_id="inv-1", tool_name="shell.run"
+        kind=kind, message="测试", invocation_id="inv-1", tool_name="shell_run"
     ).to_loop_observation()
 
 
@@ -79,7 +79,7 @@ def test_a_model_mistake_is_retryable() -> None:
 def test_a_human_denial_closes_the_tool_catalog_for_the_turn() -> None:
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("shell.run", "c1"),)),
+            response(tool_calls=(call("shell_run", "c1"),)),
             response("好的, 我原本想清理构建产物"),
         ]
     )
@@ -96,7 +96,7 @@ def test_a_human_denial_closes_the_tool_catalog_for_the_turn() -> None:
 
 def test_the_model_is_told_not_to_rephrase() -> None:
     gateway = ScriptedGateway(
-        responses=[response(tool_calls=(call("shell.run", "c1"),)), response("好")]
+        responses=[response(tool_calls=(call("shell_run", "c1"),)), response("好")]
     )
     loop, _ = loop_with(gateway)
     loop.start(loop_input())
@@ -116,7 +116,7 @@ def test_the_model_is_told_not_to_rephrase() -> None:
 def test_nobody_to_approve_also_halts() -> None:
     """非交互环境下重试永远还是 pending, 空转烧 token."""
     gateway = ScriptedGateway(
-        responses=[response(tool_calls=(call("shell.run", "c1"),)), response("好")]
+        responses=[response(tool_calls=(call("shell_run", "c1"),)), response("好")]
     )
     loop, _ = loop_with(gateway)
     loop.start(loop_input())
@@ -129,7 +129,7 @@ def test_queued_calls_still_get_a_tool_result() -> None:
     """协议要求每个 tool_call 都有对应结果; 直接丢掉排队项会让下一次请求残缺."""
     gateway = ScriptedGateway(
         responses=[
-            response(tool_calls=(call("shell.run", "c1"), call("fs.read_file", "c2"))),
+            response(tool_calls=(call("shell_run", "c1"), call("fs_read", "c2"))),
             response("好"),
         ]
     )
@@ -156,7 +156,7 @@ def _blocked_round(count: int) -> tuple[ScriptedGateway, object]:
             tool_calls=(
                 ToolCall(
                     tool_call_id=f"c{index}",
-                    name="shell.run",
+                    name="shell_run",
                     # 每次换个写法: 重复调用闸的签名不同, 拦不住它.
                     arguments=MappingProxyType({"command": f"variant-{index}"}),
                 ),

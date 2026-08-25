@@ -126,7 +126,7 @@ class TodoList:
         return replace(self, items=tuple(items), revision=self.revision + 1)
 
     def render(self) -> str:
-        """给模型与终端看的清单正文. 序号从 0 起, 与 todo.set_status 的入参一致."""
+        """给模型与终端看的清单正文. 序号从 0 起, 与 todo_set_status 的入参一致."""
         if not self.items:
             return "(待办清单为空)"
         marks = {

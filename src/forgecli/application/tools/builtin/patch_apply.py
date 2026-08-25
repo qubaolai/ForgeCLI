@@ -1,7 +1,7 @@
 """补丁段的替换机制与删除展开 (ADR-0029 C 类).
 
 原先住在 `fs_write.py` 的 865 行里, 由五个写工具各自调用. 五个入口合并成
-`fs.apply_patch` 之后它们搬到这里, 与 `locate` 放在一起 —— 定位与施加是同一件事的两半,
+`fs_apply_patch` 之后它们搬到这里, 与 `locate` 放在一起 —— 定位与施加是同一件事的两半,
 分在两个文件里的唯一后果是改一半忘另一半.
 
 **容差必须原样保留**: 行尾空白, 换行符与整块统一的缩进偏移会自动对齐, 而做过的容差要
@@ -28,7 +28,7 @@ __all__ = ["Edit", "apply_replacements", "delete_targets"]
 
 _EOL = re.compile(r"\r\n|\n|\r")
 # 单文件替换的读取上限. 超过它的文件不适合整体读进内存做替换 —— 那种规模的改动应当
-# 走 shell.run 里的流式工具 (ADR-0029 规则二).
+# 走 shell_run 里的流式工具 (ADR-0029 规则二).
 _MAX_SOURCE_BYTES = 4 * 1024 * 1024
 
 
@@ -62,7 +62,7 @@ def apply_replacements(
             message=(
                 f"第 {section.index} 段: {target} 超过完整读取上限 "
                 f"({facts.size} > {_MAX_SOURCE_BYTES} 字节), 拒绝基于残缺前缀改写. "
-                "这种规模的改动请走 shell.run 里的流式工具."
+                "这种规模的改动请走 shell_run 里的流式工具."
             ),
             field_path="patch",
         )
@@ -214,7 +214,7 @@ def _miss_hint(source: str, old: str) -> str:
             f" 第 {listed}{more} 行与 old_string 的首行开头相同, "
             "可以先读这一段再重试."
         )
-    return " 先用 fs.read 读回当前内容, 再照抄其中一段作为 old_string."
+    return " 先用 fs_read 读回当前内容, 再照抄其中一段作为 old_string."
 
 
 _HEAD_PROBE = 12

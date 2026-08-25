@@ -21,7 +21,7 @@ def catalog_query_for_mode(mode: SessionMode) -> CatalogQuery:
     """构造该模式下的目录查询.
 
     只有 plan 档收窄目录. 其余三档的差别体现在裁决 (mode 能力预算 + 规则), 而不是
-    "看不看得见" —— accept_edits 下让模型看不见 shell.run, 它只会改用别的方式绕,
+    "看不看得见" —— accept_edits 下让模型看不见 shell_run, 它只会改用别的方式绕,
     不如让它请求, 然后在裁决层给出明确的 ASK.
     """
     if mode is SessionMode.PLAN:

@@ -1,6 +1,6 @@
-"""search.text 的正则, 上下文与分组输出.
+"""search_text 的正则, 上下文与分组输出.
 
-这个工具做好了能直接顶掉多次 fs.read_file —— 一次搜索带上前后文, 模型往往就不用再把
+这个工具做好了能直接顶掉多次 fs_read —— 一次搜索带上前后文, 模型往往就不用再把
 整个文件读进来. 所以它的输出质量与"重复调用"是同一个问题.
 """
 
@@ -42,7 +42,7 @@ def _prepare(workspace: Path, **arguments: object) -> ToolPlan | PreparationErro
     return SearchTextTool(ResourceGovernor(), NullArtifactStore()).prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="search.text",
+            tool_name="search_text",
             arguments=arguments,
             tool_call_id="c1",
         ),
@@ -68,7 +68,7 @@ def _run(workspace: Path, **arguments: object) -> str:
     plan = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="search.text",
+            tool_name="search_text",
             arguments=arguments,
             tool_call_id="c1",
         ),
@@ -101,7 +101,7 @@ def test_an_illegal_regex_is_rejected_at_prepare(workspace: Path) -> None:
     error = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="search.text",
+            tool_name="search_text",
             arguments={"query": "([unclosed", "regex": True},
             tool_call_id="c1",
         ),
@@ -126,7 +126,7 @@ def test_a_backtracking_regex_is_rejected_before_it_can_block_the_agent(
     error = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-backtrack",
-            tool_name="search.text",
+            tool_name="search_text",
             arguments={"query": "(a|aa)+$", "regex": True},
             tool_call_id="c-backtrack",
         ),
@@ -164,7 +164,7 @@ def test_a_pattern_matching_nothing_blames_the_pattern(workspace: Path) -> None:
 
 # ---- 生成目录的过滤 ----
 #
-# 与 fs.list_files 共用 base.filter_globbed. 两份实现一定会走偏, 而走偏的后果是同一个
+# 与 fs_list_files 共用 base.filter_globbed. 两份实现一定会走偏, 而走偏的后果是同一个
 # 仓库在两个工具眼里有不同的形状.
 
 
@@ -263,7 +263,7 @@ def _run_result(workspace: Path, **arguments: object) -> object:
     plan = tool.prepare(
         ToolInvocationRequest(
             invocation_id="inv-1",
-            tool_name="search.text",
+            tool_name="search_text",
             arguments=arguments,
             tool_call_id="c1",
         ),
@@ -276,7 +276,7 @@ def _run_result(workspace: Path, **arguments: object) -> object:
 def test_the_result_reports_how_many_bytes_it_produced(workspace: Path) -> None:
     """终端进度行读 metrics.bytes_out; 不填就是每个工具都显示 `0 字节`.
 
-    那条线是用户判断"工具到底有没有拿回内容"的唯一依据 —— 见过 fs.read_file 读完一个
+    那条线是用户判断"工具到底有没有拿回内容"的唯一依据 —— 见过 fs_read 读完一个
     Java 文件显示 0 字节, 而模型在回答里引用了里面的代码.
     """
     result = _run_result(workspace, query="def login")

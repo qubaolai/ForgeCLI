@@ -1,4 +1,4 @@
-"""artifact.read 与归档存储 (ADR-0032 决策 6 / 6.1 / 6.2).
+"""artifact_read 与归档存储 (ADR-0032 决策 6 / 6.1 / 6.2).
 
 这个工具是一级降级唯一的取回路径: 降级把 transcript 里的正文换成一行引用, 引用取不
 回来的话, 压缩干的事就是"把内容删掉, 再告诉模型它在一个够不着的地方".
@@ -62,7 +62,7 @@ def _run(
     context = _context(tmp_path)
     prepared = tool.prepare(
         ToolInvocationRequest(
-            tool_name="artifact.read",
+            tool_name="artifact_read",
             invocation_id="call-1",
             arguments=arguments,
         ),
@@ -178,13 +178,13 @@ def test_a_collected_artifact_says_it_was_collected_not_that_it_failed(
 def test_the_plan_declares_no_paths_at_all(
     store: FsArtifactStore, tmp_path: Path
 ) -> None:
-    """ "目标集合在机制上封闭"就是这一条断言的内容 (照 plan.read 的形状)."""
+    """ "目标集合在机制上封闭"就是这一条断言的内容 (照 plan_read 的形状)."""
     ref = store.write(invocation_id="c1", name="output", data="内容")
     tool = ArtifactReadTool(ResourceGovernor(), store)
 
     plan = tool.prepare(
         ToolInvocationRequest(
-            tool_name="artifact.read",
+            tool_name="artifact_read",
             invocation_id="call-1",
             arguments={"artifact_id": ref.artifact_id},
         ),

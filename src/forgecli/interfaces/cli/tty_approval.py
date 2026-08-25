@@ -98,7 +98,7 @@ def _render_content(console: Console, view: ApprovalView) -> None:
     """逐字展示要跑的代码与要写的内容.
 
     这一节不能省, 也不能只给路径: 用户批准的是"会发生什么", 而 `python3 deploy.py` 这
-    七个字里没有任何能让人做判断的信息. 同理 `fs.apply_patch README.md` —— 要看的是
+    七个字里没有任何能让人做判断的信息. 同理 `fs_apply_patch README.md` —— 要看的是
     文件会变成什么样.
     """
     for snapshot in view.script_snapshots:

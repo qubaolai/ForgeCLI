@@ -107,7 +107,7 @@ def expand_targets(
         )
     # 封闭成功一律记 FORGE_EXPANDED, 即使目标写得再显式, 甚至一个目标都没有.
     #
-    # STATIC 有专门的含义: **工具自己**用结构化入参证明了目标集合 (fs.apply_patch 的
+    # STATIC 有专门的含义: **工具自己**用结构化入参证明了目标集合 (fs_apply_patch 的
     # path 参数). 分析器是从一条不透明的命令串里推出来的, 冒用 STATIC 等于把推导结果
     # 伪装成工具的原始声明 —— validate_narrowing 也正是这么判的.
     return ExpansionResult(resolution=TargetResolution.FORGE_EXPANDED, targets=unique)

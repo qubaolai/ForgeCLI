@@ -33,9 +33,9 @@ def _constants() -> dict[str, object]:
 
 def test_the_text_is_pinned_by_fingerprint() -> None:
     """改任何一段正文都要在这里显式承认一次."""
-    assert prompt_text.PROMPT_TEXT_VERSION == 8
+    assert prompt_text.PROMPT_TEXT_VERSION == 9
     assert prompt_text.fingerprint() == (
-        "sha256:b3e771130da6723ae8aa54425803c0f993e6bbca094ec7067182df15f1901499"
+        "sha256:35a67fd730910fef002fc149dbbff8e7435c465f0e04b7834d6a86ba9762b478"
     )
 
 

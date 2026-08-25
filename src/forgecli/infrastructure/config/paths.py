@@ -87,7 +87,7 @@ def plans_dir(project_id: str, session_id: str) -> Path:
     住在那个会话里. 附带好处是删会话时它一起走, 项目目录不会攒下孤儿计划.
 
     仍然不落在工作区里: 那会污染用户仓库, 还会被下一轮 Agent 当成项目内容读回上下文
-    (与 state_dir 同一条理由). 落在工作区外的另一个后果是 ``fs.*`` 工具够不到它 ——
+    (与 state_dir 同一条理由). 落在工作区外的另一个后果是 ``fs_*`` 工具够不到它 ——
     这正是 ADR-0022 决策 5 想要的隔离.
     """
     return projects_dir() / project_id / "sessions" / session_id / "plans"

@@ -8,8 +8,8 @@
   重发同一条请求也不会好转. 直接中止.
 
 这组用例钉住的是第一类. 它值得单独一个文件, 因为一次静默的格式失败代价极大: 见过真实
-任务里 search.text 唯一一次调用就这么被打掉, 模型收不到任何反馈, 从此再没碰过这个工具,
-全程改用 shell.run.
+任务里 search_text 唯一一次调用就这么被打掉, 模型收不到任何反馈, 从此再没碰过这个工具,
+全程改用 shell_run.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ from support.loop_harness import (
 def _dirty(call_id: str, value: str) -> ToolCall:
     return ToolCall(
         tool_call_id=call_id,
-        name="shell.run",
+        name="shell_run",
         arguments=MappingProxyType({"command": value}),
     )
 
@@ -80,7 +80,7 @@ def test_markup_in_arguments_triggers_a_retry_not_a_dispatch() -> None:
     gateway = ScriptedGateway(
         responses=[
             response(tool_calls=(_dirty("c1", "find /x</think><tool_call>grep"),)),
-            response(tool_calls=(call("search.text", "c2"),)),
+            response(tool_calls=(call("search_text", "c2"),)),
         ]
     )
     loop, _ = loop_with(gateway)
@@ -91,7 +91,7 @@ def test_markup_in_arguments_triggers_a_retry_not_a_dispatch() -> None:
     assert isinstance(result, LoopDecision)
     action = result.next_action
     assert isinstance(action, ToolRequestAction)
-    assert action.request.name == "search.text"
+    assert action.request.name == "search_text"
     assert len(gateway.responses) == 0
 
 
@@ -99,7 +99,7 @@ def test_the_retry_tells_the_model_what_broke() -> None:
     gateway = ScriptedGateway(
         responses=[
             response(tool_calls=(_dirty("c1", "ls</think>"),)),
-            response(tool_calls=(call("search.text", "c2"),)),
+            response(tool_calls=(call("search_text", "c2"),)),
         ]
     )
     loop, _ = loop_with(gateway)
@@ -119,7 +119,7 @@ def test_the_broken_call_never_enters_the_transcript() -> None:
     gateway = ScriptedGateway(
         responses=[
             response(tool_calls=(_dirty("c1", "<arg_value>rm"),)),
-            response(tool_calls=(call("search.text", "c2"),)),
+            response(tool_calls=(call("search_text", "c2"),)),
         ]
     )
     loop, _ = loop_with(gateway)
@@ -136,12 +136,12 @@ def test_markup_in_the_tool_name_counts_too() -> None:
                 tool_calls=(
                     ToolCall(
                         tool_call_id="c1",
-                        name="fs.list_files</think><tool_call>",
+                        name="fs_list_files</think><tool_call>",
                         arguments=MappingProxyType({}),
                     ),
                 )
             ),
-            response(tool_calls=(call("search.text", "c2"),)),
+            response(tool_calls=(call("search_text", "c2"),)),
         ]
     )
     loop, _ = loop_with(gateway)
@@ -151,14 +151,12 @@ def test_markup_in_the_tool_name_counts_too() -> None:
     assert isinstance(result, LoopDecision)
     action = result.next_action
     assert isinstance(action, ToolRequestAction)
-    assert action.request.name == "search.text"
+    assert action.request.name == "search_text"
 
 
 def test_a_clean_call_is_not_mistaken_for_markup() -> None:
     """模型完全可能在写一段含 `<think>` 的 HTML. 判据只看工具名与字符串参数值."""
-    gateway = ScriptedGateway(
-        responses=[response(tool_calls=(call("fs.read_file", "c1"),))]
-    )
+    gateway = ScriptedGateway(responses=[response(tool_calls=(call("fs_read", "c1"),))])
     loop, _ = loop_with(gateway)
 
     result = loop.start(loop_input())
@@ -166,7 +164,7 @@ def test_a_clean_call_is_not_mistaken_for_markup() -> None:
     assert isinstance(result, LoopDecision)
     action = result.next_action
     assert isinstance(action, ToolRequestAction)
-    assert action.request.name == "fs.read_file"
+    assert action.request.name == "fs_read"
 
 
 # ---- 重试上限 ----
@@ -200,7 +198,7 @@ def test_the_count_is_cumulative_not_consecutive() -> None:
     gateway = ScriptedGateway(
         responses=[
             response(tool_calls=(_dirty("c1", "a</think>"),)),
-            response(tool_calls=(call("fs.read_file", "ok"),)),
+            response(tool_calls=(call("fs_read", "ok"),)),
             response(tool_calls=(_dirty("c2", "b</think>"),)),
             response(tool_calls=(_dirty("c3", "c</think>"),)),
         ]
@@ -216,7 +214,7 @@ def test_the_count_is_cumulative_not_consecutive() -> None:
             kind=ObservationKind.TOOL_RESULT,
             message="读到了",
             invocation_id="ok",
-            tool_name="fs.read_file",
+            tool_name="fs_read",
         ).to_loop_observation()
     )
 
@@ -256,7 +254,7 @@ class TruncatedArgumentsGateway(ScriptedGateway):
                         ToolCallDelta(
                             index=0,
                             tool_call_id="c1",
-                            name="shell.run",
+                            name="shell_run",
                             # 半截: 引号没闭合, 对象没收尾.
                             arguments_delta='{"command": "find /x',
                         ),
@@ -282,8 +280,8 @@ def test_partial_arguments_retry_instead_of_aborting_the_turn() -> None:
     gateway = TruncatedArgumentsGateway(
         ScriptedGateway(
             responses=[
-                response(tool_calls=(call("shell.run", "c1"),)),
-                response(tool_calls=(call("search.text", "c2"),)),
+                response(tool_calls=(call("shell_run", "c1"),)),
+                response(tool_calls=(call("search_text", "c2"),)),
             ]
         )
     )
@@ -294,7 +292,7 @@ def test_partial_arguments_retry_instead_of_aborting_the_turn() -> None:
     assert isinstance(result, LoopDecision)
     action = result.next_action
     assert isinstance(action, ToolRequestAction)
-    assert action.request.name == "search.text"
+    assert action.request.name == "search_text"
 
 
 def test_partial_arguments_are_never_guessed_into_shape() -> None:
@@ -302,8 +300,8 @@ def test_partial_arguments_are_never_guessed_into_shape() -> None:
     gateway = TruncatedArgumentsGateway(
         ScriptedGateway(
             responses=[
-                response(tool_calls=(call("shell.run", "c1"),)),
-                response(tool_calls=(call("search.text", "c2"),)),
+                response(tool_calls=(call("shell_run", "c1"),)),
+                response(tool_calls=(call("search_text", "c2"),)),
             ]
         )
     )

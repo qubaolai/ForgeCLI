@@ -2,7 +2,7 @@
 
 这是接入任何隔离方案的**唯一接缝**. 围栏由 infrastructure 的
 `SandboxedCommandExecutor` 包在 `LocalCommandExecutor` 外面接入 (ADR-0030 决策 1),
-而不是从 shell.run 或 git.read 内部接入 —— 工具一旦自己知道"有围栏时走这条, 没围栏时
+而不是从 shell_run 或 git_read 内部接入 —— 工具一旦自己知道"有围栏时走这条, 没围栏时
 走那条", 就会出现绕过隔离的隐藏分支.
 
 请求里带的是**绝对可执行文件路径与已净化的环境**: 执行器不做 PATH 查找, 不继承

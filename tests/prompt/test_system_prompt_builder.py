@@ -33,12 +33,12 @@ from forgecli.domain.tool.capability import Capability
 from support.fakes import FACTS, PROFILE, prompt
 
 _TOOLS = (
-    ToolBrief("fs.read_file", "读取文件"),
-    ToolBrief("fs.list_files", "列出文件"),
-    ToolBrief("search.text", "搜索文本"),
-    ToolBrief("git.read", "读取 git 状态"),
-    ToolBrief("fs.edit_file", "精确替换文件片段"),
-    ToolBrief("shell.run", "执行 Shell 命令"),
+    ToolBrief("fs_read", "读取文件"),
+    ToolBrief("fs_list_files", "列出文件"),
+    ToolBrief("search_text", "搜索文本"),
+    ToolBrief("git_read", "读取 git 状态"),
+    ToolBrief("fs_edit_file", "精确替换文件片段"),
+    ToolBrief("shell_run", "执行 Shell 命令"),
 )
 
 
@@ -83,14 +83,14 @@ def test_the_builtin_profile_is_pinned_by_fingerprint() -> None:
     snapshot = prompt(
         SessionMode.ACCEPT_EDITS,
         tools=(
-            ToolBrief("fs.read_file", "读取文件"),
-            ToolBrief("search.text", "搜索文本"),
-            ToolBrief("shell.run", "执行 Shell 命令"),
+            ToolBrief("fs_read", "读取文件"),
+            ToolBrief("search_text", "搜索文本"),
+            ToolBrief("shell_run", "执行 Shell 命令"),
         ),
     )
 
     assert snapshot.fingerprint == (
-        "sha256:076e9ca9572c626bad3148021713a9169b69b9500dd2083e2a1f40a9f7cbecbc"
+        "sha256:ad1972b84c9cb9ea2ba21ca18ceb32c9fca8c3c221be5a012e5a5f06a870171c"
     )
 
 
@@ -158,14 +158,14 @@ def test_the_tool_table_only_lists_this_turn_catalog() -> None:
         PromptBlockId.TOOL_CONTRACT,
     )
 
-    assert "fs.read_file" in body
-    assert "fs.edit_file" not in body
-    assert "shell.run" not in body
+    assert "fs_read" in body
+    assert "fs_edit_file" not in body
+    assert "shell_run" not in body
 
 
 def test_the_shell_boundary_is_dropped_when_shell_is_not_available() -> None:
     body = _body(
-        _build(available_tools=(ToolBrief("fs.read_file", "读取文件"),)),
+        _build(available_tools=(ToolBrief("fs_read", "读取文件"),)),
         PromptBlockId.TOOL_CONTRACT,
     )
 
@@ -359,22 +359,22 @@ def test_runtime_facts_reject_an_empty_root_list() -> None:
 def test_the_tool_table_separates_name_from_title() -> None:
     """名字与标题之间必须有分隔符.
 
-    分隔符曾经在一次重构里丢过, 渲染出来的是 `读取文件fs.read_file`. 这类缺陷不会让任何
+    分隔符曾经在一次重构里丢过, 渲染出来的是 `读取文件fs_read`. 这类缺陷不会让任何
     测试失败 —— 提示词照常渲染, 指纹照常稳定, 只是模型读到的工具表是一坨. 所以只能这样
     正面钉住.
     """
     body = _body(_build(), PromptBlockId.TOOL_CONTRACT)
 
-    assert "  fs.read_file: 读取文件" in body
-    assert "读取文件fs.read_file" not in body
+    assert "  fs_read: 读取文件" in body
+    assert "读取文件fs_read" not in body
 
 
 def test_the_tool_name_comes_first() -> None:
     """模型要用名字发起调用, 名字左对齐才好扫."""
     body = _body(_build(), PromptBlockId.TOOL_CONTRACT)
-    line = next(row for row in body.splitlines() if "fs.edit_file" in row)
+    line = next(row for row in body.splitlines() if "fs_edit_file" in row)
 
-    assert line.strip().startswith("fs.edit_file")
+    assert line.strip().startswith("fs_edit_file")
 
 
 # ---- 检索顺序 ----
@@ -503,7 +503,7 @@ def test_the_plan_block_carries_a_reference_not_the_body() -> None:
     body = _body(snapshot, PromptBlockId.PLAN_STATE)
 
     assert "pl_abc" in body
-    assert "plan.read" in body
+    assert "plan_read" in body
     # 正文里的小节标题一个都不该出现在块里.
     assert "## 目标" not in body
 
@@ -521,8 +521,8 @@ def test_the_todo_block_says_how_to_correct_it() -> None:
     """光给清单不给纠正手段, 模型发现拆错了也只能将就着往下走."""
     body = _body(_build(planning=_planning(todo=_a_todo())), PromptBlockId.TODO_STATE)
 
-    assert "todo.write" in body
-    assert "todo.set_status" in body
+    assert "todo_write" in body
+    assert "todo_set_status" in body
 
 
 def test_an_empty_todo_list_renders_nothing() -> None:
@@ -598,7 +598,7 @@ def test_an_approved_plan_whose_todo_moved_on_disappears() -> None:
 
 
 def test_an_approved_plan_with_live_work_still_shows() -> None:
-    """还在做的时候要看得见: 模型可能需要 plan.read 回去看大方向."""
+    """还在做的时候要看得见: 模型可能需要 plan_read 回去看大方向."""
     snapshot = _build(
         planning=_planning(plan=_a_plan(PlanStatus.APPROVED), todo=_a_todo())
     )

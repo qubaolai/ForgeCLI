@@ -1,14 +1,14 @@
-"""artifact.read: 取回一段已经归档的工具输出 (ADR-0032 决策 6.2).
+"""artifact_read: 取回一段已经归档的工具输出 (ADR-0032 决策 6.2).
 
 **这是一级降级唯一的取回路径.** 降级把 transcript 里的正文换成一行引用, 而引用取不
 回来的话, 压缩干的事就是"把内容删掉, 再告诉模型它在一个够不着的地方".
 
 模型够不着那些文件: ``build_protected_path_policy`` 把 ``state_dir()`` 注册成
-``FORGE_STATE`` 且 ``deny_read=True``, 于是 ``fs.read ~/.forge/state/artifacts/...``
-与 ``shell.run cat ...`` 都会走 ``HARD_DENY_CREDENTIAL_ACCESS`` —— 不是 ASK, 既不能
+``FORGE_STATE`` 且 ``deny_read=True``, 于是 ``fs_read ~/.forge/state/artifacts/...``
+与 ``shell_run cat ...`` 都会走 ``HARD_DENY_CREDENTIAL_ACCESS`` —— 不是 ASK, 既不能
 批准也不能用 ``/add-dir`` 豁免.
 
-形状照 ``plan.read`` 抄, 连同它那条理由: ``additionalProperties: False`` 加上
+形状照 ``plan_read`` 抄, 连同它那条理由: ``additionalProperties: False`` 加上
 **没有路径字段**, 构成这个工具目标集合在机制上封闭的证明. 所以 ``ToolPlan`` 不声明
 任何路径 target, ``workspace_analyzer`` 也就没有东西可判 —— 这不是绕过上面那道
 Hard Deny, 是根本不产生受它管辖的路径.
@@ -54,7 +54,7 @@ from forgecli.shared.cancellation import CancelToken
 __all__ = ["ArtifactReadTool"]
 
 _SPEC = ToolSpec(
-    name="artifact.read",
+    name="artifact_read",
     version="1",
     title="读回已归档的输出",
     description=(
@@ -83,7 +83,7 @@ _SPEC = ToolSpec(
 class ArtifactReadTool(Tool):
     def __init__(self, governor: ResourceGovernor, artifacts: ArtifactStore) -> None:
         self._governor = governor
-        # 不是可选依赖: 没有存储的 artifact.read 只能永远回一句"取不到", 而模型会
+        # 不是可选依赖: 没有存储的 artifact_read 只能永远回一句"取不到", 而模型会
         # 一直看到 transcript 里的归档引用. 装不出来就别注册这个工具.
         self._artifacts = artifacts
 
