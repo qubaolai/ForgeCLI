@@ -27,6 +27,9 @@ class SessionSnapshot:
     status: str = "active"
     schema_version: int = 1
     title: str = ""
+    # 最后一次上下文压缩的事件 id (ADR-0032 决策 8). 只是给排查用的路标 —— 重建
+    # transcript 走的是事件流本身, 不依赖这个字段.
+    last_compaction_event_id: str | None = None
     # 运行时字段，不序列化：排在末尾并带默认值，好让 from_dict 无须为它取值。
     mode: SessionMode = SessionMode.ACCEPT_EDITS
 
@@ -40,6 +43,7 @@ class SessionSnapshot:
             "status": self.status,
             "title": self.title,
             "last_event_id": self.last_event_id,
+            "last_compaction_event_id": self.last_compaction_event_id,
             "updated_at": self.updated_at,
         }
 
@@ -51,11 +55,13 @@ class SessionSnapshot:
         ``chat``），一律忽略并取默认档，读旧文件因此不会失败。
         """
         last = data.get("last_event_id")
+        compaction = data.get("last_compaction_event_id")
         raw_version = data.get("schema_version", 1)
         return cls(
             session_id=str(data.get("session_id", "")),
             workspace_root=str(data.get("workspace_root", "")),
             last_event_id=None if last is None else str(last),
+            last_compaction_event_id=(None if compaction is None else str(compaction)),
             updated_at=str(data.get("updated_at", "")),
             status=str(data.get("status", "active")),
             schema_version=raw_version if isinstance(raw_version, int) else 1,

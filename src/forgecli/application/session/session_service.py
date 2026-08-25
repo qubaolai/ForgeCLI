@@ -174,6 +174,23 @@ class SessionService:
         """
         return self._append(EventType.USAGE_RECORDED, {"turn_id": turn_id, **payload})
 
+    def record_compaction(
+        self, payload: Mapping[str, object], *, turn_id: str
+    ) -> SessionEvent:
+        """记录一次上下文压缩 (ADR-0032 决策 8).
+
+        payload 为 CompactionDraft.to_payload(); 循环只产出草稿, 落盘边界在
+        AgentTurnService -> 本方法, 与 record_usage 同一条分工.
+
+        顺带把 last_compaction_event_id 推进到这条事件 —— _append 已经把 last_event_id
+        更新过了, 这里直接取它, 不重新算一遍 id.
+        """
+        event = self._append(
+            EventType.CONTEXT_COMPACTED, {"turn_id": turn_id, **payload}
+        )
+        self._current = replace(self.current(), last_compaction_event_id=event.event_id)
+        return event
+
     def record_tool_event(
         self,
         event_type: EventType,

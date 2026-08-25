@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from forgecli.domain.context.budget import ContextBudget
 from forgecli.domain.conversation.message import ChatMessage
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.prompt.blocks import PromptSnapshot
@@ -23,8 +24,12 @@ from forgecli.domain.tool.catalog import ToolCatalog
 class ContextPackage:
     """本轮模型上下文 (ADR-0018 §3.2).
 
-    归一化对话消息 + 本轮冻结的系统提示词. 上下文压缩与记忆注入还没有产出方, 因此不在
-    这里预留字段.
+    归一化对话消息 + 本轮冻结的系统提示词 + 本轮的上下文预算.
+
+    预算是**可选**的, 与必填的 prompt 不同 (ADR-0032 决策 1): 缺提示词必须让调用被
+    阻止, 而缺预算只是不压缩. 两者的失败方向不一样 —— 没有提示词的模型会开始猜自己是
+    谁, 而没有预算的压缩器不做事, 与接入压缩之前的行为完全一致. 更要紧的是不能瞎猜一个
+    窗口大小: 猜小了平白压掉内容, 猜大了等于没有这道防线.
 
     prompt 是**必填**而不是可选: 缺提示词时主模型调用必须被阻止 (ADR-0018 §11), 而
     "可选字段 + 运行期检查"意味着漏传的后果是一次静默降级 —— 模型照常回答, 只是没有
@@ -37,6 +42,7 @@ class ContextPackage:
 
     prompt: PromptSnapshot
     messages: tuple[ChatMessage, ...] = ()
+    budget: ContextBudget | None = None
 
 
 @dataclass(frozen=True)

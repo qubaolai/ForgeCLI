@@ -20,7 +20,7 @@ from forgecli.domain.agent.actions import (
 )
 from forgecli.domain.security.findings import RiskFact
 from forgecli.domain.tool.plan import ToolPlan
-from forgecli.domain.tool.result import ToolResult
+from forgecli.domain.tool.result import ToolResult, ToolResultStatus
 
 __all__ = ["ObservationKind", "ToolObservation", "rejected"]
 
@@ -135,7 +135,31 @@ class ToolObservation:
             source=self.kind.source,
             is_error=self.is_error,
             disposition=self.kind.disposition,
+            # 只有真的跑出结果的调用才有来源身份. 被策略拒绝的那些没有内容可去重,
+            # 也没有内容可降级.
+            provenance=None if self.result is None else self.result.provenance,
         )
+
+    def digest_line(self) -> str:
+        """跨回合保留的一行结论 (ADR-0032 决策 7).
+
+        回合之间只留这一行, 不留正文: 正文进跨轮历史等于把回合内溢出提前到第二轮.
+        但"这件事做过, 结果是什么, 细节在哪"必须留下 —— 全丢的后果是下一轮的模型
+        重新读一遍同样的文件, 重新 grep 一遍同样的词.
+
+        由本类派生而不是在调用方手写: ADR-0031 §背景第 3 条记过一次手写副本的教训,
+        那份形状照抄 render() 但不走它, 于是 render() 改了它不会跟着变.
+        """
+        if self.result is None:
+            return self.kind.value
+        head = _first_line(self.result.text)
+        parts = [head] if head else []
+        if self.result.status is not ToolResultStatus.OK:
+            parts.insert(0, self.result.status.value)
+        provenance = self.result.provenance
+        if provenance is not None and provenance.archived:
+            parts.append(f"({provenance.artifact_id})")
+        return " ".join(parts) if parts else self.kind.value
 
     def render(self) -> str:
         """给模型看的文本. 工具结果直接给内容, 其余给结构化拒绝说明."""
@@ -204,3 +228,20 @@ def rejected(
         risk_summary=tuple(fact.detail for fact in risk_facts),
         can_retry=can_retry,
     )
+
+
+# 一行结论最多多长. 超了截断 —— 它要跨回合留在历史里, 而"跨回合的完整输出"正是
+# ADR-0032 决策 7 要避免的东西.
+_DIGEST_LIMIT = 160
+
+
+def _first_line(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return (
+                stripped
+                if len(stripped) <= _DIGEST_LIMIT
+                else stripped[:_DIGEST_LIMIT] + "..."
+            )
+    return ""

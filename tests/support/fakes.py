@@ -21,7 +21,11 @@ from forgecli.application.security.executable_resolver import (
     EXECUTABLE_RESOLUTION_VERSION,
 )
 from forgecli.application.tool_request.run_observer import ToolRunObserver
-from forgecli.application.tools.artifact_store import ArtifactRef, ArtifactStore
+from forgecli.application.tools.artifact_store import (
+    ArtifactMissing,
+    ArtifactRef,
+    ArtifactStore,
+)
 from forgecli.domain.execution.environment import (
     DEFAULT_ENV_ALLOWLIST,
     ShellLaunch,
@@ -183,8 +187,76 @@ class NullArtifactStore(ArtifactStore):
             truncated=True,
         )
 
-    def read(self, artifact_id: str) -> str:
-        raise KeyError(f"NullArtifactStore 不保存内容: {artifact_id}")
+    def read(
+        self,
+        artifact_id: str,
+        *,
+        offset: int | None = None,
+        limit: int | None = None,
+    ) -> str:
+        raise ArtifactMissing(artifact_id)
+
+    def exists(self, artifact_id: str) -> bool:
+        return False
+
+    def touch(self, artifact_id: str) -> None:
+        return None
+
+    def sweep(self, *, older_than_seconds: float) -> int:
+        return 0
+
+
+class MemoryArtifactStore(ArtifactStore):
+    """进程内的归档存储: 内容真的留着, 按内容哈希寻址, 与 FsArtifactStore 同口径.
+
+    上下文压缩要问"这份内容还取不取得回来" (ADR-0032 决策 6.1), 而 NullArtifactStore
+    的答案永远是"取不回来" —— 拿它测降级, 测到的永远是过期那一支.
+    """
+
+    def __init__(self) -> None:
+        self.contents: dict[str, str] = {}
+        self.touched: list[str] = []
+
+    def write(self, *, invocation_id: str, name: str, data: str) -> ArtifactRef:
+        content_hash = digest_text(data)
+        artifact_id = content_hash.split(":", 1)[1][:16]
+        self.contents[artifact_id] = data
+        return ArtifactRef(
+            artifact_id=artifact_id,
+            path=f"memory://{artifact_id}",
+            size=len(data.encode("utf-8")),
+            content_hash=content_hash,
+        )
+
+    def read(
+        self,
+        artifact_id: str,
+        *,
+        offset: int | None = None,
+        limit: int | None = None,
+    ) -> str:
+        if artifact_id not in self.contents:
+            raise ArtifactMissing(artifact_id)
+        self.touched.append(artifact_id)
+        body = self.contents[artifact_id]
+        if offset is None and limit is None:
+            return body
+        lines = body.splitlines()
+        start = max(1, offset or 1) - 1
+        end = None if limit is None else start + max(0, limit)
+        return "\n".join(lines[start:end])
+
+    def exists(self, artifact_id: str) -> bool:
+        return artifact_id in self.contents
+
+    def touch(self, artifact_id: str) -> None:
+        if artifact_id in self.contents:
+            self.touched.append(artifact_id)
+
+    def sweep(self, *, older_than_seconds: float) -> int:
+        removed = len(self.contents)
+        self.contents.clear()
+        return removed
 
 
 class NullManualShellObserver(ManualShellObserver):

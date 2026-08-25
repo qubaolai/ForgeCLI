@@ -20,6 +20,7 @@ from enum import Enum
 from types import MappingProxyType
 
 from forgecli.domain.agent.stop import LoopStopReason
+from forgecli.domain.tool.result import ResultProvenance
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,10 @@ class LoopObservation:
     source: ObservationSource = ObservationSource.CONTEXT
     is_error: bool = False
     disposition: ObservationDisposition = ObservationDisposition.CONTINUE
+    # 这条观察对应的工具结果是"什么东西的快照" (ADR-0032). 循环原样转写到
+    # ToolResultBlock 上, 供上下文管理判断能不能去重与降级. 循环自己不读它 ——
+    # 它只是个传递者, 判断在 application/context.
+    provenance: ResultProvenance | None = None
 
 
 @dataclass(frozen=True)

@@ -80,6 +80,23 @@ SIBLING_BANS: tuple[tuple[str, str, str], ...] = (
         "application.llm.gateway.default_gateway",
         "AgentLoop 只依赖 LlmGateway 端口, 不依赖网关实现 (ADR-0028 规则 A1)",
     ),
+    (
+        "application.context",
+        "application.llm.gateway.default_gateway",
+        "上下文管理只依赖 LlmGateway 端口, 不依赖网关实现 (ADR-0028 规则 A1)",
+    ),
+    # 记忆是模型可写且不经人确认的提示词输入. 它进不了裁决, 是整个 ADR-0033 敢做静默
+    # 写入的承重理由 —— 所以这条边界必须是机器守得住的, 写在注释里不算.
+    (
+        "application.memory",
+        "application.security",
+        "记忆不参与任何安全裁决 (ADR-0033 决策 3)",
+    ),
+    (
+        "application.agent_loop",
+        "application.memory",
+        "AgentLoop 不读写长期记忆 (ADR-0010 §影响)",
+    ),
     # 工具链路只认识自己的输出端口, 不认识端口另一头的实现 (ADR-0028 规则 A1).
     # 删掉这两条, ToolRunObserver 与 ToolAuditSink 这两个抽象就白留了 —— 协调器会
     # 顺着同层的 import 直接认识事件总线与会话写入口.

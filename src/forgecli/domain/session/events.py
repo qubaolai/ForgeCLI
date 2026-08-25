@@ -55,6 +55,16 @@ class EventType(Enum):
     PLAN_REVIEWED = "plan_reviewed"
     TODO_UPDATED = "todo_updated"
 
+    # -- 上下文压缩 (ADR-0032 决策 8) --
+    #
+    # 与上面三条相反, 这一条的 payload **含正文**. 摘要是模型一次性产出的, 不可复现,
+    # 引用的目标一旦被回收就永远重建不出来 —— 而计划正文的真相源是磁盘上的文件, 随时
+    # 读得回来. 判据是可复现性, 不是"大不大".
+    #
+    # 重放 transcript 时按位置生效: 读到最后一条本事件就丢掉已累积的部分, 从摘要接着
+    # 往下走. 事件在日志里的位置本身就定义了它覆盖的范围, 所以不另存起止 event_id.
+    CONTEXT_COMPACTED = "context_compacted"
+
 
 @dataclass(frozen=True)
 class SessionEvent:

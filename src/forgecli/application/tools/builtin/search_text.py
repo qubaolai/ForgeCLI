@@ -462,6 +462,7 @@ class SearchTextTool(Tool):
             content_parts=emitted.parts,
             artifacts=emitted.artifacts,
             metrics=ToolMetrics(bytes_out=emitted.bytes_out),
+            provenance=emitted.provenance,
             error=(
                 ToolError(code="cancelled", message="搜索被取消") if cancelled else None
             ),

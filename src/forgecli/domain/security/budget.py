@@ -37,10 +37,22 @@ _NEVER_AUTO = frozenset(
     }
 )
 
-# 不需要围栏就能自动放行的: 读工作区, 写计划, 起一个已被裁决绑定的子进程.
+# 不需要围栏就能自动放行的: 读工作区, 写计划, 读回自己落盘的输出, 起一个已被裁决
+# 绑定的子进程.
+#
+# ARTIFACT_READ 在这里而不是走 EXTERNAL_READ: 它读的确实是工作区之外的路径, 但那个
+# 路径不由模型指定 —— 入参是一个十六进制内容哈希, 校验过才拼得出文件名. 按
+# EXTERNAL_READ 算的话, 每次取回一段被降级掉的历史输出都要问一次人, 而那正是
+# ADR-0032 一级降级要省下的东西.
+#
+# MEMORY_WRITE 同理, 而且**静默正是它的设计目标** (ADR-0033 决策 2): 记忆的全部价值
+# 在于无感积累, 一个每次都要人点确认的记忆系统, 用户会在第三次的时候关掉它. 承重的
+# 缓解不是这道闸, 是决策 3 那条"记忆不参与任何安全裁决".
 _ALWAYS = frozenset(
     {
         Capability.PLAN_ONLY,
+        Capability.ARTIFACT_READ,
+        Capability.MEMORY_WRITE,
         Capability.WORKSPACE_READ,
         Capability.SPAWN_PROCESS,
     }

@@ -90,7 +90,7 @@ def test_the_builtin_profile_is_pinned_by_fingerprint() -> None:
     )
 
     assert snapshot.fingerprint == (
-        "sha256:ebcf649cc33754dc09f3a669490d5e7c4bcc11500d24c8cf657cc7c691273b43"
+        "sha256:076e9ca9572c626bad3148021713a9169b69b9500dd2083e2a1f40a9f7cbecbc"
     )
 
 

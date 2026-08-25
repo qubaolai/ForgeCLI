@@ -16,6 +16,7 @@ from forgecli.application.agent_run.events import (
     AgentRunEventBus,
     AgentRunEventSubscriber,
 )
+from forgecli.application.context.manager import ContextManager
 from forgecli.application.llm.catalog import InMemoryModelCatalog
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.llm.metering import CostEstimator, UsageMeter
@@ -162,12 +163,17 @@ def response(text: str = "", tool_calls: tuple[ToolCall, ...] = ()) -> ModelResp
     )
 
 
-def loop_with(gateway: ScriptedGateway) -> tuple[BuiltinAgentLoop, Collector]:
+def loop_with(
+    gateway: ScriptedGateway, *, context: ContextManager | None = None
+) -> tuple[BuiltinAgentLoop, Collector]:
     bus = AgentRunEventBus()
     collector = Collector()
     bus.subscribe(collector)
     loop = BuiltinAgentLoop(
-        gateway, UsageMeter(CostEstimator(InMemoryModelCatalog())), event_bus=bus
+        gateway,
+        UsageMeter(CostEstimator(InMemoryModelCatalog())),
+        event_bus=bus,
+        context=context,
     )
     return loop, collector
 

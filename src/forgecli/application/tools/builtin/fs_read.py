@@ -8,6 +8,7 @@ ASK. 读 ~/.ssh/id_rsa 和读 src/main.py 因此得到不同待遇, 而工具本
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import MappingProxyType
 from typing import NamedTuple
 
@@ -193,6 +194,14 @@ class ReadFileTool(Tool):
             content_parts=emitted.parts + window.notes,
             artifacts=emitted.artifacts,
             metrics=ToolMetrics(bytes_out=emitted.bytes_out),
+            # 只有这里填得出来源身份 (ADR-0032 决策 3): path 是 realpath, source_state
+            # 是 perform 入口刚复核过的那一个 token. 拿它去重, 与 ADR-0027 的执行前
+            # 复核用的是同一个判据.
+            provenance=replace(
+                emitted.provenance,
+                source_path=path,
+                source_state=str(plan.normalized_input["source_state"]),
+            ),
         )
 
 

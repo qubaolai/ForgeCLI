@@ -13,6 +13,7 @@ from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_turn import AgentTurnService
 from forgecli.application.agent_turn.cancellation import TurnCancelSource
 from forgecli.application.config.config_service import ConfigService
+from forgecli.application.context.manager import ContextManager
 from forgecli.application.llm.availability import EnvProviderAvailability
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
@@ -142,12 +143,19 @@ class ProjectRuntime:
         self._agent_turn = self._build_agent_turn()
 
     def _build_agent_turn(self) -> AgentTurnService:
+        # 与 CLI 同一份装配 (ADR-0032): 必须拿工具栈里那个 ArtifactStore 实例, 否则
+        # 工具写进去的内容, 降级时会被判成"已过期回收".
+        context_manager = ContextManager(
+            artifacts=self.tools.artifacts, gateway=self.llm.gateway
+        )
+
         def new_loop() -> BuiltinAgentLoop:
             return BuiltinAgentLoop(
                 self.llm.gateway,
                 self.llm.usage_meter,
                 cancel_token_factory=self.cancel_source.current,
                 event_bus=self.event_bus,
+                context=context_manager,
             )
 
         def runtime_facts() -> RuntimeFacts:
@@ -165,6 +173,9 @@ class ProjectRuntime:
             prompt_builder=SystemPromptBuilder(),
             runtime_facts=runtime_facts,
             instructions=FsProjectInstructionReader(),
+            context_budget=self.llm.context_budget,
+            context=context_manager,
+            memory=self.tools.memory,
             planning=self.tools.planning,
             run_bus=self.event_bus,
             tools=self.tools.dispatcher,

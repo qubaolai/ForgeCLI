@@ -20,6 +20,7 @@ base_url 在注册时固定（阶段偏差，路由与模型选择本身是现�
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.gateway.cache import InMemoryResponseCache
 from forgecli.application.llm.gateway.default_gateway import DefaultLlmGateway
+from forgecli.application.llm.gateway.errors import ModelGatewayError
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.llm.gateway.governance import SlidingWindowHealthRegistry
 from forgecli.application.llm.gateway.observability import InProcessGatewayMetrics
@@ -38,8 +40,12 @@ from forgecli.application.llm.metering import CostEstimator, UsageMeter
 from forgecli.application.llm.overrides_service import ModelOverridesService
 from forgecli.application.llm.selection import ConfigBackedSelectionResolver
 from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
+from forgecli.domain.config.errors import ConfigError
+from forgecli.domain.context.budget import ContextBudget
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.selection import CurrentModelSelection
 from forgecli.infrastructure.llm.adapters import OpenAICompatibleProvider
 from forgecli.infrastructure.llm.credentials import (
     EnvCredentialResolver,
@@ -59,6 +65,8 @@ class LlmRuntime:
     # 进程内观测聚合（ADR-0012 §9）：/status 经 snapshot() 消费（展示接入后续切片）。
     gateway_metrics: InProcessGatewayMetrics
     thinking_state: ThinkingRuntimeState
+    # 当前模型的上下文预算 (ADR-0032 决策 1). 每轮现取: 用户可能刚 /model 换过模型.
+    context_budget: Callable[[], ContextBudget | None]
 
 
 def build_llm_runtime(
@@ -101,7 +109,38 @@ def build_llm_runtime(
         overrides_service=overrides_service,
         gateway_metrics=metrics,
         thinking_state=thinking_state,
+        context_budget=_budget_reader(resolver),
     )
+
+
+def _budget_reader(
+    resolver: ConfigBackedSelectionResolver,
+) -> Callable[[], ContextBudget | None]:
+    """把当前主模型的窗口折成一份预算 (ADR-0032 决策 1).
+
+    走 resolver 而不是直接读 llm.json: 当前模型是谁, 有没有按用途覆盖, 目录里的窗口
+    是多少 —— 这三件事的口径必须与真正发请求时用的那一份完全一致. 各读各的, 压缩就会
+    按 A 模型的窗口去压一份要发给 B 模型的请求.
+
+    解析不出来时返回 None, **不猜一个窗口**: 猜小了平白压掉内容, 猜大了等于没有这道
+    防线. 返回 None 只是回到接入压缩之前的行为, 而那不会让这一轮失败.
+    """
+
+    def _current() -> ContextBudget | None:
+        try:
+            resolved = resolver.resolve(
+                CurrentModelSelection(), origin=RequestOrigin.ACT
+            )
+        except (ModelGatewayError, ConfigError):
+            # 模型没配, 目录里没有它, 或者配置读不了. 都不是这一轮该失败的理由.
+            return None
+        entry = resolved.entry
+        return ContextBudget(
+            context_window=entry.context_window,
+            reserved_output_tokens=entry.max_output_tokens or 0,
+        )
+
+    return _current
 
 
 def _build_provider_registry(llm_config_service: LlmConfigService) -> ProviderRegistry:

@@ -24,6 +24,7 @@ from forgecli.application.prompt.project_instruction_reader import ProjectInstru
 from forgecli.application.prompt.runtime_facts import RuntimeFacts
 from forgecli.domain.execution.fence import FencePolicy
 from forgecli.domain.intents import SessionMode
+from forgecli.domain.memory.entry import MemoryEntry
 from forgecli.domain.prompt import text as prompt_text
 from forgecli.domain.prompt.blocks import PromptBlock, PromptBlockId, PromptSnapshot
 from forgecli.domain.security.budget import fence_allowed_capabilities
@@ -61,6 +62,8 @@ class PromptBuildInput:
     planning: ActivePlanning = field(default_factory=ActivePlanning)
     # 本回合的围栏边界 (ADR-0030). 模型据此知道自己能碰到什么, 不必靠猜.
     fence: FencePolicy | None = None
+    # 跨会话记忆 (ADR-0033 决策 8). 空的是常态 —— 新项目本来就没有记忆.
+    memory: tuple[MemoryEntry, ...] = ()
 
 
 class SystemPromptBuilder:
@@ -84,6 +87,10 @@ class SystemPromptBuilder:
         todo_state = _todo_state(build_input)
         if todo_state is not None:
             blocks.append(todo_state)
+        # 记忆排在最后, 同属易变尾部: 模型可能在会话中途用 memory.write 改写它.
+        memory_state = _memory_state(build_input)
+        if memory_state is not None:
+            blocks.append(memory_state)
         return PromptSnapshot(
             version=prompt_text.PROMPT_TEXT_VERSION, blocks=tuple(blocks)
         )
@@ -291,4 +298,32 @@ def _escape_sentinels(text: str) -> str:
         if line.strip() in (prompt_text.INSTRUCTION_BEGIN, prompt_text.INSTRUCTION_END)
         else line
         for line in text.split("\n")
+    )
+
+
+def _memory_state(build_input: PromptBuildInput) -> PromptBlock | None:
+    """跨会话记忆 (ADR-0033 决策 8).
+
+    正文第一句就写明来源与优先级. 这一块与"项目指令"的**信任级别不同** —— 那边是用户
+    写的, 这边是模型自己推断的, 可能已经过时 —— 而模型分不出来, 除非我们说.
+
+    冲突由模型按这条优先级自己判, Forge 不替它挑一个: 逐条比对要求语义理解, 而机械
+    地按 key 字面匹配几乎永不命中, 摆一个不会响的提示比没有更糟.
+    """
+    if not build_input.memory:
+        return None
+    sections: list[str] = [prompt_text.MEMORY_STATE_LEAD]
+    for scope, label in prompt_text.MEMORY_SCOPE_NAMES:
+        lines = [
+            prompt_text.MEMORY_ENTRY_LINE.format(key=entry.key, value=entry.value)
+            for entry in build_input.memory
+            if entry.scope is scope
+        ]
+        if lines:
+            sections.append("\n".join([f"{label}:", *lines]))
+    return PromptBlock(
+        block_id=PromptBlockId.MEMORY_STATE,
+        heading=prompt_text.HEADING_MEMORY_STATE,
+        body="\n\n".join(sections),
+        cacheable=False,
     )

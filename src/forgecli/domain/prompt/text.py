@@ -42,12 +42,15 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
+from forgecli.domain.memory.entry import MemoryScope
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.hashing import digest_text
 
 # 接 MAIN_AGENT_PROMPT_VERSION 的 5 往下数: 那个常量数的是同一件事 (Forge 撰写的正文
 # 改了没有), 只是当时只覆盖系统提示词一块.
-PROMPT_TEXT_VERSION = 6
+PROMPT_TEXT_VERSION = 8
 
 
 # ============================================================================
@@ -61,6 +64,7 @@ HEADING_WORKSPACE_INSTRUCTIONS = "项目指令"
 HEADING_RUNTIME_FACTS = "当前运行事实"
 HEADING_PLAN_STATE = "当前计划"
 HEADING_TODO_STATE = "当前待办"
+HEADING_MEMORY_STATE = "跨会话记忆"
 
 CORE_IDENTITY = """\
 你是运行在 ForgeCLI 中的编码 Agent.
@@ -169,6 +173,7 @@ TODO_STATE_BODY = """\
 # 的提示词, 从而毁掉指纹的确定性.
 CAPABILITY_NAMES: tuple[tuple[Capability, str], ...] = (
     (Capability.PLAN_ONLY, "计划"),
+    (Capability.ARTIFACT_READ, "读回已归档的输出"),
     (Capability.WORKSPACE_READ, "工作区读取"),
     (Capability.WORKSPACE_WRITE, "工作区写入"),
     (Capability.WORKSPACE_DELETE, "工作区删除"),
@@ -263,6 +268,110 @@ CANCEL_NOTICE = "(本轮回复已被用户取消)"
 REVIEW_NOTICE = "已提交一份计划, 等待你的决定."
 
 
+# ---- 跨会话记忆 (ADR-0033 决策 8) ----
+#
+# 这一块与 WORKSPACE_INSTRUCTIONS 的**信任级别不同**, 而模型分不出来 —— 除非我们说.
+# 项目指令是用户写的, 这里是模型自己从过往对话推断的, 可能已经过时. 所以正文第一句
+# 就得把这件事和冲突时的优先级说清楚, 不能只列条目.
+
+MEMORY_STATE_LEAD = """\
+以下是你在过往会话里记下的事实, 由你自己推断而来, **不是用户下达的指令**. \
+它们可能已经过时: 与"项目指令"块冲突时一律以那一块为准. \
+发现某条不对就用 memory.forget 删掉它, 学到新的用 memory.write 记下来."""
+
+# 记忆分级的人类可读名. 与 CAPABILITY_NAMES 同一个理由: 用元组而不是 dict 遍历,
+# 集合的迭代顺序不稳定会让同样的输入产出不同的提示词, 从而毁掉指纹的确定性.
+MEMORY_SCOPE_NAMES: tuple[tuple[MemoryScope, str], ...] = (
+    (MemoryScope.PROJECT, "项目事实"),
+    (MemoryScope.USER, "用户偏好"),
+)
+
+MEMORY_ENTRY_LINE = "- {key}: {value}"
+
+# memory.write / memory.forget 的回执.
+MEMORY_WRITTEN = "已记住 {key}."
+MEMORY_REPLACED = "已更新 {key} (原值: {old})."
+MEMORY_FORGOTTEN = "已忘记 {key}."
+MEMORY_NOT_FOUND = "没有记过 {key}, 无需忘记."
+MEMORY_REJECT_INVALID_KEY = (
+    "key 只能是小写字母, 数字, 下划线, 点和连字符, 最长 64 字符."
+)
+MEMORY_REJECT_EMPTY_VALUE = "value 不能为空."
+MEMORY_REJECT_VALUE_TOO_LONG = (
+    "value 超过 {limit} 字节. 记忆每一轮都进上下文, 请只留结论, 不要写成长文."
+)
+MEMORY_REJECT_SECRET = (
+    "内容像是凭证, 已拒绝写入. 记忆会长期留在磁盘上并每轮进上下文, "
+    "任何 token, 密钥或证书都不要记."
+)
+MEMORY_REJECT_SCOPE_FULL = (
+    "这一级记忆已满 ({limit} 条). 先用 memory.forget 删掉不再成立的那条."
+)
+
+
+# ============================================================================
+# 三点五, 上下文压缩与去重 (ADR-0032)
+#
+# 这些占位文本会**顶替掉** transcript 里原本的工具结果正文. 措辞因此比别处更要紧:
+# 模型读到的不再是内容本身, 而是这一行 —— 它得凭这一行判断"要不要去取回来".
+#
+# 三种状态必须分得开. 混成一句"内容见 xxx"的后果是模型去取一个已经被回收的 id,
+# 拿回一条找不到的错误, 而它读不出这是清理机制还是自己 id 写错了 —— 后一种理解会让
+# 它反复重试, 直到撞满 _MAX_BLOCKED_CALLS.
+# ============================================================================
+
+# 一级降级: 内容还在, 取得回来.
+ARCHIVED_AVAILABLE = (
+    "[第 {index} 次工具调用的输出已归档 {artifact_id} ({size} 字节), "
+    "需要细节时用 artifact.read 取回]"
+)
+
+# 一级降级: 内容已被过期回收 (ADR-0032 决策 6.1). 明说取不回来, 别让它白试一次.
+ARCHIVED_EXPIRED = (
+    "[第 {index} 次工具调用的输出已过期回收, 取不回来了; "
+    "还需要这份内容的话重新执行一次]"
+)
+
+# 去重命中: 同一个路径, 同一个状态, 本轮已经读过一次.
+DEDUP_UNCHANGED = (
+    "[与第 {index} 次工具调用读到的内容相同, 该文件此后未变更; "
+    "需要正文时用 artifact.read 取 {artifact_id}]"
+)
+
+# 变更通知 (决策 4). 主动告诉它, 不等它来问 —— 它不会想起来问.
+ARCHIVED_STALE = (
+    "[第 {index} 次工具调用读到的内容已归档 {artifact_id}; "
+    "该文件此后被修改过, 上面这一份不再代表当前内容]"
+)
+
+# artifact.read 取不到时回给模型的结论.
+ARTIFACT_MISSING = (
+    "该输出已过期回收, 取不回来了. 还需要这份内容的话重新执行一次原来的调用."
+)
+ARTIFACT_BAD_ID = "artifact_id 只能是 16 位十六进制字符, 不能包含路径."
+ARTIFACT_WINDOW_TRUNCATED = (
+    "[这一段仍然超出单次回填上限, 已截断; 用 offset 与 limit 取更小的一段]"
+)
+
+# 回合间保留的工具调用结论行 (决策 7). 跨轮只留这一行, 不留正文.
+TURN_TOOL_LINE = "[第 {index} 次工具调用] {tool} -> {outcome}"
+TURN_TOOL_HEADER = "上一轮执行过的工具调用:"
+
+# 二级摘要 (决策 2). 给摘要模型的指令, 以及摘要在 transcript 里的包装.
+COMPACTION_INSTRUCTION = """\
+把下面这段对话压缩成一份交接说明, 供你自己在上下文被截断之后继续同一个任务.
+
+必须保留: 用户的目标与明确约束; 已经做完的关键动作及其结果; 改过或正在关注的文件;
+失败, 风险与还没做完的事; 下一步打算.
+
+不要保留: 逐字的文件内容, 完整的命令输出, 已经不影响后续判断的中间过程.
+
+只输出这份说明本身, 不要有前言后语."""
+
+COMPACTION_HEADER = "以下是本次对话早前部分的交接说明, 原文已因上下文长度被压缩:"
+COMPACTION_FAILED = "上下文超长, 且自动压缩未能完成."
+
+
 # ============================================================================
 # 四, 结构化输出
 #
@@ -296,6 +405,8 @@ def fingerprint() -> str:
 def _canonical(value: object) -> str:
     if isinstance(value, tuple):
         return "|".join(_canonical(item) for item in value)
-    if isinstance(value, Capability):
-        return value.value
+    if isinstance(value, Enum):
+        # 按枚举基类而不是逐个类型列举: 漏掉一个的后果是它落到 str(), 于是 repr 里的
+        # 类名进了指纹 —— 改个类名就会让指纹变, 而正文一个字都没动.
+        return str(value.value)
     return str(value)

@@ -25,6 +25,7 @@ from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_run.tool_observer import EventBusToolRunObserver
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
+from forgecli.application.memory.memory_service import MemoryService
 from forgecli.application.planning.planning_service import PlanningService
 from forgecli.application.recovery.coordinator import WorkspaceMutationCoordinator
 from forgecli.application.recovery.recovery_service import RecoveryService
@@ -38,11 +39,19 @@ from forgecli.application.session.session_service import SessionService
 from forgecli.application.session.tool_audit import SessionToolAudit
 from forgecli.application.tool_request.coordinator import ToolRequestCoordinator
 from forgecli.application.tool_request.dispatcher import CoordinatorToolDispatcher
-from forgecli.application.tools.artifact_store import ArtifactStore
+from forgecli.application.tools.artifact_store import (
+    ARTIFACT_RETENTION_SECONDS,
+    ArtifactStore,
+)
+from forgecli.application.tools.builtin.artifact_read import ArtifactReadTool
 from forgecli.application.tools.builtin.fs_apply_patch import ApplyPatchTool
 from forgecli.application.tools.builtin.fs_find import FindTool
 from forgecli.application.tools.builtin.fs_read import ReadFileTool
 from forgecli.application.tools.builtin.git_read import GitReadTool
+from forgecli.application.tools.builtin.memory_tools import (
+    MemoryForgetTool,
+    MemoryWriteTool,
+)
 from forgecli.application.tools.builtin.planning_tools import (
     PlanReadTool,
     PlanWriteTool,
@@ -60,11 +69,14 @@ from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.execution.fence import FencePolicy, fence_for
 from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
 from forgecli.domain.intents import SessionMode
+from forgecli.domain.memory.entry import MemoryScope
 from forgecli.infrastructure.config.paths import (
     artifacts_dir,
     learned_rules_file,
     plans_dir,
+    project_memory_file,
     recovery_dir,
+    user_memory_file,
 )
 from forgecli.infrastructure.execution.environment_probe import (
     build_execution_environment,
@@ -77,6 +89,7 @@ from forgecli.infrastructure.execution.sandbox.selection import select_provider
 from forgecli.infrastructure.execution.sandboxed_command_executor import (
     SandboxedCommandExecutor,
 )
+from forgecli.infrastructure.memory.json_memory_store import JsonMemoryStore
 from forgecli.infrastructure.planning import FsPlanStore
 from forgecli.infrastructure.recovery.cow_snapshot_backend import (
     probe_snapshot_backend,
@@ -113,6 +126,12 @@ class ToolStack:
     # 围栏是不是真的立起来了 —— 来自启动期行为自测, 不是"装了就算".
     confined: bool
     planning: PlanningService
+    # 记忆 (ADR-0033 决策 10). 工具经它写, AgentTurnService 经它读 —— 必须是同一个
+    # 实例, 否则模型这一轮记下的东西下一轮读不到.
+    memory: MemoryService
+    # 归档存储 (ADR-0032). 上下文管理要它来判断降级之后取不取得回来, 所以它必须与
+    # 工具写进去的是**同一个实例** —— 各建一个的话, 写在 A 里的内容 B 说不存在.
+    artifacts: ArtifactStore
     # 人工 Shell 回来之后要清的缓存都注册在它上面 (ADR-0017 §10).
     barrier: ManualMutationBarrier
 
@@ -188,6 +207,12 @@ def build_tool_stack(
     # 3. 工具注册表.
     governor = ResourceGovernor()
     store = artifacts or FsArtifactStore(artifacts_dir())
+    # 启动时回收一次超期未引用的归档内容 (ADR-0032 决策 6). 挂在启动而不是会话结束:
+    # 用户不会记得归档会话, 挂在"会话结束"上的回收等于不回收.
+    #
+    # 失败不阻塞启动: 回收不了的后果是多占一点磁盘, 而这是组合根, 抛出去就是起不来.
+    with contextlib.suppress(OSError):
+        store.sweep(older_than_seconds=ARTIFACT_RETENTION_SECONDS)
     # 围栏包在执行器外面, 不在工具内部分支 (ADR-0030 决策 1).
     executor: CommandExecutor = SandboxedCommandExecutor(
         LocalCommandExecutor(), provider
@@ -198,6 +223,18 @@ def build_tool_stack(
     planning = PlanningService(
         FsPlanStore(lambda: plans_dir(workspace_id, session.current().session_id))
     )
+    # 记忆 (ADR-0033). 两级各一份存储: 项目事实跟项目走, 用户偏好跟人走.
+    #
+    # workspace_id 这个形参名是历史遗留, 传进来的就是 project_id (见 bootstrap 的
+    # 装配点) —— 记忆按项目分区, 与 plans/ 用的是同一个身份.
+    memory = MemoryService(
+        {
+            MemoryScope.PROJECT: JsonMemoryStore(
+                project_memory_file(workspace_id), MemoryScope.PROJECT
+            ),
+            MemoryScope.USER: JsonMemoryStore(user_memory_file(), MemoryScope.USER),
+        }
+    )
     registry = ToolRegistry()
     registry.register_all(
         (
@@ -206,6 +243,9 @@ def build_tool_stack(
             TodoReadTool(planning),
             TodoWriteTool(planning),
             TodoSetStatusTool(planning),
+            ArtifactReadTool(governor, store),
+            MemoryWriteTool(memory),
+            MemoryForgetTool(memory),
             FindTool(governor, store),
             ReadFileTool(governor, store),
             SearchTextTool(governor, store),
@@ -282,6 +322,8 @@ def build_tool_stack(
         fence_factory=fence_factory,
         confined=fence_report.confined,
         planning=planning,
+        memory=memory,
+        artifacts=store,
         barrier=barrier,
     )
 

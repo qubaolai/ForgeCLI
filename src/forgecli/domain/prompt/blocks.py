@@ -38,6 +38,9 @@ class PromptBlockId(Enum):
     # (ADR-0018 §4.4 的两条判据).
     PLAN_STATE = "plan_state"
     TODO_STATE = "todo_state"
+    # 跨会话记忆 (ADR-0033 决策 8). 同样在缓存断点之后: 模型可能在会话中途用
+    # memory.write 改写它, 进稳定前缀就等于前缀不再稳定.
+    MEMORY_STATE = "memory_state"
 
 
 @dataclass(frozen=True)

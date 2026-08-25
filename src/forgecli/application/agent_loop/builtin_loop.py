@@ -34,6 +34,7 @@ from dataclasses import dataclass
 
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_run.scrubbing import scrub_arguments
+from forgecli.application.context.manager import ContextManager
 from forgecli.application.llm.error_hints import actionable_message
 from forgecli.application.llm.gateway.errors import (
     MalformedToolCallError,
@@ -74,6 +75,8 @@ from forgecli.domain.agent.run_events import (
 )
 from forgecli.domain.agent.state import LoopBudgets, LoopInput
 from forgecli.domain.agent.stop import LoopStopReason, StopClassification
+from forgecli.domain.context.budget import ContextBudget
+from forgecli.domain.context.compaction import CompactionDraft
 from forgecli.domain.conversation.message import (
     ChatMessage,
     TextBlock,
@@ -243,6 +246,7 @@ class BuiltinAgentLoop:
         cancel_token_factory: Callable[[], CancelToken | None] = lambda: None,
         event_bus: AgentRunEventBus | None = None,
         timer: Callable[[], float] = time.monotonic,
+        context: ContextManager | None = None,
     ) -> None:
         self._gateway = gateway
         self._meter = usage_meter
@@ -254,6 +258,9 @@ class BuiltinAgentLoop:
         self._finished = False
         self._turn_id: str | None = None
         self._usage_drafts: list[UsageRecordDraft] = []
+        # 压缩记录 (ADR-0032 决策 1). 循环攒着, AgentTurnService 落盘 —— 与
+        # usage_drafts 同一条分工: 循环可以调模型, 但不写事件 (ADR-0010).
+        self._compaction_drafts: list[CompactionDraft] = []
         self._partial_answer: str | None = None
         # 本轮的运行 transcript: 每次模型调用都基于它, 工具结果按 §10 写回这里.
         self._messages: tuple[ChatMessage, ...] = ()
@@ -262,6 +269,9 @@ class BuiltinAgentLoop:
         self._session_id = ""
         self._tools: tuple[ToolSchema, ...] = ()
         self._budgets = LoopBudgets()
+        # 缺省为 None: 没给预算就不压缩, 与接入之前的行为一致. 不猜一个窗口大小.
+        self._context = context
+        self._context_budget: ContextBudget | None = None
         # 模型一次要了多个工具时的等待队列, 以及正在等 observation 的那一个.
         self._pending_calls: list[ToolCall] = []
         self._dispatched: ToolCall | None = None
@@ -291,6 +301,7 @@ class BuiltinAgentLoop:
         # 本轮所有模型调用复用同一份提示词. 不在工具调用之间隐式换 (ADR-0018 §6.2):
         # 换了之后"模型为什么突然改了行为"就再也对不上任何一条事件.
         self._prompt = loop_input.context_package.prompt
+        self._context_budget = loop_input.context_package.budget
         self._budgets = loop_input.budgets
         self._tools = _schemas_of(loop_input.tool_catalog)
         self._turn_started_at = self._timer()
@@ -319,6 +330,11 @@ class BuiltinAgentLoop:
         return tuple(self._usage_drafts)
 
     @property
+    def compaction_drafts(self) -> tuple[CompactionDraft, ...]:
+        """本轮发生过的压缩 (落盘由 AgentTurnService 执行)."""
+        return tuple(self._compaction_drafts)
+
+    @property
     def partial_answer(self) -> str | None:
         """流式中断时已累积的部分回答文本 (无则为 None)."""
         return self._partial_answer
@@ -330,6 +346,10 @@ class BuiltinAgentLoop:
         over_budget = self._check_model_budget()
         if over_budget is not None:
             return over_budget
+
+        too_long = self._fit_context()
+        if too_long is not None:
+            return too_long
 
         self._step_index += 1
         self._publish(
@@ -494,6 +514,7 @@ class BuiltinAgentLoop:
                         tool_call_id=call.tool_call_id,
                         content=_labelled(call, observation.content),
                         is_error=observation.is_error,
+                        provenance=observation.provenance,
                     ),
                 ),
             ),
@@ -661,6 +682,34 @@ class BuiltinAgentLoop:
             return self._stop(
                 LoopStopReason.BUDGET_EXHAUSTED,
                 prompt_text.TOOL_BUDGET_STOP.format(limit=limit),
+            )
+        return None
+
+    def _fit_context(self) -> LoopStop | None:
+        """调模型之前整理一次上下文 (ADR-0032 决策 1).
+
+        放在这里而不是等网关抛 ModelContextOverflowError: 那条路上请求已经组好了, 而且
+        它今天是终止性的 —— 一轮跑了二十步的工作会因为最后一次调用超窗而整个作废.
+
+        压完仍然放不下时停在 CONTEXT_COMPACTION_REQUIRED, 不把一个必然被拒的请求发出去.
+        它归类为 RESUMABLE_PAUSE: 这一轮干不下去了, 但会话没坏.
+        """
+        if self._context is None:
+            return None
+        result = self._context.fit(
+            self._messages,
+            budget=self._context_budget,
+            session_id=self._session_id,
+            turn_id=self._turn_id or "",
+            system_prompt="" if self._prompt is None else self._prompt.text,
+            tools=self._tools,
+        )
+        self._messages = result.messages
+        self._compaction_drafts.extend(result.drafts)
+        if result.over_allowance:
+            return self._stop(
+                LoopStopReason.CONTEXT_COMPACTION_REQUIRED,
+                prompt_text.COMPACTION_FAILED,
             )
         return None
 

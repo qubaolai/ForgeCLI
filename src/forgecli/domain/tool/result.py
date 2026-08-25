@@ -19,6 +19,7 @@ from typing import ClassVar
 __all__ = [
     "ArtifactRef",
     "ContentPart",
+    "ResultProvenance",
     "ToolError",
     "ToolMetrics",
     "ToolResult",
@@ -42,7 +43,6 @@ class ContentPart:
     """一段结果内容. 回填模型时必须带着截断标记, 不做静默截断."""
 
     text: str
-    media_type: str = "text/plain"
     truncated: bool = False
     artifact_id: str | None = None
 
@@ -59,6 +59,40 @@ class ArtifactRef:
     size: int
     content_hash: str
     truncated: bool = False
+
+
+@dataclass(frozen=True)
+class ResultProvenance:
+    """这条结果是"什么东西, 在什么状态下"的一份快照 (ADR-0032 决策 3/4).
+
+    两个字段组各自独立地开启一种能力, 缺一组不影响另一组:
+
+    - ``source_path`` + ``source_state`` 让这条结果可以**去重**: 同一个路径在同一个
+      状态下被读第二次, 后一次回一行引用就够了.
+    - ``artifact_id`` 让这条结果可以**降级**: transcript 里的正文换成引用, 完整内容
+      仍在 ArtifactStore 里, 用 artifact.read 取回.
+
+    ``source_state`` 取 ``path_state_token``, 与 ADR-0027 执行前复核用的是**同一个
+    函数**. 两套判据会让安全层说"没变"而去重层说"变了", 而这种分歧不会报错.
+
+    只有读文件的工具填得出 ``source_*``. ``shell.run`` 填不出 —— 它的输出不是某个路径
+    在某个状态下的快照, 重跑一次也不保证一样. 于是它的结果不参与去重, 但仍然可以降级.
+    """
+
+    artifact_id: str = ""
+    source_path: str = ""
+    source_state: str = ""
+    byte_size: int = 0
+
+    @property
+    def dedupable(self) -> bool:
+        """能不能拿它判"这份内容我已经见过了"."""
+        return bool(self.source_path and self.source_state)
+
+    @property
+    def archived(self) -> bool:
+        """正文降级之后还取不取得回来."""
+        return bool(self.artifact_id)
 
 
 @dataclass(frozen=True)
@@ -106,6 +140,9 @@ class ToolResult:
     # 发生的失败。恢复协调器据此避免把竞争者创建的文件误记成 Forge 的 postimage。
     workspace_mutated: bool | None = None
     turn_disposition: TurnDisposition = TurnDisposition.CONTINUE
+    # 这条结果的来源身份与归档位置 (ADR-0032). None 表示工具没有声明 —— 那样的结果
+    # 既不去重也不降级, 原样留在 transcript 里.
+    provenance: ResultProvenance | None = None
 
     def __post_init__(self) -> None:
         if self.status is ToolResultStatus.OK and self.error is not None:

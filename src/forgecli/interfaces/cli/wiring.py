@@ -25,6 +25,7 @@ from forgecli.infrastructure.session.fs_session_catalog import FsSessionCatalog
 from forgecli.infrastructure.session.json_state_store import JsonStateStore
 from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
 from forgecli.interfaces.cli.commands.add_dir_command import AddDirCommand
+from forgecli.interfaces.cli.commands.compact_command import CompactCommand
 from forgecli.interfaces.cli.commands.config_command import ConfigCommand
 from forgecli.interfaces.cli.commands.exit_command import ExitCommand
 from forgecli.interfaces.cli.commands.help_command import HelpCommand
@@ -158,6 +159,13 @@ def build_registry(
             ),
         ),
     ]
+    slash_specs.append(
+        CommandSpec(
+            "compact",
+            "压缩当前会话历史, 腾出上下文空间",
+            handler=CompactCommand(agent_turn, output),
+        )
+    )
     # /exit 与 Ctrl-C×2 是同一条退出路径 (都抛 SessionExit), 不是两套收尾逻辑.
     exit_spec = CommandSpec("exit", "退出会话", handler=ExitCommand(output))
     # 工具链相关的命令只有在装配了 ToolStack 时才注册: 没有目录授权与恢复层的时候,

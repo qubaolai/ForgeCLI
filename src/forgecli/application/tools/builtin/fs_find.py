@@ -289,6 +289,7 @@ class FindTool(Tool):
             content_parts=emitted.parts,
             artifacts=emitted.artifacts,
             metrics=ToolMetrics(bytes_out=emitted.bytes_out),
+            provenance=emitted.provenance,
         )
 
 

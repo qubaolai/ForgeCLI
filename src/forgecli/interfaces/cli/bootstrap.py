@@ -18,6 +18,7 @@ from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_turn import AgentTurnService
 from forgecli.application.agent_turn.cancellation import TurnCancelSource
 from forgecli.application.config.config_service import ConfigService
+from forgecli.application.context.manager import ContextManager
 from forgecli.application.intent_router import IntentRouter
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
@@ -238,14 +239,6 @@ def run() -> ExitCode:
         stream_view = TerminalRunRenderer(console)
         run_bus.subscribe(stream_view)
 
-        def _new_loop() -> BuiltinAgentLoop:
-            return BuiltinAgentLoop(
-                llm_runtime.gateway,
-                llm_runtime.usage_meter,
-                cancel_token_factory=cancel_source.current,
-                event_bus=run_bus,
-            )
-
         # 工具, 安全与恢复三层. 装配它需要一个已经存在的会话 (审计要写进事件日志),
         # 所以放在 session 之后, registry 之前.
         tools = build_tool_stack(
@@ -256,6 +249,25 @@ def run() -> ExitCode:
             run_bus=run_bus,
             approval=TtyApprovalService(console=console),
         )
+
+        # 上下文管理 (ADR-0032). 建在工具栈之后, 因为它必须拿到**同一个**
+        # ArtifactStore —— 各建一个的话, 工具写进 A 的内容, 降级时 B 会说不存在,
+        # 于是每一条降级占位都写成"已过期回收".
+        #
+        # 网关给它是为了二级摘要. 循环本来就持有网关, 所以这不新增任何能力 (ADR-0010
+        # 允许循环调模型, 禁的是写事件).
+        context_manager = ContextManager(
+            artifacts=tools.artifacts, gateway=llm_runtime.gateway
+        )
+
+        def _new_loop() -> BuiltinAgentLoop:
+            return BuiltinAgentLoop(
+                llm_runtime.gateway,
+                llm_runtime.usage_meter,
+                cancel_token_factory=cancel_source.current,
+                event_bus=run_bus,
+                context=context_manager,
+            )
 
         def _is_git_repo(path: str) -> bool:
             """向上找 .git.
@@ -283,6 +295,9 @@ def run() -> ExitCode:
             prompt_builder=SystemPromptBuilder(),
             runtime_facts=_runtime_facts,
             instructions=FsProjectInstructionReader(),
+            context_budget=llm_runtime.context_budget,
+            context=context_manager,
+            memory=tools.memory,
             planning=tools.planning,
             run_bus=run_bus,
             tools=tools.dispatcher,

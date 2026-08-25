@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from forgecli.domain.conversation.turn import MessageRole
+from forgecli.domain.tool.result import ResultProvenance
 from forgecli.domain.tool.tool_call import ToolCall
 
 __all__ = ["ChatMessage", "ContentBlock", "TextBlock", "ToolResultBlock"]
@@ -45,6 +46,12 @@ class ToolResultBlock(ContentBlock):
     tool_call_id: str
     content: str
     is_error: bool = False
+    # 这条结果的来源身份与归档位置 (ADR-0032). 上下文管理据此判断能不能去重, 以及
+    # 降级之后取不取得回来. None 表示工具没声明, 那样的块原样留着.
+    #
+    # 放在块上而不是另建一张边表: 边表要靠索引对齐消息序列, 而消息序列在压缩过程中
+    # 正在被重写 —— 一次没对齐就是把 A 的来源安到 B 头上, 且不会报错.
+    provenance: ResultProvenance | None = None
 
     def __post_init__(self) -> None:
         if not self.tool_call_id.strip():

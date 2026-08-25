@@ -393,6 +393,7 @@ class GitReadTool(Tool):
                 content_parts=emitted.parts,
                 artifacts=emitted.artifacts,
                 metrics=metrics,
+                provenance=emitted.provenance,
             )
         return ToolResult(
             invocation_id=plan.plan_id,
@@ -401,6 +402,7 @@ class GitReadTool(Tool):
             content_parts=emitted.parts,
             artifacts=emitted.artifacts,
             metrics=metrics,
+            provenance=emitted.provenance,
             error=ToolError(
                 code="git_failed",
                 message=outcome.failure or (outcome.stderr.strip() or "git 执行失败"),

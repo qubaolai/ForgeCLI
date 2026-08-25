@@ -24,7 +24,9 @@ from dataclasses import dataclass
 
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
 from forgecli.application.agent_run.events import AgentRunEventBus
+from forgecli.application.context.manager import ContextManager
 from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
+from forgecli.application.memory.memory_service import MemoryService
 from forgecli.application.planning.planning_service import (
     ActivePlanning,
     PlanningService,
@@ -58,6 +60,8 @@ from forgecli.domain.agent.run_events import (
 )
 from forgecli.domain.agent.state import ContextPackage, LoopInput
 from forgecli.domain.agent.stop import LoopStopReason
+from forgecli.domain.context.budget import ContextBudget
+from forgecli.domain.context.compaction import CompactionDraft, CompactionLevel
 from forgecli.domain.conversation.message import ChatMessage, TextBlock
 from forgecli.domain.conversation.turn import (
     AssistantResponse,
@@ -84,6 +88,7 @@ class _TurnOutcome:
     text: str
     status: TurnStatus
     usage_drafts: tuple[UsageRecordDraft, ...] = ()
+    compaction_drafts: tuple[CompactionDraft, ...] = ()
     stop_reason: str | None = None
     # 完整 traceback. 只进事件日志, 不上屏 —— 终端一行摘要就够,
     # 但排查时必须找得回来.
@@ -106,6 +111,17 @@ class AgentTurnService:
         prompt_builder: SystemPromptBuilder,
         runtime_facts: Callable[[], RuntimeFacts],
         instructions: ProjectInstructionReader,
+        # 每轮现取, 与 runtime_facts 同一个形状: 用户可能刚 /model 换过模型, 上一轮的
+        # 窗口不作数. 返回 None 表示这一轮算不出窗口 (目录里没有这个模型), 那时不压缩
+        # 也不猜 —— 猜小了平白压掉内容, 猜大了等于没有这道防线 (ADR-0032 决策 1).
+        context_budget: Callable[[], ContextBudget | None],
+        # 与循环持有的是**同一个**实例. /compact 走的是这一份, 自动压缩走循环那一份,
+        # 但两条路必须用同一套判据与同一个 ArtifactStore.
+        context: ContextManager | None = None,
+        # 记忆的唯一入口 (ADR-0033 决策 10). 给这里而不是给循环: ADR-0010 明写循环
+        # 不读写长期记忆, 而功能上也用不着 —— 读只发生在 _compile_prompt 那一刻,
+        # 与 ProjectInstructionReader 和 PlanningService 完全同构.
+        memory: MemoryService | None = None,
         planning: PlanningService | None = None,
         run_bus: AgentRunEventBus | None = None,
         tools: CoordinatorToolDispatcher | None = None,
@@ -117,6 +133,10 @@ class AgentTurnService:
         # 每轮现取: 用户可能刚 /add-dir 加过根, 上一轮的事实不作数.
         self._runtime_facts = runtime_facts
         self._instructions = instructions
+        self._context_budget = context_budget
+        self._context = context
+        # 缺省为 None: 没接记忆时提示词块整块不渲染, 链路照常工作.
+        self._memory = memory
         # 计划与待办缺省为 None: 没接时两个提示词块整块不渲染, 链路照常工作.
         self._planning = planning
         # 计划与待办的运行事件发在这里 (ADR-0022 §7): 服务独家持有 turn_id 且是唯一的
@@ -133,6 +153,9 @@ class AgentTurnService:
         self._max_steps = max_steps
         self._turns = 0
         self._history: list[ChatMessage] = []
+        # 本轮跑过的工具调用结论行 (ADR-0032 决策 7). 每轮清空 —— 它只在 _remember_turn
+        # 那一刻被读一次, 攒着跨轮就会把上一轮的行再写一遍.
+        self._turn_digests: list[str] = []
 
     def resume(self, history: Iterable[SessionEvent]) -> None:
         """续写一段历史会话：接回 turn 计数，并从事件回填内存 transcript。"""
@@ -158,6 +181,13 @@ class AgentTurnService:
                 turn_id=turn_id, text=refusal, status=TurnStatus.FAILED
             )
         self._session.record_user_message(text, turn_id=turn_id, origin=origin)
+        if self._memory is not None:
+            # 记一次"当前是哪一轮", 供本轮内 memory.write 取来源 (ADR-0033 决策 7).
+            # 工具的 perform 拿不到会话身份, 而把它塞进 normalized_input 会进
+            # plan_hash, 破掉"内容相同的调用哈希相同"那条不变量.
+            self._memory.begin_turn(
+                session_id=self._session.current().session_id, turn_id=turn_id
+            )
         # mode 从 session 快照读，单一真相（不再依赖 REPL 内存态）。
         mode = self._session.current().mode
         outcome = self._obtain_outcome(text, mode, turn_id)
@@ -171,6 +201,9 @@ class AgentTurnService:
         for draft in outcome.usage_drafts:
             # usage 写入边界（ADR-0011 §11.1）：loop 只随回复交回草稿，这里统一落盘。
             self._session.record_usage(draft.to_payload(), turn_id=turn_id)
+        for compaction in outcome.compaction_drafts:
+            # 同一条分工 (ADR-0032 决策 1): 循环压缩, 但不写事件.
+            self._session.record_compaction(compaction.to_payload(), turn_id=turn_id)
         self._remember_turn(text, outcome)
         return AssistantResponse(
             turn_id=turn_id,
@@ -178,6 +211,27 @@ class AgentTurnService:
             status=outcome.status,
             pause=outcome.pause,
         )
+
+    def compact(self) -> int:
+        """手动压缩当前历史 (ADR-0032 决策 9). 返回省下的 token 数, 0 表示没压动.
+
+        落盘走的是与自动压缩同一个 record_compaction —— /resume 重建 transcript 时
+        分不出这一次是谁触发的, 也不需要分.
+        """
+        if self._context is None or not self._history:
+            return 0
+        turn_id = f"turn_{self._turns:04d}"
+        result = self._context.summarize_now(
+            tuple(self._history),
+            session_id=self._session.current().session_id,
+            turn_id=turn_id,
+        )
+        if not result.drafts:
+            return 0
+        self._history = list(result.messages)
+        for draft in result.drafts:
+            self._session.record_compaction(draft.to_payload(), turn_id=turn_id)
+        return sum(draft.tokens_saved for draft in result.drafts)
 
     # ---- 提示词 ----
 
@@ -211,6 +265,9 @@ class AgentTurnService:
                     if self._planning is None
                     else self._planning.load()
                 ),
+                # 同样每轮现读, 轮内冻结 (ADR-0033 决策 8): 模型可能在上一轮刚用
+                # memory.write 记下一条, 这一轮就该看见.
+                memory=() if self._memory is None else self._memory.load(),
             )
         )
 
@@ -219,6 +276,7 @@ class AgentTurnService:
     def _obtain_outcome(
         self, text: str, mode: SessionMode, turn_id: str
     ) -> _TurnOutcome:
+        self._turn_digests = []
         try:
             return self._run_loop(text, mode, turn_id)
         except Exception as error:
@@ -259,6 +317,7 @@ class AgentTurnService:
                         *self._history,
                         ChatMessage(role=MessageRole.USER, content=(TextBlock(text),)),
                     ),
+                    budget=self._context_budget(),
                 ),
                 tool_catalog=catalog,
             )
@@ -291,11 +350,13 @@ class AgentTurnService:
                     text=prompt_text.UNSUPPORTED_ACTION_STOP,
                     status=TurnStatus.FAILED,
                     usage_drafts=_drafts_of(loop),
+                    compaction_drafts=_compactions_of(loop),
                 )
         return _TurnOutcome(
             text=prompt_text.LOOP_STEPS_EXCEEDED_STOP,
             status=TurnStatus.FAILED,
             usage_drafts=_drafts_of(loop),
+            compaction_drafts=_compactions_of(loop),
         )
 
     def _run_tool_and_watch_planning(
@@ -436,24 +497,36 @@ class AgentTurnService:
             turn_id=turn_id,
             user_intent_summary=user_text,
         )
+        # 跨回合只留这一行 (ADR-0032 决策 7). 序号与 transcript 里工具结果的出现顺序
+        # 一致, 所以模型在下一轮读到 "第 3 次工具调用" 时, 指的是同一件事.
+        self._turn_digests.append(
+            prompt_text.TURN_TOOL_LINE.format(
+                index=len(self._turn_digests) + 1,
+                tool=observation.tool_name,
+                outcome=observation.digest_line(),
+            )
+        )
         return observation.to_loop_observation()
 
     def _outcome_from_stop(
         self, stop: LoopStop, answer: str | None, loop: BuiltinAgentLoop
     ) -> _TurnOutcome:
         drafts = _drafts_of(loop)
+        compactions = _compactions_of(loop)
         if stop.reason is LoopStopReason.FINAL_ANSWER:
             if answer is None:
                 return _TurnOutcome(
                     text=prompt_text.NO_ANSWER_STOP,
                     status=TurnStatus.FAILED,
                     usage_drafts=drafts,
+                    compaction_drafts=compactions,
                     stop_reason=stop.reason.value,
                 )
             return _TurnOutcome(
                 text=answer,
                 status=TurnStatus.COMPLETED,
                 usage_drafts=drafts,
+                compaction_drafts=compactions,
                 stop_reason=stop.reason.value,
             )
         if stop.reason is LoopStopReason.WAIT_PLAN_REVIEW:
@@ -465,6 +538,7 @@ class AgentTurnService:
                 text=answer or prompt_text.REVIEW_NOTICE,
                 status=TurnStatus.COMPLETED,
                 usage_drafts=drafts,
+                compaction_drafts=compactions,
                 stop_reason=stop.reason.value,
                 pause=TurnPause.PLAN_REVIEW,
             )
@@ -476,20 +550,35 @@ class AgentTurnService:
                 text=text,
                 status=TurnStatus.FAILED,
                 usage_drafts=drafts,
+                compaction_drafts=compactions,
                 stop_reason=stop.reason.value,
             )
         return _TurnOutcome(
             text=stop.message or prompt_text.MODEL_CALL_FAILED_STOP,
             status=TurnStatus.FAILED,
             usage_drafts=drafts,
+            compaction_drafts=compactions,
             stop_reason=stop.reason.value,
         )
 
     def _remember_turn(self, text: str, outcome: _TurnOutcome) -> None:
-        """把本轮写进内存 transcript：成对文本全部进入历史（镜像事件重放）。"""
+        """把本轮写进内存 transcript：成对文本全部进入历史（镜像事件重放）。
+
+        工具调用只留结论行, 不留正文 (ADR-0032 决策 7). 正文进跨轮历史等于把回合内
+        溢出提前到第二轮; 而全丢的后果是下一轮重新读一遍同样的文件, 重新 grep 一遍
+        同样的词 —— 那正是接入压缩之前的状态.
+
+        结论行排在助手回复之前: 工具确实是在回答之前跑的, 顺序反了模型会读成
+        "先回答, 再去做".
+        """
         self._history.append(
             ChatMessage(role=MessageRole.USER, content=(TextBlock(text),))
         )
+        if self._turn_digests:
+            body = "\n".join([prompt_text.TURN_TOOL_HEADER, *self._turn_digests])
+            self._history.append(
+                ChatMessage(role=MessageRole.USER, content=(TextBlock(body),))
+            )
         if outcome.text:
             self._history.append(
                 ChatMessage(
@@ -511,9 +600,32 @@ def _partial_answer_of(loop: BuiltinAgentLoop) -> str | None:
 
 
 def _rebuild_transcript(events: list[SessionEvent]) -> list[ChatMessage]:
-    """从历史事件重建归一化 transcript（镜像重放全部成对 user/assistant 文本）。"""
+    """从历史事件重建归一化 transcript.
+
+    压缩点是**按位置**生效的 (ADR-0032 决策 8): 读到一条 SUMMARY 级的
+    CONTEXT_COMPACTED 就丢掉已经累积的部分, 从摘要接着往下走. 事件在日志里的位置本身
+    定义了它覆盖的范围, 所以不需要另存起止 event_id.
+
+    原始事件一条不删, 只是重建时不再重放它们 —— 压缩影响的是"下一轮发给模型的历史",
+    不是审计. 排查时读全量 events.jsonl 仍然看得到当初发生的一切.
+
+    DOWNGRADE 级不参与: 它改的是回合内 transcript 里工具结果的正文, 而工具结果本来就
+    不跨回合 (决策 7 只留结论行), 拿它截断历史会把一整段对话平白丢掉.
+    """
     transcript: list[ChatMessage] = []
     for event in events:
+        if event.type == EventType.CONTEXT_COMPACTED:
+            summary = _summary_of(event)
+            if summary:
+                transcript = [
+                    ChatMessage(
+                        role=MessageRole.USER,
+                        content=(
+                            TextBlock(f"{prompt_text.COMPACTION_HEADER}\n\n{summary}"),
+                        ),
+                    )
+                ]
+            continue
         text = str(event.payload.get("text", ""))
         if not text:
             continue
@@ -526,3 +638,16 @@ def _rebuild_transcript(events: list[SessionEvent]) -> list[ChatMessage]:
                 ChatMessage(role=MessageRole.ASSISTANT, content=(TextBlock(text),))
             )
     return transcript
+
+
+def _summary_of(event: SessionEvent) -> str:
+    """一条压缩事件里的摘要正文; 不是 SUMMARY 级则为空."""
+    if str(event.payload.get("level", "")) != CompactionLevel.SUMMARY.value:
+        return ""
+    return str(event.payload.get("summary", ""))
+
+
+def _compactions_of(loop: BuiltinAgentLoop) -> tuple[CompactionDraft, ...]:
+    """读取 loop 交回的压缩记录（不在冻结 ABC 上，鸭子类型消费，同 usage_drafts）。"""
+    drafts = getattr(loop, "compaction_drafts", ())
+    return tuple(drafts)

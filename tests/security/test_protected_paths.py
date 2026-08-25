@@ -287,3 +287,22 @@ def test_the_hash_changes_when_the_protected_set_changes(clean_env: None) -> Non
         roots=(*base.roots, ProtectedRoot("/x", ProtectedCategory.PLATFORM_SYSTEM))
     )
     assert base.protected_roots_hash != widened.protected_roots_hash
+
+
+def test_the_archive_directory_stays_unreadable_through_the_normal_tools(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0032 决策 6.2 那条论证的另一半.
+
+    artifact.read 之所以不用绕过任何东西, 是因为它的 ToolPlan 不声明路径; 而 fs.read
+    与 shell.run 声明了, 所以它们指向归档目录时仍然是 Hard Deny —— 全量落盘之后这里
+    躺着每一次工具调用的完整输出, 放开等于给了一条读取全部历史的旁路.
+    """
+    monkeypatch.setenv("FORGE_CONFIG_DIR", str(tmp_path / "forge"))
+    policy = build_protected_path_policy(
+        workspace_roots=(str(tmp_path / "forge"),),
+    )
+    archive = str(tmp_path / "forge" / "state" / "artifacts" / "ab" / "abcd.txt")
+
+    assert policy.verdict_for_read(archive) is PathVerdict.DENY_READ
+    assert policy.verdict_for_write(archive) is PathVerdict.DENY_WRITE

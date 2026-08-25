@@ -19,8 +19,23 @@ class _RecordingArtifacts(ArtifactStore):
             content_hash=digest_text(data),
         )
 
-    def read(self, artifact_id: str) -> str:
+    def read(
+        self,
+        artifact_id: str,
+        *,
+        offset: int | None = None,
+        limit: int | None = None,
+    ) -> str:
         return self.data
+
+    def exists(self, artifact_id: str) -> bool:
+        return True
+
+    def touch(self, artifact_id: str) -> None:
+        return None
+
+    def sweep(self, *, older_than_seconds: float) -> int:
+        return 0
 
 
 def test_json_schema_enforces_declared_numeric_and_length_limits() -> None:

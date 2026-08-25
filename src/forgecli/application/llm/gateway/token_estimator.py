@@ -16,7 +16,12 @@ from __future__ import annotations
 
 import json
 
-from forgecli.domain.conversation.message import ChatMessage, ContentBlock, TextBlock
+from forgecli.domain.conversation.message import (
+    ChatMessage,
+    ContentBlock,
+    TextBlock,
+    ToolResultBlock,
+)
 from forgecli.domain.tool.tool_call import ToolSchema
 
 # 经验近似：平均约 4 个字符折 1 token（对中英文混排偏保守）。
@@ -62,7 +67,14 @@ class ApproximateTokenEstimator:
 
 
 def _block_text(block: ContentBlock) -> str:
-    """取内容块的可估算文本。未知块类型按其 repr 长度近似（预留扩展点）。"""
+    """取内容块的可估算文本。未知块类型按其 repr 长度近似（预留扩展点）。
+
+    工具结果块单列一支: ADR-0032 之后 transcript 的绝大部分体积都在它上面, 而走 repr
+    会把字段名和 provenance 一起算进去 —— 那些不发给供应商, 算上就是系统性高估, 于是
+    每一轮都比实际更早触发压缩。
+    """
     if isinstance(block, TextBlock):
         return block.text
+    if isinstance(block, ToolResultBlock):
+        return block.content
     return repr(block)

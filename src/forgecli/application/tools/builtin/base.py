@@ -19,7 +19,7 @@ from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.errors import PreparationError, PreparationErrorCode
 from forgecli.domain.tool.hashing import digest
 from forgecli.domain.tool.plan import WorkspaceScope
-from forgecli.domain.tool.result import ArtifactRef, ContentPart
+from forgecli.domain.tool.result import ArtifactRef, ContentPart, ResultProvenance
 from forgecli.domain.tool.spec import ToolSpec
 from forgecli.shared.json_schema import validate_json_schema
 
@@ -215,6 +215,9 @@ class EmittedText(NamedTuple):
     parts: tuple[ContentPart, ...]
     artifacts: tuple[ArtifactRef, ...]
     bytes_out: int
+    # 这次输出的归档位置与大小 (ADR-0032). 知道来源路径的工具再用 replace 补上
+    # source_path / source_state —— emit_text 只看得见一段文本, 看不见它从哪来.
+    provenance: ResultProvenance = ResultProvenance()
 
 
 def emit_text(
@@ -224,7 +227,6 @@ def emit_text(
     limits: ResourceLimits,
     artifacts: ArtifactStore | None,
     artifact_name: str = "output",
-    media_type: str = "text/plain",
 ) -> EmittedText:
     """回填模型的内容片段 + 溢写产物.
 
@@ -232,31 +234,43 @@ def emit_text(
     """
     encoded = text.encode("utf-8")
     total = len(encoded)
-    if total <= limits.max_inline_bytes:
-        return EmittedText((ContentPart(text=text, media_type=media_type),), (), total)
-
-    inline = encoded[: limits.max_inline_bytes].decode("utf-8", errors="ignore")
+    truncated = total > limits.max_inline_bytes
+    inline = (
+        encoded[: limits.max_inline_bytes].decode("utf-8", errors="ignore")
+        if truncated
+        else text
+    )
     if artifacts is None:
         return EmittedText(
-            (ContentPart(text=inline, media_type=media_type, truncated=True),),
+            (ContentPart(text=inline, truncated=truncated),),
             (),
             total,
         )
+    # 全量落盘 (ADR-0032 决策 6): 没超阈值的也要存. 一级降级要把 transcript 里的正文
+    # 换成引用, 而那要求内容确实在某处 —— 只存溢出部分的话, 占最多数的那批中小输出
+    # 根本没得降. max_inline_bytes 从此只决定回填多少, 不决定存不存.
     stored, artifact_truncated = _utf8_prefix(text, limits.max_artifact_bytes)
     ref = artifacts.write(invocation_id=invocation_id, name=artifact_name, data=stored)
     if artifact_truncated:
         ref = replace(ref, truncated=True)
+    # **artifacts 与 provenance 说的不是同一件事**, 所以只有截断时才进 artifacts:
+    #
+    # - ``artifacts`` 的意思是"你看到的输出被切了, 剩下的在这里". 它进审计 payload,
+    #   也进终端那行"N 个产物". 全量落盘之后要是把每次调用都算进去, 读一个 20 行的
+    #   文件也会显示"1 个产物" —— 而用户看这个数字, 正是想知道有没有东西被切掉.
+    # - ``provenance.artifact_id`` 的意思是"完整内容留了一份, 压缩时可以拿它顶替正文".
+    #   它没有展示方, 只有 application/context 读.
     return EmittedText(
         (
             ContentPart(
                 text=inline,
-                media_type=media_type,
-                truncated=True,
+                truncated=truncated,
                 artifact_id=ref.artifact_id,
             ),
         ),
-        (ref,),
+        (ref,) if truncated else (),
         total,
+        ResultProvenance(artifact_id=ref.artifact_id, byte_size=total),
     )
 
 

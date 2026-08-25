@@ -230,6 +230,7 @@ class ShellRunTool(Tool):
                 content_parts=emitted.parts,
                 artifacts=emitted.artifacts,
                 metrics=metrics,
+                provenance=emitted.provenance,
             )
         # 剩下的才是工具真的没跑成: 超时, 取消, 子进程起不来.
         return ToolResult(
@@ -239,6 +240,7 @@ class ShellRunTool(Tool):
             content_parts=emitted.parts,
             artifacts=emitted.artifacts,
             metrics=metrics,
+            provenance=emitted.provenance,
             error=ToolError(
                 code="shell_failed",
                 message=outcome.failure or "命令没有执行完成",

@@ -168,6 +168,10 @@ def _allow_reason(
 ) -> DecisionReason:
     if capabilities <= {Capability.PLAN_ONLY}:
         return DecisionReason.PLAN_ONLY_FAST_PATH
+    if capabilities <= {Capability.ARTIFACT_READ}:
+        return DecisionReason.ARTIFACT_READ_FAST_PATH
+    if capabilities <= {Capability.MEMORY_WRITE}:
+        return DecisionReason.MEMORY_WRITE_FAST_PATH
     if capabilities <= {Capability.WORKSPACE_READ, Capability.SPAWN_PROCESS}:
         return DecisionReason.WORKSPACE_READ_FAST_PATH
     if context.confined:

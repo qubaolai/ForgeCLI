@@ -18,7 +18,18 @@ __all__ = [
     "normalize_capability",
 ]
 
-# 词汇表版本. 新增或改写词汇需要 ADR 或显式版本升级, 并使下游缓存与学习规则失效.
+# 词汇表版本. 改动词汇一律要走 ADR, 但**要不要升版本取决于改的是哪一种** (ADR-0033
+# 决策 9):
+#
+# - **增量扩词汇** (加一个新值, 不动任何已有值的含义): 不升, 也不失效任何东西.
+#   本常量全库只有一个消费方 —— ToolPlan 的同名字段默认值, 它进 _hash_source 因而进
+#   plan_hash. 加一个新枚举值不改变任何**已有** plan 的哈希: 老的 always 规则是给不
+#   声明这个新能力的工具记的, 照常匹配; 声明它的是新工具, 没有旧规则指着它. 升版本
+#   反而会把每一个 plan_hash 打乱, 让用户为一件与他无关的事重新批准一遍.
+# - **语义改动** (改写或复用一个已有值): 必须升版本, 并使下游缓存与学习规则失效.
+#   那时一条老规则可能匹配上一件它当初没批准过的事, 而这是静默的.
+#
+# 判据是"老规则会不会因此匹配到新东西", 不是"枚举变没变".
 CAPABILITY_VOCABULARY_VERSION = "1"
 
 
@@ -26,6 +37,15 @@ class Capability(Enum):
     """本次调用请求的能力. 取值会进哈希与审计, 不可改."""
 
     PLAN_ONLY = "plan_only"
+    # 读回自己落盘的工具输出 (ADR-0032 决策 6.2). 与 PLAN_ONLY 同侧: 读的是 Forge
+    # 自己的状态目录, 碰不到用户文件, 目标也不由模型指定 —— 入参是一个内容哈希,
+    # 不是路径.
+    ARTIFACT_READ = "artifact_read"
+    # 写跨会话记忆 (ADR-0033 决策 9). 同样写 ~/.forge/ 下的文件, 同样不算 mutating.
+    #
+    # 不复用 PLAN_ONLY: 复用会让安全矩阵里"计划"和"记忆"变成同一件事, 而将来任何一条
+    # 只想管其中一个的规则都写不出来.
+    MEMORY_WRITE = "memory_write"
     WORKSPACE_READ = "workspace_read"
     WORKSPACE_WRITE = "workspace_write"
     WORKSPACE_DELETE = "workspace_delete"

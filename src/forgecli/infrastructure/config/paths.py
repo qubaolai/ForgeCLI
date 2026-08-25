@@ -59,6 +59,20 @@ def projects_dir() -> Path:
     return config_dir() / "projects"
 
 
+def user_memory_file() -> Path:
+    """用户偏好记忆 (ADR-0033 决策 4). 跟人走, 不跟项目走."""
+    return config_dir() / "memory.json"
+
+
+def project_memory_file(project_id: str) -> Path:
+    """项目事实记忆 (ADR-0033 决策 4).
+
+    与计划不同, 它**不按会话分区**: 计划脱离产生它的那段对话就会失真, 而记忆的判据
+    正好相反 —— 只记脱离对话之后仍然成立的事实 (决策 5), 那种东西才配跨会话.
+    """
+    return projects_dir() / project_id / "memory.json"
+
+
 def plans_dir(project_id: str, session_id: str) -> Path:
     """计划与待办的存放位置 (ADR-0022 §2).
 
