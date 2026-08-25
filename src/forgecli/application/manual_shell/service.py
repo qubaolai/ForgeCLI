@@ -32,12 +32,16 @@ from forgecli.application.manual_shell.provider import (
 )
 from forgecli.domain.intents import ManualShellIntent
 from forgecli.domain.manual_shell.result import ManualShellResult
+from forgecli.shared.observability.log import get_log
 
 __all__ = ["ManualShellPhase", "ManualShellService"]
 
 
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+_log = get_log(__name__)
 
 
 class ManualShellPhase(Enum):
@@ -98,6 +102,7 @@ class ManualShellService:
             )
         started = self._clock()
         self._phase = ManualShellPhase.SHELL_PREPARING
+        _log.info("manual_shell.enter", cwd=context.cwd)
         try:
             return self._run(context, started)
         finally:
@@ -106,19 +111,25 @@ class ManualShellService:
             self._phase = ManualShellPhase.SHELL_RESTORING
             self._barrier.trip()
             self._phase = ManualShellPhase.PROMPT_IDLE
+            # 屏障一旦 trip, 下一轮 agent turn 会被拒 —— 排查"为什么突然不接受输入了"
+            # 的第一条线索就在这里 (ADR-0017 §12).
+            _log.info("manual_shell.exit", barrier_blocked=self._barrier.blocked)
 
     def _run(self, context: ManualShellContext, started: str) -> ManualShellResult:
         try:
             request = self._resolver.resolve(context)
         except ManualShellUnavailable as exc:
+            _log.warning("manual_shell.resolve_failed", message=str(exc))
             return self._failed(started, str(exc))
 
+        _log.info("manual_shell.launch", argv=list(request.argv), cwd=request.cwd)
         self._observer.entered(request)
         try:
             with self._lease.acquire():
                 self._phase = ManualShellPhase.SHELL_ACTIVE
                 result = self._provider.open(request)
         except ManualShellUnavailable as exc:
+            _log.warning("manual_shell.launch_failed", message=str(exc))
             result = self._failed(started, str(exc))
         self._observer.exited(result)
         return result

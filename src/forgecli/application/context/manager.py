@@ -30,8 +30,12 @@ from forgecli.domain.context.budget import ContextBudget
 from forgecli.domain.context.compaction import CompactionDraft, CompactionLevel
 from forgecli.domain.conversation.message import ChatMessage
 from forgecli.domain.tool.tool_call import ToolSchema
+from forgecli.shared.observability.log import get_log
 
 __all__ = ["ContextFitResult", "ContextManager"]
+
+
+_log = get_log(__name__)
 
 
 @dataclass(frozen=True)
@@ -88,8 +92,21 @@ class ContextManager:
 
         estimated = self._estimate(current, system_prompt, tools)
         if not budget.needs_compaction(estimated):
+            _log.debug(
+                "context.within_budget",
+                estimated_input=estimated,
+                trigger=budget.trigger,
+                allowance=budget.allowance,
+            )
             return ContextFitResult(messages=current, estimated_input=estimated)
 
+        _log.info(
+            "context.compaction_needed",
+            estimated_input=estimated,
+            trigger=budget.trigger,
+            allowance=budget.allowance,
+            messages=len(current),
+        )
         drafts: list[CompactionDraft] = []
         current, estimated = self._downgrade(
             current, estimated, system_prompt, tools, drafts
@@ -153,6 +170,12 @@ class ContextManager:
             return messages, estimated
         compacted = transcript.rewrite(messages, rewrites)
         after = self._estimate(compacted, system_prompt, tools)
+        _log.info(
+            "context.downgraded",
+            blocks_rewritten=len(rewrites),
+            tokens_before=estimated,
+            tokens_after=after,
+        )
         drafts.append(
             CompactionDraft(
                 level=CompactionLevel.DOWNGRADE,
@@ -175,13 +198,24 @@ class ContextManager:
         turn_id: str,
     ) -> tuple[tuple[ChatMessage, ...], int]:
         if self._gateway is None:
+            _log.warning("context.summary_skipped", reason="no_gateway")
             return messages, estimated
         compacted, summary = summarize.summarize(
             messages, self._gateway, session_id=session_id, turn_id=turn_id
         )
         if not summary.text:
+            _log.warning("context.summary_skipped", reason="empty_summary")
             return messages, estimated
         after = self._estimate(compacted, system_prompt, tools)
+        _log.info(
+            "context.summarized",
+            messages_replaced=summary.messages_replaced,
+            tokens_before=estimated,
+            tokens_after=after,
+            provider=summary.provider,
+            model=summary.model,
+        )
+        _log.debug("context.summary_text", text=summary.text)
         drafts.append(
             CompactionDraft(
                 level=CompactionLevel.SUMMARY,

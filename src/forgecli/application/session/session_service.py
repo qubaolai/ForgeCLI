@@ -24,6 +24,7 @@ from forgecli.domain.intents import InputOrigin, SessionMode
 from forgecli.domain.session.events import EventType, SessionEvent
 from forgecli.domain.session.snapshot import SessionSnapshot
 from forgecli.shared.errors import SessionStateError
+from forgecli.shared.observability.log import get_log
 
 
 def _now_iso() -> str:
@@ -59,6 +60,9 @@ def _last_seq(events: Sequence[SessionEvent]) -> int:
         return int(events[-1].event_id.rsplit("_", 1)[-1])
     except (ValueError, IndexError):
         return 0
+
+
+_log = get_log(__name__)
 
 
 class SessionService:
@@ -281,7 +285,26 @@ class SessionService:
             payload=payload,
         )
         # 先追加事件，再更新快照——快照的 last_event_id 始终指向已落盘的事件。
-        self._events.append(event)
-        self._current = replace(snapshot, last_event_id=event_id, updated_at=created_at)
-        self._states.write(self._current)
+        try:
+            self._events.append(event)
+            self._current = replace(
+                snapshot, last_event_id=event_id, updated_at=created_at
+            )
+            self._states.write(self._current)
+        except OSError:
+            # 写不进事件日志是"这次会话的记录从此不完整"级别的故障, 而调用方多半只会
+            # 看到一个 IO 异常冒到最外层. 先留痕再上抛.
+            _log.exception(
+                "session.write_failed",
+                event_id=event_id,
+                event_type=event_type.value,
+                session_id=snapshot.session_id,
+            )
+            raise
+        _log.debug(
+            "session.event",
+            event_id=event_id,
+            event_type=event_type.value,
+            payload=dict(payload),
+        )
         return event

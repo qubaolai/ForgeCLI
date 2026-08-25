@@ -75,6 +75,10 @@ from forgecli.domain.prompt import text as prompt_text
 from forgecli.domain.prompt.blocks import PromptSnapshot
 from forgecli.domain.session.events import EventType, SessionEvent
 from forgecli.domain.tool.catalog import ToolCatalog
+from forgecli.shared.observability.context import bind
+from forgecli.shared.observability.log import get_log
+
+_log = get_log(__name__)
 
 # 单轮驱动的安全步数上限. 工具调用开放后一轮会跑很多步 (每次工具调用都是一次
 # observe), 因此按 LoopBudgets 给的预算走, 这个常量只是兜底.
@@ -168,6 +172,21 @@ class AgentTurnService:
     ) -> AssistantResponse:
         self._turns += 1
         turn_id = f"turn_{self._turns:04d}"
+        session_id = self._session.current().session_id
+        with bind(session_id=session_id, turn_id=turn_id):
+            return self._handle_bound(text, origin, turn_id)
+
+    def _handle_bound(
+        self, text: str, origin: InputOrigin, turn_id: str
+    ) -> AssistantResponse:
+        """本轮全部日志都带 session / turn: 一次故障能顺着 turn_id 一路读到底."""
+        _log.info(
+            "turn.received",
+            origin=origin.value,
+            chars=len(text),
+            text=text,
+            history_messages=len(self._history),
+        )
         if self._barrier.blocked:
             # 人工 Shell 回来后清缓存失败 (ADR-0017 §12). 清不掉就无法证明后续裁决基于
             # 当前事实, 而"基于过期事实的 Allow"正是这套机制要防的 —— 宁可让用户重启。
@@ -177,6 +196,7 @@ class AgentTurnService:
             self._session.record_assistant_message(
                 refusal, turn_id=turn_id, status=TurnStatus.FAILED
             )
+            _log.warning("turn.refused", reason="manual_shell_barrier", message=refusal)
             return AssistantResponse(
                 turn_id=turn_id, text=refusal, status=TurnStatus.FAILED
             )
@@ -190,7 +210,17 @@ class AgentTurnService:
             )
         # mode 从 session 快照读，单一真相（不再依赖 REPL 内存态）。
         mode = self._session.current().mode
-        outcome = self._obtain_outcome(text, mode, turn_id)
+        with _log.span("turn", mode=mode.value) as span:
+            outcome = self._obtain_outcome(text, mode, turn_id)
+            span.set(
+                status=outcome.status.value,
+                stop_reason=outcome.stop_reason,
+                answer_chars=len(outcome.text),
+                usage_records=len(outcome.usage_drafts),
+                compactions=len(outcome.compaction_drafts),
+                pause=None if outcome.pause is None else outcome.pause.value,
+            )
+        _log.info("turn.answer", text=outcome.text)
         self._session.record_assistant_message(
             outcome.text,
             turn_id=turn_id,
@@ -204,6 +234,11 @@ class AgentTurnService:
         for compaction in outcome.compaction_drafts:
             # 同一条分工 (ADR-0032 决策 1): 循环压缩, 但不写事件.
             self._session.record_compaction(compaction.to_payload(), turn_id=turn_id)
+            _log.info(
+                "context.compacted",
+                level=compaction.level.value,
+                tokens_saved=compaction.tokens_saved,
+            )
         self._remember_turn(text, outcome)
         return AssistantResponse(
             turn_id=turn_id,
@@ -227,11 +262,19 @@ class AgentTurnService:
             turn_id=turn_id,
         )
         if not result.drafts:
+            _log.info("context.compact.manual", tokens_saved=0, reason="nothing_to_do")
             return 0
         self._history = list(result.messages)
         for draft in result.drafts:
             self._session.record_compaction(draft.to_payload(), turn_id=turn_id)
-        return sum(draft.tokens_saved for draft in result.drafts)
+        saved = sum(draft.tokens_saved for draft in result.drafts)
+        _log.info(
+            "context.compact.manual",
+            tokens_saved=saved,
+            drafts=len(result.drafts),
+            messages_after=len(result.messages),
+        )
+        return saved
 
     # ---- 提示词 ----
 
@@ -243,7 +286,7 @@ class AgentTurnService:
         任一步都不调模型也不执行工具: 提示词必须在第一次模型调用之前就已经定死.
         """
         facts = self._runtime_facts()
-        return self._prompt_builder.build(
+        snapshot = self._prompt_builder.build(
             PromptBuildInput(
                 mode=mode,
                 facts=facts,
@@ -270,6 +313,19 @@ class AgentTurnService:
                 memory=() if self._memory is None else self._memory.load(),
             )
         )
+        _log.info(
+            "prompt.compiled",
+            version=snapshot.version,
+            fingerprint=snapshot.fingerprint,
+            blocks=len(snapshot.blocks),
+            chars=len(snapshot.text),
+            tools=0 if catalog is None else len(catalog.entries),
+            cwd=facts.working_directory,
+        )
+        # 整段提示词只在 debug 下写: 它每轮几千字, info 级别会把日志文件淹掉,
+        # 而"模型到底看到了什么"恰恰是最需要能翻出来的一件事.
+        _log.debug("prompt.text", text=snapshot.text)
+        return snapshot
 
     # ---- 内部 ----
 
@@ -289,6 +345,11 @@ class AgentTurnService:
             # 分两处给: 摘要进用户可见文本 (类型 + 消息, 一行), 完整 traceback 进
             # assistant_message 事件的 diagnostic 字段. 后者不上屏, 但 /resume 与事故
             # 排查时读 events.jsonl 就能拿到.
+            _log.exception(
+                "turn.driver_failed",
+                error=type(error).__name__,
+                message=str(error),
+            )
             return _TurnOutcome(
                 text=f"助手处理出错: {type(error).__name__}: {error}",
                 status=TurnStatus.FAILED,

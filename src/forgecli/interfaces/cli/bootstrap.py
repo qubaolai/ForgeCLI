@@ -69,7 +69,12 @@ from forgecli.interfaces.cli.tty_prompts import TtyDirectoryPicker, TtyTrustProm
 from forgecli.interfaces.cli.wiring import build_registry
 from forgecli.interfaces.exit_codes import ExitCode
 from forgecli.interfaces.runtime.llm_wiring import build_llm_runtime
+from forgecli.interfaces.runtime.logging_wiring import start_logging
 from forgecli.interfaces.runtime.tool_wiring import ToolStack, build_tool_stack
+from forgecli.shared import __version__
+from forgecli.shared.observability.log import get_log
+
+_log = get_log(__name__)
 
 # 正文不出现方括号, 免得被 Rich 当成样式标记解析.
 _ELEVATED_REFUSAL = (
@@ -180,6 +185,17 @@ def run() -> ExitCode:
     保证任何一条拒绝路径都不碰 Forge home, 也让"同一个原因永远对应同一个退出码".
     """
     console = Console()
+    # 日志先于一切装配: 下面每一条拒绝路径 (root, 无 TTY, 未信任, 项目被占) 都要留下
+    # 记录, 而它们全都发生在还没有任何 service 的时候.
+    status = start_logging()
+    _log.info(
+        "forge.start",
+        entry="cli",
+        version=__version__,
+        cwd=str(Path.cwd()),
+        log_file=None if status.file is None else str(status.file),
+        log_level=status.level,
+    )
     render_banner(console=console)
 
     # ADR-0009 决策 2: root 拆掉 OS 权限外墙, 安全模型不再成立, 故拒绝而非降级.
@@ -191,6 +207,7 @@ def run() -> ExitCode:
     # 才发现没有 TTY —— 白占进程锁, 且同一个"没有 TTY"会因项目是否已信任而给出
     # 不同退出码.
     if not stdin_is_tty():
+        _log.warning("forge.refused", reason="no_tty")
         console.print(_NO_TTY_REFUSAL)
         return ExitCode.NO_TTY
 
@@ -199,10 +216,16 @@ def run() -> ExitCode:
     # 上面已确保有 TTY, 所以这里只可能是 bound / trusted / declined 三种结果.
     result = startup.resolve(Path.cwd(), interactive=True)
     if result.project is None:
+        _log.warning("forge.refused", reason="untrusted", cwd=str(Path.cwd()))
         console.print("已取消：未信任当前目录，不创建任何配置。")
         return ExitCode.UNTRUSTED
 
     context = ProjectContext(result.project)
+    _log.info(
+        "project.resolved",
+        project_id=context.project.project_id,
+        workspace_roots=list(context.project.workspace_roots),
+    )
 
     # 项目级排他：同一项目同一时刻只允许一个 forge 进程操作。锁文件落在用户级
     # Forge home 的项目目录下（不写进仓库），用 OS 咨询锁，进程崩溃由 OS 自动释放。
@@ -212,6 +235,7 @@ def run() -> ExitCode:
     try:
         lock.acquire()
     except ProjectLockedError as exc:
+        _log.warning("forge.refused", reason="project_locked", message=exc.message)
         console.print(f"[yellow]{exc.message}[/]")
         return ExitCode.PROJECT_LOCKED
 
@@ -311,6 +335,14 @@ def run() -> ExitCode:
         output = RichOutput(console=console)
         presenter = RichMenuPresenter(console=console)
         picker = TtyDirectoryPicker(console=console)
+        _log.info(
+            "runtime.ready",
+            session_id=session.current().session_id,
+            model=str(config_service.effective().default_model),
+            isolation=tools.profile.isolation_level.value,
+            platform=tools.profile.platform,
+            workspace_id=tools.workspace_id,
+        )
         registry = build_registry(
             session_service=session,
             context=context,
@@ -324,6 +356,7 @@ def run() -> ExitCode:
             overrides_service=llm_runtime.overrides_service,
             thinking_state=thinking_state,
             tools=tools,
+            gateway_metrics=llm_runtime.gateway_metrics,
         )
         router = IntentRouter(registry=registry)
         Repl(
@@ -343,6 +376,7 @@ def run() -> ExitCode:
                 console, tools.planning, PlanReviewService(tools.planning)
             ),
         ).run()
+        _log.info("forge.stop", entry="cli", exit_code=ExitCode.OK.value)
         return ExitCode.OK
     finally:
         # 正常退出 / 异常 / Ctrl-C 都释放（flock 在 kill -9 时也由 OS 释放）。

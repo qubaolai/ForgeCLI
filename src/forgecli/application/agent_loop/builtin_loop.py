@@ -99,6 +99,10 @@ from forgecli.domain.prompt.blocks import PromptSnapshot
 from forgecli.domain.tool.catalog import ToolCatalog
 from forgecli.domain.tool.tool_call import ToolCall, ToolSchema
 from forgecli.shared.cancellation import CancelToken
+from forgecli.shared.observability.context import update as update_run_context
+from forgecli.shared.observability.log import get_log
+
+_log = get_log(__name__)
 
 # 单轮内的兜底上限. LoopBudgets 没给预算时用它, 防止模型与工具互相喂招停不下来.
 _DEFAULT_MAX_MODEL_CALLS = 9999
@@ -215,6 +219,41 @@ def _render_call(call: ToolCall) -> str:
     return f"{call.name}({arguments})"
 
 
+def _transcript_view(messages: tuple[ChatMessage, ...]) -> list[dict[str, object]]:
+    """把 transcript 摊平成可以直接读的形状, 供 debug 级日志写出整段上下文.
+
+    排查"模型为什么突然这么答"时, 真正要看的就是那一刻发给它的完整消息序列 —— 事件
+    日志里只有落盘的成对 user / assistant, 轮内的 tool result 回填与压缩改写不在那里.
+    只在 DEBUG 下调用, info 级别不会为它拼这个字符串.
+    """
+    view: list[dict[str, object]] = []
+    for message in messages:
+        item: dict[str, object] = {"role": message.role.value}
+        texts = [
+            block.text for block in message.content if isinstance(block, TextBlock)
+        ]
+        if texts:
+            item["text"] = "\n".join(texts)
+        results = [
+            {
+                "tool_call_id": block.tool_call_id,
+                "is_error": block.is_error,
+                "content": block.content,
+            }
+            for block in message.content
+            if isinstance(block, ToolResultBlock)
+        ]
+        if results:
+            item["tool_results"] = results
+        if message.tool_calls:
+            item["tool_calls"] = [
+                {"id": call.tool_call_id, "name": call.name, "args": call.arguments}
+                for call in message.tool_calls
+            ]
+        view.append(item)
+    return view
+
+
 def _signature_of(call: ToolCall) -> str:
     """一次调用的身份: 工具名 + 规范化参数. 参数顺序不同不算不同的调用."""
     return repr(
@@ -305,6 +344,34 @@ class BuiltinAgentLoop:
         self._budgets = loop_input.budgets
         self._tools = _schemas_of(loop_input.tool_catalog)
         self._turn_started_at = self._timer()
+        # 本轮的标识就位, 上一轮的清零. `update` 没有还原点, 所以由每一轮自己把
+        # step / req / tool 归零 —— 否则 loop.start 那一行会带着上一轮的步号.
+        update_run_context(
+            session_id=self._session_id,
+            turn_id=self._turn_id or "",
+            step=0,
+            request_id="",
+            tool="",
+        )
+        _log.info(
+            "loop.start",
+            mode=loop_input.mode.value,
+            tools=[schema.name for schema in self._tools],
+            messages=len(self._messages),
+            prompt_fingerprint=(
+                "" if self._prompt is None else self._prompt.fingerprint
+            ),
+            max_model_calls=self._budgets.max_model_calls_per_turn,
+            max_tool_calls=self._budgets.max_tool_calls_per_turn,
+            context_window=(
+                None
+                if self._context_budget is None
+                else self._context_budget.context_window
+            ),
+            context_allowance=(
+                None if self._context_budget is None else self._context_budget.allowance
+            ),
+        )
         self._publish(
             AgentRunEventKind.TURN_STARTED,
             TurnStartedPayload(mode=loop_input.mode.value, tool_count=len(self._tools)),
@@ -352,11 +419,29 @@ class BuiltinAgentLoop:
             return too_long
 
         self._step_index += 1
+        # 顺带把 tool 清掉: 这一步是在想, 不在跑工具. 不清的话上一次调用的工具名会
+        # 一直挂在后面每一行上, 读日志的人会以为那几行也属于它.
+        update_run_context(step=self._step_index, tool="")
         self._publish(
             AgentRunEventKind.STEP_STARTED,
             StepStartedPayload(step_index=self._step_index, phase=RunPhase.THINKING),
         )
         request = self._build_request()
+        update_run_context(request_id=request.request_id)
+        _log.info(
+            "model.request",
+            call_index=self._model_calls,
+            origin=request.origin.value,
+            messages=len(request.messages),
+            tools=len(self._tools),
+            streaming=self._bus is not None,
+        )
+        if _log.enabled_for_debug():
+            # 先问再拼: _transcript_view 要走一遍整段 transcript, 而 DEBUG 关掉时
+            # 那份结果会被原样丢掉 —— 参数是在调用之前求值的, 级别检查拦不住它.
+            _log.debug(
+                "model.request.messages", messages=_transcript_view(self._messages)
+            )
         self._publish(
             AgentRunEventKind.MODEL_STARTED,
             ModelStartedPayload(call_index=self._model_calls),
@@ -372,6 +457,7 @@ class BuiltinAgentLoop:
         try:
             outcome = self._call_model(request)
         except ModelCancelledError as exc:
+            _log.warning("model.cancelled", message=str(exc))
             return self._stop(LoopStopReason.USER_CANCELLED, actionable_message(exc))
         except MalformedToolCallError as exc:
             # 绝不猜一个参数补上去, 那等于替模型编参数.
@@ -382,8 +468,14 @@ class BuiltinAgentLoop:
         except ModelResponseParseError as exc:
             # 父类留给 provider 的响应压根不是 JSON 这类传输层故障: 那不是模型的错,
             # 追加纠错消息是在冤枉它, 重发同一条请求也不会好转.
+            _log.exception("model.parse_failed", message=str(exc))
             return self._stop(LoopStopReason.MODEL_ERROR_BLOCKING, str(exc))
         except ModelGatewayError as exc:
+            _log.exception(
+                "model.gateway_failed",
+                error=type(exc).__name__,
+                message=str(exc),
+            )
             return self._stop(
                 LoopStopReason.MODEL_ERROR_BLOCKING, actionable_message(exc)
             )
@@ -392,6 +484,7 @@ class BuiltinAgentLoop:
             self._publish_turn_finished(outcome.reason)
             return outcome
         if outcome.empty:
+            _log.warning("model.empty_response")
             return self._stop(
                 LoopStopReason.MODEL_ERROR_BLOCKING, prompt_text.EMPTY_RESPONSE_STOP
             )
@@ -402,6 +495,12 @@ class BuiltinAgentLoop:
         for call in outcome.tool_calls:
             marker = _protocol_markup_in(call)
             if marker is not None:
+                _log.warning(
+                    "model.protocol_markup",
+                    tool=call.name,
+                    marker=marker,
+                    arguments=call.arguments,
+                )
                 return self._retry_malformed(
                     prompt_text.MALFORMED_DETAIL.format(tool=call.name, marker=marker)
                 )
@@ -410,6 +509,11 @@ class BuiltinAgentLoop:
             # 目录已经收掉了, 模型还在要工具. 靠"没给你看你就不会要"不算强制 —— 真正
             # 的强制是这里不派发. 这些 tool_calls 也不写进 transcript: 写进去就欠一份
             # 配对的 tool result, 而本轮不会再有执行了.
+            _log.warning(
+                "loop.tool_calls_after_close",
+                requested=[call.name for call in outcome.tool_calls],
+                has_text=bool(outcome.text.strip()),
+            )
             if not outcome.text.strip():
                 return self._stop(LoopStopReason.POLICY_DENIED, prompt_text.HALT_STOP)
             outcome = _ModelOutcome(text=outcome.text)
@@ -442,6 +546,17 @@ class BuiltinAgentLoop:
         self._dispatched = call
         self._tool_calls += 1
         self._step_index += 1
+        update_run_context(step=self._step_index, tool=call.name)
+        # 入参**原样**写进日志, 与发给终端的 scrub_arguments 是两条路: 屏幕上要防的是
+        # 一屏 base64 把过程刷没, 而排查一次"工具为什么这么干"必须看到它真正收到了什么.
+        _log.info(
+            "tool.requested",
+            tool=call.name,
+            tool_call_id=call.tool_call_id,
+            arguments=call.arguments,
+            queued=len(self._pending_calls),
+            tool_call_index=self._tool_calls,
+        )
         self._publish(
             AgentRunEventKind.STEP_STARTED,
             StepStartedPayload(step_index=self._step_index, phase=RunPhase.TOOL),
@@ -476,6 +591,13 @@ class BuiltinAgentLoop:
         回填而不是静默跳过, 也不是直接停止本轮: 模型必须知道"你在重复", 否则它只会
         原样再要一次. 这条消息进 transcript, 下一次模型调用就看得到.
         """
+        _log.warning(
+            "loop.repeat_call_rejected",
+            tool=call.name,
+            arguments=call.arguments,
+            limit=_MAX_IDENTICAL_CALLS,
+            seen=self._call_counts[_signature_of(call)],
+        )
         self._messages = (
             *self._messages,
             ChatMessage(
@@ -505,6 +627,14 @@ class BuiltinAgentLoop:
         call = self._dispatched
         assert call is not None
         self._dispatched = None
+        _log.info(
+            "tool.observed",
+            tool=call.name,
+            is_error=observation.is_error,
+            disposition=observation.disposition.value,
+            chars=len(observation.content),
+            content=observation.content,
+        )
         self._messages = (
             *self._messages,
             ChatMessage(
@@ -575,6 +705,7 @@ class BuiltinAgentLoop:
         count = self._barren_streak
         self._barren_streak = 0
         notice = prompt_text.BARREN_NOTICE.format(count=count)
+        _log.warning("loop.barren_streak", count=count)
         self._publish(
             AgentRunEventKind.DECISION_SUMMARY,
             DecisionSummaryPayload(reason_summary=f"连续 {count} 次调用没有新信息"),
@@ -589,9 +720,15 @@ class BuiltinAgentLoop:
         这是本轮收, 不是永久禁: 下一句话该由人说, 他可以纠正也可以换个要求.
         """
         if observation.disposition is ObservationDisposition.HALT:
+            _log.warning("loop.halt", reason="user_refused")
             return prompt_text.HALT_NOTICE
         if observation.disposition is ObservationDisposition.BLOCKED:
             self._blocked_calls += 1
+            _log.warning(
+                "loop.blocked_call",
+                blocked=self._blocked_calls,
+                limit=_MAX_BLOCKED_CALLS,
+            )
             if self._blocked_calls >= _MAX_BLOCKED_CALLS:
                 return prompt_text.BLOCKED_NOTICE.format(count=self._blocked_calls)
         return None
@@ -602,6 +739,11 @@ class BuiltinAgentLoop:
         不直接 LoopStop: 人有权知道模型原本想做什么, 以及为什么停下. 硬中止的话屏幕上
         只会突然什么都没有.
         """
+        _log.warning(
+            "loop.tools_closed",
+            notice=notice,
+            abandoned=[call.name for call in self._pending_calls],
+        )
         self._abandon_pending(notice)
         self._tools = ()
         self._tools_closed = True
@@ -628,6 +770,12 @@ class BuiltinAgentLoop:
         transcript 里留一批配不上 tool result 的 tool_calls.
         """
         self._malformed_responses += 1
+        _log.warning(
+            "model.malformed_tool_call",
+            detail=detail,
+            count=self._malformed_responses,
+            limit=_MAX_MALFORMED_RESPONSES,
+        )
         if self._malformed_responses > _MAX_MALFORMED_RESPONSES:
             return self._stop(
                 LoopStopReason.MODEL_ERROR_BLOCKING,
@@ -670,6 +818,7 @@ class BuiltinAgentLoop:
     def _check_model_budget(self) -> LoopStop | None:
         limit = self._budgets.max_model_calls_per_turn or _DEFAULT_MAX_MODEL_CALLS
         if self._model_calls >= limit:
+            _log.warning("loop.model_budget_exhausted", limit=limit)
             return self._stop(
                 LoopStopReason.BUDGET_EXHAUSTED,
                 prompt_text.MODEL_BUDGET_STOP.format(limit=limit),
@@ -679,6 +828,7 @@ class BuiltinAgentLoop:
     def _check_tool_budget(self) -> LoopStop | None:
         limit = self._budgets.max_tool_calls_per_turn or _DEFAULT_MAX_TOOL_CALLS
         if self._tool_calls >= limit:
+            _log.warning("loop.tool_budget_exhausted", limit=limit)
             return self._stop(
                 LoopStopReason.BUDGET_EXHAUSTED,
                 prompt_text.TOOL_BUDGET_STOP.format(limit=limit),
@@ -706,7 +856,16 @@ class BuiltinAgentLoop:
         )
         self._messages = result.messages
         self._compaction_drafts.extend(result.drafts)
+        if result.drafts:
+            _log.info(
+                "context.fit",
+                drafts=len(result.drafts),
+                tokens_saved=sum(draft.tokens_saved for draft in result.drafts),
+                messages=len(result.messages),
+                over_allowance=result.over_allowance,
+            )
         if result.over_allowance:
+            _log.error("context.over_allowance", messages=len(result.messages))
             return self._stop(
                 LoopStopReason.CONTEXT_COMPACTION_REQUIRED,
                 prompt_text.COMPACTION_FAILED,
@@ -782,6 +941,7 @@ class BuiltinAgentLoop:
             elapsed_ms=(self._timer() - started) * 1000.0,
             usage=response.usage,
         )
+        _log.debug("model.response.text", text=response.content)
         return _ModelOutcome(text=response.content, tool_calls=response.tool_calls)
 
     def _call_stream(self, request: ModelRequest) -> _ModelOutcome | LoopStop:
@@ -845,6 +1005,7 @@ class BuiltinAgentLoop:
             elapsed_ms=elapsed_ms,
             usage=accumulator.usage,
         )
+        _log.debug("model.response.text", text=accumulator.text)
         return _ModelOutcome(text=accumulator.text, tool_calls=tool_calls)
 
     def _record_stream_draft(
@@ -869,6 +1030,18 @@ class BuiltinAgentLoop:
         self._usage_drafts.append(self._meter.build_draft(request, response))
 
     def _stop(self, reason: LoopStopReason, message: str | None) -> LoopStop:
+        # 停下来之后的行不该还挂着本轮最后一步的标识. session / turn 由外层
+        # AgentTurnService 的 bind 负责还原, 这里只清自己写进去的那几个.
+        update_run_context(step=0, request_id="", tool="")
+        _log.info(
+            "loop.stop",
+            reason=reason.value,
+            message=message,
+            model_calls=self._model_calls,
+            tool_calls=self._tool_calls,
+            steps=self._step_index,
+            elapsed_ms=(self._timer() - self._turn_started_at) * 1000.0,
+        )
         self._finished = True
         self._publish_turn_finished(reason, detail=message or "")
         return LoopStop.of(reason, message=message)
@@ -898,6 +1071,18 @@ class BuiltinAgentLoop:
         elapsed_ms: float,
         usage: ModelUsage | None,
     ) -> None:
+        _log.info(
+            "model.response",
+            finish_reason=finish_reason.value,
+            text_chars=text_chars,
+            tool_calls=tool_call_count,
+            elapsed_ms=elapsed_ms,
+            input_tokens=None if usage is None else usage.input_tokens,
+            output_tokens=None if usage is None else usage.output_tokens,
+            cached_tokens=None if usage is None else usage.cached_input_tokens,
+            reasoning_tokens=None if usage is None else usage.reasoning_tokens,
+            estimated=None if usage is None else usage.estimated,
+        )
         self._publish(
             AgentRunEventKind.MODEL_REASONING_STATUS,
             ReasoningStatusPayload(status=ReasoningStatus.COMPLETED),
@@ -935,6 +1120,12 @@ class BuiltinAgentLoop:
         *,
         retryable: bool = False,
     ) -> None:
+        _log.error(
+            "model.failed",
+            error_kind=error_kind,
+            message=message,
+            retryable=retryable,
+        )
         self._publish(
             AgentRunEventKind.MODEL_FAILED,
             ModelFailedPayload(

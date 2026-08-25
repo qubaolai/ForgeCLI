@@ -38,8 +38,11 @@ from forgecli.domain.tool.result import (
     ToolResultStatus,
 )
 from forgecli.shared.cancellation import CancelToken
+from forgecli.shared.observability.log import get_log
 
 __all__ = ["ToolRuntime"]
+
+_log = get_log(__name__)
 
 
 class ToolRuntime:
@@ -108,12 +111,22 @@ class ToolRuntime:
 
         invocation_id = plan.plan_id
         if cancel is not None and cancel.cancelled:
+            _log.info("tool.cancelled_before_start", tool=plan.tool_name)
             return _cancelled_result(invocation_id, plan.tool_name)
 
         started = self._timer()
         try:
             result = tool.perform(plan, context, cancel)
         except Exception as exc:  # noqa: BLE001 - 工具异常必须归一, 不能穿透到循环
+            # 归一成 ToolResult 之后, 异常对象与 traceback 就没人拿得到了 —— 模型只会
+            # 看到一行 "tool_exception". 排查工具自身的 bug 全靠这里留下的 traceback.
+            _log.exception(
+                "tool.exception",
+                tool=plan.tool_name,
+                error=type(exc).__name__,
+                message=str(exc),
+                normalized_input=dict(plan.normalized_input),
+            )
             return ToolResult(
                 invocation_id=invocation_id,
                 tool_name=plan.tool_name,
@@ -148,6 +161,7 @@ class ToolRuntime:
                     or digest_bytes(content) != binding.content_hash
                 )
             if changed:
+                _log.warning("tool.file_state_changed", path=binding.path)
                 raise AuthorizationError(
                     AuthorizationErrorCode.EXECUTION_ENVIRONMENT_CHANGED,
                     f"安全分析读取的文件已变化，需要重新裁决: {binding.path}",

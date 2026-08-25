@@ -31,6 +31,7 @@ from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.thinking import ThinkingEffortName, ThinkingMode
 from forgecli.domain.workspace.project import WorkspaceError
 from forgecli.infrastructure.project import ProjectLockedError
+from forgecli.interfaces.runtime.diagnostics import diagnostics_report
 from forgecli.interfaces.web.events import WebEventHub
 from forgecli.interfaces.web.runtime import (
     ProjectRuntime,
@@ -40,6 +41,7 @@ from forgecli.interfaces.web.runtime import (
 from forgecli.interfaces.web.serialization import to_jsonable
 from forgecli.shared import __version__
 from forgecli.shared.errors import SessionStateError
+from forgecli.shared.observability.log import get_log
 
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _SESSION_COOKIE = "forge_web_session"
@@ -88,6 +90,8 @@ code { padding: 2px 6px; border-radius: 5px; background: #e8ebef; color: #111827
 <p>请回到运行 <code>forge</code> 的终端，复制那里打印的启动链接重新打开控制面。</p>
 </main></body></html>
 """
+
+_log = get_log(__name__)
 
 
 class TrustProjectRequest(BaseModel):
@@ -181,14 +185,32 @@ class LocalControlPlaneGuard:
             return
         denial = self._denial(Request(scope))
         if denial is not None:
+            _log.warning(
+                "web.denied",
+                method=scope.get("method"),
+                path=scope.get("path"),
+                status=denial.status_code,
+            )
             denial.headers.update(_SECURITY_HEADERS)
             await denial(scope, receive, send)
             return
 
         path = str(scope.get("path", ""))
+        method = str(scope.get("method", ""))
+        raw_query = scope.get("query_string", b"")
+        query = (
+            raw_query.decode("utf-8", "replace") if isinstance(raw_query, bytes) else ""
+        )
 
         async def send_hardened(message: Message) -> None:
             if message["type"] == "http.response.start":
+                _log.info(
+                    "web.request",
+                    method=method,
+                    path=path,
+                    query=query,
+                    status=message.get("status"),
+                )
                 headers = MutableHeaders(scope=message)
                 for name, value in _SECURITY_HEADERS.items():
                     headers[name] = value
@@ -351,6 +373,18 @@ def create_app(
     @app.get("/api/v1/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
+
+    @app.get("/api/v1/diagnostics")
+    async def diagnostics(request: Request) -> dict[str, object]:
+        """开发者诊断读数 (ADR-0035): 与 CLI 的 /diagnostics 同一份读模型.
+
+        网关那部分要激活项目才有 —— LLM 运行时是按项目装配的, 没激活项目时进程里
+        根本没有网关.
+        """
+        runtime = request.app.state.registry.active
+        return diagnostics_report(
+            None if runtime is None else runtime.llm.gateway_metrics
+        )
 
     @app.get("/api/v1/bootstrap")
     async def bootstrap(request: Request) -> dict[str, object]:

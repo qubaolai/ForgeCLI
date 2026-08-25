@@ -53,6 +53,9 @@ from forgecli.interfaces.web.approval import WebApprovalBroker
 from forgecli.interfaces.web.events import WebEventHub
 from forgecli.interfaces.web.serialization import to_jsonable
 from forgecli.shared.errors import SessionStateError
+from forgecli.shared.observability.log import get_log
+
+_log = get_log(__name__)
 
 
 @dataclass(frozen=True)
@@ -213,6 +216,13 @@ class ProjectRuntime:
 
     def _execute_turn(self, run_id: str, text: str, origin: InputOrigin) -> None:
         self.cancel_source.issue()
+        _log.info(
+            "web.turn.started",
+            run_id=run_id,
+            project_id=self.project.project_id,
+            origin=origin.value,
+            chars=len(text),
+        )
         try:
             response = self._agent_turn.handle_user_message(text, origin=origin)
             status = (
@@ -221,7 +231,16 @@ class ProjectRuntime:
                 else "completed"
             )
             completed = TurnRun(run_id=run_id, status=status, response=response)
+            _log.info("web.turn.finished", run_id=run_id, status=status)
         except Exception as exc:  # noqa: BLE001 - 后台边界必须转成可查询状态
+            # 这里是后台线程的最外层: 异常被压成一个字符串状态之后, traceback 就再也
+            # 拿不回来了 —— 而页面上只会显示一行错误文案.
+            _log.exception(
+                "web.turn.failed",
+                run_id=run_id,
+                error=type(exc).__name__,
+                message=str(exc),
+            )
             completed = TurnRun(
                 run_id=run_id,
                 status="failed",
@@ -236,6 +255,7 @@ class ProjectRuntime:
         with self._run_lock:
             running = self._run is not None and self._run.status == "running"
         if running:
+            _log.info("web.turn.cancel_requested", project_id=self.project.project_id)
             token = self.cancel_source.current()
             if token is not None:
                 token.cancel()

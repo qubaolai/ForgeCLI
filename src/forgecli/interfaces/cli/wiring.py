@@ -10,6 +10,7 @@ from forgecli.application.agent_turn import AgentTurnService
 from forgecli.application.config.config_service import ConfigService
 from forgecli.application.interaction_ports import DirectoryPicker
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
+from forgecli.application.llm.gateway.observability import InProcessGatewayMetrics
 from forgecli.application.llm.overrides_service import ModelOverridesService
 from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.application.project.project import ProjectContext
@@ -27,6 +28,7 @@ from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
 from forgecli.interfaces.cli.commands.add_dir_command import AddDirCommand
 from forgecli.interfaces.cli.commands.compact_command import CompactCommand
 from forgecli.interfaces.cli.commands.config_command import ConfigCommand
+from forgecli.interfaces.cli.commands.diagnostics_command import DiagnosticsCommand
 from forgecli.interfaces.cli.commands.exit_command import ExitCommand
 from forgecli.interfaces.cli.commands.help_command import HelpCommand
 from forgecli.interfaces.cli.commands.mode_command import ModeCommand, ModeSelectCommand
@@ -65,6 +67,7 @@ def build_registry(
     overrides_service: ModelOverridesService | None = None,
     thinking_state: ThinkingRuntimeState | None = None,
     tools: ToolStack | None = None,
+    gateway_metrics: InProcessGatewayMetrics | None = None,
 ) -> CommandRegistry:
     registry = CommandRegistry()
     # ConfigService 按 level 路由落盘：应用级 config.json，项目级当前项目的 forge.json。
@@ -164,6 +167,13 @@ def build_registry(
             "compact",
             "压缩当前会话历史, 腾出上下文空间",
             handler=CompactCommand(agent_turn, output),
+        )
+    )
+    slash_specs.append(
+        CommandSpec(
+            "diagnostics",
+            "查看日志位置与本进程的运行读数 (--reset 清零计数)",
+            handler=DiagnosticsCommand(output, gateway_metrics),
         )
     )
     # /exit 与 Ctrl-C×2 是同一条退出路径 (都抛 SessionExit), 不是两套收尾逻辑.

@@ -29,10 +29,14 @@ from forgecli.domain.tool.authorization import (
 )
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.shared.errors import ForgeError
+from forgecli.shared.observability.log import get_log
 
 __all__ = ["AuthorizationIssueError", "ToolAuthorizationService"]
 
 _DEFAULT_TTL_SECONDS = 300.0
+
+
+_log = get_log(__name__)
 
 
 class AuthorizationIssueError(ForgeError):
@@ -77,6 +81,14 @@ class ToolAuthorizationService:
         """
         findings = self._analyzers.analyze(plan, policy, context)
         validate_narrowing(plan, findings.plan)
+        _log.debug(
+            "security.analyzed",
+            tool=plan.tool_name,
+            capabilities=sorted(item.value for item in findings.plan.capabilities),
+            risk_facts=[fact.code for fact in findings.risk_facts],
+            executables=list(findings.executable_names),
+            mutating_targets=list(findings.plan.effects.mutating_targets),
+        )
         return self._apply_learned_rule(self._policy.decide(findings, policy), policy)
 
     def _apply_learned_rule(
@@ -95,6 +107,12 @@ class ToolAuthorizationService:
         rule = self._learned.find(decision, policy)
         if rule is None:
             return decision
+        _log.info(
+            "security.learned_rule_hit",
+            tool=decision.effective_plan.tool_name,
+            rule_id=rule.rule_id,
+            original_reason=decision.reason.value,
+        )
         return replace(
             decision,
             decision=Decision.ALLOW,
@@ -121,7 +139,7 @@ class ToolAuthorizationService:
                 f"只有 ALLOW 裁决可以签发授权, 当前为 {decision.decision.value}"
             )
         now = self._clock()
-        return ExecutionAuthorization(
+        envelope = ExecutionAuthorization(
             authorization_id=self._new_id(),
             effective_plan=decision.effective_plan,
             execution_profile_hash=policy.execution_profile_hash,
@@ -131,3 +149,12 @@ class ToolAuthorizationService:
             recovery_binding=recovery_binding,
             approval_view_hash=approval_view_hash,
         )
+        _log.info(
+            "security.authorization_issued",
+            tool=decision.effective_plan.tool_name,
+            authorization_id=envelope.authorization_id,
+            reason=decision.reason.value,
+            expires_in_seconds=self._ttl,
+            recovery_binding=recovery_binding,
+        )
+        return envelope

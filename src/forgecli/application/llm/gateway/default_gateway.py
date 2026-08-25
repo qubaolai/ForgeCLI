@@ -33,6 +33,7 @@ mark_failed（401/429 冷却）或引用本身消失（配置/解析层面）时
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -95,10 +96,25 @@ from forgecli.domain.model.streaming import ModelStreamChunk, ProviderStreamChun
 from forgecli.domain.model.thinking import ThinkingMode
 from forgecli.domain.prompt import text as prompt_text
 from forgecli.shared.json_schema import validate_json_schema
+from forgecli.shared.observability.log import get_log
+
+_log = get_log(__name__)
 
 # settings_source 未注入时的 provider 默认（与配置切片默认一致）。
 _FALLBACK_TIMEOUT_SECONDS = 60.0
 _FALLBACK_MAX_RETRIES = 2
+
+
+def _credential_fields(credential: Credential | None) -> dict[str, object]:
+    """凭证在日志里的身份: 引用名 + 值的哈希前缀, 不含值本身.
+
+    排查"用的是哪一把 key"要的是身份而不是那串字符; 而日志文件是最容易被整份贴进
+    issue 的东西. 指纹取 sha256 前 8 位而不是"头 4 位 + 尾 4 位": 后者泄漏真实字符.
+    """
+    if credential is None:
+        return {"credential": "keyless"}
+    digest = hashlib.sha256(credential.value.encode("utf-8")).hexdigest()[:8]
+    return {"credential": credential.ref, "credential_fingerprint": digest}
 
 
 @dataclass
@@ -161,6 +177,17 @@ class DefaultLlmGateway(LlmGateway):
     def complete(self, request: ModelRequest) -> ModelResponse:
         ref, entry = self._resolve_selection(request)
         thinking = self._resolve_thinking(request, ref, entry)
+        _log.info(
+            "llm.complete",
+            provider=ref.provider,
+            model=ref.model,
+            origin=request.origin.value,
+            messages=len(request.messages),
+            tools=len(request.tools),
+            thinking=thinking.enabled,
+            thinking_effort=None if thinking.effort is None else thinking.effort.value,
+            context_window=entry.context_window,
+        )
         return self._complete_resolved(
             request, ref, entry, request.params, thinking, use_cache=True
         )
@@ -214,6 +241,19 @@ class DefaultLlmGateway(LlmGateway):
         estimated_input = self._pre_call_checks(request, ref, entry, params)
         settings = self._settings(ref.provider)
         self._raise_if_cancelled(request, ref)
+        _log.info(
+            "llm.stream",
+            provider=ref.provider,
+            model=ref.model,
+            origin=request.origin.value,
+            messages=len(request.messages),
+            tools=len(request.tools),
+            thinking=thinking.enabled,
+            thinking_effort=None if thinking.effort is None else thinking.effort.value,
+            estimated_input_tokens=estimated_input,
+            timeout_seconds=settings.timeout_seconds,
+            max_retries=settings.max_retries,
+        )
         return self._stream_with_retries(
             request,
             ref,
@@ -247,6 +287,7 @@ class DefaultLlmGateway(LlmGateway):
                 request, ref, thinking=thinking, schema_digest=cache_digest
             )
             if cached is not None:
+                _log.info("llm.cache_hit", provider=ref.provider, model=ref.model)
                 self._observe_response(request, ref, cached, None, cache_hit=True)
                 return cached
         counts = _RetryCounts()
@@ -270,6 +311,15 @@ class DefaultLlmGateway(LlmGateway):
             )
         except ModelGatewayError as exc:
             self._observe_error(request, ref, exc, counts, start)
+            _log.error(
+                "llm.failed",
+                provider=ref.provider,
+                model=ref.model,
+                error=type(exc).__name__,
+                message=str(exc),
+                elapsed_ms=(self._timer() - start) * 1000.0,
+                **counts.summary(),
+            )
             raise
         latency_ms = (self._timer() - start) * 1000.0
 
@@ -288,6 +338,19 @@ class DefaultLlmGateway(LlmGateway):
             latency_ms=latency_ms,
             tool_calls=provider_response.tool_calls,
             raw_metadata=raw_metadata,
+        )
+        _log.info(
+            "llm.completed",
+            provider=ref.provider,
+            model=ref.model,
+            finish_reason=response.finish_reason.value,
+            latency_ms=latency_ms,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            estimated=usage.estimated,
+            content_chars=len(response.content),
+            tool_calls=[call.name for call in response.tool_calls],
+            **counts.summary(),
         )
         self._health.record_success(ref)
         if use_cache:
@@ -345,6 +408,14 @@ class DefaultLlmGateway(LlmGateway):
                 raise
             except ModelRateLimitError as exc:
                 last_error = self._with_context(exc, ref, request)
+                _log.warning(
+                    "llm.rate_limited",
+                    provider=ref.provider,
+                    model=ref.model,
+                    retry_after=exc.retry_after,
+                    message=str(exc),
+                    **_credential_fields(credential),
+                )
                 if self._should_wait_retry(exc, settings):
                     # 429 短等重试（ADR-0012 §2）：本地等待后同一凭证重试；
                     # 等待经注入 sleeper，计入 latency，不计 provider 计费。
@@ -360,6 +431,13 @@ class DefaultLlmGateway(LlmGateway):
             except ModelAuthError as exc:
                 # 凭证级重试：同 provider/model 换下一个 credential（§12）。
                 last_error = self._with_context(exc, ref, request)
+                _log.warning(
+                    "llm.auth_failed",
+                    provider=ref.provider,
+                    model=ref.model,
+                    message=str(exc),
+                    **_credential_fields(credential),
+                )
                 if credential is None:
                     raise last_error from exc
                 self._mark_failed(credential, type(exc).__name__, None)
@@ -370,11 +448,27 @@ class DefaultLlmGateway(LlmGateway):
                 self._health.record_failure(ref)
                 last_error = self._with_context(exc, ref, request)
                 counts.transport += 1
+                _log.warning(
+                    "llm.transport_retry",
+                    provider=ref.provider,
+                    model=ref.model,
+                    attempt=counts.transport,
+                    max_retries=settings.max_retries,
+                    error=type(exc).__name__,
+                    message=str(exc),
+                )
                 continue
             except ModelGatewayError:
                 raise
             except Exception as exc:  # 契约兜底：任何非网关异常归一化为网关错误。
                 self._health.record_failure(ref)
+                _log.exception(
+                    "llm.provider_internal_error",
+                    provider=ref.provider,
+                    model=ref.model,
+                    error=type(exc).__name__,
+                    message=str(exc),
+                )
                 raise ModelProviderInternalError(
                     f"provider {ref.provider!r} 调用失败: {exc}",
                     provider=ref.provider,
@@ -467,6 +561,14 @@ class DefaultLlmGateway(LlmGateway):
                 raise
             except ModelRateLimitError as exc:
                 last_error = self._with_context(exc, ref, request)
+                _log.warning(
+                    "llm.rate_limited",
+                    provider=ref.provider,
+                    model=ref.model,
+                    retry_after=exc.retry_after,
+                    message=str(exc),
+                    **_credential_fields(credential),
+                )
                 if self._should_wait_retry(exc, settings):
                     counts.wait += 1
                     assert exc.retry_after is not None
@@ -815,6 +917,14 @@ class DefaultLlmGateway(LlmGateway):
         )
         expected_output = params.max_output_tokens or entry.max_output_tokens or 0
         if estimated_input + expected_output > entry.context_window:
+            _log.error(
+                "llm.context_overflow",
+                provider=ref.provider,
+                model=ref.model,
+                estimated_input=estimated_input,
+                expected_output=expected_output,
+                context_window=entry.context_window,
+            )
             raise ModelContextOverflowError(
                 f"估算输入 {estimated_input} + 预期输出 {expected_output} "
                 f"超出模型 {ref} 上下文窗口 {entry.context_window}",

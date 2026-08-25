@@ -22,11 +22,16 @@ from rich.console import Console
 from forgecli.infrastructure.config import config_dir
 from forgecli.infrastructure.project import ProjectLockedError
 from forgecli.interfaces.exit_codes import ExitCode
+from forgecli.interfaces.runtime.logging_wiring import start_logging
 from forgecli.interfaces.web.app import create_app
 from forgecli.interfaces.web.runtime import (
     ProjectRuntimeRegistry,
     build_project_service,
 )
+from forgecli.shared import __version__
+from forgecli.shared.observability.log import get_log
+
+_log = get_log(__name__)
 
 DEFAULT_PORT = 8765
 
@@ -106,6 +111,17 @@ def load_web_secrets() -> tuple[str, str]:
 def run(*, port: int = DEFAULT_PORT, open_browser: bool = False) -> int:
     """只监听 loopback，并用一次性启动令牌打开控制面。"""
     console = Console()
+    status = start_logging()
+    _log.info(
+        "forge.start",
+        entry="web",
+        version=__version__,
+        cwd=str(Path.cwd()),
+        port=port,
+        open_browser=open_browser,
+        log_file=None if status.file is None else str(status.file),
+        log_level=status.level,
+    )
     project_service = build_project_service()
     registry = ProjectRuntimeRegistry(project_service)
     current = project_service.find_trusted(Path.cwd())
@@ -113,6 +129,7 @@ def run(*, port: int = DEFAULT_PORT, open_browser: bool = False) -> int:
         try:
             registry.activate(current.project_id)
         except ProjectLockedError as exc:
+            _log.warning("forge.refused", reason="project_locked", message=exc.message)
             console.print(f"[yellow]{exc.message}[/]")
             return ExitCode.PROJECT_LOCKED
 
@@ -127,6 +144,7 @@ def run(*, port: int = DEFAULT_PORT, open_browser: bool = False) -> int:
         try:
             sock.bind(("127.0.0.1", port))
         except OSError as exc:
+            _log.error("web.bind_failed", port=port, message=str(exc))
             console.print(
                 f"[red]端口 {port} 无法监听[/]：{exc.strerror}。\n"
                 "多半是另一个 Forge 还在运行；可以先停掉它，或用 "
@@ -135,6 +153,7 @@ def run(*, port: int = DEFAULT_PORT, open_browser: bool = False) -> int:
             return ExitCode.PORT_BUSY
         sock.listen(2048)
         selected_port = int(sock.getsockname()[1])
+        _log.info("web.listening", port=selected_port)
         url = (
             f"http://127.0.0.1:{selected_port}/boot?token="
             f"{urllib.parse.quote(token, safe='')}"
@@ -162,6 +181,7 @@ def run(*, port: int = DEFAULT_PORT, open_browser: bool = False) -> int:
             contextlib.suppress(KeyboardInterrupt),
         ):
             server.run(sockets=[sock])
+        _log.info("forge.stop", entry="web", port=selected_port)
         return 0
     finally:
         sock.close()

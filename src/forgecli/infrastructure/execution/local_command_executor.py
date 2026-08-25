@@ -30,6 +30,7 @@ from forgecli.application.tools.command_executor import (
     CommandRequest,
 )
 from forgecli.shared.cancellation import CancelToken
+from forgecli.shared.observability.log import get_log
 
 __all__ = ["LocalCommandExecutor"]
 
@@ -92,11 +93,25 @@ class _BoundedReader(threading.Thread):
         return b"".join(self._chunks).decode("utf-8", errors="replace")
 
 
+_log = get_log(__name__)
+
+
 class LocalCommandExecutor(CommandExecutor):
     def run(
         self, request: CommandRequest, cancel: CancelToken | None = None
     ) -> CommandOutcome:
         started = time.monotonic()
+        # argv 与环境原样进日志: 一次"命令怎么就没跑起来"的排查, 要看的正是 Forge
+        # 最终交给 execve 的那个数组, 而不是模型写的那行字符串.
+        _log.info(
+            "shell.spawn",
+            argv=list(request.argv),
+            cwd=request.cwd,
+            timeout_seconds=request.timeout_seconds,
+            max_output_bytes=request.max_output_bytes,
+            has_stdin=request.stdin is not None,
+        )
+        _log.debug("shell.environment", environment=dict(request.environment))
         try:
             process = subprocess.Popen(
                 list(request.argv),
@@ -112,6 +127,13 @@ class LocalCommandExecutor(CommandExecutor):
                 start_new_session=True,
             )
         except OSError as exc:
+            _log.error(
+                "shell.spawn_failed",
+                argv=list(request.argv),
+                cwd=request.cwd,
+                errno=exc.errno,
+                message=str(exc),
+            )
             return CommandOutcome(
                 exit_code=None,
                 duration_seconds=time.monotonic() - started,
@@ -147,7 +169,7 @@ class LocalCommandExecutor(CommandExecutor):
         finally:
             self._reap(process)
 
-        return CommandOutcome(
+        outcome = CommandOutcome(
             exit_code=process.returncode,
             stdout=out_reader.text,
             stderr=err_reader.text,
@@ -157,6 +179,19 @@ class LocalCommandExecutor(CommandExecutor):
             duration_seconds=time.monotonic() - started,
             child_process_count=1,
         )
+        _log.info(
+            "shell.exited",
+            argv=list(request.argv),
+            exit_code=outcome.exit_code,
+            timed_out=timed_out,
+            cancelled=cancelled,
+            truncated=outcome.truncated,
+            duration_seconds=outcome.duration_seconds,
+            stdout_chars=len(outcome.stdout),
+            stderr_chars=len(outcome.stderr),
+        )
+        _log.debug("shell.output", stdout=outcome.stdout, stderr=outcome.stderr)
+        return outcome
 
     @staticmethod
     def _feed_stdin(process: subprocess.Popen[bytes], stdin: str | None) -> None:

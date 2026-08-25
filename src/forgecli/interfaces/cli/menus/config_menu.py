@@ -50,10 +50,21 @@ class ConfigMenu:
         )
 
     def root_menu(self) -> Menu:
+        # 日志级别就地切换 (ADR-0035): 一个只能靠改 config.json 才能打开的 debug
+        # 开关, 等于要求用户在最需要日志的那一刻先去找配置文件.
+        # 改完下次启动生效 —— 当前进程的 handler 在启动时就装好了.
+        log_level = MenuOption(
+            "日志级别 (debug/info/warn, 下次启动生效)", keys.LOGGING_LEVEL
+        )
         rows: list[Choice] = [
             Choice("供应商配置", submenu=self._llm_menu.providers_menu),
             Choice("模型配置", submenu=self._llm_menu.models_menu),
             Choice("网关运行时配置", submenu=self._gateway_menu.root_menu),
+            Choice(
+                log_level.label,
+                preview=self._shown(log_level),
+                on_cycle=self._cycle_choice(log_level),
+            ),
         ]
         if self._overrides_menu is not None:
             rows.append(Choice("用途模型覆盖", submenu=self._overrides_menu.root_menu))

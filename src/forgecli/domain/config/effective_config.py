@@ -31,6 +31,10 @@ class EffectiveConfig:
 
     telemetry_enabled: bool
     output_theme: str
+    # 运行期日志级别 (ADR-0035). 它是**这份视图里唯一一个在进程启动之前就要读到的键**:
+    # 日志装配发生在任何 service 之前, 所以那条路径直接读 config.json, 不经这里.
+    # 收进来是为了 /config 能显示与修改它 —— 一个只能改文件的开关等于没有开关.
+    logging_level: str
     default_model: ModelRef | None  # 未配置时为 None
 
     @classmethod
@@ -44,6 +48,7 @@ class EffectiveConfig:
         return cls(
             telemetry_enabled=_as_bool(value(config_keys.TELEMETRY_ENABLED)),
             output_theme=value(config_keys.OUTPUT_THEME),
+            logging_level=value(config_keys.LOGGING_LEVEL),
             default_model=_read_model(overrides),
         )
 
@@ -54,6 +59,7 @@ class EffectiveConfig:
             if self.telemetry_enabled
             else "false",
             config_keys.OUTPUT_THEME: self.output_theme,
+            config_keys.LOGGING_LEVEL: self.logging_level,
         }
 
     def display(self, key: str) -> str:

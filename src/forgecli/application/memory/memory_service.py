@@ -35,9 +35,13 @@ from forgecli.domain.memory.entry import (
     MemoryScope,
 )
 from forgecli.domain.memory.secrets import looks_like_secret
+from forgecli.shared.observability.log import get_log
 from forgecli.shared.utils import now_iso
 
 __all__ = ["MemoryRejection", "MemoryService", "MemoryWrite"]
+
+
+_log = get_log(__name__)
 
 
 class MemoryRejection(Enum):
@@ -103,11 +107,25 @@ class MemoryService:
             return MemoryWrite(MemoryRejection.SCOPE_FULL)
         rejection = self._reject(key, value)
         if rejection is not None:
+            _log.warning(
+                "memory.rejected",
+                scope=scope.value,
+                key=key,
+                reason=rejection.value,
+                chars=len(value),
+            )
             return MemoryWrite(rejection)
         existing = store.load()
         replaced = next((e.value for e in existing if e.key == key), "")
         kept = tuple(entry for entry in existing if entry.key != key)
         if not replaced and len(kept) >= MAX_ENTRIES_PER_SCOPE:
+            _log.warning(
+                "memory.rejected",
+                scope=scope.value,
+                key=key,
+                reason=MemoryRejection.SCOPE_FULL.value,
+                entries=len(kept),
+            )
             return MemoryWrite(MemoryRejection.SCOPE_FULL)
         store.save(
             (
@@ -125,6 +143,16 @@ class MemoryService:
                 ),
             )
         )
+        # 记忆是模型可写且不经人确认的提示词输入 (ADR-0033): 写了什么必须留痕, 否则
+        # "模型为什么从某一轮开始改了行为"就完全无从查起.
+        _log.info(
+            "memory.written",
+            scope=scope.value,
+            key=key,
+            value=value.strip(),
+            replaced=replaced,
+            derived_from=derived_from.strip(),
+        )
         return MemoryWrite(replaced=replaced)
 
     def forget(self, scope: MemoryScope, key: str) -> bool:
@@ -137,6 +165,7 @@ class MemoryService:
         if len(kept) == len(existing):
             return False
         store.save(kept)
+        _log.info("memory.forgotten", scope=scope.value, key=key)
         return True
 
     def _reject(self, key: str, value: str) -> MemoryRejection | None:

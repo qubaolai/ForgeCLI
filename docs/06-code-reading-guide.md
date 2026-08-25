@@ -9,7 +9,7 @@
 
 | 层 | 文件 | 行数 | 说明 |
 |---|---|---|---|
-| `shared` | 5 | 178 | 取消令牌, JSON Schema 校验 |
+| `shared` | 5 | 178 | 取消令牌, JSON Schema 校验, 日志与指标 (ADR-0035) |
 | `domain` | 80 | 8940 | 纯值对象, 无 I/O |
 | `application` | 122 | 15342 | 用例编排与端口 |
 | `infrastructure` | 40 | 3444 | 适配器 |
@@ -27,6 +27,23 @@
 
 每一站都给出: 读什么文件 / 配套哪份 ADR / **读完应该能回答什么问题**. 最后一项是自检 ——
 答不上来说明这一站没读透, 往下走会越来越吃力.
+
+### 0.1 让运行日志替你走一遍
+
+"跟着一次真实请求走"可以不只是比喻. 开着 debug 跑一句话, 然后读那份日志 (ADR-0035):
+
+```bash
+FORGE_LOG_LEVEL=debug poetry run forge cli
+tail -f ~/.forge/logs/forge-latest.log
+```
+
+一次带工具调用的对话会按发生顺序留下 `turn.received` -> `prompt.compiled` ->
+`model.request` -> `model.response` -> `tool.requested` -> `pipeline.prepared` ->
+`pipeline.decision` -> `tool.execute.ok` -> `tool.observed` -> `loop.stop`. 每一行的
+模块路径就是文件路径 (去掉 `forgecli.` 前缀), 照着 open 即可.
+
+比通读快的地方在于**顺序是真的**: 文档里的链路图是作者整理过的, 日志里的是这台机器上
+刚刚实际发生的, 包括那些文档没写的分支 (重试, 降级, 被闸拦下的调用).
 
 ## 1. 建立骨架
 

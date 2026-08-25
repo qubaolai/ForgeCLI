@@ -70,8 +70,13 @@ from forgecli.domain.tool.errors import PreparationError
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.domain.tool.result import ToolResult, TurnDisposition
 from forgecli.shared.cancellation import CancelToken
+from forgecli.shared.observability.context import bind
+from forgecli.shared.observability.log import get_log
+from forgecli.shared.observability.metrics import METRICS
 
 __all__ = ["ToolRequestCoordinator"]
+
+_log = get_log(__name__)
 
 _ERROR_KINDS: dict[AuthorizationErrorCode, ObservationKind] = {
     AuthorizationErrorCode.AUTHORIZATION_MISSING: ObservationKind.AUTHORIZATION_MISSING,
@@ -156,8 +161,39 @@ class ToolRequestCoordinator:
         # 不能跨项目命中.
         policy = replace(policy, workspace_id=self._workspace_id)
         invocation_id = self._new_invocation_id()
-        observation = self._resolve(request, invocation_id, context, policy, cancel)
+        with bind(invocation_id=invocation_id, tool=request.name):
+            return self._handle_bound(request, invocation_id, context, policy, cancel)
+
+    def _handle_bound(
+        self,
+        request: ToolRequest,
+        invocation_id: str,
+        context: ExecutionContext,
+        policy: PolicyContext,
+        cancel: CancelToken | None,
+    ) -> ToolObservation:
+        """整条管线的日志都带 inv + tool: 一次调用从裁决到执行是连续的一段."""
+        _log.info(
+            "pipeline.start",
+            arguments=request.arguments,
+            mode=policy.mode.value,
+            cwd=context.cwd,
+            workspace_roots=list(context.workspace_roots),
+        )
+        with _log.span("pipeline") as span:
+            observation = self._resolve(request, invocation_id, context, policy, cancel)
+            span.set(
+                kind=observation.kind.value,
+                reason_code=observation.reason_code,
+                is_error=observation.is_error,
+            )
         if observation.kind not in _EXECUTED_KINDS:
+            _log.info(
+                "pipeline.rejected",
+                kind=observation.kind.value,
+                reason_code=observation.reason_code,
+                message=observation.message,
+            )
             # 没有执行的调用也必须留下终态与审计. 少了这一步, 展示层会永远停在"未完成",
             # events.jsonl 里也查不到这次请求发生过 —— 而模型其实早就拿到了结论.
             self._observer.tool_rejected(
@@ -188,14 +224,52 @@ class ToolRequestCoordinator:
         if unavailable is not None:
             return unavailable
 
+        # 这两段用手工计时而不是 log.span: span 会各自多打一行只带 elapsed_ms 的
+        # `.ok`, 而它们紧接着就是 pipeline.prepared / pipeline.decision —— 同一件事
+        # 打两行, 一次工具密集的对话里这就是几百行纯噪音. 耗时折进那两行里, 指标照记.
+        started = time.perf_counter()
         prepared = self._prepare(request, invocation_id, context)
+        prepare_ms = (time.perf_counter() - started) * 1000.0
+        METRICS.observe("pipeline.prepare", prepare_ms)
         if isinstance(prepared, ToolObservation):
+            _log.warning(
+                "pipeline.prepare_failed",
+                kind=prepared.kind.value,
+                message=prepared.message,
+            )
             return prepared
+        _log.info(
+            "pipeline.prepared",
+            plan_hash=prepared.plan_hash,
+            capabilities=sorted(item.value for item in prepared.capabilities),
+            read_paths=list(prepared.effects.read_paths),
+            write_paths=list(prepared.effects.write_paths),
+            delete_paths=list(prepared.effects.delete_paths),
+            network_targets=list(prepared.effects.network_targets),
+            child_process=prepared.effects.child_process,
+            target_resolution=prepared.target_resolution.value,
+            normalized_input=dict(prepared.normalized_input),
+            elapsed_ms=prepare_ms,
+        )
         self._observer.tool_prepared(
             prepared, invocation_id=invocation_id, arguments=request.arguments
         )
 
+        started = time.perf_counter()
         decision = self._authorization.evaluate(prepared, policy, context)
+        evaluate_ms = (time.perf_counter() - started) * 1000.0
+        METRICS.observe("pipeline.evaluate", evaluate_ms)
+        _log.info(
+            "pipeline.decision",
+            decision=decision.decision.value,
+            reason=decision.reason.value,
+            matched_rule=decision.matched_rule_id,
+            mandatory=decision.mandatory,
+            message=decision.message,
+            risk_facts=[fact.code for fact in decision.risk_facts],
+            executables=list(decision.executable_names),
+            elapsed_ms=evaluate_ms,
+        )
         self._audit.policy_decision(decision, invocation_id=invocation_id)
         self._observer.policy_resolved(decision, invocation_id=invocation_id)
         if decision.decision is Decision.DENY:
@@ -223,6 +297,12 @@ class ToolRequestCoordinator:
         if catalog.contains(request.name):
             return None
         registered = self._registry.contains(request.name)
+        _log.warning(
+            "pipeline.unavailable",
+            registered=registered,
+            mode=policy.mode.value,
+            catalog=[entry.name for entry in catalog.entries],
+        )
         kind = (
             ObservationKind.TOOL_UNAVAILABLE_IN_MODE
             if registered
@@ -328,7 +408,26 @@ class ToolRequestCoordinator:
             mandatory=decision.mandatory,
             target_count=len(decision.effective_plan.effects.mutating_targets),
         )
-        response = self._approval.request(approval)
+        _log.info(
+            "approval.requested",
+            approval_id=approval.approval_id,
+            mandatory=decision.mandatory,
+            reason=decision.reason.value,
+            mutating_targets=list(decision.effective_plan.effects.mutating_targets),
+            allowed_scopes=[scope.value for scope in view.allowed_scopes],
+        )
+        with _log.span("approval.wait", approval_id=approval.approval_id) as span:
+            response = self._approval.request(approval)
+            span.set(outcome=response.outcome.value, approved=response.approved)
+        _log.info(
+            "approval.resolved",
+            approval_id=response.approval_id,
+            outcome=response.outcome.value,
+            approved=response.approved,
+            scope=response.scope.value if response.approved else None,
+            learned=response.scope.learned if response.approved else False,
+            note=response.note,
+        )
         self._observer.approval_resolved(
             tool_name,
             invocation_id=invocation_id,
@@ -374,6 +473,11 @@ class ToolRequestCoordinator:
         # "用户确实点过同意"不等于"他同意的那件事仍然成立".
         if response.scope.learned and self._learned is not None:
             self._learned.record(revalidated, policy, response.scope)
+            _log.info(
+                "approval.rule_learned",
+                scope=response.scope.value,
+                tool=revalidated.effective_plan.tool_name,
+            )
         return replace(
             revalidated,
             decision=Decision.ALLOW,
@@ -412,6 +516,11 @@ class ToolRequestCoordinator:
         )
         changed = approved_binding.differences(current)
         if changed:
+            _log.warning(
+                "approval.binding_changed",
+                approval_id=approval_id,
+                changed=list(changed),
+            )
             return rejected(
                 ObservationKind.APPROVAL_REQUIRED,
                 "批准后事实已变化, 旧批准失效, 需要重新审批: " + ", ".join(changed),
@@ -436,8 +545,15 @@ class ToolRequestCoordinator:
         # 顺序不能换: 先建立恢复保障, 再签发授权. 反过来就会出现"已经拿到执行授权,
         # 但还原不了"的窗口 (ADR-0015 §1).
         try:
-            transaction = self._recovery.begin(plan, context, policy)
+            with _log.span("recovery.begin", mutates=plan.mutates_workspace) as span:
+                transaction = self._recovery.begin(plan, context, policy)
+                span.set(
+                    checkpoint_id=(
+                        None if transaction is None else transaction.checkpoint_id
+                    )
+                )
         except RecoveryUnavailableError as exc:
+            _log.error("recovery.unavailable", message=exc.message)
             return rejected(
                 ObservationKind.RECOVERY_UNAVAILABLE,
                 exc.message,
@@ -468,11 +584,42 @@ class ToolRequestCoordinator:
         self._observer.tool_started(plan.tool_name, invocation_id=invocation_id)
         started = self._clock()
         try:
-            result = self._runtime.execute(envelope, context, cancel=cancel)
+            with _log.span(
+                "tool.execute",
+                authorization_id=envelope.authorization_id,
+                plan_hash=plan.plan_hash,
+            ) as span:
+                result = self._runtime.execute(envelope, context, cancel=cancel)
+                span.set(
+                    status=result.status.value,
+                    exit_code=result.metrics.exit_code,
+                    bytes_out=result.metrics.bytes_out,
+                    workspace_mutated=result.workspace_mutated,
+                    artifacts=[item.artifact_id for item in result.artifacts],
+                )
         except AuthorizationError as exc:
+            _log.error(
+                "tool.authorization_refused",
+                code=exc.code.value,
+                message=exc.message,
+            )
             return self._authorization_refused(
                 exc, transaction, plan, invocation_id, envelope.authorization_id
             )
+        if result.error is not None:
+            _log.warning(
+                "tool.failed",
+                status=result.status.value,
+                code=result.error.code,
+                message=result.error.message,
+            )
+        # 工具回填给模型的正文原样进 debug: 上一层只记了字节数, 而"模型看到的那段
+        # 输出到底长什么样"是排查"它为什么这么理解"的唯一依据.
+        #
+        # 先问再取: result.text 会把所有内容块拼成一整段, 一次大文件读取就是几 MB,
+        # 而参数在调用之前就求值了.
+        if _log.enabled_for_debug():
+            _log.debug("tool.output", text=result.text)
         self._recovery.finish(transaction, plan, result)
         self._audit.tool_completed(result, plan_hash=plan.plan_hash)
         self._observer.tool_completed(
@@ -542,6 +689,12 @@ class ToolRequestCoordinator:
     def _denied(
         self, decision: AuthorizationDecision, invocation_id: str
     ) -> ToolObservation:
+        _log.warning(
+            "pipeline.denied",
+            reason=decision.reason.value,
+            message=decision.message,
+            risk_facts=[fact.code for fact in decision.risk_facts],
+        )
         return rejected(
             ObservationKind.POLICY_DENIED,
             decision.message or "请求被安全策略拒绝",

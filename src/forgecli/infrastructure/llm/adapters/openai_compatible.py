@@ -15,6 +15,7 @@ deepseek / mimo / openai / local 均走 OpenAI chat-completions 协议，本 ada
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
@@ -41,6 +42,7 @@ from forgecli.domain.model.provider_spec import ThinkingDialect
 from forgecli.domain.model.response import FinishReason, ModelUsage
 from forgecli.domain.model.streaming import ProviderStreamChunk, ToolCallDelta
 from forgecli.domain.tool.tool_call import ToolCall
+from forgecli.shared.observability.log import get_log
 
 _FINISH_REASONS: dict[str, FinishReason] = {
     "stop": FinishReason.STOP,
@@ -56,6 +58,9 @@ _PROTOCOL_CAPABILITIES = ProviderCapabilities(
     supports_tools=True,
     supports_structured_output=True,
 )
+
+
+_log = get_log(__name__)
 
 
 def _default_client_factory() -> httpx.Client:
@@ -95,6 +100,8 @@ class OpenAICompatibleProvider(ModelProvider):
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         self._raise_if_cancelled(request)
         payload = self._payload(request, stream=False)
+        _log.debug("http.request", url=self._base_url, payload=payload)
+        started = time.perf_counter()
         with self._client_factory() as client:
             try:
                 response = client.post(
@@ -104,16 +111,44 @@ class OpenAICompatibleProvider(ModelProvider):
                     timeout=request.timeout_seconds,
                 )
             except httpx.TimeoutException as exc:
+                _log.warning(
+                    "http.timeout",
+                    url=self._base_url,
+                    timeout_seconds=request.timeout_seconds,
+                    elapsed_ms=(time.perf_counter() - started) * 1000.0,
+                    message=str(exc),
+                )
                 raise ModelTimeoutError(f"provider 请求超时: {exc}") from exc
             except httpx.TransportError as exc:
+                _log.warning(
+                    "http.transport_error",
+                    url=self._base_url,
+                    error=type(exc).__name__,
+                    elapsed_ms=(time.perf_counter() - started) * 1000.0,
+                    message=str(exc),
+                )
                 raise ModelUnavailableError(f"provider 连接失败: {exc}") from exc
+            _log.info(
+                "http.response",
+                url=self._base_url,
+                status=response.status_code,
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
+                bytes=len(response.content),
+            )
             self._raise_for_status(response)
             try:
                 body = response.json()
             except (json.JSONDecodeError, ValueError) as exc:
+                _log.error(
+                    "http.body_not_json",
+                    url=self._base_url,
+                    body=response.text,
+                    message=str(exc),
+                )
                 raise ModelResponseParseError(
                     f"provider 响应不是合法 JSON: {exc}"
                 ) from exc
+            _log.debug("http.response.body", body=body)
         return self._parse_completion(body)
 
     # ---- 流式（§9）----
@@ -121,6 +156,10 @@ class OpenAICompatibleProvider(ModelProvider):
     def stream(self, request: ProviderRequest) -> Iterator[ProviderStreamChunk]:
         self._raise_if_cancelled(request)
         payload = self._payload(request, stream=True)
+        _log.debug("http.stream.request", url=self._base_url, payload=payload)
+        started = time.perf_counter()
+        chunks = 0
+        first_chunk_ms = 0.0
         client = self._client_factory()
         try:
             with client.stream(
@@ -131,20 +170,53 @@ class OpenAICompatibleProvider(ModelProvider):
                 timeout=request.timeout_seconds,
             ) as response:
                 self._raise_for_stream_status(response)
+                _log.info(
+                    "http.stream.open",
+                    url=self._base_url,
+                    status=response.status_code,
+                    elapsed_ms=(time.perf_counter() - started) * 1000.0,
+                )
                 for line in response.iter_lines():
                     # 取消：读行间隙检查并中止底层连接，不等待自然超时（§9）。
                     if self._cancelled(request):
                         response.close()
+                        _log.info("http.stream.cancelled", chunks=chunks)
                         raise ModelCancelledError("流式调用已被取消，连接已中止")
                     chunk = self._parse_sse_line(line)
                     if chunk is not None:
+                        chunks += 1
+                        if chunks == 1:
+                            first_chunk_ms = (time.perf_counter() - started) * 1000.0
                         yield chunk
         except httpx.TimeoutException as exc:
+            _log.warning(
+                "http.stream.timeout",
+                url=self._base_url,
+                chunks=chunks,
+                timeout_seconds=request.timeout_seconds,
+                message=str(exc),
+            )
             raise ModelTimeoutError(f"provider 流式请求超时: {exc}") from exc
         except httpx.TransportError as exc:
+            _log.warning(
+                "http.stream.transport_error",
+                url=self._base_url,
+                chunks=chunks,
+                error=type(exc).__name__,
+                message=str(exc),
+            )
             raise ModelUnavailableError(f"provider 流式连接失败: {exc}") from exc
         finally:
             client.close()
+            _log.info(
+                "http.stream.closed",
+                url=self._base_url,
+                chunks=chunks,
+                # 首块延迟是"模型卡在哪"最直接的读数: 首块慢是排队或者在思考,
+                # 首块快而总时长长是在正常出字.
+                first_chunk_ms=first_chunk_ms,
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            )
 
     # ---- 请求映射 ----
 
@@ -414,6 +486,15 @@ class OpenAICompatibleProvider(ModelProvider):
 
     def _raise_http_error(self, status: int, response: httpx.Response) -> None:
         summary = self._error_summary(response)
+        # 错误体**整段**进日志, 不只是 error.message 的前 200 字: 那份摘要是给模型与
+        # 用户看的, 而排查一次 400 往往要看 provider 到底指着哪个字段说不合法.
+        _log.error(
+            "http.error",
+            url=self._base_url,
+            status=status,
+            summary=summary,
+            body=response.text,
+        )
         if status in (401, 403):
             raise ModelAuthError(f"provider 认证失败（{status}）: {summary}")
         if status == 429:

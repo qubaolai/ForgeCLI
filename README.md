@@ -18,6 +18,21 @@ poetry run forge
 poetry run forge --open --port 8899
 ```
 
+## 排查问题
+
+运行日志写在 `~/.forge/logs/`, 一次运行一个文件, `forge-latest.log` 指向本次运行:
+
+```text
+tail -f ~/.forge/logs/forge-latest.log
+```
+
+默认级别 `info` 记录一次运行的骨架 (启动, turn 起止, 模型调用, 工具裁决与执行结果);
+`FORGE_LOG_LEVEL=debug` 额外写整段提示词, 模型回复原文, 工具输出与 HTTP payload.
+终端里 `/diagnostics` 给出日志位置, 各阶段耗时分位数与模型调用读数.
+
+日志**不脱敏** (凭证的值除外), 贴给别人之前请先自己看一眼. 详见
+[docs/使用相关.md](docs/使用相关.md) 与 ADR-0035.
+
 ## 质量检查
 
 ```text
