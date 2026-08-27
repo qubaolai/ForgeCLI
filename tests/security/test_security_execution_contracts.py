@@ -22,6 +22,7 @@ from forgecli.application.tools.runtime import ToolRuntime
 from forgecli.application.tools.tool import Tool, ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.execution.environment import ShellLaunch
+from forgecli.domain.execution.profile import ExecutionProfile
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.approval import (
     ApprovalBinding,
@@ -279,6 +280,61 @@ def test_explicit_toolchain_directory_is_not_treated_as_system(
 
     identity = ExecutableResolver().resolve("runner", context)
     assert identity.trust_zone is TrustZone.TOOLCHAIN
+    assert identity.eligible_for_plain_allow is False
+
+
+def _profile_with_trusted_bin(bin_dir: Path) -> ExecutionProfile:
+    profile = probe_execution_profile(protected_roots_hash="protected")
+    return replace(profile, trusted_path=(str(bin_dir),))
+
+
+def test_a_symlink_in_the_controlled_path_stays_system(tmp_path: Path) -> None:
+    """包管理器普遍在 bin 目录里放符号链接, 实体在版本化的另一棵目录树里.
+
+    只按 realpath 判信任区的话, Homebrew 装的 python3 / node / npm 全部落进 UNKNOWN,
+    每次调用都要人点头 —— 而 Nix, asdf, pyenv 的形状完全一样.
+    """
+    bin_dir = tmp_path / "brew" / "bin"
+    bin_dir.mkdir(parents=True)
+    cellar = tmp_path / "brew" / "Cellar" / "python@3.14" / "bin"
+    cellar.mkdir(parents=True)
+    (cellar / "python3.14").write_bytes(b"binary")
+    (bin_dir / "python3").symlink_to(cellar / "python3.14")
+    profile = _profile_with_trusted_bin(bin_dir)
+    context = ExecutionContext(
+        cwd=str(tmp_path),
+        workspace_roots=(str(tmp_path / "workspace"),),
+        environment=build_execution_environment(profile, raw={}),
+        filesystem=OsFileSystemView(),
+        profile=profile,
+    )
+
+    identity = ExecutableResolver().resolve("python3", context)
+
+    assert identity.trust_zone is TrustZone.SYSTEM
+    assert identity.eligible_for_plain_allow is True
+
+
+def test_a_symlink_pointing_into_the_workspace_is_not_laundered(tmp_path: Path) -> None:
+    """入口在受控 PATH 上不能给工作区里的文件洗白: 那是 Agent 自己写得了的内容."""
+    bin_dir = tmp_path / "brew" / "bin"
+    bin_dir.mkdir(parents=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "evil").write_bytes(b"binary")
+    (bin_dir / "python3").symlink_to(workspace / "evil")
+    profile = _profile_with_trusted_bin(bin_dir)
+    context = ExecutionContext(
+        cwd=str(tmp_path),
+        workspace_roots=(str(workspace),),
+        environment=build_execution_environment(profile, raw={}),
+        filesystem=OsFileSystemView(),
+        profile=profile,
+    )
+
+    identity = ExecutableResolver().resolve("python3", context)
+
+    assert identity.trust_zone is TrustZone.WORKSPACE
     assert identity.eligible_for_plain_allow is False
 
 

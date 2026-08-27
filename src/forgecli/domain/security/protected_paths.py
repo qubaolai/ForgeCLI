@@ -25,11 +25,29 @@ from forgecli.domain.tool.hashing import digest
 from forgecli.domain.workspace.boundary import is_within
 
 __all__ = [
+    "HARMLESS_DEVICES",
     "ProtectedCategory",
     "ProtectedPathPolicy",
     "ProtectedRoot",
     "PathVerdict",
+    "is_harmless_device",
 ]
+
+# 进程自己的流与丢弃口. 它们落在 /dev 下, 但读写它们既碰不到块设备, 也拿不到任何别人
+# 的数据.
+#
+# 不放行的话 `2>/dev/null` 就是一次"写入受保护路径", 而那是 Hard Deny —— 一批纯只读
+# 命令因此连人点头都放不行. 真实日志里模型想查一下 maven 装在哪, 两次都被这条拦下, 于是
+# 它再也没能验证自己写的代码能不能构建.
+HARMLESS_DEVICES = frozenset(
+    {"/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/tty"}
+)
+_HARMLESS_DEVICE_PREFIX = "/dev/fd/"
+
+
+def is_harmless_device(path: str) -> bool:
+    """写它不改变任何持久状态, 读它也读不到别人的东西."""
+    return path in HARMLESS_DEVICES or path.startswith(_HARMLESS_DEVICE_PREFIX)
 
 
 class ProtectedCategory(Enum):
@@ -105,6 +123,8 @@ class ProtectedPathPolicy:
         `~/.ssh`, `~/.aws`, `~/.zshrc` 全部变成未受保护 —— 一条为"用 Forge 开发 Forge"
         准备的豁免, 顺手关掉了凭证与启动配置的保护.
         """
+        if is_harmless_device(realpath):
+            return None
         exempt = self._exempt(realpath)
         matches = [
             root

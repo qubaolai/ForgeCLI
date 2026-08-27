@@ -188,3 +188,36 @@ def test_privilege_escalators_are_never_stripped() -> None:
 )
 def test_prefixes_compose_without_losing_the_inner_command(raw: str) -> None:
     assert _deny(raw) is DecisionReason.HARD_DENY_DESTRUCTIVE
+
+
+# ---- 设备写入: `2>/dev/null` 曾经让一批纯只读命令撞上不可覆盖的底线 ----
+
+
+@mark.parametrize(
+    "raw",
+    [
+        "find / -maxdepth 6 -name mvn -type f 2>/dev/null",
+        "ls ~/.m2/repository 2>/dev/null",
+        "mvn -v > /dev/stdout",
+        "echo hi > /dev/fd/3",
+    ],
+)
+def test_process_streams_are_not_device_writes(raw: str) -> None:
+    """写自己的流或丢弃口碰不到块设备.
+
+    这道底线是给 `> /dev/disk0` 准备的. 把 `2>/dev/null` 一起算进去, 模型连"看看
+    maven 装在哪"都做不到 —— 而 hard deny 是不可覆盖的, 人点头也放不行.
+    """
+    assert _deny(raw) is None
+
+
+@mark.parametrize(
+    "raw",
+    [
+        "echo x > /dev/disk0",
+        "cat image > /dev/rdisk2",
+        "cat a > /dev/zero",
+    ],
+)
+def test_writing_a_real_device_stays_denied(raw: str) -> None:
+    assert _deny(raw) is DecisionReason.HARD_DENY_DESTRUCTIVE

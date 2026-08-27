@@ -22,6 +22,7 @@ import re
 from dataclasses import dataclass
 
 from forgecli.domain.security.findings import RiskFact
+from forgecli.domain.security.protected_paths import is_harmless_device
 from forgecli.domain.security.shell.command_plan import (
     CommandPlan,
     CommandUnit,
@@ -220,11 +221,18 @@ def _targets_root(unit: CommandUnit) -> bool:
 
 
 def _writes_device(unit: CommandUnit) -> bool:
-    return any(
-        target.startswith(prefix)
-        for target in unit.write_targets
-        for prefix in _DEVICE_PREFIXES
-    )
+    return any(_is_device(target) for target in unit.write_targets)
+
+
+def _is_device(target: str) -> bool:
+    """无害的那几个走 protected_paths 的同一份判据.
+
+    两份清单必然走偏, 而走偏的形态是"这条命令过了设备检查, 却栽在受保护路径上" ——
+    两道闸说法不一致, 而模型只看得到后一条.
+    """
+    if is_harmless_device(target):
+        return False
+    return target.startswith(_DEVICE_PREFIXES)
 
 
 def _is_reverse_shell(unit: CommandUnit) -> bool:

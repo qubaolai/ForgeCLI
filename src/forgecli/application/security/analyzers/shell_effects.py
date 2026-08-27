@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from fnmatch import fnmatch
 
+from forgecli.domain.security.protected_paths import is_harmless_device
 from forgecli.domain.security.shell.arguments import classify_arguments
 from forgecli.domain.security.shell.command_plan import (
     CommandPlan,
@@ -114,6 +115,19 @@ _MAY_WRITE_KINDS = (
 )
 
 
+def _paths(
+    targets: tuple[str, ...], home: str, resolve: Callable[[str], str]
+) -> list[str]:
+    """重定向目标里的路径. 丢弃口与进程自己的流不算.
+
+    `2>/dev/null` 不是"往工作区外写文件": 它不改变任何持久状态, 也没有任何东西可以被
+    人审出来. 留在目标集合里的后果是围栏判它越界, 于是最常见的一种 shell 写法要人点头
+    才能跑 —— 而这条通知发生在 auto 模式下, 每次都会打断自动执行.
+    """
+    resolved = (resolve(expand_home(target, home)) for target in targets)
+    return [path for path in resolved if not is_harmless_device(path)]
+
+
 def effects_of(
     command: CommandPlan,
     expanded: tuple[str, ...],
@@ -126,8 +140,8 @@ def effects_of(
     glob 用 expand_targets 已经展开好的结果替换, 而不是把 `*.tmp` 原样记成一个目标 ——
     审批界面要展示的是"会删掉哪两个文件", 不是一个模式串.
     """
-    writes = [resolve(expand_home(t, home)) for t in command.write_targets]
-    reads = [resolve(expand_home(t, home)) for t in command.read_targets]
+    writes = _paths(command.write_targets, home, resolve)
+    reads = _paths(command.read_targets, home, resolve)
     deletes: list[str] = []
     moves: list[str] = []
     for unit in command.units:

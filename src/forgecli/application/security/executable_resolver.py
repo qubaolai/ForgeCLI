@@ -52,7 +52,7 @@ class ExecutableResolver:
             mtime_ns=facts.mtime_ns,
             content_hash=digest_bytes(content) if complete else "",
             content_complete=complete,
-            trust_zone=self._trust_zone(facts.realpath, context),
+            trust_zone=self._trust_zone(absolute, facts.realpath, context),
             interpreter_chain=self._interpreter_chain(content),
         )
 
@@ -69,7 +69,20 @@ class ExecutableResolver:
                 return candidate
         return None
 
-    def _trust_zone(self, realpath: str, context: ExecutionContext) -> TrustZone:
+    def _trust_zone(
+        self, absolute: str, realpath: str, context: ExecutionContext
+    ) -> TrustZone:
+        """两端都要看: 命中的那个 PATH 条目, 和它最终指向的文件.
+
+        可写的几个区按 realpath 判, 顺序在前 —— `/usr/local/bin/x` 指进工作区仍然是
+        工作区里的文件, 入口在受控 PATH 上不能把它洗白.
+
+        SYSTEM 则要放行入口: 包管理器普遍在 bin 目录里放符号链接, 实体存在版本化的
+        另一棵目录树 (Homebrew 的 Cellar, Nix 的 store, asdf 与 pyenv 的 shims).
+        只看 realpath 的话, brew 装的 python3, node, npm 全部落进 UNKNOWN, 于是每一次
+        调用都要人点头 —— 而这条 PATH 条目正是画像声明为可信的那一条. 换掉链接指向
+        会改掉 FileStateBinding 里的 realpath 与内容哈希, 执行前复核照样拦得住.
+        """
         if any(is_within(realpath, root) for root in context.workspace_roots):
             return TrustZone.WORKSPACE
         if any(is_within(realpath, root) for root in _TEMP_ROOTS):
@@ -81,7 +94,11 @@ class ExecutableResolver:
             for entry in context.profile.writable_toolchain_path
         ):
             return TrustZone.TOOLCHAIN
-        if any(is_within(realpath, entry) for entry in context.profile.trusted_path):
+        if any(
+            is_within(path, entry)
+            for path in (realpath, absolute)
+            for entry in context.profile.trusted_path
+        ):
             return TrustZone.SYSTEM
         return TrustZone.UNKNOWN
 

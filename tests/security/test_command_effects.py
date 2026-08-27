@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from pytest import mark
 
+from forgecli.application.security.analyzers.shell_effects import effects_of
 from forgecli.domain.security.shell.command_plan import ShellKind
 from forgecli.domain.security.shell.effects import EffectKind, effect_kind_of
 from forgecli.domain.security.shell.expansion import expand_targets
 from forgecli.domain.security.shell.parser import parse_command
+from forgecli.domain.tool.plan import PlanEffects
 
 
 def _first(raw: str) -> EffectKind:
@@ -115,3 +117,29 @@ def test_a_known_reader_keeps_the_target_set_closed() -> None:
         home="/home/dev",
     )
     assert result.closed is True
+
+
+def _effects(raw: str) -> PlanEffects:
+    plan = parse_command(raw, ShellKind.POSIX, cwd="/w")
+    resolve = lambda path: path if path.startswith("/") else f"/w/{path}"  # noqa: E731
+    expanded = expand_targets(
+        plan, resolve=resolve, glob=lambda _: (), home="/home/dev"
+    )
+    return effects_of(plan, expanded.targets, "/home/dev", resolve=resolve)
+
+
+def test_a_discard_redirect_is_not_a_workspace_write() -> None:
+    """`2>/dev/null` 不是"往工作区外写文件".
+
+    留在目标集合里的后果是围栏判它越界, 于是 shell 里最常见的一种写法在 auto 模式下
+    每次都要人点头 —— 真实日志里模型两次想查 maven 装在哪, 都停在这里.
+    """
+    effects = _effects("ls -a . 2>/dev/null")
+
+    assert effects.write_paths == ()
+
+
+def test_a_real_device_write_still_shows_up_as_a_target() -> None:
+    effects = _effects("echo x > /dev/disk0")
+
+    assert effects.write_paths == ("/dev/disk0",)
