@@ -1,4 +1,4 @@
-"""补丁信封的语法与解析 (ADR-0029 规则三 C 类).
+r"""补丁信封的语法与解析 (ADR-0029 规则三 C 类).
 
 一个信封 = 若干文件段, 每段一种操作. 五个写工具合并成一个入口之后, 未来所有写入场景的
 变化都在这里的语法里表达, 不占新工具位, 不加新参数.
@@ -28,13 +28,22 @@
 可以直接复用 `text_edit.locate` 的容差与"文件里其实长这样"的原文回显 —— 那是 ADR-0029
 点名要保住的东西. 带前缀的格式做不到, 因为前缀本身要先被剥掉才能比对.
 
-语法规则只有三条:
+语法规则只有四条:
 
-1. **标记是行锚定的**: 一行以 `*** ` 开头且其后是已知动词时才是标记, 否则是正文.
-   于是正文里出现 `*** 注意` 这种行不会被误认.
-2. **正文逐字**: 标记行的换行之后, 到下一个标记行之前的那个换行为止. 想要末尾换行就
+1. **标记是行锚定的**: 一行以 `*** ` 开头, 其后第一个词全由 ASCII 字母组成时, 它就是
+   一个标记 —— 动词认不出来直接报错, **不当正文**.
+
+   曾经的规则是"认不出就当正文", 代价是模型把 `*** ADD` / `*** INSERT` 这类自己发明的
+   动词写进信封时, 那一行连同它后面的全部内容被吞进正文原样落盘. 实测一次会话里 7 次
+   调用中招, 5 个文件里躺着一行 `*** INSERT`, 而工具每次都回"已应用 1 处改动".
+
+   歧义不能靠猜: `*** ADD` 既可能是打错的动词, 也可能是文件里真有这么一行. 报错让前者
+   当场改对 (模型看得到合法动词表), 后者按规则 2 转义。
+2. **正文里以 `*** ` 开头的行写成 `\*** `**: 解析时剥掉那个反斜杠. 要写字面的
+   `\*** ` 就写 `\\*** `.
+3. **正文逐字**: 标记行的换行之后, 到下一个标记行之前的那个换行为止. 想要末尾换行就
    多空一行.
-3. **解析失败指到段和处**: 错误里带段序号, 路径与第几处替换, 不整封退回 (ADR-0029
+4. **解析失败指到段和处**: 错误里带段序号, 路径与第几处替换, 不整封退回 (ADR-0029
    约束 3).
 """
 
@@ -54,7 +63,9 @@ __all__ = [
 ]
 
 _MARKER = "*** "
+_ESCAPE = "\\"
 _MOVE_ARROW = " -> "
+_VERBS = ("UPDATE", "NEW", "DELETE", "MOVE", "FIND", "REPLACE")
 
 
 @dataclass(frozen=True)
@@ -125,14 +136,25 @@ class _Marker:
 
 
 def _marker_at(line: str, line_number: int) -> _Marker | None:
-    """这一行是不是标记. 不是已知动词就当正文 —— 正文里的 `*** 注意` 不该被误认."""
+    """这一行是不是标记. 像动词但不认识就报错, 不当正文.
+
+    判据是"第一个词全由 ASCII 字母组成": 那种形状只可能是在写动词. 中文, 符号与空白
+    一律当正文, 所以 `*** 注意` 与 Markdown 的分隔线照旧不受影响.
+    """
     if not line.startswith(_MARKER):
         return None
     rest = line[len(_MARKER) :].strip()
     verb, _, argument = rest.partition(" ")
-    upper = verb.upper()
-    if upper not in {"UPDATE", "NEW", "DELETE", "MOVE", "FIND", "REPLACE"}:
+    if not verb.isascii() or not verb.isalpha():
         return None
+    upper = verb.upper()
+    if upper not in _VERBS:
+        raise PatchSyntaxError(
+            f"不认识的动词 `*** {verb}`. 可用的是 "
+            + ", ".join(f"`*** {name}`" for name in _VERBS)
+            + f"; 这一行是正文的话写成 `\\{_MARKER}...`",
+            where=f"第 {line_number + 1} 行",
+        )
     return _Marker(verb=upper, argument=argument.strip(), line_number=line_number)
 
 
@@ -253,4 +275,16 @@ def _body(lines: list[str], start: _Marker, stop: _Marker | None) -> str:
     """
     first = start.line_number + 1
     last = stop.line_number if stop is not None else len(lines)
-    return "\n".join(lines[first:last])
+    return "\n".join(_unescape(line) for line in lines[first:last])
+
+
+def _unescape(line: str) -> str:
+    r"""行首的一个反斜杠 + 标记形状 = 转义, 剥掉那个反斜杠 (规则 2).
+
+    按"剥完反斜杠之后是不是标记形状"判, 于是 `\\*** ` 剥成 `\*** `, 一个真的以
+    `\*** ` 开头的行也写得出来. 其余的行首反斜杠一律原样留着.
+    """
+    bare = line.lstrip(_ESCAPE)
+    if bare == line or not bare.startswith(_MARKER):
+        return line
+    return line[1:]

@@ -71,6 +71,8 @@ class ResultProvenance:
       状态下被读第二次, 后一次回一行引用就够了.
     - ``artifact_id`` 让这条结果可以**降级**: transcript 里的正文换成引用, 完整内容
       仍在 ArtifactStore 里, 用 artifact_read 取回.
+    - ``mutated_paths`` 让这条结果可以**作废别人**: 写文件的工具据此告诉上下文管理,
+      前面那些读到的内容从此不代表当前状态了.
 
     ``source_state`` 取 ``path_state_token``, 与 ADR-0027 执行前复核用的是**同一个
     函数**. 两套判据会让安全层说"没变"而去重层说"变了", 而这种分歧不会报错.
@@ -83,6 +85,12 @@ class ResultProvenance:
     source_path: str = ""
     source_state: str = ""
     byte_size: int = 0
+    # 这次调用改掉了哪些路径 (决策 4). 与 ``source_*`` 分开而不是复用它:
+    #
+    # - 一个补丁信封可以动很多文件, ``source_path`` 只装得下一个.
+    # - 写入的正文是一行改动说明, 不是文件内容. 让它去当"这份你读过"的引用目标, 模型
+    #   顺着引用拿到的会是 "已应用 1 处改动", 而不是它要的那段代码.
+    mutated_paths: tuple[str, ...] = ()
 
     @property
     def dedupable(self) -> bool:
@@ -158,13 +166,21 @@ class ToolResult:
 
     @property
     def text(self) -> str:
-        """拼接成回填模型的文本 (截断片段带显式标记)."""
-        return "\n".join(
+        """拼接成回填模型的文本 (截断片段带显式标记).
+
+        失败时把 ``ToolError.message`` 也拼进去. content_parts 装的是工具跑出来的输出,
+        而一次 mkdir 失败根本没有输出 —— 只填 error 的结果回到模型手里就是一个空字符串,
+        它读不出发生过什么, 只能原样再试一次, 或者改用 shell 自己去摸文件系统.
+        """
+        lines = [
             f"{part.text}\n[输出已截断, 完整内容见产物 {part.artifact_id}]"
             if part.truncated
             else part.text
             for part in self.content_parts
-        )
+        ]
+        if self.error is not None:
+            lines.append(self.error.message)
+        return "\n".join(lines)
 
     def to_audit_payload(self) -> dict[str, object]:
         """工具侧审计只记机制事实: 状态, 耗时, 退出码, 产物引用与截断情况."""

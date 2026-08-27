@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 
 from forgecli.application.tools.builtin.fs_apply_patch import ApplyPatchTool
+from forgecli.application.tools.builtin.fs_read import ReadFileTool
+from forgecli.application.tools.resource_governor import ResourceGovernor
 from forgecli.application.tools.tool import ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.tool.capability import Capability
@@ -399,3 +401,103 @@ def test_an_empty_patch_is_rejected(workspace: Path) -> None:
 
     assert isinstance(error, PreparationError)
     assert error.field_path == "patch"
+
+
+# ---- 改过谁: 上下文管理据此把改动前那次读标记成过时的 (ADR-0032 决策 4) ----
+
+
+def _perform(workspace: Path, patch: str):  # type: ignore[no-untyped-def]
+    plan = _prepare(workspace, patch)
+    assert isinstance(plan, ToolPlan)
+    return _tool().perform(plan, _context(workspace))
+
+
+def test_a_write_reports_every_path_it_touched(workspace: Path) -> None:
+    (workspace / "a.py").write_text("old\n", encoding="utf-8")
+    (workspace / "gone.py").write_text("x", encoding="utf-8")
+
+    result = _perform(
+        workspace,
+        "*** UPDATE a.py\n*** FIND\nold\n*** REPLACE\nnew\n\n"
+        "*** NEW b.py\nfresh\n\n"
+        "*** DELETE gone.py",
+    )
+
+    assert result.provenance is not None
+    assert set(result.provenance.mutated_paths) == {
+        str(workspace / "a.py"),
+        str(workspace / "b.py"),
+        str(workspace / "gone.py"),
+    }
+
+
+def test_a_move_reports_both_ends(workspace: Path) -> None:
+    (workspace / "from.py").write_text("x", encoding="utf-8")
+
+    result = _perform(workspace, "*** MOVE from.py -> to.py")
+
+    assert result.provenance is not None
+    assert set(result.provenance.mutated_paths) == {
+        str(workspace / "from.py"),
+        str(workspace / "to.py"),
+    }
+
+
+def test_the_reported_path_matches_what_fs_read_records(workspace: Path) -> None:
+    """两个工具必须给出同一种路径写法, 否则这条通知一次也不会命中.
+
+    去重按路径字符串归组: fs_read 记 realpath, 补丁这边记别的形式的话, 两条记录在
+    上下文管理眼里就是两个不相干的文件 —— 不报错, 只是通知永远不发.
+    """
+    target = workspace / "a.py"
+    target.write_text("old\n", encoding="utf-8")
+    read = ReadFileTool(ResourceGovernor(), None)
+    read_plan = read.prepare(
+        ToolInvocationRequest(
+            invocation_id="inv-read",
+            tool_name="fs_read",
+            arguments={"path": str(target)},
+            tool_call_id="c0",
+        ),
+        _context(workspace),
+    )
+    assert isinstance(read_plan, ToolPlan)
+    read_result = read.perform(read_plan, _context(workspace))
+
+    written = _perform(workspace, "*** UPDATE a.py\n*** FIND\nold\n*** REPLACE\nnew")
+
+    assert read_result.provenance is not None
+    assert written.provenance is not None
+    assert read_result.provenance.source_path in written.provenance.mutated_paths
+
+
+def test_a_partial_apply_still_reports_what_landed(workspace: Path) -> None:
+    """中途停下同样改过东西.
+
+    不报的话, 已经写下去的那几个文件在上下文里仍然是改动前的样子 —— 而这正是最需要
+    这条通知的时刻.
+    """
+    (workspace / "a.py").write_text("old\n", encoding="utf-8")
+    (workspace / "later.py").write_text("x", encoding="utf-8")
+    plan = _prepare(
+        workspace,
+        "*** UPDATE a.py\n*** FIND\nold\n*** REPLACE\nnew\n\n*** DELETE later.py",
+    )
+    assert isinstance(plan, ToolPlan)
+    tool = ApplyPatchTool(
+        lambda path, content: Path(path).write_text(content, encoding="utf-8"),
+        lambda path, content: Path(path).write_text(content, encoding="utf-8"),
+        _explode,
+        lambda source, target: Path(source).rename(target),
+        lambda path: Path(path).mkdir(parents=True, exist_ok=True),
+    )
+
+    result = tool.perform(plan, _context(workspace))
+
+    assert result.status is ToolResultStatus.TOOL_ERROR
+    assert result.provenance is not None
+    assert result.provenance.mutated_paths == (str(workspace / "a.py"),)
+
+
+def _explode(path: str) -> None:
+    raise OSError("盘满了")

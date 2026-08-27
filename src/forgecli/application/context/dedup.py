@@ -8,6 +8,10 @@
 - 状态不同 -> 前一条已经过时, 降级并写明"该文件此后被修改过". 这是**主动**通知,
   模型不需要想起来去问.
 
+写入也要报到这里. 只比对读与读的话, 这条通知**对写入完全不生效** —— 模型改完一个文件,
+transcript 里那份改动前的内容仍然摆在那里, 不带任何标记, 而它下一次拼 FIND 段照的就是
+那一份. 写入没有可比对的"下一次读", 所以它走 ``mutated_paths``: 直接说出自己动过谁.
+
 ## 为什么这个 pass 是无状态的
 
 它不存表, 每次从 transcript 重新算. 于是"文件变没变"这个判断的两个输入, 都是各自那次
@@ -42,7 +46,17 @@ def plan_rewrites(
     anchors: dict[str, Slot] = {}
     for slot in slots:
         provenance = slot.block.provenance
-        if provenance is None or not provenance.dedupable:
+        if provenance is None:
+            continue
+        for path in provenance.mutated_paths:
+            # 决策 4 的另一半: 改过之后, 前面那次读到的内容不再代表当前状态.
+            #
+            # 写入自己**不接任**新锚点: 它的正文是一行改动说明, 当不了后来那次读的
+            # 引用目标. 下一次真的读回来, 那一条才是新的代表.
+            mutated = anchors.pop(path, None)
+            if mutated is not None:
+                rewrites[mutated.key] = placeholders.stale_notice(mutated, artifacts)
+        if not provenance.dedupable:
             # shell_run 一类填不出来源身份. 它们的输出不是某个路径在某个状态下的快照,
             # 重跑一次也不保证一样, 所以不参与去重 —— 但仍然可以被降级.
             continue

@@ -468,7 +468,13 @@ def _create_directory(path: str, mode: int) -> None:
 
 
 def _make_directory(path: str) -> None:
-    Path(path).mkdir(exist_ok=False)
+    # exist_ok: 一个信封里的多个段各自在 prepare 阶段算父目录, 算的都是"这一段执行前"
+    # 的磁盘状态. 前一段建过 backend/ 之后, 后一段的计划里仍然写着要建它 —— 报
+    # FileExistsError 会让整封补丁停在第一段, 剩下的文件既没写也没人知道.
+    #
+    # parents 保持默认的 False: 要建的每一级都由 _missing_parents 逐级列进
+    # write_paths 并经过裁决, parents=True 会创建没被声明过的祖先目录.
+    Path(path).mkdir(exist_ok=True)
 
 
 def _set_mode(path: str, mode: int) -> None:

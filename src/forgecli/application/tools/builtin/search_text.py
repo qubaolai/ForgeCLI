@@ -34,7 +34,6 @@ from forgecli.domain.tool.plan import (
     ToolPlan,
 )
 from forgecli.domain.tool.result import (
-    ContentPart,
     ToolError,
     ToolMetrics,
     ToolResult,
@@ -396,7 +395,6 @@ class SearchTextTool(Tool):
                     invocation_id=plan.plan_id,
                     tool_name=_SPEC.name,
                     status=ToolResultStatus.TOOL_ERROR,
-                    content_parts=(ContentPart(text=message),),
                     error=ToolError(
                         code="target_changed", message=message, retryable=True
                     ),

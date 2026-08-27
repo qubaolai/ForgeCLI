@@ -405,7 +405,6 @@ class TodoSetStatusTool(_PlanningTool):
                 invocation_id=plan.plan_id,
                 tool_name=self._SPEC.name,
                 status=ToolResultStatus.TOOL_ERROR,
-                content_parts=(ContentPart(text=str(exc)),),
                 error=ToolError(
                     code=PreparationErrorCode.INVALID_INPUT.value, message=str(exc)
                 ),

@@ -31,7 +31,6 @@ from forgecli.domain.tool.authorization import (
 from forgecli.domain.tool.hashing import digest_bytes
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.domain.tool.result import (
-    ContentPart,
     ToolError,
     ToolMetrics,
     ToolResult,
@@ -192,7 +191,6 @@ def _cancelled_result(invocation_id: str, tool_name: str) -> ToolResult:
         invocation_id=invocation_id,
         tool_name=tool_name,
         status=ToolResultStatus.CANCELLED,
-        content_parts=(ContentPart(text="调用在执行前已被取消"),),
         error=ToolError(code="cancelled", message="调用在执行前已被取消"),
     )
 

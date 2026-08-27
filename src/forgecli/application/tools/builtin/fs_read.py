@@ -158,7 +158,6 @@ class ReadFileTool(Tool):
                 invocation_id=plan.plan_id,
                 tool_name=_SPEC.name,
                 status=ToolResultStatus.TOOL_ERROR,
-                content_parts=(ContentPart(text=message),),
                 error=ToolError(code="target_changed", message=message, retryable=True),
             )
         requested = _positive(plan.normalized_input.get("max_bytes"))

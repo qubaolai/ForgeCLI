@@ -177,3 +177,71 @@ def test_a_tool_name_the_model_made_up_still_leaves_a_terminal_trace(
 
     assert observation.kind is ObservationKind.TOOL_UNAVAILABLE
     assert observation.reason_code == "tool_unavailable"
+
+
+# ---- 真实日志里被卡住的那几条 ----
+
+
+def test_a_multi_file_envelope_lands_every_section(
+    stack: ToolStack, tmp_path: Path
+) -> None:
+    """两段共用一个新建祖先目录时, 整封补丁只写进了第一个文件.
+
+    每段的父目录清单是 prepare 阶段按各自执行前的磁盘状态算的, 而落盘那一步
+    mkdir(exist_ok=False). 真实日志里 29 次调用中 11 次这样半途停下.
+    """
+    result = _call(
+        stack,
+        "fs_apply_patch",
+        patch=(
+            "*** NEW backend/pom.xml\n<project/>\n\n"
+            "*** NEW backend/src/Main.java\nclass Main {}\n\n"
+            "*** NEW backend/src/App.java\nclass App {}"
+        ),
+    )
+
+    assert result.kind is ObservationKind.TOOL_RESULT
+    workspace = tmp_path / "ws"
+    assert (workspace / "backend/pom.xml").exists()
+    assert (workspace / "backend/src/Main.java").exists()
+    assert (workspace / "backend/src/App.java").exists()
+
+
+def test_a_failed_write_tells_the_model_what_went_wrong(
+    stack: ToolStack, tmp_path: Path
+) -> None:
+    """失败回给模型的曾经是空字符串: 只填 error 不填 content_parts."""
+    (tmp_path / "ws" / "a.txt").write_text("x", encoding="utf-8")
+
+    result = _call(stack, "fs_apply_patch", patch="*** NEW a.txt\ny")
+
+    assert result.render().strip()
+
+
+def test_an_invented_patch_verb_is_reported_not_written(
+    stack: ToolStack, tmp_path: Path
+) -> None:
+    """`*** INSERT` 曾经作为正文第一行写进 schema.sql, 而工具回"已应用 1 处改动"."""
+    result = _call(
+        stack,
+        "fs_apply_patch",
+        patch="*** NEW schema.sql\n*** INSERT\nCREATE TABLE t (id int);",
+    )
+
+    assert result.kind is ObservationKind.PREPARATION_FAILED
+    assert "*** INSERT" in result.render()
+    assert not (tmp_path / "ws" / "schema.sql").exists()
+
+
+def test_a_read_only_probe_with_dev_null_runs_unattended(stack: ToolStack) -> None:
+    """`2>/dev/null` 曾经命中"写入设备路径"这条不可覆盖的底线.
+
+    这是日志里那条查 maven 装在哪的命令, 它被硬拒之后模型就再也没法验证构建.
+    """
+    result = _call(
+        stack,
+        "shell_run",
+        command="ls -a . 2>/dev/null; echo done",
+    )
+
+    assert result.kind is ObservationKind.TOOL_RESULT

@@ -154,7 +154,6 @@ class _MemoryTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=self._SPEC.name,
             status=ToolResultStatus.INVALID_INPUT,
-            content_parts=(ContentPart(text=message),),
             error=ToolError(
                 code=rejection.value,
                 message=message,

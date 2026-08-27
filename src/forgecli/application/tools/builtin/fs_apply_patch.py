@@ -53,6 +53,7 @@ from forgecli.domain.tool.plan import (
 )
 from forgecli.domain.tool.result import (
     ContentPart,
+    ResultProvenance,
     ToolError,
     ToolMetrics,
     ToolResult,
@@ -85,6 +86,10 @@ _SPEC = ToolSpec(
         "父目录按需自动创建; 目标已存在时失败\n"
         "*** DELETE 路径       删除文件或整个目录\n"
         "*** MOVE 源 -> 目标   移动或重命名, 目标已存在时失败\n"
+        "\n"
+        "以上四个动词加 FIND / REPLACE 就是全部, 没有别的; "
+        "写别的动词会报错, 不会被当成正文. "
+        "正文里本来就有以 `*** ` 开头的行时, 那一行写成 `\\*** `.\n"
         "\n"
         "同一片段要在多处替换时写 `*** FIND ALL`. "
         "FIND 段照抄文件内容即可: 行尾空白, 换行符与整块统一的缩进偏移会自动对齐, "
@@ -246,16 +251,18 @@ class ApplyPatchTool(Tool):
         assert isinstance(operations, tuple)
         applied: list[str] = []
         notes: list[str] = []
+        mutated: list[str] = []
         for raw in operations:
             assert isinstance(raw, Mapping)
             stale = _stale_target(raw, context)
             if stale is not None:
-                return _stale_result(plan, stale, applied)
+                return _stale_result(plan, stale, applied, mutated)
             try:
                 self._apply(raw)
             except OSError as exc:
-                return _failed_result(plan, raw, exc, applied)
+                return _failed_result(plan, raw, exc, applied, mutated)
             applied.append(_describe(raw))
+            mutated.extend(_mutated_paths(raw))
             note = str(raw.get("note", ""))
             if note:
                 notes.append(f"{raw['path']}: {note}")
@@ -272,6 +279,7 @@ class ApplyPatchTool(Tool):
             content_parts=(ContentPart(text="\n".join(lines)),),
             metrics=ToolMetrics(bytes_out=len("\n".join(lines).encode("utf-8"))),
             workspace_mutated=True,
+            provenance=ResultProvenance(mutated_paths=tuple(mutated)),
         )
 
     def _apply(self, raw: Mapping[str, object]) -> None:
@@ -530,22 +538,47 @@ def _error(message: str) -> PreparationError:
     )
 
 
-def _stale_result(plan: ToolPlan, path: str, applied: list[str]) -> ToolResult:
+def _mutated_paths(raw: Mapping[str, object]) -> tuple[str, ...]:
+    """这一段实际动了哪些路径 (ADR-0032 决策 4).
+
+    删除要展开成清单: 删一个目录改掉的是里面每一个文件, 而模型前面可能逐个读过它们.
+    移动两端都算 —— 源没了, 目标是新的.
+    """
+    kind = str(raw["kind"])
+    if kind == "delete":
+        targets = raw["targets"]
+        assert isinstance(targets, Sequence)
+        return tuple(str(target) for target in targets)
+    if kind == "move":
+        return (str(raw["source"]), str(raw["path"]))
+    return (str(raw["path"]),)
+
+
+def _stale_result(
+    plan: ToolPlan, path: str, applied: list[str], mutated: list[str]
+) -> ToolResult:
     done = f" 已完成 {len(applied)} 处, 未回滚." if applied else ""
     return ToolResult(
         invocation_id=plan.plan_id,
         tool_name=_SPEC.name,
         status=ToolResultStatus.TOOL_ERROR,
-        content_parts=(
-            ContentPart(text=f"目标在计划生成后发生变化, 已拒绝写入: {path}.{done}"),
+        error=ToolError(
+            code="target_changed",
+            message=f"目标在计划生成后发生变化, 已拒绝写入: {path}.{done}",
         ),
-        error=ToolError(code="target_changed", message=path),
         workspace_mutated=bool(applied),
+        # 中途停下同样改过东西. 不报的话, 已经写下去的那几个文件在上下文里仍然是
+        # 改动前的样子.
+        provenance=ResultProvenance(mutated_paths=tuple(mutated)),
     )
 
 
 def _failed_result(
-    plan: ToolPlan, raw: Mapping[str, object], exc: OSError, applied: list[str]
+    plan: ToolPlan,
+    raw: Mapping[str, object],
+    exc: OSError,
+    applied: list[str],
+    mutated: list[str],
 ) -> ToolResult:
     done = f" 已完成 {len(applied)} 处, 未回滚." if applied else ""
     return ToolResult(
@@ -554,4 +587,5 @@ def _failed_result(
         status=ToolResultStatus.TOOL_ERROR,
         error=ToolError(code="apply_failed", message=f"{raw['path']}: {exc}.{done}"),
         workspace_mutated=bool(applied),
+        provenance=ResultProvenance(mutated_paths=tuple(mutated)),
     )

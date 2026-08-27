@@ -41,6 +41,19 @@ def _read_result(
     )
 
 
+def _write_result(*, call_id: str, paths: tuple[str, ...]) -> ChatMessage:
+    return ChatMessage(
+        role=MessageRole.TOOL,
+        content=(
+            ToolResultBlock(
+                tool_call_id=call_id,
+                content=f"已应用 {len(paths)} 处改动:",
+                provenance=ResultProvenance(mutated_paths=paths),
+            ),
+        ),
+    )
+
+
 def _ask(text: str) -> ChatMessage:
     return ChatMessage(role=MessageRole.USER, content=(TextBlock(text),))
 
@@ -151,3 +164,66 @@ def test_running_fit_twice_changes_nothing_the_second_time() -> None:
     twice = manager.fit(once, session_id="s1", turn_id="t1", budget=None).messages
 
     assert _contents(once) == _contents(twice)
+
+
+def test_writing_a_file_marks_the_earlier_read_stale() -> None:
+    """这条通知以前对写入完全不生效.
+
+    判据只比对读与读: 模型改完一个文件, transcript 里那份改动前的内容仍然摆在那里,
+    不带任何标记, 而它下一次拼 FIND 段照的就是那一份.
+    """
+    store = MemoryArtifactStore()
+    body = "class SecurityConfig {\n}\n"
+    messages = (
+        _ask("看一下安全配置"),
+        _read_result(
+            store, call_id="c1", path="/w/SecurityConfig.java", state="s1", body=body
+        ),
+        _ask("加一个 UserDetailsService"),
+        _write_result(call_id="c2", paths=("/w/SecurityConfig.java",)),
+    )
+
+    result = ContextManager(artifacts=store).fit(
+        messages, session_id="s", turn_id="t", budget=None
+    )
+
+    assert body not in _contents(result.messages)
+    assert "此后被修改过" in _contents(result.messages)[0]
+
+
+def test_one_envelope_marks_every_file_it_touched() -> None:
+    """一个信封可以动很多文件, 而 source_path 只装得下一个."""
+    store = MemoryArtifactStore()
+    messages = (
+        _read_result(store, call_id="c1", path="/w/a.java", state="s1", body="A" * 40),
+        _read_result(store, call_id="c2", path="/w/b.java", state="s1", body="B" * 40),
+        _write_result(call_id="c3", paths=("/w/a.java", "/w/b.java")),
+    )
+
+    result = ContextManager(artifacts=store).fit(
+        messages, session_id="s", turn_id="t", budget=None
+    )
+
+    assert all("此后被修改过" in text for text in _contents(result.messages)[:2])
+
+
+def test_a_write_never_becomes_the_reference_target_of_a_later_read() -> None:
+    """写入的正文是一行改动说明, 当不了"这份你读过"的引用目标.
+
+    让它接任锚点的话, 模型顺着引用拿到的会是 "已应用 1 处改动", 而不是它要的那段代码.
+    """
+    store = MemoryArtifactStore()
+    body = "class A {}\n"
+    messages = (
+        _write_result(call_id="c1", paths=("/w/a.java",)),
+        _read_result(store, call_id="c2", path="/w/a.java", state="s2", body=body),
+        _read_result(store, call_id="c3", path="/w/a.java", state="s2", body=body),
+    )
+
+    result = ContextManager(artifacts=store).fit(
+        messages, session_id="s", turn_id="t", budget=None
+    )
+
+    contents = _contents(result.messages)
+    assert contents[1] == body
+    assert "与第 2 次工具调用读到的内容相同" in contents[2]
