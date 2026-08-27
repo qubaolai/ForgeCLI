@@ -145,6 +145,7 @@ def build_tool_stack(
     approval: ApprovalService | None = None,
     artifacts: ArtifactStore | None = None,
     run_bus: AgentRunEventBus,
+    toolchain_dirs: tuple[str, ...] = (),
 ) -> ToolStack:
     """按依赖顺序装配三层."""
     # 0. 工作区根先 resolve. macOS 上 /var 与 /tmp 都是指向 /private/... 的软链接,
@@ -161,7 +162,8 @@ def build_tool_stack(
 
     # 2. 执行画像与受控环境.
     profile = probe_execution_profile(
-        protected_roots_hash=protected.protected_roots_hash
+        protected_roots_hash=protected.protected_roots_hash,
+        toolchain_dirs=toolchain_dirs,
     )
     environment = build_execution_environment(profile)
 

@@ -272,6 +272,7 @@ def run() -> ExitCode:
             gateway=llm_runtime.gateway,
             run_bus=run_bus,
             approval=TtyApprovalService(console=console),
+            toolchain_dirs=config_service.effective().toolchain_dirs,
         )
 
         # 上下文管理 (ADR-0032). 建在工具栈之后, 因为它必须拿到**同一个**

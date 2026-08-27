@@ -12,6 +12,7 @@ EffectiveConfig 是配置的*只读视图*：把“默认值 + 用户覆盖”�
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -36,6 +37,13 @@ class EffectiveConfig:
     # 收进来是为了 /config 能显示与修改它 —— 一个只能改文件的开关等于没有开关.
     logging_level: str
     default_model: ModelRef | None  # 未配置时为 None
+    # 额外进受控 PATH 的工具链目录 (ADR-0014 §4.2). 探测出来的候选目录只有那几个系统
+    # 位置, 装在别处的 maven / jdk / node 因此在受控 PATH 上根本不存在 —— 模型跑不了
+    # 构建, 也就永远验证不了自己写的代码能不能起来.
+    #
+    # 它们进 PATH 但**不算可信**: ExecutableResolver 把它们判成 TOOLCHAIN, 里面的
+    # 可执行文件仍然按脚本执行分析.
+    toolchain_dirs: tuple[str, ...]
 
     @classmethod
     def from_overrides(cls, overrides: Mapping[str, str]) -> EffectiveConfig:
@@ -50,6 +58,9 @@ class EffectiveConfig:
             output_theme=value(config_keys.OUTPUT_THEME),
             logging_level=value(config_keys.LOGGING_LEVEL),
             default_model=_read_model(overrides),
+            toolchain_dirs=_read_toolchain_dirs(
+                value(config_keys.EXECUTION_TOOLCHAIN_DIRS)
+            ),
         )
 
     def as_dict(self) -> dict[str, str]:
@@ -60,11 +71,21 @@ class EffectiveConfig:
             else "false",
             config_keys.OUTPUT_THEME: self.output_theme,
             config_keys.LOGGING_LEVEL: self.logging_level,
+            config_keys.EXECUTION_TOOLCHAIN_DIRS: os.pathsep.join(self.toolchain_dirs),
         }
 
     def display(self, key: str) -> str:
         """某个键当前的有效取值（字符串），未知键回 "(未知)"。"""
         return self.as_dict().get(key, "(未知)")
+
+
+def _read_toolchain_dirs(raw: str) -> tuple[str, ...]:
+    """按 os.pathsep 拆开, 与 PATH 本身同一种写法.
+
+    分隔符取平台的而不是固定一个字符: Windows 路径里的 `C:` 会把冒号分法切坏, 而这份
+    值最终就是要拼进 PATH 的.
+    """
+    return tuple(entry for entry in raw.split(os.pathsep) if entry.strip())
 
 
 def _read_model(overrides: Mapping[str, str]) -> ModelRef | None:

@@ -27,6 +27,7 @@ from forgecli.domain.config.errors import (
 TELEMETRY_ENABLED = "telemetry.enabled"
 OUTPUT_THEME = "output.theme"
 LOGGING_LEVEL = "logging.level"
+EXECUTION_TOOLCHAIN_DIRS = "execution.toolchain_dirs"
 # 项目级（forge.json）
 DEFAULT_MODEL_PROVIDER_KEY = "model.provider"
 DEFAULT_MODEL_NAME_KEY = "model.name"
@@ -107,6 +108,7 @@ SCHEMA: tuple[ConfigKey, ...] = (
         default="info",
         choices=("debug", "info", "warn"),
     ),
+    ConfigKey(EXECUTION_TOOLCHAIN_DIRS, ConfigLevel.APP, ValueKind.TEXT),
     # 项目级 → forge.json
     ConfigKey(DEFAULT_MODEL_PROVIDER_KEY, ConfigLevel.PROJECT, ValueKind.TEXT),
     ConfigKey(DEFAULT_MODEL_NAME_KEY, ConfigLevel.PROJECT, ValueKind.TEXT),

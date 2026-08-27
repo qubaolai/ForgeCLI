@@ -170,7 +170,8 @@ def _unresolved(
             detail=(
                 f"{token}: 在 {context.profile.platform} 的 "
                 f"{command.shell_kind.value} 环境里既不是内建命令, "
-                "也不在受控 PATH 上"
+                "也不在受控 PATH 上. 它确实装在本机而只是不在受控 PATH 上时, "
+                "把所在目录配进 execution.toolchain_dirs"
             ),
         ),
     )
