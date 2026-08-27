@@ -38,7 +38,7 @@ _OPTIONS = (
     SelectOption(
         key=PlanReviewChoice.APPROVE_AND_RUN.value,
         label="同意并执行",
-        detail="批准计划, 建好待办, 并立刻开始做 (plan 档会切到 accept_edits)",
+        detail="批准计划, 建好待办, 并立刻开始做 (plan 档会切到 auto)",
     ),
     SelectOption(
         key=PlanReviewChoice.APPROVE.value,

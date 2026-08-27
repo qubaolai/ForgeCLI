@@ -4,6 +4,10 @@
 要时间), 和**不可复现性** —— 被摘要吃掉的原文再也拼不回来, 所以摘要正文必须进事件
 payload 而不是留引用 (决策 8).
 
+"要钱"这件事以前只写在这段注释里: `response.usage` 被原地丢掉, 于是这次调用不进
+`USAGE_RECORDED`, 也不进本轮合计. 而它的 input 大致等于被压掉的那段历史, 不是零头.
+现在交回一份 `UsageRecordDraft` (ADR-0037), 由调用方按与模型调用完全相同的那条路落盘.
+
 ## 两条实现上的硬约束
 
 1. **切点必须落在 tool call 配对之外.** 带 tool_calls 的 assistant 消息后面欠着配对的
@@ -20,6 +24,8 @@ import uuid
 
 from forgecli.application.context.transcript import safe_split_points
 from forgecli.application.llm.gateway.gateway import LlmGateway
+from forgecli.application.llm.metering import UsageMeter
+from forgecli.application.prompt.template_renderer import render_notice
 from forgecli.domain.conversation.message import (
     ChatMessage,
     TextBlock,
@@ -30,7 +36,7 @@ from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.params import ModelParams
 from forgecli.domain.model.request import ModelRequest
 from forgecli.domain.model.selection import CurrentModelSelection
-from forgecli.domain.prompt import text as prompt_text
+from forgecli.domain.model.usage import UsageRecordDraft
 
 __all__ = ["KEEP_RECENT_MESSAGES", "Summary", "summarize"]
 
@@ -42,9 +48,13 @@ KEEP_RECENT_MESSAGES = 6
 
 
 class Summary:
-    """摘要结果. 拿不到摘要时 ``text`` 为空, 调用方按"压不下去"处理."""
+    """摘要结果. 拿不到摘要时 ``text`` 为空, 调用方按"压不下去"处理.
 
-    __slots__ = ("messages_replaced", "model", "provider", "text")
+    ``usage`` 与 ``text`` 相互独立: 模型回了一段空白也照样计费, 所以只要请求发出去过,
+    这里就带着计量草稿 —— 按"没压动"处理的那条路径同样要把这笔账记上.
+    """
+
+    __slots__ = ("messages_replaced", "model", "provider", "text", "usage")
 
     def __init__(
         self,
@@ -53,11 +63,13 @@ class Summary:
         messages_replaced: int = 0,
         provider: str = "",
         model: str = "",
+        usage: UsageRecordDraft | None = None,
     ) -> None:
         self.text = text
         self.messages_replaced = messages_replaced
         self.provider = provider
         self.model = model
+        self.usage = usage
 
 
 def summarize(
@@ -66,50 +78,58 @@ def summarize(
     *,
     session_id: str,
     turn_id: str,
+    meter: UsageMeter | None = None,
 ) -> tuple[tuple[ChatMessage, ...], Summary]:
-    """把靠前的一段换成摘要. 压不动时原样返回."""
+    """把靠前的一段换成摘要. 压不动时原样返回.
+
+    ``meter`` 缺省为 None: 没接计量时照常摘要, 只是这次调用不产出计量草稿. 与
+    ``gateway`` 缺省为 None 是同一条取舍 —— 缺一个可选协作件不该让功能塌掉.
+    """
     split = _split_at(messages)
     if split <= 0:
         return messages, Summary()
     head = messages[:split]
-    response = gateway.complete(
-        ModelRequest(
-            request_id=f"req_{uuid.uuid4().hex[:12]}",
-            session_id=session_id,
-            turn_id=turn_id,
-            # 用途标签, 不选模型 (ADR-0011 §3.3): 摘要走当前主模型, 除非用户显式
-            # 给这个用途配了覆盖.
-            origin=RequestOrigin.COMPACT,
-            model_selection=CurrentModelSelection(),
-            messages=(
-                ChatMessage(
-                    role=MessageRole.USER,
-                    content=(
-                        TextBlock(
-                            f"{prompt_text.COMPACTION_INSTRUCTION}\n\n{_flatten(head)}"
-                        ),
+    request = ModelRequest(
+        request_id=f"req_{uuid.uuid4().hex[:12]}",
+        session_id=session_id,
+        turn_id=turn_id,
+        # 用途标签, 不选模型 (ADR-0011 §3.3): 摘要走当前主模型, 除非用户显式
+        # 给这个用途配了覆盖.
+        origin=RequestOrigin.COMPACT,
+        model_selection=CurrentModelSelection(),
+        messages=(
+            ChatMessage(
+                role=MessageRole.USER,
+                content=(
+                    TextBlock(
+                        f"{render_notice("context.compaction_instruction")}\n\n{_flatten(head)}"
                     ),
                 ),
             ),
-            params=ModelParams(),
-            # 不带系统提示词也不带工具: 这一次调用不是在扮演 Agent, 它只做一件事.
-            # 带上工具目录, 模型会开始"请求工具"而不是写摘要.
-            system_prompt=None,
-            tools=(),
-        )
+        ),
+        params=ModelParams(),
+        # 不带系统提示词也不带工具: 这一次调用不是在扮演 Agent, 它只做一件事.
+        # 带上工具目录, 模型会开始"请求工具"而不是写摘要.
+        system_prompt=None,
+        tools=(),
     )
+    response = gateway.complete(request)
+    # 草稿在这里就建好: 下面两条"没压动"的返回路径同样要带着它. 请求已经发出去了,
+    # 这笔钱花没花与摘要好不好用无关.
+    usage = None if meter is None else meter.build_draft(request, response)
     text = response.content.strip()
     if not text:
-        return messages, Summary()
+        return messages, Summary(usage=usage)
     replacement = ChatMessage(
         role=MessageRole.USER,
-        content=(TextBlock(f"{prompt_text.COMPACTION_HEADER}\n\n{text}"),),
+        content=(TextBlock(f"{render_notice("context.compaction_header")}\n\n{text}"),),
     )
     return (replacement, *messages[split:]), Summary(
         text=text,
         messages_replaced=split,
         provider=response.provider,
         model=response.model,
+        usage=usage,
     )
 
 

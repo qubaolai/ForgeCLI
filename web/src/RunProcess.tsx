@@ -3,6 +3,7 @@ import { ChevronIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import {
   buildTimeline,
+  formatTokens,
   LocalTurn,
   metricsFor,
   numberValue,
@@ -73,10 +74,17 @@ function RunMetrics({ metrics }: { metrics: ReturnType<typeof metricsFor> }) {
     <span>{formatDuration(metrics.elapsedMs)}</span>
     <span>{metrics.modelCalls} 次模型</span>
     <span>{metrics.toolCalls} 次工具</span>
-    <span title={`输入 ${metrics.inputTokens} · 输出 ${metrics.outputTokens} · 思考 ${metrics.reasoningTokens} · 缓存 ${metrics.cachedTokens}`}>
-      {metrics.estimated ? "约 " : ""}{metrics.totalTokens.toLocaleString()} tokens
+    <span title={tokenBreakdown(metrics)}>
+      {metrics.estimated ? "约 " : ""}{formatTokens(metrics.totalTokens)} tokens
     </span>
   </span>;
+}
+
+/** 悬停才看的明细给整数: 这一栏正是用来核对上面那个 k 是怎么来的。 */
+function tokenBreakdown(metrics: ReturnType<typeof metricsFor>) {
+  const parts = [`输入 ${metrics.inputTokens}`, `输出 ${metrics.outputTokens}`, `思考 ${metrics.reasoningTokens}`, `缓存 ${metrics.cachedTokens}`];
+  if (metrics.compactTokens > 0) parts.push(`其中上下文压缩 ${metrics.compactTokens}`);
+  return parts.join(" · ");
 }
 
 function ModelStep({ events, output, turnStatus, reason }: { events: RunEvent[]; output: string; turnStatus: LocalTurn["status"]; reason: string }) {
@@ -93,10 +101,10 @@ function ModelStep({ events, output, turnStatus, reason }: { events: RunEvent[];
     {thinking && state === "running" && <p className="step-line muted"><span className="step-chip thinking">思考中…</span></p>}
     {showsOutput(completed) && output && <div className="step-answer"><Markdown content={output} compact /></div>}
     {usage && <p className="step-line muted">
-      <span className="step-chip">输入 {formatTokens(usage.payload.input_tokens)}</span>
-      <span className="step-chip">输出 {formatTokens(usage.payload.output_tokens)}</span>
-      {numberValue(usage.payload.reasoning_tokens) > 0 && <span className="step-chip">思考 {formatTokens(usage.payload.reasoning_tokens)}</span>}
-      {numberValue(usage.payload.cached_tokens) > 0 && <span className="step-chip">缓存 {formatTokens(usage.payload.cached_tokens)}</span>}
+      <span className="step-chip">输入 {formatTokens(numberValue(usage.payload.input_tokens))}</span>
+      <span className="step-chip">输出 {formatTokens(numberValue(usage.payload.output_tokens))}</span>
+      {numberValue(usage.payload.reasoning_tokens) > 0 && <span className="step-chip">思考 {formatTokens(numberValue(usage.payload.reasoning_tokens))}</span>}
+      {numberValue(usage.payload.cached_tokens) > 0 && <span className="step-chip">缓存 {formatTokens(numberValue(usage.payload.cached_tokens))}</span>}
       {Boolean(usage.payload.estimated) && <span className="step-chip">估算</span>}
     </p>}
     {failed && <p className="step-line danger">{stringValue(failed.payload.message) || stringValue(failed.payload.error_kind)}</p>}
@@ -232,6 +240,19 @@ function CompletionLine({ event }: { event: RunEvent }) {
 }
 
 function NoteStep({ event }: { event: RunEvent }) {
+  if (event.kind === "context_compacted") {
+    // 省下的是**上下文**, 花掉的是 token —— 两个方向相反的数, 所以这一行只讲省下多少,
+    // 花掉多少并进上面那条合计里 (ADR-0037)。
+    const summary = stringValue(event.payload.level) === "summary";
+    const replaced = numberValue(event.payload.messages_replaced);
+    const rewritten = numberValue(event.payload.blocks_rewritten);
+    return <Step state="done" title="上下文压缩" subject={summary ? "摘要" : "降级为引用"}>
+      <p className="step-line muted">
+        省下 {formatTokens(numberValue(event.payload.tokens_saved))} tokens
+        {summary ? ` · 顶替 ${replaced} 条消息` : ` · 改写 ${rewritten} 段工具输出`}
+      </p>
+    </Step>;
+  }
   if (event.kind === "todo_updated") {
     const current = stringValue(event.payload.current);
     return <Step state="done" title="待办" subject={`${numberValue(event.payload.done)}/${numberValue(event.payload.total)}`}>
@@ -298,6 +319,3 @@ function formatDuration(milliseconds: number) {
   return milliseconds >= 1000 ? `${(milliseconds / 1000).toFixed(1)}s` : `${Math.round(milliseconds)}ms`;
 }
 
-function formatTokens(value: unknown) {
-  return numberValue(value).toLocaleString();
-}

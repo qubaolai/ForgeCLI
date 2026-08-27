@@ -60,8 +60,23 @@ export type TurnMetrics = {
   reasoningTokens: number;
   cachedTokens: number;
   totalTokens: number;
+  // 合计里属于上下文压缩的那部分。压缩是 Forge 自己发起的额外模型调用, 混在总数里
+  // 不标出来, 用户拿总数去核账单时会发现一次对不上的调用 (ADR-0037)。
+  compactTokens: number;
   estimated: boolean;
 };
+
+/**
+ * token 数的显示口径: 不足 1000 给整数, 到了 1000 换成 k。
+ *
+ * 一位小数就够: 这个数字是拿来判断量级的 (这轮烧得多不多), 不是拿来对账的 ——
+ * 要对账得看供应商账单, 而那里的口径本来就与本地估算不同。
+ * 尾随的 .0 去掉: `1.0k` 看起来像是精确到百位, 其实不是。
+ */
+export function formatTokens(value: number) {
+  if (value < 1000) return String(Math.round(value));
+  return `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+}
 
 const terminalKinds = new Set(["turn_completed", "turn_failed", "turn_cancelled"]);
 
@@ -212,6 +227,7 @@ export function shouldAutoFollow(scrollHeight: number, scrollTop: number, client
 
 export function metricsFor(events: RunEvent[], now = Date.now(), startedAt = now): TurnMetrics {
   const usage = events.filter((event) => event.kind === "model_usage");
+  const compaction = usage.filter((event) => isCompactionUsage(event));
   const finished = [...events].reverse().find((event) => terminalKinds.has(event.kind));
   const payload = finished?.payload ?? {};
   const totalFromCalls = usage.reduce((total, event) => {
@@ -227,6 +243,10 @@ export function metricsFor(events: RunEvent[], now = Date.now(), startedAt = now
     reasoningTokens: sumPayload(usage, "reasoning_tokens"),
     cachedTokens: sumPayload(usage, "cached_tokens"),
     totalTokens: totalFromCalls,
+    compactTokens: compaction.reduce((total, event) => {
+      const explicit = numberValue(event.payload.total_tokens);
+      return total + (explicit || numberValue(event.payload.input_tokens) + numberValue(event.payload.output_tokens));
+    }, 0),
     estimated: usage.some((event) => Boolean(event.payload.estimated)),
   };
 }
@@ -251,10 +271,18 @@ export function groupToolEvents(events: RunEvent[]) {
   return groups;
 }
 
+/** 这条用量属于上下文压缩, 不属于 Agent 自己的某次模型调用。 */
+export function isCompactionUsage(event: RunEvent) {
+  return event.kind === "model_usage" && stringValue(event.payload.origin) === "compact";
+}
+
 export function groupModelEvents(events: RunEvent[]) {
   const groups = new Map<string, RunEvent[]>();
   for (const event of events) {
     if (!event.kind.startsWith("model_")) continue;
+    // 压缩的用量事件带着自己的 request_id, 不挡掉的话会在时间线上多出一个只有用量、
+    // 没有开始也没有结束的"模型调用", 而且永远显示成运行中。它属于压缩那一行。
+    if (isCompactionUsage(event)) continue;
     const key = modelKey(event);
     groups.set(key, [...(groups.get(key) ?? []), event]);
   }
@@ -291,7 +319,7 @@ export type TimelineItem =
   | { id: string; kind: "tools"; sequence: number; category: ToolCategory; groups: ToolGroup[]; reason: string }
   | { id: string; kind: "note"; sequence: number; event: RunEvent; reason: string };
 
-const NOTE_KINDS = ["todo_updated", "plan_proposed"];
+const NOTE_KINDS = ["todo_updated", "plan_proposed", "context_compacted"];
 
 const OTHER_TOOLS: ToolCategory = { id: "other", label: "其他工具" };
 

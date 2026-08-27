@@ -36,6 +36,7 @@ from forgecli.domain.agent.run_events import (
     AgentRunEvent,
     AgentRunEventKind,
     ApprovalRequestedPayload,
+    ContextCompactedPayload,
     ModelFailedPayload,
     ModelUsagePayload,
     PolicyResolvedPayload,
@@ -49,6 +50,8 @@ from forgecli.domain.agent.run_events import (
     ToolQueuedPayload,
     TurnFinishedPayload,
 )
+from forgecli.domain.context.compaction import CompactionLevel
+from forgecli.domain.model.origin import RequestOrigin
 from forgecli.interfaces.cli.transcript import assistant_line
 
 __all__ = ["TerminalRunRenderer"]
@@ -79,21 +82,44 @@ def _clean(text: str, *, limit: int = _LINE_LIMIT) -> str:
     return escape(stripped)
 
 
+# 用途标签取枚举值, 不在这里另写一个字符串 —— 那是事实不是措辞 (ADR-0031 收录判据).
+_COMPACT_ORIGIN = RequestOrigin.COMPACT.value
+
+
+def _tokens(value: int) -> str:
+    """token 数的显示口径: 不足 1000 给整数, 到了 1000 换成 k.
+
+    一位小数就够: 这个数字是拿来判断量级的 (这轮烧得多不多), 不是拿来对账的 ——
+    要对账得看供应商账单, 而那里的口径本来就与本地估算不同.
+    尾随的 .0 去掉: `1.0k` 看起来像是精确到百位, 其实不是.
+    """
+    if value < 1000:
+        return str(value)
+    return f"{value / 1000:.1f}".removesuffix(".0") + "k"
+
+
 @dataclass
 class _TurnUsage:
     """一轮里累计的 token 用量.
 
-    只累计经 AgentLoop 发出的模型调用. 安全分类器走的是 gateway 的另一条路径, 不发运行
-    事件, 因此不进这个数 —— 它有自己的预算, 也不属于"这轮对话"的内容 (ADR-0013 §11).
+    含上下文压缩那次额外的模型调用 (ADR-0037): 它是这一轮真实烧掉的 token, 不算进来
+    合计就对不上账单. 但**单独记一份** —— 压缩不是用户这句话直接引起的调用, 混进去
+    不标出来, 用户会以为自己问一句话就烧了这么多.
+
+    仍然不含安全分类器: 它走 gateway 的另一条路径, 不发运行事件, 有自己的预算, 也不
+    属于"这轮对话"的内容 (ADR-0013 §11).
     """
 
     calls: int = 0
     total: int = 0
+    compacted: int = 0
     estimated: bool = False
 
     def add(self, payload: ModelUsagePayload) -> None:
         self.calls += 1
         self.total += payload.total
+        if payload.origin == _COMPACT_ORIGIN:
+            self.compacted += payload.total
         # 一轮里只要有一次是估算的, 总数就是估算的: 混着报比全估算更容易误导.
         self.estimated = self.estimated or payload.estimated
 
@@ -289,20 +315,46 @@ class TerminalRunRenderer(AgentRunEventSubscriber):
         if not isinstance(payload, ModelUsagePayload):
             return
         self._usage.add(payload)
-        bits = [f"输入 {payload.input_tokens:,}"]
+        bits = [f"输入 {_tokens(payload.input_tokens)}"]
         if payload.cached_tokens:
             # 缓存命中部分单价不同, 与总输入分开显示才看得出这次为什么便宜.
-            bits.append(f"其中缓存 {payload.cached_tokens:,}")
-        bits.append(f"输出 {payload.output_tokens:,}")
+            bits.append(f"其中缓存 {_tokens(payload.cached_tokens)}")
+        bits.append(f"输出 {_tokens(payload.output_tokens)}")
         if payload.reasoning_tokens:
-            bits.append(f"思考 {payload.reasoning_tokens:,}")
+            bits.append(f"思考 {_tokens(payload.reasoning_tokens)}")
         if self._usage.calls > 1:
-            bits.append(f"本轮累计 {self._usage.total:,}")
-        line = f"│  用量 {' · '.join(bits)} tokens"
+            bits.append(f"本轮累计 {_tokens(self._usage.total)}")
+        # 压缩那一笔标出来: 不标的话, 用户看到的是一次自己没发起过的调用在烧 token.
+        label = "用量(压缩)" if payload.origin == _COMPACT_ORIGIN else "用量"
+        line = f"│  {label} {' · '.join(bits)} tokens"
         if payload.estimated:
             # 供应商没回 usage, 这是本地估算. 不标出来用户会拿它去核账单.
             line = f"{line} (估算)"
         self._process(_clean(line))
+
+    def _on_context_compacted(self, event: AgentRunEvent) -> None:
+        """压缩这件事本身也要报 (ADR-0037).
+
+        以前它完全不可见: 用户看到的是"卡了几秒", 而实际发生的是一次额外的模型调用把
+        一段历史换掉了. 这一行只讲**省下**多少上下文; 花掉多少走用量行, 两个数方向
+        相反, 并排出现才读得懂.
+        """
+        payload = event.payload
+        if not isinstance(payload, ContextCompactedPayload):
+            return
+        summary = payload.level == CompactionLevel.SUMMARY.value
+        detail = (
+            f"顶替 {payload.messages_replaced} 条消息"
+            if summary
+            else f"改写 {payload.blocks_rewritten} 段工具输出"
+        )
+        kind = "摘要" if summary else "降级为引用"
+        self._process(
+            _clean(
+                f"│  上下文压缩 ({kind}) "
+                f"省下 {_tokens(payload.tokens_saved)} tokens · {detail}"
+            )
+        )
 
     def _on_model_failed(self, event: AgentRunEvent) -> None:
         payload = event.payload
@@ -324,7 +376,9 @@ class TerminalRunRenderer(AgentRunEventSubscriber):
         ]
         if self._usage.calls:
             # 收尾行也带一次总量: 中途的用量行会被长回答顶到上面去.
-            total = f"{self._usage.total:,} tokens"
+            total = f"{_tokens(self._usage.total)} tokens"
+            if self._usage.compacted:
+                total = f"{total} (含压缩 {_tokens(self._usage.compacted)})"
             parts.append(f"{total} (含估算)" if self._usage.estimated else total)
         self._process(_clean(" · ".join(parts)))
 
@@ -409,6 +463,7 @@ _HANDLERS = {
     K.MODEL_REASONING_STATUS: TerminalRunRenderer._on_reasoning,
     K.MODEL_OUTPUT_DELTA: TerminalRunRenderer._on_output_delta,
     K.MODEL_COMPLETED: TerminalRunRenderer._on_model_completed,
+    K.CONTEXT_COMPACTED: TerminalRunRenderer._on_context_compacted,
     K.MODEL_USAGE: TerminalRunRenderer._on_model_usage,
     K.MODEL_FAILED: TerminalRunRenderer._on_model_failed,
     K.TOOL_QUEUED: TerminalRunRenderer._on_tool_queued,

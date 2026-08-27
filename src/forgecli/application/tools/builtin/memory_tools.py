@@ -26,11 +26,11 @@ from forgecli.application.memory.memory_store import (
     MAX_ENTRIES_PER_SCOPE,
     MAX_VALUE_BYTES,
 )
+from forgecli.application.prompt.template_renderer import render_notice
 from forgecli.application.tools.builtin.base import validate_arguments
 from forgecli.application.tools.tool import Tool, ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.memory.entry import MemoryScope
-from forgecli.domain.prompt import text as prompt_text
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.errors import PreparationError, PreparationErrorCode
 from forgecli.domain.tool.plan import (
@@ -59,14 +59,14 @@ _SCOPE_DESCRIPTION = (
 # 拒绝原因 -> 给模型的说明. 映射住在这里而不是 text.py: MemoryRejection 是 application
 # 的类型, 而 domain 不能 import application (ADR-0002 分层方向).
 _REJECTION_TEXT: dict[MemoryRejection, str] = {
-    MemoryRejection.INVALID_KEY: prompt_text.MEMORY_REJECT_INVALID_KEY,
-    MemoryRejection.EMPTY_VALUE: prompt_text.MEMORY_REJECT_EMPTY_VALUE,
-    MemoryRejection.VALUE_TOO_LONG: prompt_text.MEMORY_REJECT_VALUE_TOO_LONG.format(
-        limit=MAX_VALUE_BYTES
+    MemoryRejection.INVALID_KEY: render_notice("memory.reject_invalid_key"),
+    MemoryRejection.EMPTY_VALUE: render_notice("memory.reject_empty_value"),
+    MemoryRejection.VALUE_TOO_LONG: render_notice(
+        "memory.reject_value_too_long", limit=MAX_VALUE_BYTES
     ),
-    MemoryRejection.LOOKS_LIKE_SECRET: prompt_text.MEMORY_REJECT_SECRET,
-    MemoryRejection.SCOPE_FULL: prompt_text.MEMORY_REJECT_SCOPE_FULL.format(
-        limit=MAX_ENTRIES_PER_SCOPE
+    MemoryRejection.LOOKS_LIKE_SECRET: render_notice("memory.reject_secret"),
+    MemoryRejection.SCOPE_FULL: render_notice(
+        "memory.reject_scope_full", limit=MAX_ENTRIES_PER_SCOPE
     ),
 }
 
@@ -206,9 +206,9 @@ class MemoryWriteTool(_MemoryTool):
             # 说清覆盖了什么: 模型据此知道它刚推翻了自己以前的结论, 而不是新增了一条.
             return self._ok(
                 plan,
-                prompt_text.MEMORY_REPLACED.format(key=key, old=written.replaced),
+                render_notice("memory.replaced", key=key, old=written.replaced),
             )
-        return self._ok(plan, prompt_text.MEMORY_WRITTEN.format(key=key))
+        return self._ok(plan, render_notice("memory.written", key=key))
 
 
 class MemoryForgetTool(_MemoryTool):
@@ -231,6 +231,6 @@ class MemoryForgetTool(_MemoryTool):
     ) -> ToolResult:
         key = str(plan.normalized_input.get("key", ""))
         if self._memory.forget(self._scope_of(plan), key):
-            return self._ok(plan, prompt_text.MEMORY_FORGOTTEN.format(key=key))
+            return self._ok(plan, render_notice("memory.forgotten", key=key))
         # 删一个不存在的 key 不是错误 —— 但模型该知道它记错了什么.
-        return self._ok(plan, prompt_text.MEMORY_NOT_FOUND.format(key=key))
+        return self._ok(plan, render_notice("memory.not_found", key=key))

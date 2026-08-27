@@ -1,4 +1,4 @@
-"""计划评审: 四选一的语义与状态迁移 (ADR-0023 决策 3 / 4).
+"""计划评审: 四选一的语义与状态迁移 (ADR-0023 决策 3 / 4, 决策 4 由 ADR-0038 修订).
 
 **它不驱动界面.** 读一行输入, 弹一个菜单, 打印一段文字 —— 那些是 CLI 的事. 这里只回答
 "用户选了这一项之后, 计划与待办各自变成什么, 以及要不要再起一轮".
@@ -8,16 +8,16 @@ learned rules**. 人同意一份计划, 不会让计划里提到的任何一条�
 
 ### 升档是这个模块唯一碰权限的地方
 
-"同意并执行"会把 PLAN 升到 ACCEPT_EDITS, 而这是权限规则变更, 约束写死在 `_upgraded_mode`
-里, 不接受任何参数:
+"同意并执行"会把 PLAN 升到 AUTO (ADR-0038 修订了 ADR-0023 决策 4), 而这是权限规则变更,
+约束写死在 `_upgraded_mode` 里, 不接受任何参数:
 
 1. 仅当当前档是 PLAN 时升档.
-2. 绝不升到 AUTO 或 FULL_ACCESS, 无论计划正文写了什么 —— 计划是模型产出的低信任文本,
-   不能成为提权的依据.
+2. 绝不升到 FULL_ACCESS, 无论计划正文写了什么 —— 计划是模型产出的低信任文本, 不能成为
+   提权的依据; 放网络与跨工作区那一档只能由人自己切.
 3. **批准计划不等于批准计划里的任何一次工具调用.** 升档之后每一步执行仍然逐次经过完整
    裁决管线: 目录能力门 -> prepare -> 能力分析 -> PolicyEngine -> ASK/ALLOW/DENY ->
-   恢复屏障 -> ExecutionAuthorization. 升档只改变哪些能力可以自动放行这一档预算, 与在
-   plan 档手敲 /accept-edits 完全等价, 不多一分.
+   恢复屏障 -> ExecutionAuthorization. 升档只改变模式编译出的围栏与工具目录, 与在 plan
+   档手敲 /auto 完全等价, 不多一分.
 """
 
 from __future__ import annotations
@@ -128,12 +128,16 @@ class PlanReviewService:
 
 
 def _upgraded_mode(mode: SessionMode) -> SessionMode | None:
-    """唯一允许的升档: PLAN -> ACCEPT_EDITS.
+    """唯一允许的升档: PLAN -> AUTO (ADR-0038).
 
     不接受任何参数, 也不看计划内容. 写成一个只认当前档的纯函数, 是为了让"计划里写了什么
     能不能影响档位"这个问题在类型层面就没有入口 —— 计划是模型产出的低信任文本.
 
-    在 auto 或 full_access 档批准一份计划不改档: 既不升也不降. 降档看起来"更安全", 实际
-    是替用户撤销了他自己做过的决定.
+    终点是 AUTO 而不是 ACCEPT_EDITS: "同意并执行"表达的是"按这份计划自己做完",
+    停在名义上仍要逐条问命令的那一档名实不符. FULL_ACCESS 仍在这条边之外 ——
+    它放的是网络与跨工作区, 那种决定只能由人自己做.
+
+    在 accept_edits, auto 或 full_access 档批准一份计划不改档: 既不升也不降. 降档看起来
+    "更安全", 实际是替用户撤销了他自己做过的决定.
     """
-    return SessionMode.ACCEPT_EDITS if mode is SessionMode.PLAN else None
+    return SessionMode.AUTO if mode is SessionMode.PLAN else None

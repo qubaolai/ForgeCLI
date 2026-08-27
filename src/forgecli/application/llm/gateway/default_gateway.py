@@ -78,6 +78,7 @@ from forgecli.application.llm.gateway.token_estimator import (
 from forgecli.application.llm.selection import (
     ConfigBackedSelectionResolver,
 )
+from forgecli.application.prompt.template_renderer import render_notice
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.credentials import Credential
 from forgecli.domain.model.model_ref import ModelRef
@@ -94,7 +95,6 @@ from forgecli.domain.model.response import (
 )
 from forgecli.domain.model.streaming import ModelStreamChunk, ProviderStreamChunk
 from forgecli.domain.model.thinking import ThinkingMode
-from forgecli.domain.prompt import text as prompt_text
 from forgecli.shared.json_schema import validate_json_schema
 from forgecli.shared.observability.log import get_log
 
@@ -852,8 +852,8 @@ class DefaultLlmGateway(LlmGateway):
         schema_text = json.dumps(
             dict(request.schema), ensure_ascii=False, sort_keys=True
         )
-        instruction = prompt_text.SCHEMA_INSTRUCTION.format(
-            name=request.schema_name, schema=schema_text
+        instruction = render_notice(
+            "prompt.schema_instruction", name=request.schema_name, schema=schema_text
         )
         system_prompt = (
             f"{base.system_prompt}\n\n{instruction}"

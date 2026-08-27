@@ -37,6 +37,7 @@ dependencies = [
     "httpx (>=0.28,<0.29)",
     "fastapi (>=0.135,<0.136)",
     "uvicorn (>=0.41,<0.42)",
+    "jinja2 (>=3.1,<4.0)",
 ]
 
 # -----------------------------------------------------------------------------
@@ -57,6 +58,10 @@ packages = [
 ]
 include = [
     { path = "src/forgecli/interfaces/web/static", format = ["wheel", "sdist"] },
+    # 系统提示词模板 (ADR-0039). 它们是包内数据: 少了任何一份, 装出来的 forge 起不了
+    # 会话, 而源码树里跑测试照样绿 —— 所以这一行和 tests/prompt 里那条 importlib.resources
+    # 用例是同一件事的两半.
+    { path = "src/forgecli/application/prompt/templates", format = ["wheel", "sdist"] },
 ]
 
 # -----------------------------------------------------------------------------

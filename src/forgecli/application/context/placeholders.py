@@ -11,8 +11,8 @@ xxx"的后果是模型去取一个已经被回收的 id, 拿回一条找不到, 
 from __future__ import annotations
 
 from forgecli.application.context.transcript import Slot
+from forgecli.application.prompt.template_renderer import render_notice
 from forgecli.application.tools.artifact_store import ArtifactStore
-from forgecli.domain.prompt import text as prompt_text
 
 __all__ = ["archived_notice", "dedup_notice", "stale_notice"]
 
@@ -37,11 +37,14 @@ def archived_notice(slot: Slot, artifacts: ArtifactStore | None) -> str:
     """一级降级: 正文换成引用."""
     artifact_id = _retrievable(slot, artifacts)
     if not artifact_id:
-        return prompt_text.ARCHIVED_EXPIRED.format(index=slot.ordinal)
+        return render_notice("context.archived_expired", index=slot.ordinal)
     provenance = slot.block.provenance
     size = 0 if provenance is None else provenance.byte_size
-    return prompt_text.ARCHIVED_AVAILABLE.format(
-        index=slot.ordinal, artifact_id=artifact_id, size=size
+    return render_notice(
+        "context.archived_available",
+        index=slot.ordinal,
+        artifact_id=artifact_id,
+        size=size,
     )
 
 
@@ -49,9 +52,9 @@ def stale_notice(slot: Slot, artifacts: ArtifactStore | None) -> str:
     """决策 4: 这一条读到的内容, 之后文件被改过了."""
     artifact_id = _retrievable(slot, artifacts)
     if not artifact_id:
-        return prompt_text.ARCHIVED_EXPIRED.format(index=slot.ordinal)
-    return prompt_text.ARCHIVED_STALE.format(
-        index=slot.ordinal, artifact_id=artifact_id
+        return render_notice("context.archived_expired", index=slot.ordinal)
+    return render_notice(
+        "context.archived_stale", index=slot.ordinal, artifact_id=artifact_id
     )
 
 
@@ -63,7 +66,7 @@ def dedup_notice(anchor: Slot, duplicate: Slot, artifacts: ArtifactStore | None)
     """
     artifact_id = _retrievable(duplicate, artifacts)
     if not artifact_id:
-        return prompt_text.ARCHIVED_EXPIRED.format(index=duplicate.ordinal)
-    return prompt_text.DEDUP_UNCHANGED.format(
-        index=anchor.ordinal, artifact_id=artifact_id
+        return render_notice("context.archived_expired", index=duplicate.ordinal)
+    return render_notice(
+        "context.dedup_unchanged", index=anchor.ordinal, artifact_id=artifact_id
     )

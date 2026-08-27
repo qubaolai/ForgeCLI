@@ -1,0 +1,51 @@
+{#
+收摊时的文字.
+
+双读者: 先显示给用户, 同时作为 assistant 文本进入历史, 下一轮模型会读到它. 因此措辞
+既要对人说得清, 也不能给模型留下"再试一次"的余地.
+#}
+{% macro halt() %}
+上一次请求未获授权, 本轮已停止执行工具.
+{% endmacro %}
+{% macro malformed(count) %}
+模型连续 {{ count }} 次产出无法使用的工具调用, 本轮中止.
+{% endmacro %}
+{% macro model_budget(limit) %}
+本轮模型调用已达上限 {{ limit }}.
+{% endmacro %}
+{% macro tool_budget(limit) %}
+本轮工具调用已达上限 {{ limit }}.
+{% endmacro %}
+{% macro empty_response() %}
+模型既没有回复也没有请求工具.
+{% endmacro %}
+{% macro cancelled() %}
+本轮回复已取消.
+{% endmacro %}
+{% macro stream_interrupted() %}
+流式响应中断, 本轮回复失败.
+{% endmacro %}
+{% macro partial_tool_call() %}
+工具调用参数不完整.
+{% endmacro %}
+{% macro no_answer() %}
+循环未产出回复.
+{% endmacro %}
+{% macro model_call_failed() %}
+模型调用失败.
+{% endmacro %}
+{% macro loop_steps_exceeded() %}
+循环步数超出安全上限, 本轮中止.
+{% endmacro %}
+{% macro unsupported_action() %}
+该动作类型尚未支持.
+{% endmacro %}
+{#
+取消与计划评审: 追加在已产出的部分回答之后, 而不是替换它 —— 用户已经看到的字不该消失.
+#}
+{% macro cancel_notice() %}
+(本轮回复已被用户取消)
+{% endmacro %}
+{% macro review_notice() %}
+已提交一份计划, 等待你的决定.
+{% endmacro %}

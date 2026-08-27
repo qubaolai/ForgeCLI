@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
+from forgecli.application.prompt.template_renderer import render_notice
 from forgecli.application.tools.artifact_store import (
     ArtifactMissing,
     ArtifactStore,
@@ -30,7 +31,6 @@ from forgecli.application.tools.builtin.base import validate_arguments
 from forgecli.application.tools.resource_governor import ResourceGovernor
 from forgecli.application.tools.tool import Tool, ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
-from forgecli.domain.prompt import text as prompt_text
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.errors import PreparationError, PreparationErrorCode
 from forgecli.domain.tool.plan import (
@@ -103,7 +103,7 @@ class ArtifactReadTool(Tool):
             # 给的是"找不到", 而后者会让模型以为内容被回收了, 于是放弃取回.
             return PreparationError(
                 code=PreparationErrorCode.INVALID_INPUT,
-                message=prompt_text.ARTIFACT_BAD_ID,
+                message=render_notice("context.artifact_bad_id"),
                 field_path="artifact_id",
             )
         return ToolPlan(
@@ -146,10 +146,12 @@ class ArtifactReadTool(Tool):
                 invocation_id=plan.plan_id,
                 tool_name=_SPEC.name,
                 status=ToolResultStatus.TOOL_ERROR,
-                content_parts=(ContentPart(text=prompt_text.ARTIFACT_MISSING),),
+                content_parts=(
+                    ContentPart(text=render_notice("context.artifact_missing")),
+                ),
                 error=ToolError(
                     code="artifact_expired",
-                    message=prompt_text.ARTIFACT_MISSING,
+                    message=render_notice("context.artifact_missing"),
                     retryable=False,
                 ),
             )
@@ -158,7 +160,7 @@ class ArtifactReadTool(Tool):
         # 不走 emit_text: 那会把取回的内容再归档一遍. 超长时给的是分段取的办法,
         # 而不是又一个 id —— 内容本来就已经在同一个 id 底下.
         text = (
-            f"{inline}\n{prompt_text.ARTIFACT_WINDOW_TRUNCATED}"
+            f"{inline}\n{render_notice("context.artifact_window_truncated")}"
             if truncated
             else inline
         )

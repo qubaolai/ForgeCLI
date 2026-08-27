@@ -13,6 +13,7 @@ from rich.console import Console
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.domain.agent.run_events import (
     AgentRunEventKind,
+    ContextCompactedPayload,
     ModelUsagePayload,
     RunEventPayload,
     TurnFinishedPayload,
@@ -57,7 +58,8 @@ def test_usage_is_reported_after_the_call(harness: Harness) -> None:
         )
 
     text = harness.text()
-    assert "输入 1,234" in text
+    # 过千换 k (ADR-0037): 这个数字是拿来判断量级的, 不是拿来对账的.
+    assert "输入 1.2k" in text
     assert "输出 567" in text
 
 
@@ -202,3 +204,53 @@ def test_one_estimated_call_taints_the_turn_total(harness: Harness) -> None:
         )
 
     assert "165 tokens (含估算)" in harness.text()
+
+
+# ---- 上下文压缩 (ADR-0037) ----
+
+
+def test_compaction_usage_is_labelled_and_counted(harness: Harness) -> None:
+    """压缩是 Forge 自己发起的调用.
+
+    不算进合计, 总数就对不上账单; 算进去却不标出来, 用户会以为自己问一句话烧了这么多.
+    所以两件事都要做.
+    """
+    with harness.renderer.turn():
+        harness.send(
+            K.MODEL_USAGE,
+            ModelUsagePayload(origin="act", input_tokens=2000, output_tokens=100),
+        )
+        harness.send(
+            K.MODEL_USAGE,
+            ModelUsagePayload(origin="compact", input_tokens=8000, output_tokens=200),
+        )
+        harness.send(
+            K.TURN_COMPLETED,
+            TurnFinishedPayload(
+                status="completed", model_calls=1, tool_calls=0, elapsed_ms=100.0
+            ),
+        )
+
+    text = harness.text()
+    assert "用量(压缩)" in text
+    assert "10.3k tokens (含压缩 8.2k)" in text
+
+
+def test_a_compaction_row_says_what_it_saved(harness: Harness) -> None:
+    """省下的是上下文, 花掉的是 token —— 两个方向相反的数, 各自一行."""
+    with harness.renderer.turn():
+        harness.send(
+            K.CONTEXT_COMPACTED,
+            ContextCompactedPayload(
+                level="summary",
+                tokens_before=9000,
+                tokens_after=1200,
+                tokens_saved=7800,
+                messages_replaced=12,
+            ),
+        )
+
+    text = harness.text()
+    assert "上下文压缩 (摘要)" in text
+    assert "省下 7.8k tokens" in text
+    assert "顶替 12 条消息" in text

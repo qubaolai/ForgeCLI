@@ -8,16 +8,22 @@ from __future__ import annotations
 
 from forgecli.application.agent_turn.agent_turn_service import _rebuild_transcript
 from forgecli.application.context.manager import ContextManager
+from forgecli.application.llm.catalog import InMemoryModelCatalog
+from forgecli.application.llm.metering import CostEstimator, UsageMeter
 from forgecli.application.tool_request.observations import (
     ObservationKind,
     ToolObservation,
 )
+from forgecli.domain.agent.run_events import AgentRunEventKind
 from forgecli.domain.agent.state import ContextPackage, LoopInput
 from forgecli.domain.agent.stop import LoopStopReason, StopClassification
 from forgecli.domain.context.budget import ContextBudget
 from forgecli.domain.conversation.message import ChatMessage, TextBlock
 from forgecli.domain.conversation.turn import MessageRole
 from forgecli.domain.intents import SessionMode
+from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.request import ModelRequest
+from forgecli.domain.model.response import FinishReason, ModelResponse, ModelUsage
 from forgecli.domain.session.events import EventType, SessionEvent
 from forgecli.domain.tool.result import (
     ContentPart,
@@ -27,6 +33,40 @@ from forgecli.domain.tool.result import (
 )
 from support.fakes import MemoryArtifactStore, prompt
 from support.loop_harness import ScriptedGateway, loop_with, response
+
+_BIG = "y" * 8000
+
+
+def _meter() -> UsageMeter:
+    return UsageMeter(CostEstimator(InMemoryModelCatalog()))
+
+
+def _long_history() -> tuple[ChatMessage, ...]:
+    """长到必须走二级摘要, 且切点落在配对之外."""
+    messages: list[ChatMessage] = []
+    for index in range(8):
+        messages.append(
+            ChatMessage(role=MessageRole.USER, content=(TextBlock(f"问题 {index}"),))
+        )
+        messages.append(
+            ChatMessage(role=MessageRole.ASSISTANT, content=(TextBlock(_BIG),))
+        )
+    return tuple(messages)
+
+
+class _SummaryGateway(ScriptedGateway):
+    """只写摘要的替身. 它与循环用的那个 gateway 是两个: 循环走脚本, 摘要走这里."""
+
+    def complete(self, request: ModelRequest) -> ModelResponse:  # type: ignore[override]
+        return ModelResponse(
+            request_id=request.request_id,
+            provider="fake",
+            model="fake-model",
+            content="前面读了几个文件.",
+            finish_reason=FinishReason.STOP,
+            usage=ModelUsage(input_tokens=4321, output_tokens=120),
+            latency_ms=9.0,
+        )
 
 
 def _event(event_type: EventType, **payload: object) -> SessionEvent:
@@ -184,3 +224,74 @@ def test_a_downgrade_event_does_not_truncate_the_history() -> None:
         if isinstance(block, TextBlock)
     ]
     assert texts == ["第一个问题", "第一个回答"]
+
+
+# ---- ADR-0037: 压缩的账与压缩这件事都要出得来 ----
+
+
+def test_the_loop_carries_the_compaction_bill_out_with_the_other_usage() -> None:
+    """压缩那次调用的草稿混进 usage_drafts, 走与模型调用完全相同的落盘路径.
+
+    分开一条路的话, AgentTurnService 就要认识"还有另一种 usage", 而它已经有一条
+    `for draft in outcome.usage_drafts` 了 —— 两条路迟早有一条漏掉.
+    """
+    gateway = ScriptedGateway(responses=[response(text="好了")])
+    loop, collector = loop_with(
+        gateway,
+        context=ContextManager(
+            artifacts=MemoryArtifactStore(), gateway=_SummaryGateway(), meter=_meter()
+        ),
+    )
+
+    loop.start(
+        LoopInput(
+            turn_id="t1",
+            session_id="s1",
+            mode=SessionMode.ACCEPT_EDITS,
+            context_package=ContextPackage(
+                prompt=prompt(),
+                messages=_long_history(),
+                budget=ContextBudget(context_window=4000),
+            ),
+        )
+    )
+
+    origins = [draft.origin for draft in loop.usage_drafts]
+    assert RequestOrigin.COMPACT in origins, "压缩的账没跟出来"
+
+
+def test_compaction_is_visible_in_the_run_stream() -> None:
+    """以前它在界面上完全不可见: 用户看到的是"卡了几秒".
+
+    两类事件都要发 —— 压缩本身 (省下多少) 与它的用量 (花掉多少) 是方向相反的两个数,
+    只报一个都会被读错.
+    """
+    gateway = ScriptedGateway(responses=[response(text="好了")])
+    loop, collector = loop_with(
+        gateway,
+        context=ContextManager(
+            artifacts=MemoryArtifactStore(), gateway=_SummaryGateway(), meter=_meter()
+        ),
+    )
+
+    loop.start(
+        LoopInput(
+            turn_id="t1",
+            session_id="s1",
+            mode=SessionMode.ACCEPT_EDITS,
+            context_package=ContextPackage(
+                prompt=prompt(),
+                messages=_long_history(),
+                budget=ContextBudget(context_window=4000),
+            ),
+        )
+    )
+
+    kinds = collector.kinds()
+    assert AgentRunEventKind.CONTEXT_COMPACTED in kinds
+    compact_usage = [
+        event
+        for event in collector.of(AgentRunEventKind.MODEL_USAGE)
+        if getattr(event.payload, "origin", "") == RequestOrigin.COMPACT.value
+    ]
+    assert compact_usage, "压缩的用量事件没发出去, 前端合计里就少这一块"

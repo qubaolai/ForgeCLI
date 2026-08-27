@@ -22,11 +22,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from forgecli.domain.model.usage import UsageRecordDraft
+
 __all__ = [
     "AgentRunEvent",
     "AgentRunEventKind",
     "ApprovalRequestedPayload",
     "ApprovalResolvedPayload",
+    "ContextCompactedPayload",
     "DecisionSummaryPayload",
     "ModelCompletedPayload",
     "PlanProposedPayload",
@@ -68,6 +71,9 @@ class AgentRunEventKind(Enum):
     MODEL_COMPLETED = "model_completed"
     MODEL_USAGE = "model_usage"
     MODEL_FAILED = "model_failed"
+
+    # -- 上下文压缩 (ADR-0032 决策 1) --
+    CONTEXT_COMPACTED = "context_compacted"
 
     # -- 计划与待办 (ADR-0022 §7) --
     PLAN_PROPOSED = "plan_proposed"
@@ -179,6 +185,12 @@ class ModelCompletedPayload(RunEventPayload):
 
 @dataclass(frozen=True)
 class ModelUsagePayload(RunEventPayload):
+    # 这次调用的用途 (RequestOrigin 的值). 二级压缩走 compact, Agent 自己的调用走
+    # act / chat —— 展示层靠它把"这一笔是压缩烧的"标出来.
+    #
+    # 不标的话会露馅: 合计里含着一次压缩调用, 而"模型 N 次"数的是 MODEL_STARTED,
+    # 压缩不发那个事件. 用户拿总数去核账单时, 会发现一次对不上的调用.
+    origin: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
     reasoning_tokens: int = 0
@@ -195,6 +207,49 @@ class ModelUsagePayload(RunEventPayload):
         output, 有的单列), 自己把几项加起来会和账单对不上. 没给才退回 input + output.
         """
         return self.total_tokens or (self.input_tokens + self.output_tokens)
+
+    @classmethod
+    def from_draft(cls, draft: UsageRecordDraft) -> ModelUsagePayload:
+        """由计量草稿造展示载荷.
+
+        一个映射只写一处: 上下文压缩的用量与 Agent 自己调用的用量走的是两条不同的
+        产出路径 (前者由 ContextManager 产出草稿, 后者由循环现场组装), 但展示层必须
+        看到同一种形状 —— 各写一份, 迟早会有一边漏掉 cached 或 reasoning.
+        """
+        return cls(
+            origin=draft.origin.value,
+            input_tokens=draft.usage.input_tokens,
+            output_tokens=draft.usage.output_tokens,
+            reasoning_tokens=draft.usage.reasoning_tokens,
+            cached_tokens=draft.usage.cached_input_tokens,
+            total_tokens=draft.usage.total_tokens,
+            estimated=draft.estimated,
+        )
+
+
+@dataclass(frozen=True)
+class ContextCompactedPayload(RunEventPayload):
+    """一次上下文压缩 (ADR-0032 决策 1 / 2).
+
+    这里的 token 数是**省下多少上下文**, 与同一次压缩发出的 ModelUsagePayload 是两个
+    方向相反的数: 那个是这次压缩**花掉**多少. 两个数并排出现才读得懂 —— 只给省下的,
+    看起来像是白赚的.
+
+    tokens_before / tokens_after 都是 ApproximateTokenEstimator 对 transcript 的估算,
+    不是供应商口径, 所以它们与用量行的数字本来就不该对得上.
+    """
+
+    level: str = ""
+    tokens_before: int = 0
+    tokens_after: int = 0
+    tokens_saved: int = 0
+    # 一级降级改写了几个 tool result 块.
+    blocks_rewritten: int = 0
+    # 二级摘要顶替了几条消息.
+    messages_replaced: int = 0
+    # 二级摘要用的模型; 一级降级不调模型, 两项为空.
+    provider: str = ""
+    model: str = ""
 
 
 @dataclass(frozen=True)

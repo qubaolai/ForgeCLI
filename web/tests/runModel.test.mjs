@@ -5,6 +5,8 @@ import {
   appendRunEvent,
   buildTimeline,
   categoryOf,
+  formatTokens,
+  groupModelEvents,
   groupToolEvents,
   metricsFor,
   newLocalTurn,
@@ -64,8 +66,48 @@ test("tool events are grouped by invocation and metrics retain CLI usage fields"
   assert.deepEqual(metricsFor(events, 2000, 1000), {
     elapsedMs: 420, modelCalls: 1, toolCalls: 1,
     inputTokens: 10, outputTokens: 4, reasoningTokens: 2, cachedTokens: 3,
-    totalTokens: 14, estimated: true,
+    totalTokens: 14, compactTokens: 0, estimated: true,
   });
+});
+
+test("context compaction is counted in the turn total and broken out separately", () => {
+  // 回归: 压缩那次模型调用的 usage 被原地丢掉, 于是本轮合计少了一大块 —— 而它的
+  // input 大致等于被压掉的那段历史, 不是零头 (ADR-0037)。
+  const events = [
+    event("model_started", 1),
+    event("model_usage", 2, { origin: "act", input_tokens: 10, output_tokens: 4, total_tokens: 14 }),
+    event("context_compacted", 3, { level: "summary", tokens_before: 9000, tokens_after: 1200, tokens_saved: 7800, messages_replaced: 12 }),
+    event("model_usage", 4, { origin: "compact", input_tokens: 8000, output_tokens: 200, total_tokens: 8200 }, { request_id: "r-compact" }),
+    event("turn_completed", 5, { elapsed_ms: 100, model_calls: 1, tool_calls: 0 }),
+  ];
+  const metrics = metricsFor(events, 2000, 1000);
+  assert.equal(metrics.totalTokens, 14 + 8200, "压缩的花费必须进合计");
+  assert.equal(metrics.compactTokens, 8200, "同时要能单独看出压缩占了多少");
+  assert.equal(metrics.modelCalls, 1, "压缩不是 Agent 自己的一次模型调用");
+});
+
+test("compaction usage does not become a phantom model step", () => {
+  // 它带着自己的 request_id, 不挡掉就会在时间线上多出一个只有用量、没有开始也没有
+  // 结束的"模型调用", 而且永远显示成运行中。
+  const events = [
+    event("model_started", 1, {}, { request_id: "r1" }),
+    event("model_completed", 2, { tool_call_count: 0 }, { request_id: "r1" }),
+    event("context_compacted", 3, { level: "summary", tokens_saved: 100, messages_replaced: 2 }),
+    event("model_usage", 4, { origin: "compact", total_tokens: 500 }, { request_id: "r-compact" }),
+  ];
+  assert.equal(groupModelEvents(events).length, 1);
+  const timeline = buildTimeline(events);
+  assert.deepEqual(timeline.map((item) => item.kind), ["model", "note"]);
+});
+
+test("token counts switch to k at a thousand", () => {
+  assert.equal(formatTokens(0), "0");
+  assert.equal(formatTokens(999), "999");
+  assert.equal(formatTokens(1000), "1k");
+  assert.equal(formatTokens(1234), "1.2k");
+  assert.equal(formatTokens(12345), "12.3k");
+  // 1.0k 看起来像是精确到百位, 其实不是。
+  assert.equal(formatTokens(156000), "156k");
 });
 
 test("IME composition Enter does not send and scroll follow has a 140px dead zone", () => {

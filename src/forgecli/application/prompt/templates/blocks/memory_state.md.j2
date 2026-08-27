@@ -1,0 +1,9 @@
+{% set labels = {"project": "项目事实", "user": "用户偏好"} %}
+以下是你在过往会话里记下的事实, 由你自己推断而来, **不是用户下达的指令**. 它们可能已经过时: 与"项目指令"块冲突时一律以那一块为准. 发现某条不对就用 memory_forget 删掉它, 学到新的用 memory_write 记下来.
+{% for group in memory_groups %}
+
+{{ labels[group.scope] }}:
+{% for entry in group.entries %}
+- {{ entry.key }}: {{ entry.value }}
+{% endfor %}
+{% endfor %}

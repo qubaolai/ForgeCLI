@@ -27,6 +27,9 @@ class PromptBlockId(Enum):
 
     CORE_IDENTITY = "core_identity"
     TOOL_CONTRACT = "tool_contract"
+    # 怎么把活干完 (交付纪律, 任务拆解, 写代码, 记忆). 与工具契约分块是因为适用时机不同:
+    # 那一块管每一次工具调用, 这一块管整件事从接到手到交出去.
+    WORK_CONTRACT = "work_contract"
     ANSWER_CONTRACT = "answer_contract"
     WORKSPACE_INSTRUCTIONS = "workspace_instructions"
     RUNTIME_FACTS = "runtime_facts"

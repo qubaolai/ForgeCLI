@@ -1,0 +1,33 @@
+{#
+跨会话记忆的工具回执 (ADR-0033).
+
+状态块的正文在 blocks/memory_state.md.j2; 这里只有 memory_write / memory_forget
+回给模型的那几句.
+#}
+{% macro written(key) %}
+已记住 {{ key }}.
+{% endmacro %}
+{% macro replaced(key, old) %}
+已更新 {{ key }} (原值: {{ old }}).
+{% endmacro %}
+{% macro forgotten(key) %}
+已忘记 {{ key }}.
+{% endmacro %}
+{% macro not_found(key) %}
+没有记过 {{ key }}, 无需忘记.
+{% endmacro %}
+{% macro reject_invalid_key() %}
+key 只能是小写字母, 数字, 下划线, 点和连字符, 最长 64 字符.
+{% endmacro %}
+{% macro reject_empty_value() %}
+value 不能为空.
+{% endmacro %}
+{% macro reject_value_too_long(limit) %}
+value 超过 {{ limit }} 字节. 记忆每一轮都进上下文, 请只留结论, 不要写成长文.
+{% endmacro %}
+{% macro reject_secret() %}
+内容像是凭证, 已拒绝写入. 记忆会长期留在磁盘上并每轮进上下文, 任何 token, 密钥或证书都不要记.
+{% endmacro %}
+{% macro reject_scope_full(limit) %}
+这一级记忆已满 ({{ limit }} 条). 先用 memory_forget 删掉不再成立的那条.
+{% endmacro %}

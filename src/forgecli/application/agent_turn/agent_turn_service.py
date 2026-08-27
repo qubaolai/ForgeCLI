@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
 from forgecli.application.agent_run.events import AgentRunEventBus
-from forgecli.application.context.manager import ContextManager
+from forgecli.application.context.manager import ContextFitResult, ContextManager
 from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
 from forgecli.application.memory.memory_service import MemoryService
 from forgecli.application.planning.planning_service import (
@@ -40,6 +40,7 @@ from forgecli.application.prompt.system_prompt_builder import (
     SystemPromptBuilder,
     ToolBrief,
 )
+from forgecli.application.prompt.template_renderer import render_notice
 from forgecli.application.session.session_service import SessionService
 from forgecli.application.tool_request.dispatcher import (
     CoordinatorToolDispatcher,
@@ -54,6 +55,8 @@ from forgecli.domain.agent.actions import (
 )
 from forgecli.domain.agent.run_events import (
     AgentRunEventKind,
+    ContextCompactedPayload,
+    ModelUsagePayload,
     PlanProposedPayload,
     RunEventPayload,
     TodoUpdatedPayload,
@@ -71,7 +74,6 @@ from forgecli.domain.conversation.turn import (
 )
 from forgecli.domain.intents import InputOrigin, SessionMode
 from forgecli.domain.model.usage import UsageRecordDraft
-from forgecli.domain.prompt import text as prompt_text
 from forgecli.domain.prompt.blocks import PromptSnapshot
 from forgecli.domain.session.events import EventType, SessionEvent
 from forgecli.domain.tool.catalog import ToolCatalog
@@ -252,6 +254,9 @@ class AgentTurnService:
 
         落盘走的是与自动压缩同一个 record_compaction —— /resume 重建 transcript 时
         分不出这一次是谁触发的, 也不需要分.
+
+        turn_id 复用**上一轮**的编号: 手动压缩发生在两轮之间, 没有属于自己的 turn.
+        与 record_compaction 一直以来的口径一致, 用量记录跟着走同一个编号.
         """
         if self._context is None or not self._history:
             return 0
@@ -261,12 +266,29 @@ class AgentTurnService:
             session_id=self._session.current().session_id,
             turn_id=turn_id,
         )
+        # 记账在判断压没压动**之前** (ADR-0037): 请求已经发出去了, 摘要空不空与这笔
+        # 钱花没花无关. 早先这里的提前返回把这种情况下的用量整个吞掉了.
+        self._record_compaction_usage(result, turn_id)
         if not result.drafts:
             _log.info("context.compact.manual", tokens_saved=0, reason="nothing_to_do")
             return 0
         self._history = list(result.messages)
         for draft in result.drafts:
             self._session.record_compaction(draft.to_payload(), turn_id=turn_id)
+            self._publish_run(
+                AgentRunEventKind.CONTEXT_COMPACTED,
+                ContextCompactedPayload(
+                    level=draft.level.value,
+                    tokens_before=draft.tokens_before,
+                    tokens_after=draft.tokens_after,
+                    tokens_saved=draft.tokens_saved,
+                    blocks_rewritten=draft.blocks_rewritten,
+                    messages_replaced=draft.messages_replaced,
+                    provider=draft.provider,
+                    model=draft.model,
+                ),
+                turn_id,
+            )
         saved = sum(draft.tokens_saved for draft in result.drafts)
         _log.info(
             "context.compact.manual",
@@ -275,6 +297,20 @@ class AgentTurnService:
             messages_after=len(result.messages),
         )
         return saved
+
+    def _record_compaction_usage(self, result: ContextFitResult, turn_id: str) -> None:
+        """把手动压缩那次调用的账落盘并报出去.
+
+        自动压缩由循环攒进 usage_drafts 交回本类统一落盘; 手动压缩不经循环, 所以这条
+        路要自己走一遍同样的两步 —— 少了它, `/compact` 的花费就永远不在任何账上.
+        """
+        for draft in result.usage_drafts:
+            self._session.record_usage(draft.to_payload(), turn_id=turn_id)
+            self._publish_run(
+                AgentRunEventKind.MODEL_USAGE,
+                ModelUsagePayload.from_draft(draft),
+                turn_id,
+            )
 
     # ---- 提示词 ----
 
@@ -408,13 +444,13 @@ class AgentTurnService:
             else:
                 # ask_user / approval / compaction 属后续切片.
                 return _TurnOutcome(
-                    text=prompt_text.UNSUPPORTED_ACTION_STOP,
+                    text=render_notice("stop.unsupported_action"),
                     status=TurnStatus.FAILED,
                     usage_drafts=_drafts_of(loop),
                     compaction_drafts=_compactions_of(loop),
                 )
         return _TurnOutcome(
-            text=prompt_text.LOOP_STEPS_EXCEEDED_STOP,
+            text=render_notice("stop.loop_steps_exceeded"),
             status=TurnStatus.FAILED,
             usage_drafts=_drafts_of(loop),
             compaction_drafts=_compactions_of(loop),
@@ -546,7 +582,7 @@ class AgentTurnService:
                 # 前缀取自 ObservationKind, 不手写: 手写一遍就是第二份会漂的格式.
                 content=(
                     f"[{ObservationKind.TOOL_UNAVAILABLE.value}] "
-                    f"{prompt_text.TOOLS_NOT_WIRED}"
+                    f"{render_notice("loop.tools_not_wired")}"
                 ),
                 source=ObservationSource.ERROR,
                 is_error=True,
@@ -561,7 +597,8 @@ class AgentTurnService:
         # 跨回合只留这一行 (ADR-0032 决策 7). 序号与 transcript 里工具结果的出现顺序
         # 一致, 所以模型在下一轮读到 "第 3 次工具调用" 时, 指的是同一件事.
         self._turn_digests.append(
-            prompt_text.TURN_TOOL_LINE.format(
+            render_notice(
+                "context.turn_tool_line",
                 index=len(self._turn_digests) + 1,
                 tool=observation.tool_name,
                 outcome=observation.digest_line(),
@@ -577,7 +614,7 @@ class AgentTurnService:
         if stop.reason is LoopStopReason.FINAL_ANSWER:
             if answer is None:
                 return _TurnOutcome(
-                    text=prompt_text.NO_ANSWER_STOP,
+                    text=render_notice("stop.no_answer"),
                     status=TurnStatus.FAILED,
                     usage_drafts=drafts,
                     compaction_drafts=compactions,
@@ -596,7 +633,7 @@ class AgentTurnService:
             # text 取模型这一轮说过的话 (通常是一句"我拟了个方案"), 计划正文由 CLI 从
             # PlanningService 现取 —— 让它跟着回复文本走, 就会有两份可能不一致的正文.
             return _TurnOutcome(
-                text=answer or prompt_text.REVIEW_NOTICE,
+                text=answer or render_notice("stop.review_notice"),
                 status=TurnStatus.COMPLETED,
                 usage_drafts=drafts,
                 compaction_drafts=compactions,
@@ -605,7 +642,7 @@ class AgentTurnService:
             )
         if stop.reason is LoopStopReason.USER_CANCELLED:
             partial = _partial_answer_of(loop)
-            notice = prompt_text.CANCEL_NOTICE
+            notice = render_notice("stop.cancel_notice")
             text = f"{partial}\n{notice}" if partial else notice
             return _TurnOutcome(
                 text=text,
@@ -615,7 +652,7 @@ class AgentTurnService:
                 stop_reason=stop.reason.value,
             )
         return _TurnOutcome(
-            text=stop.message or prompt_text.MODEL_CALL_FAILED_STOP,
+            text=stop.message or render_notice("stop.model_call_failed"),
             status=TurnStatus.FAILED,
             usage_drafts=drafts,
             compaction_drafts=compactions,
@@ -636,7 +673,9 @@ class AgentTurnService:
             ChatMessage(role=MessageRole.USER, content=(TextBlock(text),))
         )
         if self._turn_digests:
-            body = "\n".join([prompt_text.TURN_TOOL_HEADER, *self._turn_digests])
+            body = "\n".join(
+                [render_notice("context.turn_tool_header"), *self._turn_digests]
+            )
             self._history.append(
                 ChatMessage(role=MessageRole.USER, content=(TextBlock(body),))
             )
@@ -682,7 +721,9 @@ def _rebuild_transcript(events: list[SessionEvent]) -> list[ChatMessage]:
                     ChatMessage(
                         role=MessageRole.USER,
                         content=(
-                            TextBlock(f"{prompt_text.COMPACTION_HEADER}\n\n{summary}"),
+                            TextBlock(
+                                f"{render_notice("context.compaction_header")}\n\n{summary}"
+                            ),
                         ),
                     )
                 ]

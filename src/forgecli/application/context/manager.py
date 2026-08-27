@@ -25,10 +25,12 @@ from dataclasses import dataclass
 from forgecli.application.context import dedup, downgrade, summarize, transcript
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.llm.gateway.token_estimator import ApproximateTokenEstimator
+from forgecli.application.llm.metering import UsageMeter
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.domain.context.budget import ContextBudget
 from forgecli.domain.context.compaction import CompactionDraft, CompactionLevel
 from forgecli.domain.conversation.message import ChatMessage
+from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.tool.tool_call import ToolSchema
 from forgecli.shared.observability.log import get_log
 
@@ -44,6 +46,11 @@ class ContextFitResult:
 
     messages: tuple[ChatMessage, ...]
     drafts: tuple[CompactionDraft, ...] = ()
+    # 二级摘要那次模型调用的计量草稿 (ADR-0037). 与 drafts 分开: 一个说"省下多少
+    # 上下文", 一个说"这次压缩花了多少 token", 是方向相反的两个数.
+    #
+    # 落盘由调用方负责, 与 CompactionDraft 和 UsageRecordDraft 完全同一条分工.
+    usage_drafts: tuple[UsageRecordDraft, ...] = ()
     estimated_input: int = 0
     # 压完仍然放不下. 循环据此走 CONTEXT_COMPACTION_REQUIRED, 而不是把一个必然被
     # 网关拒掉的请求发出去.
@@ -63,6 +70,7 @@ class ContextManager:
         artifacts: ArtifactStore | None = None,
         gateway: LlmGateway | None = None,
         estimator: ApproximateTokenEstimator | None = None,
+        meter: UsageMeter | None = None,
     ) -> None:
         # artifacts 缺省为 None: 没接存储时降级不可用 (换成引用等于把内容删了还不
         # 告诉人去哪找), 但去重与变更通知照常生效 —— 它们不依赖归档.
@@ -70,6 +78,10 @@ class ContextManager:
         # gateway 缺省为 None: 没接时只做到一级, 压不下去就如实报 over_allowance.
         self._gateway = gateway
         self._estimator = estimator or ApproximateTokenEstimator()
+        # meter 缺省为 None: 没接计量时二级摘要照常跑, 只是这次调用不产出计量草稿.
+        # 注入在这里而不是让调用方自己算 —— 自动压缩走 AgentLoop, /compact 走
+        # AgentTurnService, 两条路都要计量, 而只有 ContextManager 同时在这两条路上.
+        self._meter = meter
 
     def fit(
         self,
@@ -108,6 +120,7 @@ class ContextManager:
             messages=len(current),
         )
         drafts: list[CompactionDraft] = []
+        usage: list[UsageRecordDraft] = []
         current, estimated = self._downgrade(
             current, estimated, system_prompt, tools, drafts
         )
@@ -118,12 +131,14 @@ class ContextManager:
                 system_prompt,
                 tools,
                 drafts,
+                usage,
                 session_id=session_id,
                 turn_id=turn_id,
             )
         return ContextFitResult(
             messages=current,
             drafts=tuple(drafts),
+            usage_drafts=tuple(usage),
             estimated_input=estimated,
             over_allowance=budget.over_allowance(estimated),
         )
@@ -143,11 +158,22 @@ class ContextManager:
         """
         before = self._estimate(messages, "", ())
         drafts: list[CompactionDraft] = []
+        usage: list[UsageRecordDraft] = []
         compacted, after = self._summarize(
-            messages, before, "", (), drafts, session_id=session_id, turn_id=turn_id
+            messages,
+            before,
+            "",
+            (),
+            drafts,
+            usage,
+            session_id=session_id,
+            turn_id=turn_id,
         )
         return ContextFitResult(
-            messages=compacted, drafts=tuple(drafts), estimated_input=after
+            messages=compacted,
+            drafts=tuple(drafts),
+            usage_drafts=tuple(usage),
+            estimated_input=after,
         )
 
     # ---- 各级 ----
@@ -193,6 +219,7 @@ class ContextManager:
         system_prompt: str,
         tools: tuple[ToolSchema, ...],
         drafts: list[CompactionDraft],
+        usage: list[UsageRecordDraft],
         *,
         session_id: str,
         turn_id: str,
@@ -201,8 +228,15 @@ class ContextManager:
             _log.warning("context.summary_skipped", reason="no_gateway")
             return messages, estimated
         compacted, summary = summarize.summarize(
-            messages, self._gateway, session_id=session_id, turn_id=turn_id
+            messages,
+            self._gateway,
+            session_id=session_id,
+            turn_id=turn_id,
+            meter=self._meter,
         )
+        # 先记账再看结果: 请求已经发出去了, 摘要好不好用与这笔钱花没花无关.
+        if summary.usage is not None:
+            usage.append(summary.usage)
         if not summary.text:
             _log.warning("context.summary_skipped", reason="empty_summary")
             return messages, estimated

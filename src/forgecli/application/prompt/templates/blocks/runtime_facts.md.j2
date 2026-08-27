@@ -1,0 +1,41 @@
+{#
+自动放行的能力名: 全库唯一一处按能力枚举写死的表, 它值得 —— 能力词汇是闭集, 改动要走
+ADR 并升 CAPABILITY_VOCABULARY_VERSION (ADR-0004 5), 因此这张表不会悄悄漂. 而按模式各写
+一段散文会漂 —— 那是四份互相独立的副本.
+
+顺序即渲染顺序, 与传进来的集合无关: 集合的迭代顺序不稳定, 会让同样的输入产出不同的提示
+词, 从而毁掉指纹的确定性.
+
+其余行里 mode / platform / shell 一类是标识符, 不是措辞, 所以只有值从外面传进来.
+#}
+{% set capability_names = [
+    ("plan_only", "计划"),
+    ("artifact_read", "读回已归档的输出"),
+    ("workspace_read", "工作区读取"),
+    ("workspace_write", "工作区写入"),
+    ("workspace_delete", "工作区删除"),
+    ("path_move", "移动与重命名"),
+    ("external_read", "工作区外读取"),
+    ("external_write", "工作区外写入"),
+    ("credential_access", "读取凭证"),
+    ("execute_shell", "执行 Shell"),
+    ("execute_script", "执行脚本"),
+    ("spawn_process", "启动子进程"),
+    ("network_access", "网络访问"),
+    ("external_irreversible_effect", "不可逆的外部动作"),
+    ("model_call", "调用模型"),
+] %}
+mode: {{ mode }}
+自动放行: {{ capability_names | selectattr("0", "in", auto_allowed) | map(attribute="1") | join(", ") }}
+需人类确认: 其余一切
+platform: {{ platform }}
+shell: {{ shell_kind }}
+isolation: {{ isolation_level }}   {{ isolation_summary }}
+path: 受控且窄, 只含系统目录; 不继承你熟悉的用户 PATH
+working_directory: {{ working_directory }}
+workspace_roots: {{ workspace_root }}
+git_repository: {{ git_repository }}
+{% for root in extra_roots %}
+额外工作目录: {{ root }}
+{% endfor %}
+tools: {{ tool_count }} 个

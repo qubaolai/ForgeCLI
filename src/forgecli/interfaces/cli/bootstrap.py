@@ -280,8 +280,12 @@ def run() -> ExitCode:
         #
         # 网关给它是为了二级摘要. 循环本来就持有网关, 所以这不新增任何能力 (ADR-0010
         # 允许循环调模型, 禁的是写事件).
+        # 计量器与循环用的是**同一个** (ADR-0037): 压缩那次调用要和 Agent 自己的
+        # 调用按同一套单价算钱, 各建一个迟早会出现两套价格.
         context_manager = ContextManager(
-            artifacts=tools.artifacts, gateway=llm_runtime.gateway
+            artifacts=tools.artifacts,
+            gateway=llm_runtime.gateway,
+            meter=llm_runtime.usage_meter,
         )
 
         def _new_loop() -> BuiltinAgentLoop:

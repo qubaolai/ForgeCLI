@@ -223,7 +223,7 @@ class Repl:
                 },
             )
         if outcome.upgraded_mode is not None:
-            # 等价于用户手敲 /accept-edits, 经 SessionService.set_mode, 不新增旁路.
+            # 等价于用户手敲 /auto, 经 SessionService.set_mode, 不新增旁路.
             self._session.set_mode(outcome.upgraded_mode)
         return outcome.follow_up
 
