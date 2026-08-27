@@ -96,7 +96,7 @@ class ContextManager:
         system_prompt: str = "",
         tools: tuple[ToolSchema, ...] = (),
     ) -> ContextFitResult:
-        current = self._dedup(messages)
+        current, deduped = self._dedup(messages)
         if budget is None:
             # 没给预算就只做去重与通知. 不猜一个窗口大小 —— 猜小了平白压掉内容,
             # 猜大了等于没有这道防线.
@@ -122,7 +122,7 @@ class ContextManager:
         drafts: list[CompactionDraft] = []
         usage: list[UsageRecordDraft] = []
         current, estimated = self._downgrade(
-            current, estimated, system_prompt, tools, drafts
+            current, estimated, system_prompt, tools, drafts, deduped
         )
         if budget.needs_compaction(estimated):
             current, estimated = self._summarize(
@@ -178,9 +178,17 @@ class ContextManager:
 
     # ---- 各级 ----
 
-    def _dedup(self, messages: tuple[ChatMessage, ...]) -> tuple[ChatMessage, ...]:
+    def _dedup(
+        self, messages: tuple[ChatMessage, ...]
+    ) -> tuple[tuple[ChatMessage, ...], dict[tuple[int, int], str]]:
+        """改写后的 transcript, 外加这一遍动过哪些位置.
+
+        位置一并交出去是给降级用的: 去重给出的引用比降级引用信息更多 (它还说了"与第
+        几次相同"), 让降级覆盖掉是净损失. 改写不动消息与块的下标, 两遍的键因此对得上.
+        """
         slots = transcript.slots_of(messages)
-        return transcript.rewrite(messages, dedup.plan_rewrites(slots, self._artifacts))
+        rewrites = dedup.plan_rewrites(slots, self._artifacts)
+        return transcript.rewrite(messages, rewrites), rewrites
 
     def _downgrade(
         self,
@@ -189,9 +197,10 @@ class ContextManager:
         system_prompt: str,
         tools: tuple[ToolSchema, ...],
         drafts: list[CompactionDraft],
+        deduped: dict[tuple[int, int], str],
     ) -> tuple[tuple[ChatMessage, ...], int]:
         slots = transcript.slots_of(messages)
-        rewrites = downgrade.plan_rewrites(slots, self._artifacts, already={})
+        rewrites = downgrade.plan_rewrites(slots, self._artifacts, already=deduped)
         if not rewrites:
             return messages, estimated
         compacted = transcript.rewrite(messages, rewrites)

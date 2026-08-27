@@ -25,6 +25,7 @@ from forgecli.application.llm.gateway.errors import (
     ModelAuthError,
     ModelBadRequestError,
     ModelCancelledError,
+    ModelContextOverflowError,
     ModelProviderInternalError,
     ModelRateLimitError,
     ModelResponseParseError,
@@ -502,6 +503,10 @@ class OpenAICompatibleProvider(ModelProvider):
                 f"provider 限流（429）: {summary}",
                 retry_after=self._retry_after(response),
             )
+        if status == 400 and _is_context_overflow(response.text):
+            # 与其它 400 分开: 这一条**有救** —— 压一次上下文再发就能过, 而按普通
+            # ModelBadRequestError 处理会让一轮跑了几十步的工作整个作废.
+            raise ModelContextOverflowError(f"provider 拒绝请求（400）: {summary}")
         if 400 <= status < 500:
             raise ModelBadRequestError(f"provider 拒绝请求（{status}）: {summary}")
         raise ModelProviderInternalError(f"provider 内部错误（{status}）: {summary}")
@@ -535,3 +540,21 @@ class OpenAICompatibleProvider(ModelProvider):
     def _raise_if_cancelled(self, request: ProviderRequest) -> None:
         if self._cancelled(request):
             raise ModelCancelledError("调用已被取消，未发送 provider 请求")
+
+
+# 各家对"提示词太长"的说法. 判据只能是措辞: OpenAI 兼容协议在 400 上没有约定错误码,
+# 而 GLM 回 1261, DeepSeek 回一句话, 本地端点各说各的.
+_CONTEXT_OVERFLOW_MARKERS = (
+    "context_length_exceeded",
+    "context length",
+    "maximum context",
+    "exceeds max length",
+    "prompt is too long",
+    "too many tokens",
+    "reduce the length",
+)
+
+
+def _is_context_overflow(body: str) -> bool:
+    lowered = body.lower()
+    return any(marker in lowered for marker in _CONTEXT_OVERFLOW_MARKERS)

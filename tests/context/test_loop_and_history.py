@@ -9,11 +9,13 @@ from __future__ import annotations
 from forgecli.application.agent_turn.agent_turn_service import _rebuild_transcript
 from forgecli.application.context.manager import ContextManager
 from forgecli.application.llm.catalog import InMemoryModelCatalog
+from forgecli.application.llm.gateway.errors import ModelContextOverflowError
 from forgecli.application.llm.metering import CostEstimator, UsageMeter
 from forgecli.application.tool_request.observations import (
     ObservationKind,
     ToolObservation,
 )
+from forgecli.domain.agent.actions import AnswerAction
 from forgecli.domain.agent.run_events import AgentRunEventKind
 from forgecli.domain.agent.state import ContextPackage, LoopInput
 from forgecli.domain.agent.stop import LoopStopReason, StopClassification
@@ -32,7 +34,12 @@ from forgecli.domain.tool.result import (
     ToolResultStatus,
 )
 from support.fakes import MemoryArtifactStore, prompt
-from support.loop_harness import ScriptedGateway, loop_with, response
+from support.loop_harness import (
+    Collector,
+    ScriptedGateway,
+    loop_with,
+    response,
+)
 
 _BIG = "y" * 8000
 
@@ -67,6 +74,86 @@ class _SummaryGateway(ScriptedGateway):
             usage=ModelUsage(input_tokens=4321, output_tokens=120),
             latency_ms=9.0,
         )
+
+
+class _RejectingGateway(ScriptedGateway):
+    """前 ``rejections`` 次流式调用被供应商以"提示词太长"拒掉.
+
+    在生成器里抛而不是在 stream() 入口抛: 真实适配器是惰性的, HTTP 400 发生在拉第一
+    个块的时候 —— 循环里那个 `except ModelBadRequestError` 就是这样被绕过去的.
+    """
+
+    rejections: int = 0
+
+    def stream(self, request: ModelRequest):  # type: ignore[no-untyped-def,override]
+        if self.rejections:
+            self.rejections -= 1
+            self.requests.append(request)
+
+            def _rejected():  # type: ignore[no-untyped-def]
+                raise ModelContextOverflowError("provider 拒绝请求（400）: 提示词太长")
+                yield
+
+            return _rejected()
+        return super().stream(request)
+
+
+def _overflow_loop(rejections: int) -> tuple[object, Collector, _RejectingGateway]:
+    gateway = _RejectingGateway(responses=[response("好的")])
+    gateway.rejections = rejections
+    loop, collector = loop_with(
+        gateway,
+        context=ContextManager(
+            artifacts=MemoryArtifactStore(),
+            gateway=_SummaryGateway(),
+            meter=_meter(),
+        ),
+    )
+    return loop, collector, gateway
+
+
+def _overflow_input() -> LoopInput:
+    return LoopInput(
+        turn_id="turn-1",
+        session_id="sess-1",
+        mode=SessionMode.ACCEPT_EDITS,
+        context_package=ContextPackage(
+            prompt=prompt(),
+            messages=_long_history(),
+            # 预算宽到不会自己触发压缩: 这里要测的正是"估算说放得下, 供应商说放不下".
+            budget=ContextBudget(context_window=10_000_000),
+        ),
+    )
+
+
+def test_a_provider_side_overflow_compacts_and_retries() -> None:
+    """近似估算与供应商的分词永远有偏差, 所以这条路必须存在.
+
+    以前它按 MODEL_ERROR_BLOCKING 处理: 一轮跑了几十步的工作, 连同已经花掉的 token,
+    在最后一次调用上整个作废.
+    """
+    loop, collector, gateway = _overflow_loop(rejections=1)
+
+    step = loop.start(_overflow_input())
+
+    assert isinstance(step.next_action, AnswerAction)
+    assert len(gateway.requests) == 2, "压完之后要把这一步重发一次"
+    assert collector.of(AgentRunEventKind.CONTEXT_COMPACTED)
+    assert len(gateway.requests[1].messages) < len(gateway.requests[0].messages)
+
+
+def test_a_second_overflow_pauses_instead_of_killing_the_turn() -> None:
+    """摘要跑完只剩一段摘要加最近几条, 再超就不是压缩能解决的问题了.
+
+    停在 RESUMABLE_PAUSE 而不是 MODEL_ERROR_BLOCKING: 这一轮干不下去, 但会话没坏.
+    """
+    loop, _, gateway = _overflow_loop(rejections=2)
+
+    step = loop.start(_overflow_input())
+
+    assert step.reason is LoopStopReason.CONTEXT_COMPACTION_REQUIRED
+    assert step.reason.classification is StopClassification.RESUMABLE_PAUSE
+    assert len(gateway.requests) == 2, "只强压一次, 不反复撞墙"
 
 
 def _event(event_type: EventType, **payload: object) -> SessionEvent:

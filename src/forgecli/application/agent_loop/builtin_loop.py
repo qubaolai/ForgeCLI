@@ -40,6 +40,7 @@ from forgecli.application.llm.gateway.errors import (
     MalformedToolCallError,
     ModelBadRequestError,
     ModelCancelledError,
+    ModelContextOverflowError,
     ModelGatewayError,
     ModelResponseParseError,
 )
@@ -319,6 +320,9 @@ class BuiltinAgentLoop:
         self._call_counts: dict[str, int] = {}
         self._blocked_calls = 0
         self._malformed_responses = 0
+        # 供应商说上下文太长之后强压过几次. 估算与真实分词永远有偏差, 这条路是
+        # _fit_context 的下界而不是它的备份.
+        self._overflow_compactions = 0
         # 连续几次工具调用没带回新信息, 以及上一次带回的是什么.
         self._barren_streak = 0
         self._last_observation: str | None = None
@@ -466,6 +470,8 @@ class BuiltinAgentLoop:
             # 但"不替它补"和"不告诉它"是两件事. 只中止的话, 模型这一轮什么反馈都拿不到,
             # 下次还会原样再来一次; 告诉它坏在哪, 它自己能改. 这里只做后者.
             return self._retry_malformed(str(exc))
+        except ModelContextOverflowError as exc:
+            return self._recover_from_overflow(exc)
         except ModelResponseParseError as exc:
             # 父类留给 provider 的响应压根不是 JSON 这类传输层故障: 那不是模型的错,
             # 追加纠错消息是在冤枉它, 重发同一条请求也不会好转.
@@ -764,6 +770,46 @@ class BuiltinAgentLoop:
         self._publish(
             AgentRunEventKind.DECISION_SUMMARY,
             DecisionSummaryPayload(reason_summary=notice),
+        )
+        return self._advance()
+
+    def _recover_from_overflow(self, exc: ModelGatewayError) -> LoopStepResult:
+        """供应商说上下文太长: 强压一次再发, 而不是让这一轮作废.
+
+        走到这里说明估算与供应商的分词对不上 —— ``_fit_context`` 算着放得下, 实际放不下.
+        近似估算永远会有这种偏差, 所以这条路必须存在.
+
+        只给一次: 二级摘要跑完之后 transcript 只剩一段摘要加最近几条, 再超就不是压缩
+        能解决的问题了. 压不动时按 CONTEXT_COMPACTION_REQUIRED 停 —— 那是可恢复的暂停,
+        而 MODEL_ERROR_BLOCKING 会把已经跑了几十步的一轮直接判死.
+        """
+        if self._context is None or self._overflow_compactions:
+            _log.error("context.overflow_unrecoverable", message=str(exc))
+            return self._stop(
+                LoopStopReason.CONTEXT_COMPACTION_REQUIRED,
+                render_notice("context.compaction_failed"),
+            )
+        self._overflow_compactions += 1
+        result = self._context.summarize_now(
+            self._messages,
+            session_id=self._session_id,
+            turn_id=self._turn_id or "",
+        )
+        self._messages = result.messages
+        self._compaction_drafts.extend(result.drafts)
+        self._usage_drafts.extend(result.usage_drafts)
+        self._publish_compaction(result)
+        if not result.drafts:
+            _log.error("context.overflow_uncompactable", message=str(exc))
+            return self._stop(
+                LoopStopReason.CONTEXT_COMPACTION_REQUIRED,
+                render_notice("context.compaction_failed"),
+            )
+        _log.warning(
+            "context.overflow_compacted",
+            message=str(exc),
+            messages=len(self._messages),
+            estimated_input=result.estimated_input,
         )
         return self._advance()
 

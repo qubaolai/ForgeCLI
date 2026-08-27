@@ -20,6 +20,7 @@ payload 而不是留引用 (决策 8).
 
 from __future__ import annotations
 
+import json
 import uuid
 
 from forgecli.application.context.transcript import safe_split_points
@@ -37,6 +38,7 @@ from forgecli.domain.model.params import ModelParams
 from forgecli.domain.model.request import ModelRequest
 from forgecli.domain.model.selection import CurrentModelSelection
 from forgecli.domain.model.usage import UsageRecordDraft
+from forgecli.domain.tool.tool_call import ToolCall
 
 __all__ = ["KEEP_RECENT_MESSAGES", "Summary", "summarize"]
 
@@ -45,6 +47,9 @@ __all__ = ["KEEP_RECENT_MESSAGES", "Summary", "summarize"]
 # 留的是**最近**的: 模型正在做的那件事全在这几条里, 换成摘要等于让它凭一段转述接着
 # 干活. 6 条大致覆盖"用户提问 + 一次工具往返 + 一次回答"这样一个完整片段.
 KEEP_RECENT_MESSAGES = 6
+
+# 拍平工具调用参数时每个值留多少字符. 够认出路径与关键选项, 不够把补丁正文带进来.
+_ARGUMENT_PREVIEW_CHARS = 120
 
 
 class Summary:
@@ -152,11 +157,34 @@ def _flatten(messages: tuple[ChatMessage, ...]) -> str:
     for message in messages:
         body = "\n".join(_block_text(block) for block in message.content)
         if message.tool_calls:
-            names = ", ".join(call.name for call in message.tool_calls)
-            body = f"{body}\n-> {names}" if body else f"-> {names}"
+            calls = "\n".join(f"-> {_call_line(call)}" for call in message.tool_calls)
+            body = f"{body}\n{calls}" if body else calls
         if body.strip():
             lines.append(f"{message.role.value}: {body}")
     return "\n\n".join(lines)
+
+
+def _call_line(call: ToolCall) -> str:
+    """工具调用留名字加一段截短的参数.
+
+    只留名字的话, 摘要模型看到的是 `-> fs_apply_patch`, 读不出这一步动的是哪个文件 ——
+    而"改过或正在关注的文件"正是压缩指令点名要保住的东西.
+
+    参数也不能逐字留: 补丁正文是 transcript 里最大的一块, 原样送进摘要请求, 等于把
+    正要压缩掉的内容再完整发一遍.
+    """
+    arguments = ", ".join(
+        f"{name}={_clipped(value)}" for name, value in call.arguments.items()
+    )
+    return f"{call.name}({arguments})"
+
+
+def _clipped(value: object) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    if len(text) <= _ARGUMENT_PREVIEW_CHARS:
+        return text
+    dropped = len(text) - _ARGUMENT_PREVIEW_CHARS
+    return f"{text[:_ARGUMENT_PREVIEW_CHARS]}...(+{dropped})"
 
 
 def _block_text(block: object) -> str:
