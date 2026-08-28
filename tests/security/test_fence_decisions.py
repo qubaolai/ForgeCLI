@@ -30,10 +30,12 @@ from forgecli.application.tools.tool import ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.execution.fence import fence_for
 from forgecli.domain.intents import SessionMode
+from forgecli.domain.security.budget import fence_allowed_capabilities
 from forgecli.domain.security.context import PolicyContext
 from forgecli.domain.security.decision import AuthorizationDecision
 from forgecli.domain.security.protected_paths import ProtectedPathPolicy
 from forgecli.domain.security.vocabulary import Decision, DecisionReason
+from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
 from forgecli.shared.cancellation import CancelToken
@@ -103,7 +105,7 @@ def _decide(
     )
 
 
-# ---- 围栏内: 自动放行 ----
+# ---- auto + 围栏: 自动放行 ----
 
 
 @pytest.mark.parametrize(
@@ -164,6 +166,42 @@ def test_without_a_fence_everything_falls_back_to_ask(
 # ---- 模式边界 ----
 
 
+def test_accept_edits_auto_allows_file_io_but_not_shell(workspace: Path) -> None:
+    allowed = fence_allowed_capabilities(
+        fence_for(SessionMode.ACCEPT_EDITS, workspace_roots=(str(workspace),)),
+        confined=True,
+    )
+
+    assert Capability.WORKSPACE_READ in allowed
+    assert Capability.WORKSPACE_WRITE in allowed
+    assert Capability.EXECUTE_SHELL not in allowed
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ls -la src",
+        "sed -i 's/a/b/' src/a.py",
+        "rm -rf src/",
+    ],
+)
+def test_accept_edits_asks_before_unapproved_shell(
+    workspace: Path, command: str
+) -> None:
+    """accept_edits 只自动接受专用文件工具的读写, 不自动启动未授权的通用 Shell."""
+    decision = _decide(workspace, command, mode=SessionMode.ACCEPT_EDITS)
+
+    assert decision.decision is Decision.ASK
+    assert decision.reason is DecisionReason.MODE_REQUIRES_APPROVAL
+
+
+def test_auto_still_executes_shell_inside_the_fence(workspace: Path) -> None:
+    decision = _decide(workspace, "ls -la src", mode=SessionMode.AUTO)
+
+    assert decision.decision is Decision.ALLOW
+    assert decision.reason is DecisionReason.FENCE_CONFINED
+
+
 def test_plan_mode_does_not_auto_allow_workspace_writes(workspace: Path) -> None:
     """plan 档的围栏没有可写工作区根.
 
@@ -176,7 +214,7 @@ def test_plan_mode_does_not_auto_allow_workspace_writes(workspace: Path) -> None
 
 
 def test_network_commands_do_not_ask_when_the_fence_is_up(workspace: Path) -> None:
-    """网络通不通由围栏说了算, 不必先问一次人 (ADR-0040 §8.3 的 C 类处置).
+    """auto 下网络通不通由围栏说了算, 不必先问一次人 (ADR-0040 §8.3 的 C 类处置).
 
     原先这里断言 ASK. 但批准它并不会让围栏放宽 —— 围栏由 mode 编译, 授权信封里没有它,
     于是用户点完同意, 命令照样被围栏拦下. 那是一个答案不起作用的问题.

@@ -96,7 +96,7 @@ class ProviderResponse:
 
 
 class ModelProvider(ABC):
-    """供应商的适配接口。具体实现住在 infrastructure（含未来 FakeModelProvider）。"""
+    """供应商的适配接口。具体实现住在 infrastructure。"""
 
     @property
     @abstractmethod

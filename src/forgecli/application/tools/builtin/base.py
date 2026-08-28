@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import NamedTuple
@@ -14,7 +13,7 @@ from typing import NamedTuple
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.resource_governor import ResourceLimits
 from forgecli.application.workspace.execution_context import ExecutionContext
-from forgecli.application.workspace.filesystem_view import PathFacts, PathKind
+from forgecli.application.workspace.filesystem_view import PathFacts
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.errors import PreparationError, PreparationErrorCode
 from forgecli.domain.tool.hashing import digest
@@ -27,17 +26,11 @@ __all__ = [
     "EmittedText",
     "emit_text",
     "limit_depth",
-    "new_plan_id",
     "read_capability",
-    "resolve_executable",
     "resolve_target",
     "validate_arguments",
     "path_state_token",
 ]
-
-
-def new_plan_id() -> str:
-    return f"plan_{uuid.uuid4().hex[:12]}"
 
 
 def limit_depth(
@@ -141,28 +134,6 @@ def read_capability(scope: WorkspaceScope) -> Capability:
     if scope is WorkspaceScope.OUTSIDE:
         return Capability.EXTERNAL_READ
     return Capability.WORKSPACE_READ
-
-
-def resolve_executable(name: str, context: ExecutionContext) -> str | None:
-    """在**受控 PATH** 里定位可执行文件的绝对路径.
-
-    只查 ExecutionContext 里那份已净化的 PATH, 不查 os.environ, 也不查工作区 —— 否则
-    工作区里放一个同名文件就能顶替系统工具. 完整的文件身份绑定 (realpath, 内容哈希,
-    解释器链) 由安全侧的 ExecutableResolver 负责, 这里只解决"在哪".
-    """
-    if "/" in name or "\\" in name:
-        facts = context.filesystem.facts(name)
-        return facts.realpath if facts.is_regular_file else None
-    raw_path = context.environment.get("PATH", "")
-    separator = ";" if "\\" in raw_path else ":"
-    for entry in raw_path.split(separator):
-        if not entry or entry == ".":
-            continue
-        candidate = f"{entry.rstrip('/')}/{name}"
-        facts = context.filesystem.facts(candidate)
-        if facts.kind is PathKind.FILE:
-            return facts.realpath
-    return None
 
 
 class EmittedText(NamedTuple):

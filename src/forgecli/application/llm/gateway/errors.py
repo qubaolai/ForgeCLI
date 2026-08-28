@@ -90,9 +90,5 @@ class MalformedToolCallError(ModelResponseParseError):
     """
 
 
-class ModelBudgetExceededError(ModelGatewayError):
-    """请求前预算快照校验超限；BudgetGuard 据此拒发，不发起 provider 调用（§11.3）。"""
-
-
 class ModelCancelledError(ModelGatewayError):
     """调用被取消（用户 Ctrl-C / 上层中止 / 超时取消）。"""

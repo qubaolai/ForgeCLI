@@ -23,9 +23,6 @@ _USER_TEXT = "#9399b2"  # 用户输入正文：次要色(回显，弱化)
 _ASSISTANT_MARK = "bold #94e2d5"  # 助手行标记 "●"：青绿，菜单选中同源色
 _ASSISTANT_TEXT = "#cdd6f4"  # 助手输出正文：提亮主色(对话焦点)
 
-_THINKING = "处理中..."
-_SPINNER_STYLE = "#94e2d5"
-
 _NOTICE_TEXT = "#6c7086"  # 收尾提示(取消/失败)：灰色，弱化——非模型正文
 
 _MARK = "●"

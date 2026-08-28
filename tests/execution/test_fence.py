@@ -59,20 +59,24 @@ def test_instance_temp_root_does_not_make_plan_mode_writable() -> None:
 
 
 @pytest.mark.parametrize(
-    ("mode", "writable", "network"),
+    ("mode", "writable", "network", "automatic_shell"),
     [
-        (SessionMode.PLAN, (), False),
-        (SessionMode.ACCEPT_EDITS, ("/ws",), False),
-        (SessionMode.AUTO, ("/ws",), False),
-        (SessionMode.FULL_ACCESS, ("/ws",), True),
+        (SessionMode.PLAN, (), False, False),
+        (SessionMode.ACCEPT_EDITS, ("/ws",), False, False),
+        (SessionMode.AUTO, ("/ws",), False, True),
+        (SessionMode.FULL_ACCESS, ("/ws",), True, True),
     ],
 )
 def test_each_mode_compiles_to_its_own_boundary(
-    mode: SessionMode, writable: tuple[str, ...], network: bool
+    mode: SessionMode,
+    writable: tuple[str, ...],
+    network: bool,
+    automatic_shell: bool,
 ) -> None:
     policy = fence_for(mode, workspace_roots=("/ws",))
     assert policy.writable_roots == writable
     assert policy.network_allowed is network
+    assert policy.automatic_shell is automatic_shell
 
 
 def test_readonly_roots_stay_readable_but_not_writable() -> None:
@@ -91,6 +95,10 @@ def test_policy_hash_changes_with_any_field() -> None:
     assert (
         base.policy_hash
         != FencePolicy(writable_roots=("/ws",), network_allowed=True).policy_hash
+    )
+    assert (
+        base.policy_hash
+        != FencePolicy(writable_roots=("/ws",), automatic_shell=True).policy_hash
     )
 
 

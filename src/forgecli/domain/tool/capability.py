@@ -15,7 +15,6 @@ __all__ = [
     "CAPABILITY_VOCABULARY_VERSION",
     "MUTATING_CAPABILITIES",
     "Capability",
-    "normalize_capability",
 ]
 
 # 词汇表版本. 改动词汇一律要走 ADR, 但**要不要升版本取决于改的是哪一种** (ADR-0033
@@ -82,15 +81,3 @@ MUTATING_CAPABILITIES = frozenset(
         Capability.UNKNOWN,
     }
 )
-
-
-def normalize_capability(raw: str) -> Capability:
-    """把外部 (MCP / skill / 配置) 声明的能力名归一为闭集成员.
-
-    不认识的一律归 UNKNOWN, 由 ADR-0013 的未知路径处理 —— 不抛错, 因为抛错会让一个
-    拼错能力名的 MCP server 把整条链路打断, 而静默丢弃又等于放行.
-    """
-    try:
-        return Capability(raw.strip().lower())
-    except ValueError:
-        return Capability.UNKNOWN

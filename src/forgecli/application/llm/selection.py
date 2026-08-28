@@ -40,10 +40,7 @@ from forgecli.application.llm.gateway.errors import (
     ModelBadRequestError,
     ModelContextOverflowError,
 )
-from forgecli.application.llm.thinking_runtime import (
-    ThinkingOverlayCatalog,
-    ThinkingRuntimeState,
-)
+from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.origin import RequestOrigin
@@ -88,9 +85,7 @@ class ConfigBackedSelectionResolver:
         required_capabilities: tuple[str, ...] = (),
         min_context_window: int | None = None,
     ) -> ResolvedModel:
-        catalog: ModelCatalogService = build_catalog(self._llm.config())
-        if self._thinking_state is not None:
-            catalog = ThinkingOverlayCatalog(catalog, self._thinking_state)
+        catalog = build_catalog(self._llm.config())
         return resolve_selection(
             selection,
             catalog=catalog,
@@ -99,6 +94,7 @@ class ConfigBackedSelectionResolver:
             origin=origin,
             required_capabilities=required_capabilities,
             min_context_window=min_context_window,
+            thinking_state=self._thinking_state,
         )
 
 
@@ -111,10 +107,13 @@ def resolve_selection(
     origin: RequestOrigin,
     required_capabilities: tuple[str, ...] = (),
     min_context_window: int | None = None,
+    thinking_state: ThinkingRuntimeState | None = None,
 ) -> ResolvedModel:
     """当前模型 + 按用途覆盖的只读解析；结果一律经 catalog 校验。"""
     ref = _select_ref(selection, origin, current_model, overrides)
     entry = catalog.get(ref)  # 未知模型 -> ModelBadRequestError
+    if thinking_state is not None:
+        entry = thinking_state.apply(ref, entry)
     _validate(ref, entry, required_capabilities, min_context_window)
     return ResolvedModel(ref=ref, entry=entry)
 

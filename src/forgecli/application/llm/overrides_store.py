@@ -5,7 +5,7 @@
 嵌套对象 + 删除操作，故独立端口（JSON 实现在 infrastructure）。
 
 store 只做「段 <-> 原始 mapping」搬运，不校验 origin / provider / model——
-校验归 ModelOverridesService（复用 build_model_overrides）。
+校验归 ModelOverridesService。
 """
 
 from __future__ import annotations

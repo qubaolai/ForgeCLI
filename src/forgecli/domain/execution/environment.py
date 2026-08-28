@@ -25,7 +25,6 @@ __all__ = [
     "INJECTION_VARIABLES",
     "ShellLaunch",
     "sanitize_environment",
-    "sanitized_names",
 ]
 
 # 净化规则版本. 规则变化会改变 effective_environment_hash, 使旧授权与缓存失效.
@@ -153,11 +152,6 @@ def sanitize_environment(
     # 用于关闭 git/pip/npm 等工具的隐式用户级配置入口。
     result.update(dict(controlled or {}))
     return result
-
-
-def sanitized_names(raw: Mapping[str, str]) -> tuple[str, ...]:
-    """列出被清除的注入类变量名, 供审计展示 (只记名字, 不记取值)."""
-    return tuple(sorted(name for name in raw if _is_injection(name)))
 
 
 def _is_injection(name: str) -> bool:

@@ -55,7 +55,6 @@ from forgecli.interfaces.cli.banner import render_banner
 from forgecli.interfaces.cli.menu_presenter import RichMenuPresenter
 from forgecli.interfaces.cli.output import RichOutput
 from forgecli.interfaces.cli.plan_review_prompt import PlanReviewPrompt
-from forgecli.interfaces.cli.privilege import is_elevated  # noqa: F401  见 run()
 from forgecli.interfaces.cli.repl import Repl
 from forgecli.interfaces.cli.run_renderer import TerminalRunRenderer
 from forgecli.interfaces.cli.shell_mode import (
@@ -77,11 +76,6 @@ from forgecli.shared.observability.log import get_log
 _log = get_log(__name__)
 
 # 正文不出现方括号, 免得被 Rich 当成样式标记解析.
-_ELEVATED_REFUSAL = (
-    "[yellow]拒绝启动: 检测到当前以 root / 管理员身份运行.[/]\n"
-    "请以普通用户身份重新运行 forge (不要加 sudo)."
-)
-
 _NO_TTY_REFUSAL = (
     "[yellow]拒绝启动: 当前不在终端(TTY)中运行。[/]\n"
     "Forge 是交互式会话, 输入框依赖真终端, 在管道 / CI / 重定向下无法工作。"
@@ -197,11 +191,6 @@ def run() -> ExitCode:
         log_level=status.level,
     )
     render_banner(console=console)
-
-    # ADR-0009 决策 2: root 拆掉 OS 权限外墙, 安全模型不再成立, 故拒绝而非降级.
-    # if is_elevated():
-    #     console.print(_ELEVATED_REFUSAL)
-    #     return ExitCode.ELEVATED
 
     # 交互式会话必须有真终端. 放在信任流程之前: 否则已信任的项目会一路装配到 REPL
     # 才发现没有 TTY —— 白占进程锁, 且同一个"没有 TTY"会因项目是否已信任而给出

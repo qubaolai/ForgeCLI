@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from forgecli.application.llm.gateway.errors import (
     ModelAuthError,
-    ModelBudgetExceededError,
     ModelCancelledError,
     ModelContextOverflowError,
     ModelGatewayError,
@@ -31,8 +30,6 @@ def actionable_message(exc: ModelGatewayError) -> str:
         hint = "调用超时：请稍后重试。"
     elif isinstance(exc, ModelUnavailableError):
         hint = "供应商暂不可用：请稍后重试，或用 /model 切换当前模型。"
-    elif isinstance(exc, ModelBudgetExceededError):
-        hint = "预算超限：本次调用被拒绝。"
     elif isinstance(exc, ModelCancelledError):
         hint = "本次调用已取消。"
     else:

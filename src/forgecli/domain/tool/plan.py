@@ -20,7 +20,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from types import MappingProxyType
 
 from forgecli.domain.tool.capability import (
     CAPABILITY_VOCABULARY_VERSION,
@@ -40,7 +39,6 @@ __all__ = [
     "TargetResolution",
     "ToolPlan",
     "WorkspaceScope",
-    "empty_input",
 ]
 
 
@@ -243,8 +241,3 @@ class ToolPlan:
             "execution_context": self.execution_context,
             "file_state_bindings": self.file_state_bindings,
         }
-
-
-def empty_input() -> Mapping[str, object]:
-    """空入参的共享只读映射 (dataclass 默认值不能直接用可变 dict)."""
-    return MappingProxyType({})

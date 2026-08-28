@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from forgecli.application.planning.planning_service import ActivePlanning
@@ -18,6 +20,7 @@ from forgecli.application.prompt.system_prompt_builder import (
     ToolBrief,
 )
 from forgecli.domain.execution.fence import fence_for
+from forgecli.domain.execution.profile import IsolationLevel
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.planning import (
     PlanDocument,
@@ -183,22 +186,41 @@ def test_the_mode_summary_is_derived_from_the_real_capability_budget(
     这条是本文件里最要紧的一个: 早先这里是四段手写散文, 有人放开某个模式的网络,
     散文照样说"网络需要人类确认", 而没有任何一层会说话.
     """
-    body = _body(_build(mode=mode), PromptBlockId.RUNTIME_FACTS)
-    allowed = fence_allowed_capabilities(
-        fence_for(mode, workspace_roots=("/ws",)), confined=False
+    fence = fence_for(mode, workspace_roots=("/ws",))
+    facts = replace(FACTS, isolation_level=IsolationLevel.HOST_CONFINED)
+    body = _body(
+        _build(mode=mode, facts=facts, fence=fence), PromptBlockId.RUNTIME_FACTS
     )
+    allowed = fence_allowed_capabilities(fence, confined=True)
 
     assert mode.value in body
     if Capability.EXECUTE_SHELL in allowed:
         assert "执行 Shell" in body
     else:
         assert "执行 Shell" not in body
-    # 这几个能力在任何围栏下都不自动放行 (domain/security/budget.py).
+    # full_access 的定义是围栏内只剩 Hard Deny; 其余模式仍保留这两道闸.
     for never in (
         Capability.CREDENTIAL_ACCESS,
         Capability.EXTERNAL_IRREVERSIBLE_EFFECT,
     ):
-        assert never not in allowed
+        assert (never in allowed) is (mode is SessionMode.FULL_ACCESS)
+
+
+def test_only_auto_and_full_access_advertise_automatic_shell() -> None:
+    facts = replace(FACTS, isolation_level=IsolationLevel.HOST_CONFINED)
+
+    def summary(mode: SessionMode) -> str:
+        return _body(
+            _build(
+                mode=mode,
+                facts=facts,
+                fence=fence_for(mode, workspace_roots=("/ws",)),
+            ),
+            PromptBlockId.RUNTIME_FACTS,
+        )
+
+    assert "执行 Shell" not in summary(SessionMode.ACCEPT_EDITS)
+    assert "执行 Shell" in summary(SessionMode.AUTO)
 
 
 def test_plan_mode_does_not_claim_write_capabilities() -> None:

@@ -205,11 +205,6 @@ SCHEMA: tuple[ConfigKey, ...] = (
 _BY_NAME: dict[str, ConfigKey] = {key.name: key for key in SCHEMA}
 
 
-def is_known(name: str) -> bool:
-    """名字是否落在封闭可配置面（白名单）内。"""
-    return name in _BY_NAME
-
-
 def require_known(name: str) -> ConfigKey:
     """取键定义；不在封闭可配置面时抛 UnknownConfigKey。"""
     key = _BY_NAME.get(name)

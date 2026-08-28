@@ -26,16 +26,7 @@ from forgecli.shared.errors import ConfigError
 from forgecli.shared.observability.configure import LoggingStatus, configure_logging
 from forgecli.shared.observability.metrics import METRICS
 
-__all__ = ["logs_dir", "start_observability"]
-
-
-def logs_dir() -> str:
-    """默认日志目录: Forge home 下的 logs/. 与会话事件, 恢复快照同一层信任假设.
-
-    配置里写了 `logging.directory` 时以那个为准; 这个函数回答的是"没写时用哪". 诊断读
-    模型仍应显示 `logging_status().file`, 那才是这次运行真正在写的位置.
-    """
-    return str(config_dir() / "logs")
+__all__ = ["start_observability"]
 
 
 def start_observability() -> LoggingStatus:

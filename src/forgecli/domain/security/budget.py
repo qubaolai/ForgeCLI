@@ -75,11 +75,15 @@ _WORKSPACE_MUTATION = frozenset(
     }
 )
 
-# 只有围栏真的立起来了才自动放行的.
+# 只有围栏真的立起来了才自动放行的模型调用. 它不是通用子进程, 也不受
+# accept_edits / auto 的 Shell 自主性边界影响.
+_NEEDS_FENCE = frozenset({Capability.MODEL_CALL})
+
+# 只有模式明确允许自动 Shell, 且围栏真的立起来了, 才自动放行的能力.
 #
-# 这是本模块的核心: 旧预算表把 EXECUTE_SHELL 放进 auto 档, 靠的是分析器证明这条命令
-# 不会伸出去; 现在靠的是围栏让它伸不出去. 没有围栏 (UNCONFINED) 时这一组落回 ASK,
-# 而不是退回去证明 —— ADR-0030 决策 5.
+# accept_edits 与 auto 的文件边界相同, 自主性边界不同: 前者可以自动调用专用文件工具,
+# 但任何通用 Shell 都要问人; 后者才允许 Shell 在围栏内自动执行. 没有围栏
+# (UNCONFINED) 时两档都落回 ASK, 而不是退回去证明 —— ADR-0030 决策 5.
 #
 # NETWORK_ACCESS 在这一组里, 而**不是**"围栏放开网络时才自动放行" (ADR-0040 §8.3 的
 # C 类处置, 2026-08-28):
@@ -94,11 +98,10 @@ _WORKSPACE_MUTATION = frozenset(
 # 于是 `NETWORK_TOOLS` 那张命令名表退出授权路径, 只剩两个用处: 生成给人看的风险摘要
 # (`PlanEffects.network_targets`), 以及 Hard Deny 的 `curl | sh` 形状判定. 表里漏一条
 # 网络工具, 后果从"少一次审批"变成"风险摘要少一行".
-_NEEDS_FENCE = frozenset(
+_AUTOMATIC_SHELL = frozenset(
     {
         Capability.EXECUTE_SHELL,
         Capability.EXECUTE_SCRIPT,
-        Capability.MODEL_CALL,
         Capability.NETWORK_ACCESS,
     }
 )
@@ -118,6 +121,8 @@ def fence_allowed_capabilities(
         allowed |= _WORKSPACE_MUTATION
     if confined:
         allowed |= _NEEDS_FENCE
+        if fence.automatic_shell:
+            allowed |= _AUTOMATIC_SHELL
     return frozenset(allowed - _NEVER_AUTO)
 
 

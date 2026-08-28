@@ -9,10 +9,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from forgecli.application.llm import providers as provider_registry
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import ConfigValidationError
-from forgecli.application.llm.model_overrides import build_model_overrides
+from forgecli.application.llm.gateway.errors import ModelBadRequestError
 from forgecli.application.llm.overrides_store import ModelOverridesStore
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.origin import RequestOrigin
@@ -29,7 +31,27 @@ class ModelOverridesService:
 
     def overrides(self) -> dict[RequestOrigin, ModelRef]:
         """类型化覆盖表（供 ModelSelectionResolver 注入）；非法项归一化报错。"""
-        return build_model_overrides(self._store.load())
+        overrides: dict[RequestOrigin, ModelRef] = {}
+        for raw_origin, body in self._store.load().items():
+            try:
+                origin = RequestOrigin(raw_origin)
+            except ValueError:
+                allowed = " / ".join(item.value for item in RequestOrigin)
+                raise ModelBadRequestError(
+                    f"未知用途覆盖 origin: {raw_origin!r}；只支持 [{allowed}]"
+                ) from None
+            if not isinstance(body, Mapping):
+                raise ModelBadRequestError(
+                    f"按用途覆盖 {raw_origin!r} 必须是 provider/model 键值表"
+                )
+            provider = str(body.get("provider", "")).strip()
+            model = str(body.get("model", "")).strip()
+            if not provider or not model:
+                raise ModelBadRequestError(
+                    f"按用途覆盖 {raw_origin!r} 必须同时指定非空 provider 与 model"
+                )
+            overrides[origin] = ModelRef(provider=provider, model=model)
+        return overrides
 
     def override_for(self, origin: RequestOrigin) -> ModelRef | None:
         return self.overrides().get(origin)

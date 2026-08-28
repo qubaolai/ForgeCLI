@@ -31,7 +31,6 @@ from forgecli.domain.tool.plan import (
     TargetResolution,
     ToolPlan,
     WorkspaceScope,
-    empty_input,
 )
 from forgecli.infrastructure.execution.environment_probe import probe_execution_profile
 
@@ -49,7 +48,7 @@ def _plan(capabilities: frozenset[Capability]) -> ToolPlan:
         plan_id="inv_1",
         tool_name="shell_run",
         spec_hash="spec",
-        normalized_input=empty_input(),
+        normalized_input={},
         capabilities=capabilities,
         effects=PlanEffects(),
         target_resolution=TargetResolution.UNKNOWN,

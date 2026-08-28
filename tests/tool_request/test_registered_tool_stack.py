@@ -233,10 +233,13 @@ def test_an_invented_patch_verb_is_reported_not_written(
     assert not (tmp_path / "ws" / "schema.sql").exists()
 
 
-def test_a_read_only_probe_with_dev_null_runs_unattended(stack: ToolStack) -> None:
+def test_a_read_only_shell_probe_with_dev_null_still_requires_approval(
+    stack: ToolStack,
+) -> None:
     """`2>/dev/null` 曾经命中"写入设备路径"这条不可覆盖的底线.
 
-    这是日志里那条查 maven 装在哪的命令, 它被硬拒之后模型就再也没法验证构建.
+    它不该被硬拒, 但 accept_edits 下任何 shell_run 都必须交给人类确认; 当前测试装配
+    没有人类审批入口, 所以应停在 APPROVAL_UNAVAILABLE, 而不是实际执行.
     """
     result = _call(
         stack,
@@ -244,4 +247,6 @@ def test_a_read_only_probe_with_dev_null_runs_unattended(stack: ToolStack) -> No
         command="ls -a . 2>/dev/null; echo done",
     )
 
-    assert result.kind is ObservationKind.TOOL_RESULT
+    assert result.kind is ObservationKind.APPROVAL_UNAVAILABLE
+    assert result.reason_code == "mode_requires_approval"
+    assert result.risk_summary == ("execute_shell",)

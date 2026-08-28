@@ -33,13 +33,12 @@ from __future__ import annotations
 
 import contextlib
 import select
+import sys
 from types import TracebackType
 
 from prompt_toolkit.input import create_input
 from prompt_toolkit.key_binding.key_processor import KeyPress
 from prompt_toolkit.keys import Keys
-
-from forgecli.interfaces.cli.tty.keys import stdin_is_tty
 
 __all__ = [
     "BACKSPACE_KEYS",
@@ -64,6 +63,11 @@ BACKSPACE_KEYS = frozenset({Keys.ControlH})
 # 50ms 内不可能再按下一个键. 换掉的实现用的是 0.5ms —— 那个值在慢终端 (ssh, tmux 嵌套)
 # 上会把方向键拆成 "Esc + [ + A" 三次按键, 表现为按一下 ↑ 直接退出了菜单.
 _ESCAPE_GRACE_SECONDS = 0.05
+
+
+def stdin_is_tty() -> bool:
+    """交互路径要求标准输入和标准输出都连接终端。"""
+    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 class KeyReader:
