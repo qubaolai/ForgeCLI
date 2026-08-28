@@ -14,18 +14,6 @@ from forgecli.shared.observability.configure import (
 from forgecli.shared.observability.log import ROOT_LOGGER_NAME, get_log
 
 
-@pytest.fixture(autouse=True)
-def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in (
-        "FORGE_LOG_LEVEL",
-        "FORGE_LOG_CONSOLE",
-        "FORGE_LOG_DIR",
-        "FORGE_LOG_MAX_VALUE",
-        "FORGE_LOG_HTTP",
-    ):
-        monkeypatch.delenv(name, raising=False)
-
-
 def test_writes_a_file_named_by_pid(tmp_path: Path) -> None:
     status = configure_logging(directory=tmp_path, level="info")
 
@@ -37,20 +25,27 @@ def test_writes_a_file_named_by_pid(tmp_path: Path) -> None:
     assert "text=你好" in written
 
 
-def test_env_level_beats_configured_level(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """临时开一次 debug 不该要求先改配置文件再改回来."""
-    monkeypatch.setenv("FORGE_LOG_LEVEL", "debug")
+def test_the_configured_level_is_the_only_source(tmp_path: Path) -> None:
+    """级别只从配置来.
 
-    status = configure_logging(directory=tmp_path, level="warn")
-
+    原先还有一个 FORGE_LOG_LEVEL 环境变量压在它上面. 那个变量在设置面板里看不见也改不了,
+    于是"日志级别显示 info, 实际按 debug 在写"这种状态没有任何界面能解释.
+    """
+    status = configure_logging(directory=tmp_path, level="debug")
     assert status.level == "debug"
     assert logging.getLogger(ROOT_LOGGER_NAME).level == logging.DEBUG
 
-
-def test_configured_level_applies_when_env_is_absent(tmp_path: Path) -> None:
     assert configure_logging(directory=tmp_path, level="warn").level == "warning"
+
+
+def test_an_unreadable_level_falls_back_to_info(tmp_path: Path) -> None:
+    """装配发生在配置校验之前, 所以写坏的值只能退回默认, 不能抛."""
+    assert configure_logging(directory=tmp_path, level="很详细").level == "info"
+
+
+def test_console_is_off_unless_configured(tmp_path: Path) -> None:
+    assert configure_logging(directory=tmp_path, level="info").console is False
+    assert configure_logging(directory=tmp_path, level="info", console=True).console
 
 
 def test_reconfigure_does_not_write_twice(tmp_path: Path) -> None:
@@ -80,15 +75,21 @@ def test_unwritable_directory_does_not_stop_forge(
     assert status.file is None
 
 
-def test_max_value_override_reaches_the_renderer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("FORGE_LOG_MAX_VALUE", "0")
-
-    status = configure_logging(directory=tmp_path, level="debug")
+def test_max_value_chars_reaches_the_renderer(tmp_path: Path) -> None:
+    status = configure_logging(directory=tmp_path, level="debug", max_value_chars="0")
 
     assert status.max_value_chars == 0  # 0 = 不截断, 给"这次一定要看到全部"用
     assert logging_status().max_value_chars == 0
+
+
+def test_a_blank_max_value_keeps_the_built_in_ceiling(tmp_path: Path) -> None:
+    """留空和填 0 是两件事: 前者"不改", 后者"不截断"."""
+    assert configure_logging(directory=tmp_path, level="info").max_value_chars > 0
+
+
+def test_an_unreadable_max_value_keeps_the_built_in_ceiling(tmp_path: Path) -> None:
+    status = configure_logging(directory=tmp_path, level="info", max_value_chars="很多")
+    assert status.max_value_chars > 0
 
 
 def test_latest_symlink_points_at_this_run(tmp_path: Path) -> None:

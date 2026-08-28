@@ -22,7 +22,7 @@ from rich.console import Console
 from forgecli.infrastructure.config import config_dir
 from forgecli.infrastructure.project import ProjectLockedError
 from forgecli.interfaces.exit_codes import ExitCode
-from forgecli.interfaces.runtime.logging_wiring import start_logging
+from forgecli.interfaces.runtime.logging_wiring import start_observability
 from forgecli.interfaces.web.app import create_app
 from forgecli.interfaces.web.runtime import (
     ProjectRuntimeRegistry,
@@ -111,7 +111,7 @@ def load_web_secrets() -> tuple[str, str]:
 def run(*, port: int = DEFAULT_PORT, open_browser: bool = False) -> int:
     """只监听 loopback，并用一次性启动令牌打开控制面。"""
     console = Console()
-    status = start_logging()
+    status = start_observability()
     _log.info(
         "forge.start",
         entry="web",

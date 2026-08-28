@@ -1,32 +1,13 @@
-"""平台无关的按键模型与 TTY 判断。"""
+"""这个进程能不能做终端交互.
+
+按键模型不在这里: 它是 prompt-toolkit 的 `Keys` 与 `KeyPress` (ADR-0040 决策 4.3).
+留下这一个函数是因为它不是按键机制, 而是"要不要进交互路径"这个产品判断, 而且它的调用方
+(bootstrap / repl) 在决定之前根本不该去 import 整套输入实现.
+"""
 
 from __future__ import annotations
 
-import enum
 import sys
-from dataclasses import dataclass
-from enum import Enum
-
-
-class Key(Enum):
-    UP = enum.auto()
-    DOWN = enum.auto()
-    LEFT = enum.auto()
-    RIGHT = enum.auto()
-    ENTER = enum.auto()
-    ESC = enum.auto()
-    BACKSPACE = enum.auto()
-    SLASH = enum.auto()
-    TAB = enum.auto()
-    CTRL_C = enum.auto()
-    CHAR = enum.auto()  # 可打印字符，见 .char
-    OTHER = enum.auto()
-
-
-@dataclass(frozen=True)
-class KeyPress:
-    key: Key
-    char: str = ""
 
 
 def stdin_is_tty() -> bool:

@@ -21,6 +21,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 
+from pydantic import ValidationError
+
 from forgecli.application.llm import providers as provider_registry
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config import (
@@ -32,6 +34,8 @@ from forgecli.application.llm.config.llm_config import (
     ProviderConfig,
     RetrySettings,
     coerce_field,
+    coerce_provider_field,
+    explain_validation_error,
     parse_extra,
 )
 from forgecli.application.llm.config.llm_config_store import LlmConfigStore
@@ -44,21 +48,6 @@ from forgecli.domain.model.thinking import (
     ThinkingEffortName,
     ThinkingMode,
 )
-
-_DEFAULT_TIMEOUT = 60
-_DEFAULT_MAX_RETRIES = 2
-
-# 供应商可在菜单里编辑的字段及类型
-_PROVIDER_STR_FIELDS = {"name", "api_base", "api_key_env"}
-_PROVIDER_INT_FIELDS = {"timeout", "max_retries"}
-
-
-def _as_int(name: str, value: object, default: int) -> int:
-    if value is None:
-        return default
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ConfigValidationError(f"{name} 必须是整数，收到: {value!r}")
-    return value
 
 
 def _as_bool(name: str, value: object) -> bool:
@@ -124,19 +113,6 @@ def _as_origins(
     return tuple(origins)
 
 
-def _as_credential_refs(value: object) -> tuple[str, ...]:
-    """解析可选的 credential_refs 数组（ADR-0011 §16）；缺省返回空元组。"""
-    if value is None:
-        return ()
-    if not isinstance(value, list | tuple) or not all(
-        isinstance(item, str) and item.strip() for item in value
-    ):
-        raise ConfigValidationError(
-            f"credential_refs 必须是非空字符串数组，收到: {value!r}"
-        )
-    return tuple(item.strip() for item in value)
-
-
 class LlmConfigService:
     """读取 / 校验 / 更新 LLM 配置的用例；只有一个实现，故不设抽象基类。"""
 
@@ -147,7 +123,10 @@ class LlmConfigService:
         section = self._store.load().get("providers", {})
         providers: list[ProviderConfig] = []
         if isinstance(section, Mapping):
-            for provider_id, body in section.items():
+            for raw_id, body in section.items():
+                # 配置文件是外部数据: 这里归一一次, 下游一律拿注册表的 key. 早期版本的
+                # 菜单写出过 "GLM" (当时注册表 key 就是它), 归一让那些文件继续能读.
+                provider_id = provider_registry.normalize_provider_id(raw_id)
                 # 未知供应商：没有 adapter 能驱动，忽略而非报错。
                 if not provider_registry.is_known_provider(provider_id):
                     continue
@@ -158,6 +137,20 @@ class LlmConfigService:
 
     def providers(self) -> tuple[ProviderConfig, ...]:
         return self.config().providers
+
+    def effective_providers(self) -> tuple[ProviderConfig, ...]:
+        """每一家内置供应商各一条: 配置里写了的用配置, 没写的用注册表默认值.
+
+        `providers()` 只返回配置文件里真的有段落的那些, 因为装配 adapter 只关心它们.
+        设置页要的是另一件事: 用户得能在**添加第一个模型之前**就把端点和密钥变量名填好,
+        而那时候配置文件里还没有这家供应商的段落 —— 它在 `providers()` 里根本不存在,
+        于是界面上也就没有一行可以编辑.
+        """
+        configured = {provider.id: provider for provider in self.providers()}
+        return tuple(
+            configured.get(provider_id) or self._parse_provider(provider_id, {})
+            for provider_id in sorted(provider_registry.REGISTRY)
+        )
 
     def add_model(
         self, provider_id: str, model_id: str, params: Mapping[str, object]
@@ -282,24 +275,7 @@ class LlmConfigService:
 
     def set_provider_field(self, provider_id: str, field: str, raw: str) -> None:
         provider_registry.require_known_provider(provider_id)
-        text = raw.strip()
-        value: object
-        if field in _PROVIDER_INT_FIELDS:
-            try:
-                number = int(text)
-            except ValueError:
-                raise ConfigValidationError(
-                    f"{field} 必须是整数，收到: {raw!r}"
-                ) from None
-            if number < 0:
-                raise ConfigValidationError(f"{field} 不能为负")
-            value = number
-        elif field in _PROVIDER_STR_FIELDS:
-            if not text:
-                raise ConfigValidationError(f"{field} 不能为空")
-            value = text
-        else:
-            raise ConfigValidationError(f"未知供应商字段: {field}")
+        value = coerce_provider_field(field, raw)
         self._store.upsert_provider_field(
             provider_id, field, value, provider_defaults=self._defaults(provider_id)
         )
@@ -413,7 +389,7 @@ class LlmConfigService:
     # ---- 解析 ----
 
     def _defaults(self, provider_id: str) -> dict[str, object]:
-        spec = provider_registry.REGISTRY[provider_id]
+        spec = provider_registry.require_known_provider(provider_id)
         return {
             "name": spec.label,
             "api_base": spec.default_api_base,
@@ -473,29 +449,33 @@ class LlmConfigService:
     def _parse_provider(
         self, provider_id: str, body: Mapping[str, object]
     ) -> ProviderConfig:
-        spec = provider_registry.REGISTRY[provider_id]
+        spec = provider_registry.require_known_provider(provider_id)
         raw_models = body.get("models", {})
         models: list[ModelSpec] = []
         if isinstance(raw_models, Mapping):
             for model_id, model_body in raw_models.items():
-                fields = model_body if isinstance(model_body, Mapping) else {}
+                model_fields = model_body if isinstance(model_body, Mapping) else {}
                 models.append(
                     ModelSpec(
                         provider=provider_id,
                         id=model_id,
-                        params=ModelParams.parse(fields),
+                        params=ModelParams.parse(model_fields),
                     )
                 )
         api_key_env = body.get("api_key_env", spec.api_key_env)
-        return ProviderConfig(
-            id=provider_id,
-            name=str(body.get("name", spec.label)),
-            api_base=str(body.get("api_base", spec.default_api_base)),
-            api_key_env=str(api_key_env) if api_key_env else None,
-            timeout=_as_int("timeout", body.get("timeout"), _DEFAULT_TIMEOUT),
-            max_retries=_as_int(
-                "max_retries", body.get("max_retries"), _DEFAULT_MAX_RETRIES
-            ),
-            models=tuple(models),
-            credential_refs=_as_credential_refs(body.get("credential_refs")),
-        )
+        # 注册表给的是**运行时**默认值 (这家供应商叫什么, 官方地址是哪个), 所以只能在
+        # 这里补, 不能写成 ProviderConfig 的字段默认值 —— 那样每家都会拿到同一份.
+        provider_fields: dict[str, object] = {
+            "id": provider_id,
+            "name": body.get("name", spec.label),
+            "api_base": body.get("api_base", spec.default_api_base),
+            "api_key_env": str(api_key_env) if api_key_env else None,
+            "models": tuple(models),
+        }
+        for optional in ("timeout", "max_retries", "credential_refs"):
+            if optional in body:
+                provider_fields[optional] = body[optional]
+        try:
+            return ProviderConfig.model_validate(provider_fields)
+        except ValidationError as exc:
+            raise ConfigValidationError(explain_validation_error(exc)) from exc

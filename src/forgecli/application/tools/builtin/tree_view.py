@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from forgecli.application.tools.builtin.base import IGNORED_SEGMENTS
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.application.workspace.filesystem_view import PathFacts, PathKind
 
@@ -104,10 +103,14 @@ def _children(
     context: ExecutionContext, directory: str, *, include_ignored: bool
 ) -> tuple[tuple[str, PathFacts], ...]:
     found: list[tuple[str, PathFacts]] = []
+    root = context.primary_root
     for name in context.filesystem.list_dir(directory):
-        if not include_ignored and name in IGNORED_SEGMENTS:
+        child = f"{directory.rstrip('/')}/{name}"
+        # 忽略判断问视图, 不在这里列名单: 树视图与 glob 展开必须给出同一个仓库形状,
+        # 两份判断一定会走偏, 而走偏的后果是模型据此得出的结论互相矛盾.
+        if not include_ignored and context.filesystem.is_ignored(child, root=root):
             continue
-        facts = context.filesystem.facts(f"{directory.rstrip('/')}/{name}")
+        facts = context.filesystem.facts(child)
         if not facts.exists:
             continue
         found.append((name, facts))

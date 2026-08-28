@@ -460,6 +460,7 @@ class BuiltinAgentLoop:
             request_id=request.request_id,
         )
         try:
+            _log.info("llm.context", message=str(request.messages))
             outcome = self._call_model(request)
         except ModelCancelledError as exc:
             _log.warning("model.cancelled", message=str(exc))

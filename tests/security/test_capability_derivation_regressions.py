@@ -132,6 +132,12 @@ class _LiteralFileSystem(FileSystemView):
     def read_text(self, path: str, *, max_bytes: int) -> str:
         return ""
 
+    def read_text_if_text(self, path: str, *, max_bytes: int) -> str | None:
+        return ""
+
+    def is_ignored(self, path: str, *, root: str) -> bool:
+        return False
+
     def read_bytes(self, path: str, *, max_bytes: int) -> bytes:
         return b""
 
@@ -139,6 +145,11 @@ class _LiteralFileSystem(FileSystemView):
         return ()
 
     def expand_glob(
-        self, pattern: str, *, root: str, max_results: int | None = None
+        self,
+        pattern: str,
+        *,
+        root: str,
+        max_results: int | None = None,
+        skip_ignored: bool = True,
     ) -> tuple[str, ...]:
         return ()

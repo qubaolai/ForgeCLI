@@ -23,7 +23,9 @@ class EnvProviderAvailability:
     """基于环境变量: spec.api_key_env 是否被设置为非空值"""
 
     def is_available(self, provider_id: str) -> bool:
-        spec = provider_registry.REGISTRY.get(provider_id)
+        spec = provider_registry.REGISTRY.get(
+            provider_registry.normalize_provider_id(provider_id)
+        )
         if spec is None or not spec.api_key_env:
             return False
         return bool(os.environ.get(spec.api_key_env, "").strip())

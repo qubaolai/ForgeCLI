@@ -1,39 +1,68 @@
-"""进程入口的日志装配 (ADR-0035).
+"""进程入口的日志与指标装配 (ADR-0035).
 
 住在 interfaces 而不是 shared: 决定"日志写到哪一级, 写到哪个目录"要读应用配置与
-Forge home, 而那是 infrastructure 的知识. `shared/observability` 只接受一个目录和一个
-级别字符串, 于是它对任何层都是安全的依赖.
+Forge home, 而那是 infrastructure 的知识. `shared/observability` 只接受解析好的值,
+于是它对任何层都是安全的依赖.
 
-两条启动路径 (`forge` 起 Web, `forge cli` 进终端) 各调一次 `start_logging()`, 位置都在
-最前面 —— 早于信任解析与进程锁, 这样"起不来"本身也留得下记录.
+两条启动路径 (`forge` 起 Web, `forge cli` 进终端) 各调一次 `start_observability()`,
+位置都在最前面 —— 早于信任解析与进程锁, 这样"起不来"本身也留得下记录.
+
+## 为什么直接读 config.json 而不经 ConfigService
+
+装配发生在任何 service 之前. 装 service 要先解析项目, 解析项目要先能记日志 —— 反过来
+就成环了. 所以这里读的是同一个文件的原始键值, 校验交给后面的配置服务 (它会把写坏的值
+报出来). 读不动就按默认值装, 一个坏掉的 config.json 不该让 forge 起不来, 更不该让它在
+"连日志都还没有"的状态下起不来.
 """
 
 from __future__ import annotations
 
-from forgecli.domain.config.config_keys import LOGGING_LEVEL
+from pathlib import Path
+
+from forgecli.domain.config import config_keys
+from forgecli.domain.config.effective_config import EffectiveConfig
 from forgecli.infrastructure.config import JsonConfigStore, config_dir, config_file
 from forgecli.shared.errors import ConfigError
 from forgecli.shared.observability.configure import LoggingStatus, configure_logging
+from forgecli.shared.observability.metrics import METRICS
 
-__all__ = ["logs_dir", "start_logging"]
+__all__ = ["logs_dir", "start_observability"]
 
 
 def logs_dir() -> str:
-    """日志目录: Forge home 下的 logs/. 与会话事件, 恢复快照同一层信任假设."""
+    """默认日志目录: Forge home 下的 logs/. 与会话事件, 恢复快照同一层信任假设.
+
+    配置里写了 `logging.directory` 时以那个为准; 这个函数回答的是"没写时用哪". 诊断读
+    模型仍应显示 `logging_status().file`, 那才是这次运行真正在写的位置.
+    """
     return str(config_dir() / "logs")
 
 
-def start_logging() -> LoggingStatus:
-    """读应用配置里的 logging.level 并装上 handler.
+def start_observability() -> LoggingStatus:
+    """按 `logging.*` 与 `telemetry.enabled` 装上日志 handler 与指标开关."""
+    config = _startup_config()
+    METRICS.set_enabled(config.telemetry_enabled)
+    directory = (
+        Path(config.logging_directory).expanduser()
+        if config.logging_directory.strip()
+        else config_dir() / "logs"
+    )
+    return configure_logging(
+        directory=directory,
+        level=config.logging_level,
+        console=config.logging_console,
+        max_value_chars=config.logging_max_value_chars,
+        include_http=config.logging_include_http,
+    )
 
-    配置文件读不动时不抛: 一个坏掉的 config.json 不该让 forge 起不来, 更不该让它在
-    "连日志都还没有"的状态下起不来. 那种情况按默认级别装配, 后面配置服务自己会报错.
-    """
-    return configure_logging(directory=config_dir() / "logs", level=_configured_level())
 
-
-def _configured_level() -> str:
+def _startup_config() -> EffectiveConfig:
+    """只取应用级的那几个键; 项目级配置这时候还没解析出来."""
     try:
-        return JsonConfigStore(config_file("config.json")).load().get(LOGGING_LEVEL, "")
+        raw = JsonConfigStore(config_file("config.json")).load()
     except ConfigError:
-        return ""
+        raw = {}
+    app_keys = {key.name for key in config_keys.keys_for(config_keys.ConfigLevel.APP)}
+    return EffectiveConfig.from_overrides(
+        {name: value for name, value in raw.items() if name in app_keys}
+    )

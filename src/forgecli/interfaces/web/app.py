@@ -14,14 +14,16 @@ from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
-    StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from sse_starlette.event import ServerSentEvent
+from sse_starlette.sse import EventSourceResponse
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forgecli.application.llm import providers as provider_registry
+from forgecli.application.llm.config.llm_config import PROVIDER_FIELDS, StandardField
 from forgecli.application.planning.plan_review import PlanReviewChoice
 from forgecli.application.security.workspace_grants import GrantError
 from forgecli.domain.agent.run_events import AgentRunEventKind
@@ -57,7 +59,9 @@ _SECURITY_HEADERS = {
         "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
     ),
 }
-_STREAM_KEEP_ALIVE_SECONDS = 15.0
+# 心跳间隔: 没有事件时每隔这么久发一个注释帧, 让中间的代理不要把连接当成死的.
+# 整数是因为 EventSourceResponse.ping 的类型就是 int.
+_STREAM_KEEP_ALIVE_SECONDS = 15
 # 构建产物带内容哈希, 可以长期缓存; 入口 HTML 必须每次回源, 否则升级 Forge 之后浏览器
 # 还在跑上一版前端 —— 那是一类很难自查的故障: 代码改了, 用户看到的行为没改。
 _IMMUTABLE_PREFIX = "/assets/"
@@ -250,8 +254,19 @@ class LocalControlPlaneGuard:
         return None
 
 
-def _frame(cursor: int, name: str, data: str) -> str:
-    return f"id: {cursor}\nevent: {name}\ndata: {data}\n\n"
+def _field_view(field: StandardField) -> dict[str, str]:
+    """一个可编辑字段的表单描述. kind 是给前端选控件用的."""
+    return {"name": field.name, "label": field.label, "kind": field.kind.__name__}
+
+
+def _frame(cursor: int, name: str, data: str) -> ServerSentEvent:
+    """一条 SSE 事件. framing 交给 sse-starlette (ADR-0040 决策 4.7).
+
+    换掉手写 f-string 不只是少写三个字段: `data` 里只要出现一个换行, 手写版本就会拼出
+    一条被浏览器截断的事件, 而 `ServerSentEvent` 会按协议把多行拆成多条 `data:`.
+    我们现在的 data 是紧凑 JSON 所以撞不上, 但那是巧合, 不是保证.
+    """
+    return ServerSentEvent(id=str(cursor), event=name, data=data)
 
 
 def _turn_snapshots(hub: WebEventHub) -> list[dict[str, object]]:
@@ -485,7 +500,7 @@ def create_app(
         request: Request,
         after: str | None = None,
         last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
-    ) -> StreamingResponse:
+    ) -> EventSourceResponse:
         hub = _runtime(request).events
         # 只有断线重连才补发历史；首次连接从当前位置开始，已完成 turn 的正文由
         # transcript 提供，不能靠重放事件缓冲拼出来。页面自己管重连节奏，所以除了
@@ -496,12 +511,16 @@ def create_app(
         except ValueError:
             cursor = hub.cursor
 
-        async def stream() -> AsyncIterator[str]:
-            """一条 SSE 流；服务停止或客户端断开时立即收尾，不拖住优雅退出。"""
+        async def stream() -> AsyncIterator[ServerSentEvent | bytes]:
+            """一条 SSE 流；服务停止或客户端断开时立即收尾，不拖住优雅退出。
+
+            断线检测与心跳都归 ``EventSourceResponse``：它自己监听 ``receive`` 上的
+            ``http.disconnect`` 并取消这个生成器，也自己按固定间隔发注释帧。原先这两件
+            事都挂在下面这个循环上，代价是它们的精度被 ``hub.wait`` 的超时绑死——没有
+            事件时，断开要等满一整个心跳周期才发现。
+            """
             nonlocal cursor
             while not stopping.is_set():
-                if await request.is_disconnected():
-                    return
                 resync, pending = hub.after(cursor)
                 if resync:
                     cursor = hub.cursor
@@ -513,6 +532,7 @@ def create_app(
                     continue
                 if pending:
                     # 一次 yield 送完这批：逐条 yield 会让一次长回答变成上千次小写入。
+                    # bytes 被 sse-starlette 原样送出，所以批量不必牺牲协议正确性。
                     frames = []
                     for item in pending:
                         cursor = item.cursor
@@ -521,8 +541,8 @@ def create_app(
                             ensure_ascii=False,
                             separators=(",", ":"),
                         )
-                        frames.append(_frame(cursor, "run_event", data))
-                    yield "".join(frames)
+                        frames.append(_frame(cursor, "run_event", data).encode())
+                    yield b"".join(frames)
                     continue
                 if hub.closed:
                     # 项目被切换或关闭：结束这条流，浏览器会重连到新的 Runtime。
@@ -530,16 +550,10 @@ def create_app(
                 await hub.wait(
                     cursor, timeout=_STREAM_KEEP_ALIVE_SECONDS, stop=stopping
                 )
-                if not stopping.is_set():
-                    yield ": keep-alive\n\n"
             # 让页面知道这是本地服务主动停止，而不是需要重连的网络抖动。
             yield _frame(cursor, "server_stopping", '{"reason":"local_shutdown"}')
 
-        return StreamingResponse(
-            stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
+        return EventSourceResponse(stream(), ping=_STREAM_KEEP_ALIVE_SECONDS)
 
     @app.get("/api/v1/runs")
     async def runs(request: Request) -> dict[str, object]:
@@ -614,6 +628,11 @@ def create_app(
             "items": [
                 {
                     "key": item.name,
+                    # 中文名与说明住在 SCHEMA 里 (domain/config/config_keys). 页面不自己
+                    # 写一份: 同一个开关在 CLI 菜单和网页上叫不同名字, 两边都不会报错,
+                    # 只会让用户以为是两个开关.
+                    "label": item.title,
+                    "help": item.help,
                     "level": item.level.name.lower(),
                     "kind": item.kind.name.lower(),
                     "value": runtime.config.display(item.name),
@@ -645,6 +664,14 @@ def create_app(
         current = runtime.current_model()
         return {
             "items": [to_jsonable(item) for item in runtime.llm_config.providers()],
+            # 每家内置供应商各一条 (没配过的带注册表默认值): 设置页要能在添加第一个模型
+            # 之前就把端点填好.
+            "provider_settings": [
+                to_jsonable(item) for item in runtime.llm_config.effective_providers()
+            ],
+            # 供应商表单该有哪些行, 每行叫什么, 是什么类型 —— 全从 ProviderConfig
+            # 的字段声明派生 (ADR-0040 决策 4.2). 页面照着渲染, 不自己列一份.
+            "provider_fields": [_field_view(field) for field in PROVIDER_FIELDS],
             "known_providers": [
                 {
                     "id": provider_id,

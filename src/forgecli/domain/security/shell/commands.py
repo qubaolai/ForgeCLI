@@ -519,8 +519,13 @@ _register(
 # 两面都是: `git status` 只读, `git commit` 写. 复用只读子命令这份既有知识, 而不是把
 # 整个 git 归到某一边. 判定在 effects.effect_kind_of.
 #
-# 口径必须与 application/tools/builtin/git_read.py 的 _ReadOnlyForm 一致 —— 两处分属
-# security 与 tools, check_arch.py 禁止互相 import, 因此只能靠这条注释绑住.
+# 这张表**只服务 shell_run**: 用户或模型手敲 `git ...` 时, 它回答"这个子命令读还是写".
+#
+# 曾经它还要和 `git_read` 工具里的一份 CLI 参数白名单对口径, 靠一条注释绑着 (两处分属
+# security 与 tools, check_arch.py 禁止互相 import). ADR-0040 决策 4.4 之后那份白名单
+# 没了 —— git_read 走 libgit2 的进程内调用, 不再拼 argv, 也就没有第二份 git 知识需要
+# 对齐. 这里剩下的这一份是 ADR-0040 说的 B 类非承重表: 表外的子命令走 UNPROVEN/ASK,
+# 漏一项只会多问一次用户.
 
 GIT_LIKE: frozenset[str] = frozenset({"git", "hg", "svn", "jj"})
 

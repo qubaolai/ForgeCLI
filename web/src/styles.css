@@ -320,7 +320,9 @@ button { color: inherit; }
 .settings-body nav button.active { background: var(--surface-3); color: var(--text); }
 .settings-fields { padding: 22px; overflow: auto; }
 .setting-field { display: flex; justify-content: space-between; gap: 20px; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--border); }
-.setting-field > span { display: grid; gap: 5px; }
+.setting-field > span { flex: 1 1 auto; min-width: 0; display: grid; gap: 5px; }
+.setting-field > select, .setting-field > div { flex: 0 0 auto; }
+.setting-help { max-width: 52ch; line-height: 1.6; }
 .setting-field small { color: var(--muted); }
 .setting-field input, .setting-field select { border: 1px solid var(--border); background: #0d1015; color: var(--text); border-radius: 7px; padding: 8px; }
 .setting-field > div { display: flex; gap: 6px; }

@@ -75,21 +75,50 @@ def _percentile(ordered: list[float], ratio: float) -> float:
 
 
 class Metrics:
-    """按 `名字{标签}` 聚合的计数器与耗时序列. 加锁, 可跨线程写."""
+    """按 `名字{标签}` 聚合的计数器与耗时序列. 加锁, 可跨线程写.
 
-    def __init__(self) -> None:
+    可以整体关掉 (配置项 `telemetry.enabled`). 关掉时 `count` / `observe` 是空操作 ——
+    不是"照记但不展示": 记录点遍布工具流水线与每次模型调用, 一个不想被度量的用户不该
+    还在为此付内存和锁.
+
+    默认**关闭**, 与 `telemetry.enabled` 的默认值一致. 进程入口装配时会按配置打开
+    (`interfaces/runtime/logging_wiring.start_observability`); 没走装配的路径 (测试,
+    脚本) 因此也不会静默攒数据.
+    """
+
+    def __init__(self, *, enabled: bool = False) -> None:
         self._lock = threading.Lock()
         self._counters: dict[str, int] = {}
         self._durations: dict[str, _Durations] = {}
+        self._enabled = enabled
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    def set_enabled(self, enabled: bool) -> None:
+        """打开或关掉采集. 关掉时顺手清空已经攒下的读数.
+
+        清空是刻意的: 关掉之后 `/diagnostics` 还显示着半截数据, 用户会以为开关没生效.
+        """
+        with self._lock:
+            self._enabled = enabled
+            if not enabled:
+                self._counters.clear()
+                self._durations.clear()
 
     def count(self, name: str, amount: int = 1, **labels: str) -> None:
         """给一个计数器加数. 例: `count("tool.denied", tool="shell_run")`."""
+        if not self._enabled:
+            return
         key = _key(name, labels)
         with self._lock:
             self._counters[key] = self._counters.get(key, 0) + amount
 
     def observe(self, name: str, elapsed_ms: float, **labels: str) -> None:
         """记一次耗时 (毫秒). 由 `Log.span` 自动调用, 也可以手动记."""
+        if not self._enabled:
+            return
         key = _key(name, labels)
         with self._lock:
             self._durations.setdefault(key, _Durations()).add(elapsed_ms)

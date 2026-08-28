@@ -27,6 +27,10 @@ type TranscriptEvent = {
 
 type Setting = {
   key: string;
+  // 中文名与说明来自后端 SCHEMA，不在这里另写一份：同一个开关在终端菜单和这里叫不同
+  // 名字时，两边都不会报错，只会让用户以为是两个开关。
+  label: string;
+  help: string;
   level: string;
   kind: string;
   value: string;
@@ -157,8 +161,13 @@ type AdminActions = {
   onUndo: () => void;
   onPreviewCheckpoint: (id: string) => Promise<string>;
 };
+type FieldSpec = { name: string; label: string; kind: string };
 type ModelsResponse = {
   items: Provider[];
+  // 每家内置供应商各一条（没配过的带注册表默认值）：要能在添加第一个模型之前就把端点填好。
+  provider_settings: Provider[];
+  // 表单该有哪些行、每行叫什么——从后端的 ProviderConfig 字段声明派生。
+  provider_fields: FieldSpec[];
   known_providers: KnownProvider[];
   runtime: LlmRuntimeSettings;
   current_model: string;
@@ -261,6 +270,8 @@ function App() {
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [knownProviders, setKnownProviders] = useState<KnownProvider[]>([]);
+  const [providerSettings, setProviderSettings] = useState<Provider[]>([]);
+  const [providerFields, setProviderFields] = useState<FieldSpec[]>([]);
   const [llmRuntime, setLlmRuntime] = useState<LlmRuntimeSettings | null>(null);
   const [currentModel, setCurrentModel] = useState("");
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -348,6 +359,8 @@ function App() {
   const loadModels = useCallback(async () => {
     const models = await api<ModelsResponse>("/models");
     setProviders(models.items);
+    setProviderSettings(models.provider_settings);
+    setProviderFields(models.provider_fields);
     setKnownProviders(models.known_providers);
     setLlmRuntime(models.runtime);
     setCurrentModel(models.current_model);
@@ -943,6 +956,7 @@ function App() {
 
       {showSettings && <SettingsPanel
         items={settings} roots={workspaceRoots} rules={rules} checkpoints={checkpoints}
+        providerSettings={providerSettings} providerFields={providerFields}
         providers={providers} knownProviders={knownProviders} llmRuntime={llmRuntime}
         catalog={{ currentModel, overrides, origins, thinking, tools, status: statusView, recovery }}
         actions={{
@@ -1132,6 +1146,8 @@ type SettingsPanelProps = {
   rules: LearnedRule[];
   checkpoints: Checkpoint[];
   providers: Provider[];
+  providerSettings: Provider[];
+  providerFields: FieldSpec[];
   knownProviders: KnownProvider[];
   llmRuntime: LlmRuntimeSettings | null;
   catalog: AdminCatalog;
@@ -1149,7 +1165,7 @@ type SettingsPanelProps = {
   onSaveLlmRuntime: (changed: Record<string, string>) => void;
 };
 
-function SettingsPanel({ items, roots, rules, checkpoints, providers, knownProviders, llmRuntime, catalog, actions, onClose, onSave, onAddRoot, onRemoveRoot, onRevokeRule, onRestore, onAddModel, onRemoveModel, onSaveModel, onSaveProvider, onSaveLlmRuntime }: SettingsPanelProps) {
+function SettingsPanel({ items, roots, rules, checkpoints, providers, providerSettings, providerFields, knownProviders, llmRuntime, catalog, actions, onClose, onSave, onAddRoot, onRemoveRoot, onRevokeRule, onRestore, onAddModel, onRemoveModel, onSaveModel, onSaveProvider, onSaveLlmRuntime }: SettingsPanelProps) {
   const [tab, setTab] = useState<"general" | "models" | "security" | "recovery" | "status">("general");
   const configuredModels = useMemo(
     () => providers.flatMap((provider) => provider.models.map((model) => `${provider.id}:${model.id}`)),
@@ -1194,7 +1210,7 @@ function SettingsPanel({ items, roots, rules, checkpoints, providers, knownProvi
           <span className={`availability ${provider.available ? "ready" : ""}`}>{provider.available ? "可用" : "未配置密钥"}</span>
         </div>
       ))}
-      <h3>添加模型</h3><div className="add-root model-add"><select value={providerId} onChange={(event) => setProviderId(event.target.value)}>{knownProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select><input value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="模型 ID" /><button onClick={() => { if (providerId && modelId.trim()) { onAddModel(providerId, modelId.trim()); setModelId(""); } }}>添加</button></div><p className="field-help">API 密钥只从环境变量读取，不会在页面或配置文件中保存明文。</p><h3>已配置供应商</h3>{providers.length ? providers.map((provider) => <ProviderEditor key={provider.id} provider={provider} onSaveProvider={onSaveProvider} onSaveModel={onSaveModel} onRemoveModel={onRemoveModel} />) : <p className="empty-copy">尚未配置模型。添加模型后可设置端点、上下文和 Thinking 能力。</p>}
+      <h3>添加模型</h3><div className="add-root model-add"><select value={providerId} onChange={(event) => setProviderId(event.target.value)}>{knownProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select><input value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="模型 ID" /><button onClick={() => { if (providerId && modelId.trim()) { onAddModel(providerId, modelId.trim()); setModelId(""); } }}>添加</button></div><p className="field-help">API 密钥只从环境变量读取，不会在页面或配置文件中保存明文。</p><h3>供应商</h3><p className="field-help">供应商仅支持 OpenAI Compatible 协议（<code>/chat/completions</code>）。DeepSeek、GLM 以及 Ollama、vLLM 等本地端点都走这一套；不兼容该协议的供应商无法在此配置。</p>{(providerSettings.length ? providerSettings : providers).map((provider) => <ProviderEditor key={provider.id} provider={provider} fields={providerFields} onSaveProvider={onSaveProvider} onSaveModel={onSaveModel} onRemoveModel={onRemoveModel} />)}
       <h3>网关治理</h3>
       {llmRuntime && <DraftForm
         fields={[
@@ -1273,20 +1289,18 @@ function CheckpointRow({ checkpoint, onRestore, onPreview }: { checkpoint: Check
   </div>;
 }
 
-function ProviderEditor({ provider, onSaveProvider, onSaveModel, onRemoveModel }: { provider: Provider; onSaveProvider: (providerId: string, changed: Record<string, string>) => void; onSaveModel: (providerId: string, modelId: string, changed: Record<string, string>) => void; onRemoveModel: (providerId: string, modelId: string) => void }) {
+function ProviderEditor({ provider, fields, onSaveProvider, onSaveModel, onRemoveModel }: { provider: Provider; fields: FieldSpec[]; onSaveProvider: (providerId: string, changed: Record<string, string>) => void; onSaveModel: (providerId: string, modelId: string, changed: Record<string, string>) => void; onRemoveModel: (providerId: string, modelId: string) => void }) {
+  // 表单行由后端给（从 ProviderConfig 的字段声明派生）。这里曾经硬编码过一份同样的
+  // (字段名, 中文标签) 数组——加一个字段时它不会报错，只会在页面上少一行。
+  const rows = fields.map((field) => ({
+    key: field.name,
+    label: field.label,
+    value: String((provider as unknown as Record<string, unknown>)[field.name] ?? ""),
+  }));
+  const modelCount = provider.models.length;
   return <section className="provider-editor">
-    <div className="provider-heading"><div><strong>{provider.name}</strong><small>{provider.id} · {provider.models.length} 个模型</small></div></div>
-    <DraftForm
-      className="provider-fields"
-      fields={[
-        { key: "name", label: "名称", value: provider.name },
-        { key: "api_base", label: "API 端点", value: provider.api_base },
-        { key: "api_key_env", label: "密钥环境变量", value: provider.api_key_env ?? "" },
-        { key: "timeout", label: "超时（秒）", value: String(provider.timeout) },
-        { key: "max_retries", label: "最大重试", value: String(provider.max_retries) },
-      ]}
-      onSave={(changed) => onSaveProvider(provider.id, changed)}
-    />
+    <div className="provider-heading"><div><strong>{provider.name}</strong><small>{provider.id} · {modelCount ? `${modelCount} 个模型` : "尚未添加模型"}</small></div></div>
+    <DraftForm className="provider-fields" fields={rows} onSave={(changed) => onSaveProvider(provider.id, changed)} />
     {provider.models.map((model) => <ModelEditor key={model.id} provider={provider} model={model} onSave={onSaveModel} onRemove={onRemoveModel} />)}
   </section>;
 }
@@ -1345,7 +1359,28 @@ function DraftForm({ fields, onSave, className = "runtime-settings" }: { fields:
 function SettingField({ item, onSave }: { item: Setting; onSave: (item: Setting, value: string) => void }) {
   const [value, setValue] = useState(item.value);
   useEffect(() => setValue(item.value), [item.value]);
-  return <label className="setting-field"><span><strong>{item.key}</strong><small>{item.level === "app" ? "所有项目" : "当前项目"}</small></span>{item.choices.length ? <select value={value} onChange={(event) => { setValue(event.target.value); onSave(item, event.target.value); }}>{item.choices.map((choice) => <option key={choice}>{choice}</option>)}</select> : <div><input value={value} onChange={(event) => setValue(event.target.value)} /><button onClick={() => onSave(item, value)}>保存</button></div>}</label>;
+  const scope = item.level === "app" ? "所有项目" : "当前项目";
+  // 布尔项用是/否下拉，而不是让用户往输入框里敲 "true"。它的取值只有两个，
+  // 而一个只能靠背字面量才填得对的输入框，等于把校验推给用户。
+  const control = item.kind === "bool"
+    ? <select value={value} onChange={(event) => { setValue(event.target.value); onSave(item, event.target.value); }}>
+        <option value="true">是</option>
+        <option value="false">否</option>
+      </select>
+    : item.choices.length
+      ? <select value={value} onChange={(event) => { setValue(event.target.value); onSave(item, event.target.value); }}>{item.choices.map((choice) => <option key={choice}>{choice}</option>)}</select>
+      : <div><input value={value} onChange={(event) => setValue(event.target.value)} /><button onClick={() => onSave(item, value)}>保存</button></div>;
+  // 说明放在左列名字底下，而不是作为第三个子元素：.setting-field 是
+  // `justify-content: space-between` 的两列 flex，多一个子元素会把控件挤到中间，
+  // 名字和说明各自换行，整行散掉。
+  return <label className="setting-field">
+    <span>
+      <strong>{item.label || item.key}</strong>
+      <small>{scope}</small>
+      {item.help && <small className="setting-help">{item.help}</small>}
+    </span>
+    {control}
+  </label>;
 }
 
 export default App;

@@ -31,10 +31,11 @@
 
 ### 0.1 让运行日志替你走一遍
 
-"跟着一次真实请求走"可以不只是比喻. 开着 debug 跑一句话, 然后读那份日志 (ADR-0035):
+"跟着一次真实请求走"可以不只是比喻. 把配置项"日志级别"调成 `debug` (`/config` ->
+常规配置), 重启后跑一句话, 然后读那份日志 (ADR-0035):
 
 ```bash
-FORGE_LOG_LEVEL=debug poetry run forge cli
+poetry run forge cli
 ```
 
 ```bash
@@ -50,9 +51,9 @@ tail -f ~/.forge/logs/forge-latest.log
 比通读快的地方在于**顺序是真的**: 文档里的链路图是作者整理过的, 日志里的是这台机器上
 刚刚实际发生的, 包括那些文档没写的分支 (重试, 降级, 被闸拦下的调用).
 
-几个常用开关都在 `shared/observability/configure.py` 的模块 docstring 里:
-`FORGE_LOG_CONSOLE=1` 同时写 stderr, `FORGE_LOG_HTTP=1` 把 httpx / uvicorn 的日志也收
-进同一个文件. 会话内敲 `/diagnostics` 能看到日志路径与本进程的计数与耗时读数.
+几个常用开关都在 `/config` 的"常规配置"里: "日志同时写终端"把日志也打到 stderr,
+"日志包含 HTTP 库"把 httpx / uvicorn 的记录收进同一个文件. 会话内敲 `/diagnostics`
+能看到日志路径与本进程的计数与耗时读数 —— 后者要先打开"运行指标采集".
 
 ## 1. 建立骨架
 
@@ -286,7 +287,9 @@ artifact_read.py   入参是内容哈希不是路径 —— 目标集合"机制�
 fs_read.py         看它怎么按调用现场决定是 WORKSPACE_READ 还是 EXTERNAL_READ
 fs_find.py         看 EXPANDABLE: 在 prepare 里把 glob 展开成封闭集合; 输出形态跟着
                    pattern 走 (tree_view.py 是它不带 pattern 时的渲染)
-search_text.py     看它为什么不 shell out 到 grep/rg
+search_text.py     看它为什么不 shell out 到 grep/rg; 正则由 `regex` 的 timeout 兜底,
+                   不再按语法拒绝
+code_definitions.py 看它与 search_text 的分工: 语法树只出定义, 不出 import 与调用点
 git_read.py        看它为什么声明 SPAWN_PROCESS 却不声明 EXECUTE_SHELL
 fs_apply_patch.py  最长的写入口 (557 行). 一个信封 = 一次审批 = 一个恢复点.
                    配套 patch_envelope.py (信封语法), patch_apply.py (施加),
@@ -299,10 +302,10 @@ shell_run.py       能力上界最宽的一个. OPAQUE + 12 个能力
 > 五个入口合并成 `fs_apply_patch`. ADR-0036 又把工具名从点号分段 (`fs.read`) 改成
 > 下划线分段 (`fs_read`). 旧材料里的工具名基本都要换算一遍.
 
-当前注册的 14 个工具 (见 `interfaces/runtime/tool_wiring.py` 的 `register_all`):
+当前注册的 15 个工具 (见 `interfaces/runtime/tool_wiring.py` 的 `register_all`):
 `plan_read`, `plan_write`, `todo_read`, `todo_write`, `todo_set_status`,
 `artifact_read`, `memory_write`, `memory_forget`, `fs_find`, `fs_read`, `search_text`,
-`git_read`, `fs_apply_patch`, `shell_run`.
+`code_definitions`, `git_read`, `fs_apply_patch`, `shell_run`.
 
 **读完能回答**: 同样是读文件, 为什么 `fs_read` 在 plan 档可见而 `shell_run` 不可见?
 `git_read` 会起子进程, 它为什么也能进 plan 档目录?

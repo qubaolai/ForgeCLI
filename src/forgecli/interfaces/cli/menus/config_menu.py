@@ -50,25 +50,66 @@ class ConfigMenu:
         )
 
     def root_menu(self) -> Menu:
-        # 日志级别就地切换 (ADR-0035): 一个只能靠改 config.json 才能打开的 debug
-        # 开关, 等于要求用户在最需要日志的那一刻先去找配置文件.
-        # 改完下次启动生效 —— 当前进程的 handler 在启动时就装好了.
-        log_level = MenuOption(
-            "日志级别 (debug/info/warn, 下次启动生效)", keys.LOGGING_LEVEL
-        )
         rows: list[Choice] = [
+            Choice("常规配置", submenu=self._general_menu),
             Choice("供应商配置", submenu=self._llm_menu.providers_menu),
             Choice("模型配置", submenu=self._llm_menu.models_menu),
             Choice("网关运行时配置", submenu=self._gateway_menu.root_menu),
-            Choice(
-                log_level.label,
-                preview=self._shown(log_level),
-                on_cycle=self._cycle_choice(log_level),
-            ),
         ]
         if self._overrides_menu is not None:
             rows.append(Choice("用途模型覆盖", submenu=self._overrides_menu.root_menu))
         return Menu("配置", tuple(rows))
+
+    def _general_menu(self) -> Menu:
+        """应用级配置, 一行一个键, 全部从 SCHEMA 派生.
+
+        原先这里只手写了一行"日志级别", 别的应用级键在终端里根本没有入口 —— 要改就得
+        自己去找 config.json. 而每加一个键就手写一行的做法, 会让终端和网页各有一份中文
+        文案, 同一个开关在两处叫不同名字.
+
+        名字与说明现在都住在 `ConfigKey` 上 (domain/config/config_keys), 这里只负责
+        "按类型挑一种交互": 布尔按左右切, 枚举按左右轮, 文本与整数进行内编辑.
+        """
+        rows: list[Choice] = []
+        for key in keys.keys_for(keys.ConfigLevel.APP):
+            option = MenuOption(key.title, key.name)
+            if key.kind is keys.ValueKind.BOOL:
+                rows.append(
+                    Choice(
+                        key.title,
+                        preview=self._shown(option),
+                        on_cycle=self._cycle_bool(option),
+                        payload=self._help(key),
+                    )
+                )
+            elif key.kind is keys.ValueKind.CHOICE:
+                rows.append(
+                    Choice(
+                        key.title,
+                        preview=self._shown(option),
+                        on_cycle=self._cycle_choice(option),
+                        payload=self._help(key),
+                    )
+                )
+            else:
+                rows.append(
+                    Choice(
+                        key.title,
+                        preview=self._shown(option),
+                        on_text=self._set_text(option),
+                        text_default=self._shown(option),
+                        payload=self._help(key),
+                    )
+                )
+        return Menu("常规配置", tuple(rows))
+
+    @staticmethod
+    def _help(key: keys.ConfigKey) -> Callable[[], str] | None:
+        """空格键展开的那段说明. 没写说明就不给这一行加预览."""
+        return (lambda: key.help) if key.help else None
+
+    def _set_text(self, option: MenuOption) -> Callable[[str], None]:
+        return lambda value: self._safe_set(option, value)
 
     # ---- 泛型回调（按 kind，统一委托 ConfigService，按 level 路由落盘）----
 

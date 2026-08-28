@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from rapidfuzz import fuzz
+
 from forgecli.application.tools.builtin.patch_envelope import UpdateFile
 from forgecli.application.tools.builtin.text_edit import (
     Alignment,
@@ -200,6 +202,9 @@ def _miss_hint(source: str, old: str) -> str:
     """
     if old != old.strip() and old.strip() and old.strip() in source:
         return " 去掉首尾空白后能命中: 多半是首尾的换行或缩进多带了一点."
+    nearest = _nearest_block(source, old)
+    if nearest:
+        return nearest
     lines = old.splitlines()
     first = lines[0].strip() if lines else ""
     hits = [
@@ -215,6 +220,51 @@ def _miss_hint(source: str, old: str) -> str:
             "可以先读这一段再重试."
         )
     return " 先用 fs_read 读回当前内容, 再照抄其中一段作为 old_string."
+
+
+# 相似度低于这个值就不引了: 引一段其实不相干的代码, 比说"找不到"更糟 —— 模型会照着它
+# 改, 然后第二次定位失败在另一个位置.
+_NEAREST_FLOOR = 55.0
+# 滑窗扫描的行数上限. 超过就不找了 —— 这段跑在 prepare 里, 而 prepare 在裁决之前, 卡在
+# 那里没有任何进度可以显示.
+_NEAREST_MAX_LINES = 20_000
+
+
+def _nearest_block(source: str, old: str) -> str:
+    """把文件里**最像** FIND 片段的那一段引出来, 附上相似度.
+
+    这一支补的是 `_miss_hint` 原来的兜底: "先用 fs_read 读回当前内容". 那句话是对的但
+    没有信息 —— 模型手里那份 FIND 与文件哪里不一样, 它依然看不见, 于是最省力的下一步
+    是把整个文件读回来再猜一次. 在真实会话里 110 次 fs_apply_patch 有 17 次
+    apply_failed, 而且集中成一串: 定位失败 -> 重读 -> 再失败.
+
+    相似度用 `rapidfuzz`: 逐窗算编辑距离比是 O(n*m) 的字符串比较, 纯 Python 写在这里会
+    让一个几千行的文件卡住 prepare. rapidfuzz 是 C++ 实现, 并且 `partial_ratio` 自带
+    "在长串里找最像的一段"这个语义, 正好是这里要问的问题.
+    """
+    source_lines = source.splitlines()
+    old_lines = old.splitlines()
+    if not old_lines or not source_lines or len(source_lines) > _NEAREST_MAX_LINES:
+        return ""
+    span = len(old_lines)
+    best_score = 0.0
+    best_start = 0
+    for start in range(max(1, len(source_lines) - span + 1)):
+        window = "\n".join(source_lines[start : start + span])
+        score = fuzz.ratio(window, old, score_cutoff=best_score)
+        if score > best_score:
+            best_score, best_start = score, start
+    if best_score < _NEAREST_FLOOR:
+        return ""
+    quoted = "\n".join(
+        f"{best_start + offset + 1:>6} | {line}"
+        for offset, line in enumerate(source_lines[best_start : best_start + span])
+    )
+    return (
+        f" 文件里最接近的一段在第 {best_start + 1} 行 (相似度 {best_score:.0f}%), "
+        f"逐字符是:\n{quoted}\n"
+        "请照抄上面这几行 (去掉行号与竖线) 作为 FIND 片段再试."
+    )
 
 
 _HEAD_PROBE = 12

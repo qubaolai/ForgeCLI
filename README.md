@@ -27,7 +27,8 @@ tail -f ~/.forge/logs/forge-latest.log
 ```
 
 默认级别 `info` 记录一次运行的骨架 (启动, turn 起止, 模型调用, 工具裁决与执行结果);
-`FORGE_LOG_LEVEL=debug` 额外写整段提示词, 模型回复原文, 工具输出与 HTTP payload.
+把配置项"日志级别"(`logging.level`) 调成 `debug` 会额外写整段提示词, 模型回复原文,
+工具输出与 HTTP payload —— 在 `/config` 的"常规配置"里改, 下次启动生效.
 终端里 `/diagnostics` 给出日志位置, 各阶段耗时分位数与模型调用读数.
 
 日志**不脱敏** (凭证的值除外), 贴给别人之前请先自己看一眼. 详见

@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 
 from rich.cells import cell_len
@@ -24,7 +23,14 @@ from rich.text import Text
 
 from forgecli.application.interaction_ports import MenuPresenter
 from forgecli.application.menu import Choice, Menu
-from forgecli.interfaces.cli.tty.tty import Key, raw_mode, read_key, stdin_is_tty
+from forgecli.interfaces.cli.tty.tty import (
+    BACKSPACE_KEYS,
+    CONFIRM_KEYS,
+    KeyReader,
+    Keys,
+    is_text,
+    stdin_is_tty,
+)
 
 # 配色与 prompt_loop 的「裸斜杠菜单」保持一致：背景透明、选中仅靠文字颜色区分
 # （不反显、不铺底色），边框用灰色与输入框同色。
@@ -69,10 +75,9 @@ class RichMenuPresenter(MenuPresenter):
         searching = False
         previewing = False
         editing: tuple[Choice, str] | None = None
-        fd = sys.stdin.fileno()
 
         with (
-            raw_mode(fd=fd),
+            KeyReader() as keys,
             Live(console=self._console, auto_refresh=False, screen=False) as live,
         ):
             while stack:
@@ -92,67 +97,67 @@ class RichMenuPresenter(MenuPresenter):
                     ),
                     refresh=True,
                 )
-                press = read_key(fd=fd)
+                press = keys.read()
 
                 # Ctrl-C 在任意状态 / 任意层级都直接关闭整个菜单。
-                if press.key is Key.CTRL_C:
+                if press.key is Keys.ControlC:
                     break
 
                 if editing is not None:  # 行内文本编辑
                     choice, buf = editing
-                    if press.key is Key.ENTER:
+                    if press.key in CONFIRM_KEYS:
                         if choice.on_text:
                             choice.on_text(buf)
                         editing = None
-                    elif press.key is Key.ESC:
+                    elif press.key is Keys.Escape:
                         editing = None
-                    elif press.key is Key.BACKSPACE:
+                    elif press.key in BACKSPACE_KEYS:
                         editing = (choice, buf[:-1])
-                    elif press.key in (Key.CHAR, Key.SLASH):
-                        editing = (choice, buf + press.char)
+                    elif is_text(press):
+                        editing = (choice, buf + press.data)
                     continue
 
                 if searching:  # 搜索输入
-                    if press.key is Key.ENTER:
+                    if press.key in CONFIRM_KEYS:
                         searching = False
-                    elif press.key is Key.ESC:
+                    elif press.key is Keys.Escape:
                         searching, query = False, ""
-                    elif press.key is Key.BACKSPACE:
+                    elif press.key in BACKSPACE_KEYS:
                         query = query[:-1]
-                    elif press.key in (Key.CHAR, Key.SLASH):
-                        query += press.char
+                    elif is_text(press):
+                        query += press.data
                     index = 0
                     continue
 
-                if press.key is Key.ESC:
+                if press.key is Keys.Escape:
                     if len(stack) > 1:
                         stack.pop()  # Esc 逐层返回
                         index, query = 0, ""
                     else:
                         break  # 根层 Esc 关闭命令
                     continue
-                if press.key is Key.SLASH:
+                if is_text(press) and press.data == "/":
                     searching, query = True, ""
                     continue
                 # 空格切换「摘要预览」：当前行有 summary 时在列表下方展开/收起其摘要。
-                if press.key is Key.CHAR and press.char == " ":
+                if is_text(press) and press.data == " ":
                     previewing = not previewing
                     continue
                 if not rows:
                     continue
 
                 row = rows[index]
-                if press.key is Key.UP:
+                if press.key is Keys.Up:
                     index = (index - 1) % len(rows)
-                elif press.key is Key.DOWN:
+                elif press.key is Keys.Down:
                     index = (index + 1) % len(rows)
-                elif press.key is Key.LEFT:
+                elif press.key is Keys.Left:
                     if row.on_cycle:
                         row.on_cycle(-1)
-                elif press.key is Key.RIGHT:
+                elif press.key is Keys.Right:
                     if row.on_cycle:
                         row.on_cycle(+1)
-                elif press.key is Key.ENTER:
+                elif press.key in CONFIRM_KEYS:
                     # Enter 只表示「确认 / 下钻」：进入子菜单、进入行内编辑、触发动作。
                     # 开关 / 枚举行的切换只走 ←/→，Enter 在这类行上不切换候选值。
                     if row.submenu:

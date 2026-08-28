@@ -78,6 +78,20 @@ class FileSystemView(ABC):
         """读文本. 超过 max_bytes 时截断到上限, 不抛错 (调用方按需判断截断)."""
 
     @abstractmethod
+    def is_ignored(self, path: str, *, root: str) -> bool:
+        """这条路径是不是被忽略的生成物. 判断交给权威来源, 不由调用方列名单."""
+
+    @abstractmethod
+    def read_text_if_text(self, path: str, *, max_bytes: int) -> str | None:
+        """文本内容; 判定为二进制时返回 None.
+
+        与 `read_text` 分开而不是让它自己返回空串: "空文件"和"二进制文件"对调用方是两件
+        事. `search_text` 靠这个区分把 `.class` / `.jar` 挡在扫描之外 —— 它有 2000 个
+        文件与 200 条命中的额度, 二进制解码出来的替换字符照样会产生命中, 于是额度被喂给
+        噪音, 而"这个词不在代码里"这个结论建立在没扫到源码上.
+        """
+
+    @abstractmethod
     def read_bytes(self, path: str, *, max_bytes: int) -> bytes:
         """读原始字节 (可执行文件哈希用)."""
 
@@ -87,6 +101,19 @@ class FileSystemView(ABC):
 
     @abstractmethod
     def expand_glob(
-        self, pattern: str, *, root: str, max_results: int | None = None
+        self,
+        pattern: str,
+        *,
+        root: str,
+        max_results: int | None = None,
+        skip_ignored: bool = True,
     ) -> tuple[str, ...]:
-        """按已冻结的视图展开 glob；max_results 用于限制枚举本身的资源消耗。"""
+        """按已冻结的视图展开 glob；max_results 用于限制枚举本身的资源消耗。
+
+        `skip_ignored` 让实现跳过被忽略的路径, 判断由实现自己去问权威来源 (git 仓库里
+        就是 git 自己). **必须在遍历时生效**, 不能展开完再过滤: max_results 数的是幸存
+        的候选, 而不是走过的目录项. 反过来做的话, `.venv` 与 `.git` 会先把额度吃光,
+        于是一次覆盖整个仓库的展开会报"结果不完整", 而被漏掉的恰好是源码.
+
+        调用方只说"要不要跳过", 不说"跳过哪些": 跳过哪些是环境事实, 属于 infrastructure.
+        """

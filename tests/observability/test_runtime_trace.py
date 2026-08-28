@@ -110,7 +110,7 @@ def test_repeated_identical_calls_are_logged_as_a_guard(
     records: pytest.LogCaptureFixture,
 ) -> None:
     """原地打转是最难从结果上看出来的一类故障: 每次调用本身都是合法的."""
-    repeated = tuple(_call("fs_find", pattern="*.py") for _ in range(3))
+    repeated = tuple(_call("fs_find", name_glob="*.py") for _ in range(3))
     gateway = ScriptedGateway(
         responses=[response(tool_calls=repeated), response(text="停")]
     )

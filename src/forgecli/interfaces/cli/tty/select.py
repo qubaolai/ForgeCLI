@@ -22,7 +22,13 @@ from rich.console import Console
 from rich.live import Live
 from rich.text import Text
 
-from forgecli.interfaces.cli.tty.tty import Key, raw_mode, read_key, stdin_is_tty
+from forgecli.interfaces.cli.tty.tty import (
+    CONFIRM_KEYS,
+    KeyReader,
+    Keys,
+    is_text,
+    stdin_is_tty,
+)
 
 __all__ = ["SelectOption", "SelectUnavailable", "select_one"]
 
@@ -36,15 +42,18 @@ class SelectUnavailable(RuntimeError):
     """当前环境没有可交互的终端."""
 
 
-def _stdin_fd() -> int:
-    """stdin 的文件描述符.
+def _require_readable_stdin() -> None:
+    """stdin 必须有文件描述符, 否则这里读不了键.
 
-    单独一个函数, 因为 stdin 未必有 fileno —— 被替换成内存流时 (pytest 捕获, 某些嵌入
-    环境) 会抛 UnsupportedOperation. 那种情况下 raw mode 本来就做不了, 归一成
-    SelectUnavailable 让调用方走回退路径.
+    stdin 未必有 fileno —— 被替换成内存流时 (pytest 捕获, 某些嵌入环境) 会抛
+    UnsupportedOperation. 那种情况下 raw mode 本来就做不了, 归一成 SelectUnavailable
+    让调用方走回退路径.
+
+    必须显式拦: `create_input()` 对这种 stdin 会安静地返回一个 DummyInput, 于是"没有
+    终端"会表现成"用户按了取消"—— 一个看起来完全正常的返回值.
     """
     try:
-        return sys.stdin.fileno()
+        sys.stdin.fileno()
     except (OSError, ValueError, io.UnsupportedOperation) as exc:
         raise SelectUnavailable("stdin 没有文件描述符, 无法进入 raw mode") from exc
 
@@ -73,24 +82,24 @@ def select_one(
     if not stdin_is_tty():
         raise SelectUnavailable("当前不在终端中, 无法交互式选择")
 
-    fd = _stdin_fd()
+    _require_readable_stdin()
     index = max(0, min(default_index, len(options) - 1))
     live = Live(
         _render(options, index), console=console, transient=True, auto_refresh=False
     )
-    with live, raw_mode(fd):
+    with live, KeyReader() as keys:
         while True:
-            press = read_key(fd)
-            if press.key is Key.UP:
+            press = keys.read()
+            if press.key is Keys.Up:
                 index = (index - 1) % len(options)
-            elif press.key is Key.DOWN:
+            elif press.key is Keys.Down:
                 index = (index + 1) % len(options)
-            elif press.key is Key.ENTER:
+            elif press.key in CONFIRM_KEYS:
                 return options[index]
-            elif press.key in (Key.ESC, Key.CTRL_C):
+            elif press.key in (Keys.Escape, Keys.ControlC):
                 return None
-            elif press.key is Key.CHAR and press.char.isdigit():
-                picked = int(press.char) - 1
+            elif is_text(press) and press.data.isdigit():
+                picked = int(press.data) - 1
                 if 0 <= picked < len(options):
                     # 数字键直接确认, 不只是移动光标: 按下 "3" 的人已经决定了.
                     return options[picked]

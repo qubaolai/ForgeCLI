@@ -49,6 +49,9 @@ def diagnostics_report(
             "console": status.console,
             "max_value_chars": status.max_value_chars,
         },
+        # 采集关掉时 stages 是空的. 单独给一个 telemetry 段, 否则"没有阶段耗时"会被
+        # 读成"这次运行什么都没干", 而实际是开关关着 (配置项 telemetry.enabled).
+        "telemetry": {"enabled": METRICS.enabled},
         "stages": METRICS.snapshot(),
     }
     if gateway is not None:
@@ -80,6 +83,9 @@ def render_diagnostics(report: dict[str, object]) -> str:
         lines.append(f"日志文件: {logging_view.get('file')}")
     else:
         lines.append("日志: 未装配 (这个进程没有调用 configure_logging)")
+
+    if not _section(report, "telemetry").get("enabled", True):
+        lines.append("运行指标采集: 已关闭 (配置项 telemetry.enabled)")
 
     stages = _section(report, "stages")
     lines.extend(_duration_lines(stages))

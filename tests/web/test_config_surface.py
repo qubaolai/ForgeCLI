@@ -6,12 +6,20 @@ Web 用户被迫回终端, 而终端入口已经由 ADR-0025 取代。
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
+from forgecli.application.llm.config.llm_config import (
+    ModelParams,
+    ModelSpec,
+    ProviderConfig,
+)
 from forgecli.domain.planning import PlanIndex
 from forgecli.interfaces.web.app import create_app
+from forgecli.interfaces.web.serialization import to_jsonable
 
 
 class FakeRegistry:
@@ -184,3 +192,49 @@ def test_config_changes_are_refused_while_a_turn_runs(tmp_path) -> None:
             ).status_code
             == 409
         )
+
+
+def test_provider_config_survives_web_serialization() -> None:
+    """回归: ProviderConfig / ModelParams 从 dataclass 改成 Pydantic model 之后,
+    `/api/v1/models` 整条端点炸在 to_jsonable 的"不支持的 Web DTO 类型"上.
+
+    这个函数刻意认不出未知类型, 所以每换一种值对象的底座都要在这里登记一次 —— 这条
+    用例就是那个提醒.
+    """
+    provider = ProviderConfig.model_validate(
+        {
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "api_base": "https://example.invalid/chat/completions",
+            "api_key_env": "DEEPSEEK_API_KEY",
+            "models": (
+                ModelSpec(
+                    provider="deepseek",
+                    id="deepseek-chat",
+                    params=ModelParams.parse(
+                        {"context_window": 64000, "extra": {"seed": 1}}
+                    ),
+                ),
+            ),
+        }
+    )
+
+    payload = to_jsonable(provider)
+
+    assert payload["id"] == "deepseek"
+    assert payload["timeout"] == 60
+    assert payload["models"][0]["id"] == "deepseek-chat"
+    assert payload["models"][0]["params"]["context_window"] == 64000
+    assert payload["models"][0]["params"]["extra"] == {"seed": 1}
+    # 整棵树必须是纯 JSON 值: 端点会把它交给 json 编码.
+    json.dumps(payload)
+
+
+def test_an_unknown_type_is_still_refused() -> None:
+    """展开 Pydantic model 不能顺带把"认不出就抛"这条性质弄丢."""
+
+    class _Opaque:
+        pass
+
+    with pytest.raises(TypeError):
+        to_jsonable(_Opaque())

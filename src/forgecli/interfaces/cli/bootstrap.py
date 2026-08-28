@@ -69,7 +69,7 @@ from forgecli.interfaces.cli.tty_prompts import TtyDirectoryPicker, TtyTrustProm
 from forgecli.interfaces.cli.wiring import build_registry
 from forgecli.interfaces.exit_codes import ExitCode
 from forgecli.interfaces.runtime.llm_wiring import build_llm_runtime
-from forgecli.interfaces.runtime.logging_wiring import start_logging
+from forgecli.interfaces.runtime.logging_wiring import start_observability
 from forgecli.interfaces.runtime.tool_wiring import ToolStack, build_tool_stack
 from forgecli.shared import __version__
 from forgecli.shared.observability.log import get_log
@@ -187,7 +187,7 @@ def run() -> ExitCode:
     console = Console()
     # 日志先于一切装配: 下面每一条拒绝路径 (root, 无 TTY, 未信任, 项目被占) 都要留下
     # 记录, 而它们全都发生在还没有任何 service 的时候.
-    status = start_logging()
+    status = start_observability()
     _log.info(
         "forge.start",
         entry="cli",

@@ -5,7 +5,10 @@ CLI 与 Web 读同一个函数: 两个入口给出不同的数字, 排查时就�
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
+
+import pytest
 
 from forgecli.application.llm.gateway.observability import (
     GatewayCallSample,
@@ -21,6 +24,16 @@ from forgecli.interfaces.runtime.diagnostics import (
 )
 from forgecli.shared.observability.configure import configure_logging
 from forgecli.shared.observability.metrics import METRICS
+
+
+@pytest.fixture(autouse=True)
+def _collect_metrics() -> Iterator[None]:
+    """采集默认是关的 (配置项 telemetry.enabled). 这些用例问的是开着时的行为."""
+    METRICS.set_enabled(True)
+    try:
+        yield
+    finally:
+        METRICS.set_enabled(False)
 
 
 class _Output:

@@ -90,7 +90,7 @@ def test_the_builtin_profile_is_pinned_by_fingerprint() -> None:
     )
 
     assert snapshot.fingerprint == (
-        "sha256:2f044794541bb50915617c67c35a3c48b83dc43e86fbefe63211e756d17db024"
+        "sha256:8536870a547f5ed6b7b904e5c0c70ff515273116a895b0d9e32cad8c2772e167"
     )
 
 
@@ -382,15 +382,23 @@ def test_the_tool_name_comes_first() -> None:
 # ---- 检索顺序 ----
 
 
-def test_the_search_strategy_is_stated() -> None:
-    """47 次工具调用里 22 次在逐层列目录, 22 次在反复 grep, 读文件只有 3 次.
+def test_the_search_strategy_splits_the_four_retrieval_intents() -> None:
+    """四种检索意图各有各的判据, 而不是一句"先用关键词检索定位".
 
-    工具能力早就够了 (递归 glob 一直可用), 缺的是"先检索定位再读文件"这条顺序.
+    原先只有那一句概括, "关键词检索"对应哪个动作要模型自己推断. 真实日志里它推断错过:
+    想找一段文字的出处, 填的却是文件名 glob, 拿到空结果之后改成把整个文件读回来自己扫.
+    四条分流是这次新增的, 少掉任何一条都会让那条推断重新出现.
     """
     body = _body(_build(), PromptBlockId.TOOL_CONTRACT)
+    strategy = body[body.index("## 检索顺序") :]
 
-    assert "检索顺序" in body
-    assert "不要逐层列目录" in body
+    assert "定义在哪" in strategy  # 按符号
+    assert "出现在哪些地方" in strategy  # 按内容
+    assert "文件名 glob" in strategy  # 按文件名
+    assert "看它的全文或某一段" in strategy  # 读文件
+    # 反向约束照旧: 它们挡的是最常见的两种绕路.
+    assert "不要一层一层地列" in strategy
+    assert "不要逐个把候选文件读回来自己扫" in strategy
 
 
 def test_the_search_strategy_names_no_tool() -> None:

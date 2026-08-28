@@ -7,14 +7,14 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
+
+import regex
 
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.builtin.base import (
     emit_text,
-    filter_globbed,
     joined,
     path_state_token,
     read_capability,
@@ -51,18 +51,26 @@ _MAX_FILES = 2000
 _MAX_MATCHES = 200
 _MAX_FILE_BYTES = 1024 * 1024
 _MAX_REGEX_LINE_CHARS = 16 * 1024
+# 单行正则匹配的墙钟上限. 取代原先按语法拒绝正则的那套判据 —— 要防的是跑不完,
+# 不是括号.
+_REGEX_LINE_TIMEOUT = 0.25
 _MAX_GLOB_CANDIDATES = 10_000
 
 _SPEC = ToolSpec(
     name="search_text",
-    version="4",
+    version="5",
     title="搜索文本",
     description=(
-        "在文件内容里搜索, 按文件分组返回 行号:内容. "
+        "在**文件内容**里搜索一段文字, 按文件分组返回 行号:内容. "
+        "要找一个类或函数**定义在哪**, 用 code_definitions —— 那个不会命中 import "
+        "与调用点; 要按文件名找文件, 用 fs_find.\n"
+        "query 是要在内容里查的文字. "
         "path 可以是目录, 也可以是单个文件. "
-        "默认递归扫描 path 下的整棵树 (pattern 默认 '**/*'), 不需要先列目录. "
-        "pattern 是文件名 glob, 用来把扫描范围缩窄, 例如 pattern='**/*.java'. "
-        "默认按子串匹配, 传 regex=true 时 query 作为 Python 正则. "
+        "默认递归扫描 path 下的整棵树 (in_files 默认 '**/*'), 不需要先列目录. "
+        "in_files 是文件名 glob, 只用来把扫描范围缩窄, 例如 in_files='**/*.java'; "
+        "它不参与内容匹配. "
+        "默认按子串匹配 (区分大小写), 传 regex=true 时 query 作为正则, "
+        "此时可以写 (?i) 前缀做大小写不敏感搜索. "
         "context_lines 给出每个命中的前后文行数. "
         "默认跳过 .git, node_modules, target 一类生成目录, "
         "需要它们时传 include_ignored=true. "
@@ -71,12 +79,49 @@ _SPEC = ToolSpec(
     input_schema={
         "type": "object",
         "properties": {
-            "query": {"type": "string", "maxLength": 512},
-            "path": {"type": "string"},
-            "pattern": {"type": "string", "maxLength": 1024},
-            "regex": {"type": "boolean"},
-            "context_lines": {"type": "integer", "minimum": 0, "maximum": 10},
-            "include_ignored": {"type": "boolean"},
+            "query": {
+                "type": "string",
+                "maxLength": 512,
+                "description": (
+                    "要在文件内容里查找的文字. regex=false 时按字面子串匹配, "
+                    "区分大小写."
+                ),
+            },
+            "path": {
+                "type": "string",
+                "description": (
+                    "搜索根目录, 也可以是单个文件; 省略时从工作区根递归搜索."
+                ),
+            },
+            "in_files": {
+                "type": "string",
+                "maxLength": 1024,
+                "description": (
+                    "把扫描范围缩窄到哪些文件的 glob, 例如 '**/*.java'. "
+                    "它筛的是**文件路径**, 不参与内容匹配 —— "
+                    "要搜的文字写在 query 里."
+                ),
+            },
+            "regex": {
+                "type": "boolean",
+                "description": (
+                    "为 true 时把 query 当正则. 单行匹配有超时保护, 语法不设限, "
+                    "(?i) 与转义括号都可以用."
+                ),
+            },
+            "context_lines": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10,
+                "description": "每个命中行前后附带的上下文行数.",
+            },
+            "include_ignored": {
+                "type": "boolean",
+                "description": (
+                    "为 true 时不跳过 .git, node_modules, target 一类生成目录, "
+                    "也不套用工作区 .gitignore."
+                ),
+            },
         },
         "required": ["query"],
         "additionalProperties": False,
@@ -124,25 +169,30 @@ def _context_lines(arguments: Mapping[str, object]) -> int:
 
 
 def _matcher(query: str, use_regex: bool) -> Callable[[str], bool]:
+    """一行是否命中. 正则一律带超时, 语法上不设限.
+
+    原先这里挡的是**语法**: 含 `( ) { } |` 的正则一律拒掉, 理由是 Python `re` 没有可
+    中止的匹配超时, `(a|aa)+$` 这类表达式会卡住整个 Agent. 那条判据用裸子串扫, 认不出
+    转义 —— 于是 `def \\w+\\(` 这种最常见的代码检索正则也被拒了, 而 `\\(` 只是一个字面
+    左括号, 与回溯毫无关系. `(?i)` 同样被误伤, 这是 search_text 至今做不了大小写不敏感
+    搜索的直接原因.
+
+    `regex` 模块的 `timeout=` 直接解决了原来的动机: 实测 `(a|aa)+$` 在 0.5 秒准时抛
+    TimeoutError. 判据从"这个正则长什么样"换成"它跑了多久", 后者才是真正要防的东西.
+    """
     if not use_regex:
         return lambda line: query in line
-    compiled = re.compile(query)
-    return lambda line: compiled.search(line) is not None
+    compiled = regex.compile(query)
 
+    def hit(line: str) -> bool:
+        # 超时按"这一行不匹配"处理而不是往上抛: 一次搜索扫几百个文件, 单行病态回溯不该
+        # 让整次调用失败. 真正跑满超时的行会拖慢搜索, 但拖不垮它.
+        try:
+            return compiled.search(line, timeout=_REGEX_LINE_TIMEOUT) is not None
+        except TimeoutError:
+            return False
 
-def _unsafe_regex_reason(query: str) -> str | None:
-    """只允许不会形成嵌套/分支回溯的正则子集。
-
-    Python ``re`` 没有可中止的匹配超时；把任意模型正则放进主进程会让 `(a|aa)+$`
-    这类表达式卡住整个 Agent。高级正则应走受超时约束的 shell/rg 路径。
-    """
-    if any(token in query for token in ("(", ")", "{", "}", "|")):
-        return "分组、分支与花括号量词不在安全正则子集中"
-    if re.search(r"\\[1-9]", query):
-        return "反向引用不在安全正则子集中"
-    if sum(query.count(token) for token in ("*", "+")) > 4:
-        return "无界量词过多"
-    return None
+    return hit
 
 
 def _render_hits(lines: list[str], numbers: list[int], around: int) -> list[str]:
@@ -166,17 +216,17 @@ def _render_hits(lines: list[str], numbers: list[int], around: int) -> list[str]
 def _empty_message(plan: ToolPlan, scanned: int, *, complete: bool) -> str:
     """把"没找到"说清楚: 搜了几个文件, 搜的是什么, 在哪儿搜的.
 
-    只回"未找到匹配"时, 模型分不清是"确实没有"还是"搜错地方了", 于是反复换 pattern
-    重试. 给出扫描文件数就能让它自己判断 —— 扫了 0 个文件说明 pattern 不对, 扫了 300 个
+    只回"未找到匹配"时, 模型分不清是"确实没有"还是"搜错地方了", 于是反复换 in_files
+    重试. 给出扫描文件数就能让它自己判断 —— 扫了 0 个文件说明 in_files 不对, 扫了 300 个
     说明这个词确实不在代码里.
     """
     query = plan.normalized_input["query"]
     root = plan.normalized_input["path"]
-    pattern = plan.normalized_input["pattern"]
+    in_files = plan.normalized_input["in_files"]
     if scanned == 0:
         return (
-            f"没有文件被扫描: {root} 下没有匹配 {pattern} 的文件. "
-            "问题出在 pattern 或 path 上, 不是搜索词. "
+            f"没有文件被扫描: {root} 下没有匹配 {in_files} 的文件. "
+            "问题出在 in_files 或 path 上, 不是搜索词. "
             "注意 .git, node_modules, target 一类生成目录默认被跳过, "
             "需要它们时传 include_ignored=true."
         )
@@ -186,7 +236,7 @@ def _empty_message(plan: ToolPlan, scanned: int, *, complete: bool) -> str:
         else "扫描受资源上限影响，结果不完整，不能据此断言全文不存在."
     )
     return (
-        f"在 {root} 下扫描了 {scanned} 个文件 (pattern={pattern}), "
+        f"在 {root} 下扫描了 {scanned} 个文件 (in_files={in_files}), "
         f"没有一行包含 {query!r}. {conclusion}"
     )
 
@@ -220,23 +270,13 @@ class SearchTextTool(Tool):
         use_regex = bool(request.arguments.get("regex", False))
         if use_regex:
             try:
-                re.compile(query)
-            except re.error as exc:
+                regex.compile(query)
+            except regex.error as exc:
                 # 非法正则在 prepare 就挡下: 让它进执行阶段只会变成一次没有结果的调用,
                 # 模型读不出"是我正则写错了".
                 return PreparationError(
                     code=PreparationErrorCode.INVALID_INPUT,
                     message=f"query 不是合法正则: {exc}",
-                    field_path="query",
-                )
-            unsafe = _unsafe_regex_reason(query)
-            if unsafe is not None:
-                return PreparationError(
-                    code=PreparationErrorCode.UNSUPPORTED_REQUEST,
-                    message=(
-                        f"该正则可能造成不可中止的回溯: {unsafe}. "
-                        "请改用更简单的正则或经审批的 shell_run/rg."
-                    ),
                     field_path="query",
                 )
         target = resolve_target(
@@ -245,7 +285,7 @@ class SearchTextTool(Tool):
         if isinstance(target, PreparationError):
             return target
         _, facts = target
-        pattern = str(request.arguments.get("pattern", "**/*"))
+        in_files = str(request.arguments.get("in_files", "**/*"))
         include_ignored = bool(request.arguments.get("include_ignored", False))
         if facts.kind is PathKind.FILE:
             # 收一个文件就是 files = [它] (ADR-0029 A 类). 早先这里直接返回
@@ -261,7 +301,7 @@ class SearchTextTool(Tool):
                 request,
                 context,
                 root=facts.realpath,
-                pattern=pattern,
+                in_files=in_files,
                 include_ignored=include_ignored,
                 files=(facts.realpath,),
                 expansion_truncated=False,
@@ -277,16 +317,13 @@ class SearchTextTool(Tool):
         # 先过滤再截断, 顺序不能换: 反过来的话 target/ 下的几千个 class 文件会先把
         # _MAX_FILES 的额度吃光, 于是"这个词不在代码里"这个结论建立在没扫到源码上.
         raw_candidates = context.filesystem.expand_glob(
-            pattern,
+            in_files,
             root=facts.realpath,
             max_results=_MAX_GLOB_CANDIDATES + 1,
+            skip_ignored=not include_ignored,
         )
         expansion_truncated = len(raw_candidates) > _MAX_GLOB_CANDIDATES
-        candidates = filter_globbed(
-            raw_candidates[:_MAX_GLOB_CANDIDATES],
-            root=facts.realpath,
-            include_ignored=include_ignored,
-        )
+        candidates = raw_candidates[:_MAX_GLOB_CANDIDATES]
         regular: list[str] = []
         skipped_symlinks = 0
         for candidate in candidates:
@@ -305,7 +342,7 @@ class SearchTextTool(Tool):
             request,
             context,
             root=facts.realpath,
-            pattern=pattern,
+            in_files=in_files,
             include_ignored=include_ignored,
             files=files,
             expansion_truncated=expansion_truncated,
@@ -319,7 +356,7 @@ class SearchTextTool(Tool):
         context: ExecutionContext,
         *,
         root: str,
-        pattern: str,
+        in_files: str,
         include_ignored: bool,
         files: tuple[str, ...],
         expansion_truncated: bool,
@@ -340,7 +377,7 @@ class SearchTextTool(Tool):
                 {
                     "query": query,
                     "path": root,
-                    "pattern": pattern,
+                    "in_files": in_files,
                     "regex": use_regex,
                     "context_lines": _context_lines(request.arguments),
                     "include_ignored": include_ignored,
@@ -378,6 +415,7 @@ class SearchTextTool(Tool):
         matches: list[str] = []
         total = 0
         cancelled = False
+        skipped_binary = 0
         regex_line_truncated = False
         use_regex = bool(plan.normalized_input.get("regex", False))
         expected_states = _state_map(plan.normalized_input.get("file_states", ()))
@@ -399,9 +437,13 @@ class SearchTextTool(Tool):
                         code="target_changed", message=message, retryable=True
                     ),
                 )
-            lines = context.filesystem.read_text(
-                path, max_bytes=_MAX_FILE_BYTES
-            ).splitlines()
+            text = context.filesystem.read_text_if_text(path, max_bytes=_MAX_FILE_BYTES)
+            if text is None:
+                # 二进制文件. 跳过而不是解码后硬扫: 替换字符也能"命中", 而命中额度被
+                # 噪音吃光之后, "这个词不在代码里"这个结论建立在没扫到源码上.
+                skipped_binary += 1
+                continue
+            lines = text.splitlines()
             numbers: list[int] = []
             for index, line in enumerate(lines, start=1):
                 candidate = line
@@ -436,6 +478,8 @@ class SearchTextTool(Tool):
         skipped_symlinks = _int_value(plan.normalized_input.get("skipped_symlinks", 0))
         if skipped_symlinks:
             incomplete_notes.append(f"跳过了 {skipped_symlinks} 个符号链接")
+        if skipped_binary:
+            incomplete_notes.append(f"跳过了 {skipped_binary} 个二进制文件")
         if total >= _MAX_MATCHES:
             incomplete_notes.append(f"命中达到 {_MAX_MATCHES} 条上限")
         if regex_line_truncated:

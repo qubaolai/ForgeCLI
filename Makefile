@@ -6,7 +6,7 @@
 # format                poetry run ruff format .
 # type                  poetry run mypy
 # arch                  poetry run python scripts/check_arch.py + check_abstractions.py
-#                       + check_prompt_text.py
+#                       + check_prompt_text.py + check_deps.py
 # test                  poetry run pytest
 # ci                    check + lint + format-check + type + arch + test
 # run                   poetry run forge
@@ -34,7 +34,7 @@ help:
 	@echo "make format            - 自动格式化代码"
 	@echo "make format-check      - 只检查格式，不修改文件"
 	@echo "make type              - 类型检查"
-	@echo "make arch              - 依赖方向, 抽象保留与提示词归属检查 (ADR-0028, ADR-0031)"
+	@echo "make arch              - 依赖方向, 抽象保留, 提示词归属与依赖声明检查 (ADR-0028, ADR-0031, ADR-0040)"
 	@echo "make test              - 运行测试"
 	@echo "make web-install       - 安装 Web 前端依赖"
 	@echo "make web-type          - 检查 React/TypeScript 类型"
@@ -73,6 +73,7 @@ arch:
 	$(POETRY) run python scripts/check_arch.py
 	$(POETRY) run python scripts/check_abstractions.py
 	$(POETRY) run python scripts/check_prompt_text.py
+	$(POETRY) run python scripts/check_deps.py
 
 test: 
 	$(POETRY) run pytest

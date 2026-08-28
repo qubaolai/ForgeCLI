@@ -1,12 +1,11 @@
 """两个轻量 TTY 交互组件：首启信任确认、工作区目录输入。
 
-与 menu_presenter 同套底层：raw_mode + read_key + rich.Live 就地重绘；配色一致。
+与 menu_presenter 同套底层：KeyReader + rich.Live 就地重绘；配色一致。
 非 TTY（管道 / CI / 测试）直接返回安全默认，绝不阻塞——交互结果在测试里用 fake 注入。
 """
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable, Sequence
 
 from rich.console import Console, Group
@@ -15,7 +14,14 @@ from rich.panel import Panel
 from rich.text import Text
 
 from forgecli.application.interaction_ports import DirectoryPicker, TrustPrompter
-from forgecli.interfaces.cli.tty.tty import Key, raw_mode, read_key, stdin_is_tty
+from forgecli.interfaces.cli.tty.tty import (
+    BACKSPACE_KEYS,
+    CONFIRM_KEYS,
+    KeyReader,
+    Keys,
+    is_text,
+    stdin_is_tty,
+)
 
 _FRAME = "bright_black"
 _PROMPT = "bold green"
@@ -47,25 +53,24 @@ class TtyTrustPrompter(TrustPrompter):
     def confirm(self, path: str) -> bool:
         if not stdin_is_tty():
             return False
-        fd = sys.stdin.fileno()
         yes = True  # 默认高亮 [是]
         with (
-            raw_mode(fd=fd),
+            KeyReader() as keys,
             Live(console=self._console, auto_refresh=False, screen=False) as live,
         ):
             while True:
                 live.update(self._render(path, yes), refresh=True)
-                press = read_key(fd=fd)
-                if press.key in (Key.CTRL_C, Key.ESC):
+                press = keys.read()
+                if press.key in (Keys.ControlC, Keys.Escape):
                     return False
-                if press.key is Key.LEFT:
+                if press.key is Keys.Left:
                     yes = True
-                elif press.key is Key.RIGHT:
+                elif press.key is Keys.Right:
                     yes = False
-                elif press.key is Key.ENTER:
+                elif press.key in CONFIRM_KEYS:
                     return yes
-                elif press.key is Key.CHAR:
-                    low = press.char.lower()
+                elif is_text(press):
+                    low = press.data.lower()
                     if low == "y":
                         return True
                     if low == "n":
@@ -101,29 +106,28 @@ class TtyDirectoryPicker(DirectoryPicker):
     def pick(self, list_subdirs: Callable[[str], Sequence[str]]) -> str | None:
         if not stdin_is_tty():
             return None
-        fd = sys.stdin.fileno()
         buf = ""
         listed_for = ""  # 当前列出的是哪个输入路径的子目录（空=当前目录）
         subdirs = list(list_subdirs(""))
         with (
-            raw_mode(fd=fd),
+            KeyReader() as keys,
             Live(console=self._console, auto_refresh=False, screen=False) as live,
         ):
             while True:
                 live.update(self._render(buf, subdirs, listed_for), refresh=True)
-                press = read_key(fd=fd)
-                if press.key in (Key.CTRL_C, Key.ESC):
+                press = keys.read()
+                if press.key in (Keys.ControlC, Keys.Escape):
                     return None
-                if press.key is Key.ENTER:
+                if press.key in CONFIRM_KEYS:
                     return buf if buf.strip() else None
-                if press.key is Key.TAB:
+                if press.key is Keys.ControlI:
                     # 按 Tab 列出当前输入路径下的子目录（空输入则列当前目录）。
                     subdirs = list(list_subdirs(buf))
                     listed_for = buf.strip()
-                elif press.key is Key.BACKSPACE:
+                elif press.key in BACKSPACE_KEYS:
                     buf = buf[:-1]
-                elif press.key in (Key.CHAR, Key.SLASH):
-                    buf += press.char
+                elif is_text(press):
+                    buf += press.data
 
     def _render(self, buf: str, subdirs: Sequence[str], listed_for: str) -> Panel:
         lines: list[Text] = []

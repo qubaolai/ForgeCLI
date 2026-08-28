@@ -44,7 +44,13 @@ class _RecordingArtifacts(ArtifactStore):
         return 0
 
 
-def test_json_schema_enforces_declared_numeric_and_length_limits() -> None:
+def test_json_schema_reports_every_violated_constraint_with_its_location() -> None:
+    """断言的是"约束生效"与"指得回位置", 不是错误消息的具体措辞.
+
+    原先这条用例查的是消息里有没有 `minLength` 这个词. 换成 jsonschema 之后消息变成
+    "'x' is too short" —— 约束照样生效, 用例却红了. 查措辞等于把校验器的实现细节钉进
+    用例, 而那正是这次换掉手写子集时最不该保留的东西.
+    """
     schema = {
         "type": "object",
         "properties": {
@@ -56,9 +62,27 @@ def test_json_schema_enforces_declared_numeric_and_length_limits() -> None:
 
     errors = validate_json_schema({"count": 4, "name": "x", "items": [1, 2, 3]}, schema)
 
-    assert any("maximum" in error for error in errors)
-    assert any("minLength" in error for error in errors)
-    assert any("maxItems" in error for error in errors)
+    assert [error.split(":")[0] for error in errors] == ["$.count", "$.items", "$.name"]
+
+
+def test_json_schema_enforces_pattern() -> None:
+    """`pattern` 曾经被静默忽略.
+
+    手写子集只覆盖 type/required/enum/长度/大小, 并明说"未覆盖的关键字被忽略". 于是
+    schema 里写了 pattern 的人会以为它生效, 而不合法的参数直接进了 prepare —— 没有
+    任何一层会说话. 这条用例钉住它不会再退回去.
+    """
+    schema = {"type": "object", "properties": {"kind": {"pattern": "^[a-z_]+$"}}}
+
+    assert validate_json_schema({"kind": "fs_read"}, schema) == []
+    assert validate_json_schema({"kind": "Not Valid"}, schema) != []
+
+
+def test_json_schema_reports_an_invalid_schema_instead_of_passing_silently() -> None:
+    """schema 本身写坏时不能静默放行 —— 放行等于这次调用完全没有校验."""
+    errors = validate_json_schema({"a": 1}, {"type": "object", "required": "a"})
+
+    assert errors and "schema 本身不合法" in errors[0]
 
 
 def test_emit_text_limits_artifact_by_utf8_bytes() -> None:

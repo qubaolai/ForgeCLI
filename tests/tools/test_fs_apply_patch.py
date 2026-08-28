@@ -501,3 +501,45 @@ def test_a_partial_apply_still_reports_what_landed(workspace: Path) -> None:
 
 def _explode(path: str) -> None:
     raise OSError("盘满了")
+
+
+def test_a_failed_find_quotes_the_nearest_block(tmp_path: Path) -> None:
+    """定位失败时给出证据, 而不是"先读回来再试".
+
+    原来的兜底是 " 先用 fs_read 读回当前内容, 再照抄其中一段". 那句话是对的但没有信息
+    —— 模型手里那份 FIND 与文件哪里不一样它依然看不见, 于是最省力的下一步是把整个文件
+    读回来再猜一次. 真实会话里 110 次 fs_apply_patch 有 17 次 apply_failed, 而且是成串
+    出现的: 定位失败 -> 重读 -> 再失败.
+    """
+    from forgecli.application.tools.builtin.patch_apply import _miss_hint
+
+    source = (
+        "def authenticate(user, password):\n"
+        "    if not user:\n"
+        '        raise ValueError("no user")\n'
+        "    return check(user, password)\n"
+    )
+    # 模型凭记忆复述的版本: 参数名与消息都差一点.
+    old = (
+        "def authenticate(username, password):\n"
+        "    if not username:\n"
+        '        raise ValueError("missing user")\n'
+        "    return check(username, password)\n"
+    )
+
+    hint = _miss_hint(source, old)
+
+    assert "最接近的一段在第 1 行" in hint
+    assert "相似度" in hint
+    assert "raise ValueError" in hint
+
+
+def test_an_unrelated_file_gets_no_quote(tmp_path: Path) -> None:
+    """引一段其实不相干的代码, 比说"找不到"更糟: 模型会照着它改, 然后在另一个位置
+    再失败一次.
+    """
+    from forgecli.application.tools.builtin.patch_apply import _miss_hint
+
+    hint = _miss_hint("import os\nimport sys\n", "class TotallyDifferentThing:\n")
+
+    assert "最接近的一段" not in hint

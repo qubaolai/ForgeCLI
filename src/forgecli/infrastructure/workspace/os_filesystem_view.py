@@ -10,15 +10,19 @@ realpath 一律解析: 受保护路径判定与目标集合封闭都依赖它, �
 
 from __future__ import annotations
 
+import os
 import time
-from collections.abc import Iterable
 from pathlib import Path
+
+from charset_normalizer import from_bytes
+from wcmatch import glob as wcglob
 
 from forgecli.application.workspace.filesystem_view import (
     FileSystemView,
     PathFacts,
     PathKind,
 )
+from forgecli.infrastructure.workspace.ignore_oracle import ignore_predicate
 
 __all__ = ["OsFileSystemView"]
 
@@ -76,9 +80,13 @@ class OsFileSystemView(FileSystemView):
         )
 
     def read_text(self, path: str, *, max_bytes: int) -> str:
-        return self.read_bytes(path, max_bytes=max_bytes).decode(
-            "utf-8", errors="replace"
-        )
+        return decode_text(self.read_bytes(path, max_bytes=max_bytes))
+
+    def read_text_if_text(self, path: str, *, max_bytes: int) -> str | None:
+        raw = self.read_bytes(path, max_bytes=max_bytes)
+        if looks_binary(raw):
+            return None
+        return decode_text(raw)
 
     def read_bytes(self, path: str, *, max_bytes: int) -> bytes:
         try:
@@ -94,20 +102,30 @@ class OsFileSystemView(FileSystemView):
             return ()
 
     def expand_glob(
-        self, pattern: str, *, root: str, max_results: int | None = None
+        self,
+        pattern: str,
+        *,
+        root: str,
+        max_results: int | None = None,
+        skip_ignored: bool = True,
     ) -> tuple[str, ...]:
-        base = Path(root)
         candidate = Path(pattern)
         if candidate.is_absolute():
             # 绝对 glob: 从根锚点展开, 保留用户写的那一段作为 pattern.
             anchor = Path(candidate.anchor)
             relative = candidate.relative_to(anchor)
-            iterator = anchor.glob(str(relative))
-            return _bounded_paths(iterator, max_results)
-        try:
-            return _bounded_paths(base.glob(pattern), max_results)
-        except (OSError, ValueError):
-            return ()
+            return _walk_glob(anchor, str(relative), max_results, skip_ignored)
+        return _walk_glob(Path(root), pattern, max_results, skip_ignored)
+
+    def is_ignored(self, path: str, *, root: str) -> bool:
+        normalized = path.replace("\\", "/")
+        base = root.replace("\\", "/").rstrip("/")
+        relative = (
+            normalized[len(base) + 1 :]
+            if normalized.startswith(f"{base}/")
+            else normalized
+        )
+        return ignore_predicate(base)(relative)
 
 
 def _resolved_parent(target: Path) -> str:
@@ -122,15 +140,86 @@ def _resolved_parent(target: Path) -> str:
         return str(target)
 
 
-def _bounded_paths(paths: Iterable[Path], max_results: int | None) -> tuple[str, ...]:
+def looks_binary(raw: bytes) -> bool:
+    """NUL 字节即判定二进制. 与 git, grep 和 ripgrep 用的是同一条判据.
+
+    判它不是为了省时间, 是为了省额度: `search_text` 有 2000 个文件的扫描上限和 200 条
+    命中上限, 一个 Maven 项目的 `target/` 里几千个 `.class` 解码成替换字符之后照样会
+    产生"命中", 于是额度被喂给了噪音, 而"这个词不在代码里"这个结论建立在没扫到源码上.
+    """
+    return b"\x00" in raw[:8192]
+
+
+def decode_text(raw: bytes) -> str:
+    """先按 utf-8 试, 失败才去猜编码.
+
+    原先是无条件 `decode("utf-8", errors="replace")`. 一个 GBK 编码的 Java 源文件在那种
+    读法下变成一串替换字符, `search_text` 搜"当前数据源"命中 0 处, 然后如实告诉模型
+    "这是确定的空结果" —— 静默漏掉, 没有任何一层会说话. 国内 Java 仓库里 GBK 源文件
+    并不罕见.
+
+    **顺序不能反.** charset-normalizer 是统计判断, 在短文件上会猜错 (实测 30 字节的
+    GBK 片段被判成 cp949); 而绝大多数源文件本来就是 utf-8, 严格解码成功就是确定答案.
+    所以只在 utf-8 解不通时才让它上场, 它猜错的代价此时也只是从一种乱码换成另一种.
+    """
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    best = from_bytes(raw).best()
+    if best is None:
+        return raw.decode("utf-8", errors="replace")
+    return str(best)
+
+
+def _walk_glob(
+    base: Path, pattern: str, max_results: int | None, skip_ignored: bool
+) -> tuple[str, ...]:
+    """自己走目录而不是用 `Path.glob`, 只为了一件事: 剪枝发生在遍历时.
+
+    `Path.glob` 会把 `.venv` 与 `node_modules` 整棵走完再把结果交出来, 调用方此时才有
+    机会丢掉它们 —— 而额度在那之前就已经用光了. `os.walk` 允许原地改写 dirs 来砍掉整棵
+    子树, 被砍掉的目录连 stat 都不会发生.
+
+    两件判断各自交给它该去的地方:
+
+    - **"这条路径要不要跳过"** 问 `ignore_oracle` —— git 仓库里就是 libgit2 自己那套
+      判断, 覆盖每一层 .gitignore, .git/info/exclude 与全局 excludesFile.
+    - **"这条路径中不中用户给的 glob"** 交给 `wcmatch.globmatch`. 它的 `*` 不跨 `/`,
+      `**` 跨整棵树, 与 bash 和 `Path.glob` 一致.
+
+    排序固定: 目录遍历顺序在不同文件系统上不一样, 而顺序一变 plan_hash 就变, 上一次
+    批准也就绑不住这一次.
+    """
     limit = max_results if max_results is not None and max_results >= 0 else None
     if limit == 0:
         return ()
+    flags = wcglob.GLOBSTAR | wcglob.DOTGLOB
     collected: list[str] = []
-    for item in paths:
-        collected.append(str(item))
-        if limit is not None and len(collected) >= limit:
-            break
+    root = str(base)
+    ignored = ignore_predicate(root) if skip_ignored else None
+    try:
+        walker = os.walk(root, followlinks=False)
+        for current, directories, files in walker:
+            relative_dir = os.path.relpath(current, root)
+            prefix = "" if relative_dir == "." else f"{relative_dir}/"
+            if ignored is not None:
+                # 原地改写才有效: os.walk 读的就是这个列表, 换成新列表它看不见.
+                # 砍掉一个目录, 它整棵子树连 stat 都不会发生.
+                directories[:] = [
+                    name for name in directories if not ignored(f"{prefix}{name}/")
+                ]
+            for name in (*directories, *files):
+                entry = f"{prefix}{name}"
+                if ignored is not None and ignored(entry):
+                    continue
+                if not wcglob.globmatch(entry, pattern, flags=flags):
+                    continue
+                collected.append(os.path.join(root, entry))
+                if limit is not None and len(collected) >= limit:
+                    return tuple(sorted(collected))
+    except (OSError, ValueError):
+        return tuple(sorted(collected))
     return tuple(sorted(collected))
 
 

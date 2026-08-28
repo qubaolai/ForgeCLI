@@ -31,7 +31,7 @@ REGISTRY: dict[str, ProviderSpec] = {
         default_api_base="",
         api_key_env="OPENAI_API_KEY",
     ),
-    "GLM": ProviderSpec(
+    "glm": ProviderSpec(
         id="glm",
         label="GLM",
         default_api_base="https://open.bigmodel.cn/api/paas/v4/chat/completions",
@@ -47,12 +47,26 @@ REGISTRY: dict[str, ProviderSpec] = {
 }
 
 
+def normalize_provider_id(raw: str) -> str:
+    """外部写来的 provider id 归一成注册表的 key.
+
+    为什么需要这一步: 这张表的 key 曾经是 `"GLM"` 而它的 `spec.id` 是 `"glm"`, 两者
+    不一致了一段时间. 期间菜单是按 key 列的, 所以用户配置文件里可能真的存着 `"GLM"`,
+    而代码里按 `spec.id` 查的地方一律查不到 —— `is_known_provider("glm")` 返回 False.
+    key 已经改回 `"glm"`, 但已经写出去的配置不会自己改, 所以入口这里认大小写.
+
+    只归一大小写和首尾空白, 不做别名映射: 别名是一张会长大的表, 而这里要修的只是
+    一次拼写事故.
+    """
+    return raw.strip().lower()
+
+
 def is_known_provider(provider_id: str) -> bool:
-    return provider_id in REGISTRY
+    return normalize_provider_id(provider_id) in REGISTRY
 
 
 def require_known_provider(provider_id: str) -> ProviderSpec:
-    spec = REGISTRY.get(provider_id)
+    spec = REGISTRY.get(normalize_provider_id(provider_id))
     if spec is None:
         allowed = " / ".join(sorted(REGISTRY))
         raise UnknownProvider(

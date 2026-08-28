@@ -26,16 +26,26 @@ def _as_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _text(value: bool) -> str:
+    return "true" if value else "false"
+
+
 @dataclass(frozen=True)
 class EffectiveConfig:
     """合并默认值与用户覆盖后的有效配置快照。"""
 
+    # 是否采集进程内的阶段耗时与计数 (shared/observability/metrics). 关掉之后
+    # /diagnostics 的 stages 是空的, 记录点本身变成空操作.
     telemetry_enabled: bool
     output_theme: str
-    # 运行期日志级别 (ADR-0035). 它是**这份视图里唯一一个在进程启动之前就要读到的键**:
-    # 日志装配发生在任何 service 之前, 所以那条路径直接读 config.json, 不经这里.
-    # 收进来是为了 /config 能显示与修改它 —— 一个只能改文件的开关等于没有开关.
+    # 日志装配 (ADR-0035). 这几个键**在进程启动之前就要读到**: 日志装配发生在任何
+    # service 之前, 所以那条路径直接读 config.json, 不经这份视图.
+    # 收进来是为了 /config 能显示与修改它们 —— 一个只能改文件的开关等于没有开关.
     logging_level: str
+    logging_console: bool
+    logging_directory: str
+    logging_max_value_chars: str
+    logging_include_http: bool
     default_model: ModelRef | None  # 未配置时为 None
     # 额外进受控 PATH 的工具链目录 (ADR-0014 §4.2). 探测出来的候选目录只有那几个系统
     # 位置, 装在别处的 maven / jdk / node 因此在受控 PATH 上根本不存在 —— 模型跑不了
@@ -57,6 +67,10 @@ class EffectiveConfig:
             telemetry_enabled=_as_bool(value(config_keys.TELEMETRY_ENABLED)),
             output_theme=value(config_keys.OUTPUT_THEME),
             logging_level=value(config_keys.LOGGING_LEVEL),
+            logging_console=_as_bool(value(config_keys.LOGGING_CONSOLE)),
+            logging_directory=value(config_keys.LOGGING_DIRECTORY),
+            logging_max_value_chars=value(config_keys.LOGGING_MAX_VALUE_CHARS),
+            logging_include_http=_as_bool(value(config_keys.LOGGING_INCLUDE_HTTP)),
             default_model=_read_model(overrides),
             toolchain_dirs=_read_toolchain_dirs(
                 value(config_keys.EXECUTION_TOOLCHAIN_DIRS)
@@ -66,11 +80,13 @@ class EffectiveConfig:
     def as_dict(self) -> dict[str, str]:
         """键 -> 规范字符串，供菜单展示与序列化对比。"""
         return {
-            config_keys.TELEMETRY_ENABLED: "true"
-            if self.telemetry_enabled
-            else "false",
+            config_keys.TELEMETRY_ENABLED: _text(self.telemetry_enabled),
             config_keys.OUTPUT_THEME: self.output_theme,
             config_keys.LOGGING_LEVEL: self.logging_level,
+            config_keys.LOGGING_CONSOLE: _text(self.logging_console),
+            config_keys.LOGGING_DIRECTORY: self.logging_directory,
+            config_keys.LOGGING_MAX_VALUE_CHARS: self.logging_max_value_chars,
+            config_keys.LOGGING_INCLUDE_HTTP: _text(self.logging_include_http),
             config_keys.EXECUTION_TOOLCHAIN_DIRS: os.pathsep.join(self.toolchain_dirs),
         }
 

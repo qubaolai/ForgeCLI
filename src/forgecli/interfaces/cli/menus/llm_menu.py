@@ -17,22 +17,17 @@ from collections.abc import Callable
 from forgecli.application.interaction_ports import UserOutput
 from forgecli.application.llm import providers as provider_registry
 from forgecli.application.llm.catalog_builder import build_catalog
-from forgecli.application.llm.config.llm_config import STANDARD_FIELDS, StandardField
+from forgecli.application.llm.config.llm_config import (
+    PROVIDER_FIELDS,
+    STANDARD_FIELDS,
+    StandardField,
+)
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.errors import ConfigError
 from forgecli.application.menu import Choice, Menu
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.thinking import ThinkingMode
-
-# 供应商详情里可编辑的字段（label, key）
-_PROVIDER_FIELDS = (
-    ("展示名", "name"),
-    ("API 地址", "api_base"),
-    ("API Key 环境变量", "api_key_env"),
-    ("超时(秒)", "timeout"),
-    ("重试次数", "max_retries"),
-)
 
 
 class LlmMenu:
@@ -62,7 +57,7 @@ class LlmMenu:
                     on_text=self._set_provider_field(provider_id, key),
                     text_default=self._provider_field_raw(provider_id, key),
                 )
-                for label, key in _PROVIDER_FIELDS
+                for label, key in ((f.label, f.name) for f in PROVIDER_FIELDS)
             )
             return Menu(f"供应商 · {provider_id}", rows)
 
@@ -299,14 +294,9 @@ class LlmMenu:
                 "api_base": spec.default_api_base,
                 "api_key_env": spec.api_key_env,
             }.get(field, "")
-        value = {
-            "name": provider.name,
-            "api_base": provider.api_base,
-            "api_key_env": provider.api_key_env or "",
-            "timeout": str(provider.timeout),
-            "max_retries": str(provider.max_retries),
-        }.get(field, "")
-        return value
+        # 直接问对象要: 字段名就是 ProviderConfig 的属性名, 再抄一张映射表出来只会
+        # 在加字段时忘记同步 (ADR-0040 决策 4.2).
+        return str(getattr(provider, field, "") or "")
 
     def _model_count_preview(self, provider_id: str) -> Callable[[], str]:
         def preview() -> str:

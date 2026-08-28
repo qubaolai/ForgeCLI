@@ -15,13 +15,13 @@
 3. **未捕获异常也写进来.** 主线程崩在终端上还看得见, 后台 turn 线程崩掉时终端上
    什么都没有 —— 那正是最需要日志的一种 bug.
 
-环境变量 (都是运行期开关, 不进配置文件):
+这些开关全部来自**配置文件** (`logging.*`, 见 domain/config/config_keys.py), 由
+`interfaces/runtime/logging_wiring` 读出来传进这个函数. 这里不读环境变量, 也不读文件:
+一个住在 shared 的模块认识 Forge 主目录在哪, 就等于把 infrastructure 的知识搬进了最底层.
 
-    FORGE_LOG_LEVEL      debug / info / warn / error, 覆盖 logging.level 配置
-    FORGE_LOG_CONSOLE    1 时同时写 stderr
-    FORGE_LOG_DIR        改写日志目录
-    FORGE_LOG_MAX_VALUE  单个值的截断字符数, 0 表示不截断
-    FORGE_LOG_HTTP       1 时把 httpx / httpcore / uvicorn 的日志也收进同一个文件
+原先它们是五个 FORGE_LOG_* 环境变量. 环境变量改起来看着方便, 但它们**在设置面板里看不见,
+也改不了** —— 用户要打开一次 debug 日志, 得先知道有这么个变量名, 再在启动命令前面拼上去,
+而且下次启动就没了. 配置项在 /config 与 Web 设置页里各是一行, 改完写进 config.json.
 """
 
 from __future__ import annotations
@@ -120,15 +120,21 @@ def configure_logging(
     *,
     directory: Path,
     level: str = "",
+    console: bool = False,
+    max_value_chars: str = "",
+    include_http: bool = False,
 ) -> LoggingStatus:
     """装上文件 (可选终端) handler 并接管未捕获异常; 重复调用会先拆掉旧的.
 
-    `level` 传配置项 `logging.level` 的值; 环境变量 FORGE_LOG_LEVEL 优先于它, 因为
-    "临时开一次 debug 跑一遍"不该要求先改配置文件再改回来.
+    参数一一对应 `logging.*` 配置项. `directory` 已经是解析好的绝对路径 ——
+    "配置留空时用哪个目录"是调用方的事, 这个模块不认识 Forge 主目录.
+
+    `max_value_chars` 是字符串而不是 int: 配置项留空表示"用内置上限", 而 0 表示
+    "不截断". 用 `int | None` 也能表达, 但那要求每个调用方先做一次同样的转换.
     """
     global _status
 
-    resolved_level = _resolve_level(level)
+    resolved_level = _LEVELS.get(level.strip().lower(), logging.INFO)
     root = logging.getLogger(ROOT_LOGGER_NAME)
     _detach(root)
     root.setLevel(resolved_level)
@@ -136,19 +142,17 @@ def configure_logging(
     # 装的 handler 再打一遍, 同一条记录出现两次.
     root.propagate = False
 
-    set_max_value_chars(_resolve_max_value_chars())
+    set_max_value_chars(_resolve_max_value_chars(max_value_chars))
     formatter = _ForgeFormatter(_LINE, datefmt=_TIME)
 
-    target = _resolve_directory(directory)
-    path = _open_file(root, target, formatter)
-    console = _env_flag("FORGE_LOG_CONSOLE")
+    path = _open_file(root, directory, formatter)
     if console:
         stream: logging.Handler = logging.StreamHandler(sys.stderr)
         stream.setFormatter(formatter)
         root.addHandler(stream)
         _attached.append((root, stream))
 
-    if _env_flag("FORGE_LOG_HTTP"):
+    if include_http:
         _attach_third_party(root, resolved_level)
 
     _install_exception_hooks()
@@ -174,30 +178,19 @@ def configure_logging(
 # ---- 各段 ----
 
 
-def _resolve_level(configured: str) -> int:
-    override = os.environ.get("FORGE_LOG_LEVEL", "").strip().lower()
-    if override in _LEVELS:
-        return _LEVELS[override]
-    return _LEVELS.get(configured.strip().lower(), logging.INFO)
+def _resolve_max_value_chars(configured: str) -> int:
+    """留空 = 用内置上限; 写了数字就用它 (0 表示不截断).
 
-
-def _resolve_max_value_chars() -> int:
-    raw = os.environ.get("FORGE_LOG_MAX_VALUE", "").strip()
+    读不懂的值退回内置上限而不是报错: 这一步发生在日志装配之前, 报错的话连"配置写错了"
+    这条记录都写不出来.
+    """
+    raw = configured.strip()
     if not raw:
         return current_max_value_chars()
     try:
         return int(raw)
     except ValueError:
         return current_max_value_chars()
-
-
-def _resolve_directory(default: Path) -> Path:
-    override = os.environ.get("FORGE_LOG_DIR", "").strip()
-    return Path(override).expanduser() if override else default
-
-
-def _env_flag(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _detach(_root: logging.Logger) -> None:

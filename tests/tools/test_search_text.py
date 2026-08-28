@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -111,30 +112,40 @@ def test_an_illegal_regex_is_rejected_at_prepare(workspace: Path) -> None:
     assert "合法正则" in error.message
 
 
-def test_a_backtracking_regex_is_rejected_before_it_can_block_the_agent(
+def test_a_backtracking_regex_is_cut_off_by_timeout_instead_of_blocking(
     workspace: Path,
 ) -> None:
-    tool = SearchTextTool(ResourceGovernor(), NullArtifactStore())
-    context = ExecutionContext(
-        cwd=str(workspace),
-        workspace_roots=(str(workspace),),
-        environment={"PATH": "/usr/bin:/bin"},
-        filesystem=OsFileSystemView(),
-        profile=PROFILE,
-    )
+    """病态回溯由**超时**拦, 不再由语法拦.
 
-    error = tool.prepare(
-        ToolInvocationRequest(
-            invocation_id="inv-backtrack",
-            tool_name="search_text",
-            arguments={"query": "(a|aa)+$", "regex": True},
-            tool_call_id="c-backtrack",
-        ),
-        context,
-    )
+    原先这条用例断言 `(a|aa)+$` 在 prepare 就被拒. 那道拦截用裸子串扫 `( ) { } |`,
+    认不出转义 —— 于是 `def \\w+\\(` 这种最常见的代码检索正则一起被拒了, 而 `\\(`
+    只是一个字面左括号. `regex` 模块的 `timeout=` 让判据回到该在的位置: 不看它长什么样,
+    看它跑了多久.
+    """
+    (workspace / "backtrack.txt").write_text("a" * 60 + "b\n", encoding="utf-8")
 
-    assert isinstance(error, PreparationError)
-    assert "不可中止的回溯" in error.message
+    started = time.perf_counter()
+    output = _run(workspace, query="(a|aa)+$", regex=True)
+    elapsed = time.perf_counter() - started
+
+    # 超时按"这一行不匹配"处理: 一次搜索扫几百个文件, 单行病态回溯不该让整次调用失败.
+    assert "backtrack.txt" not in output
+    # 单行上限 0.25 秒, 工作区里的文件个位数. 卡住的话这里会是几十秒.
+    assert elapsed < 5
+
+
+def test_a_regex_with_escaped_parentheses_is_accepted(workspace: Path) -> None:
+    """`def \\w+\\(` 是代码检索里最常见的正则, 原先被当成"分组"拒掉."""
+    output = _run(workspace, query=r"def \w+\(", regex=True)
+
+    assert "def " in output
+
+
+def test_an_inline_case_insensitive_flag_works(workspace: Path) -> None:
+    """`(?i)` 原先因为含 `(` 被拒, 这是 search_text 做不了大小写不敏感搜索的直接原因."""
+    output = _run(workspace, query="(?i)RAISE VALUEERROR", regex=True)
+
+    assert "raise ValueError" in output
 
 
 def test_context_lines_bring_the_surrounding_code(workspace: Path) -> None:
@@ -156,8 +167,8 @@ def test_an_empty_result_says_how_many_files_were_scanned(workspace: Path) -> No
     assert "确定的空结果" in output
 
 
-def test_a_pattern_matching_nothing_blames_the_pattern(workspace: Path) -> None:
-    output = _run(workspace, query="login", pattern="**/*.rs")
+def test_an_in_files_matching_nothing_blames_in_files(workspace: Path) -> None:
+    output = _run(workspace, query="login", in_files="**/*.rs")
     assert "没有文件被扫描" in output
     assert "不是搜索词" in output
 
@@ -216,8 +227,8 @@ def test_pointing_path_at_a_generated_directory_still_works(
 
 
 def test_the_empty_message_mentions_the_filter(workspace: Path) -> None:
-    """空结果要说清"可能是被过滤掉了", 否则模型只会换个 pattern 再搜一次."""
-    output = _run(workspace, query="def login", pattern="**/*.kt")
+    """空结果要说清"可能是被过滤掉了", 否则模型只会换个 in_files 再搜一次."""
+    output = _run(workspace, query="def login", in_files="**/*.kt")
     assert "include_ignored" in output
 
 
@@ -228,7 +239,7 @@ def test_large_file_prefix_never_produces_a_certain_empty_result(
         "x" * (1024 * 1024 + 10) + "needle", encoding="utf-8"
     )
 
-    output = _run(workspace, query="needle", pattern="**/*.txt")
+    output = _run(workspace, query="needle", in_files="**/*.txt")
 
     assert "结果不完整" in output
     assert "不能据此断言" in output
@@ -242,7 +253,7 @@ def test_search_skips_symlinks_and_reports_that_the_result_is_incomplete(
     outside.write_text("secret needle", encoding="utf-8")
     (workspace / "linked.txt").symlink_to(outside)
 
-    output = _run(workspace, query="needle", pattern="**/*.txt")
+    output = _run(workspace, query="needle", in_files="**/*.txt")
 
     assert "符号链接" in output
     assert "结果不完整" in output
