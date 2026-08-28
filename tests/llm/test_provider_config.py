@@ -17,6 +17,7 @@ from forgecli.application.llm.config.llm_config import PROVIDER_FIELDS
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.config.llm_config_store import LlmConfigStore
 from forgecli.application.llm.errors import ConfigValidationError, UnknownProvider
+from forgecli.domain.model.thinking import ThinkingMode
 
 
 class _MemoryStore(LlmConfigStore):
@@ -26,6 +27,7 @@ class _MemoryStore(LlmConfigStore):
         self.section: dict[str, object] = section or {}
         self.provider_writes: list[tuple[str, str, object]] = []
         self.model_writes: list[tuple[str, str, Mapping[str, object]]] = []
+        self.model_defaults: list[Mapping[str, object]] = []
 
     def load(self) -> dict[str, object]:
         return self.section
@@ -39,6 +41,7 @@ class _MemoryStore(LlmConfigStore):
         provider_defaults: Mapping[str, object],
     ) -> None:
         self.model_writes.append((provider_id, model_id, dict(fields)))
+        self.model_defaults.append(dict(provider_defaults))
 
     def remove_model(self, provider_id: str, model_id: str) -> None:
         return None
@@ -118,6 +121,17 @@ def test_models_are_parsed_under_their_provider() -> None:
     assert provider.models[0].params.context_window == 64000
     assert provider.model("deepseek-chat") is not None
     assert provider.model("nope") is None
+
+
+def test_thinking_edits_copy_the_pydantic_provider_without_a_type_error() -> None:
+    """ProviderConfig 迁移到 Pydantic 后，候选配置不能再用 dataclasses.replace。"""
+    store = _MemoryStore({"providers": {"deepseek": {"models": {"deepseek-chat": {}}}}})
+    service = LlmConfigService(store)
+
+    assert service.update_model_thinking(
+        "deepseek", "deepseek-chat", mode=ThinkingMode.OFF
+    )
+    assert store.model_writes[-1][2]["thinking_mode"] == "off"
 
 
 # ---- credential_refs ----
@@ -222,3 +236,106 @@ def test_the_editable_set_matches_what_the_menu_used_to_hardcode() -> None:
         "超时(秒)",
         "重试次数",
     ]
+
+
+# ---- 同一家供应商在文件里有两个段落 ----
+#
+# 注册表的 key 曾经是 "GLM", 早期版本的菜单照着它写出了 providers.GLM. key 改回 "glm"
+# 之后, 新的写入落在 providers.glm 上 —— 同一家供应商在文件里有了两份。
+#
+# 这组用例钉的是那次事故的两半: 读的时候要合并, 写的时候不能再产生第二份。
+
+
+LEGACY_SECTION = {
+    "GLM": {
+        "name": "GLM",
+        "api_base": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        "api_key_env": "GLM_API_KEY",
+        "models": {"glm-4": {"context_window": 128000}},
+    }
+}
+
+
+def test_a_legacy_uppercase_section_is_still_readable() -> None:
+    providers = _service(dict(LEGACY_SECTION)).providers()
+    assert [provider.id for provider in providers] == ["glm"]
+    assert [model.id for model in providers[0].models] == ["glm-4"]
+
+
+def test_two_sections_for_one_provider_are_merged() -> None:
+    """不合并的话 provider() 只命中先出现的那一份.
+
+    另一份里的模型就成了"存进去了但找不到".
+    """
+    providers = _service(
+        {
+            **LEGACY_SECTION,
+            "glm": {"name": "GLM", "models": {"glm-4-plus": {}}},
+        }
+    ).providers()
+
+    assert [provider.id for provider in providers] == ["glm"]
+    assert sorted(model.id for model in providers[0].models) == ["glm-4", "glm-4-plus"]
+
+
+def test_the_later_section_wins_for_scalar_fields() -> None:
+    """一个键只有在有人往那个段落写过的时候才会出现, 所以后写的就是最近一次编辑."""
+    provider = _service(
+        {
+            **LEGACY_SECTION,
+            "glm": {"api_base": "https://proxy.invalid/v4/chat/completions"},
+        }
+    ).providers()[0]
+
+    assert provider.api_base == "https://proxy.invalid/v4/chat/completions"
+    # 没被后写覆盖的键保留前一段的取值.
+    assert provider.api_key_env == "GLM_API_KEY"
+
+
+def test_writes_never_create_a_second_section() -> None:
+    """回归: 归一只做在读那一侧, 写入就会新建一个 `glm` 段落."""
+    store = _MemoryStore({"providers": dict(LEGACY_SECTION)})
+    LlmConfigService(store).add_model("GLM", "glm-4-plus", {})
+
+    assert [written[0] for written in store.model_writes] == ["glm"]
+
+
+def test_every_write_path_normalises_the_provider_id() -> None:
+    """漏掉任何一条都会重新长出第二个段落, 而它不会报错, 只会让查找静默落空."""
+    store = _MemoryStore({"providers": dict(LEGACY_SECTION)})
+    service = LlmConfigService(store)
+
+    service.add_model("GLM", "m1", {})
+    service.set_provider_field("GLM", "timeout", "30")
+    service.set_model_field("GLM", "glm-4", "context_window", "64000")
+    service.set_model_extra("GLM", "glm-4", '{"seed": 1}')
+
+    assert {written[0] for written in store.model_writes} == {"glm"}
+    assert {written[0] for written in store.provider_writes} == {"glm"}
+
+
+def test_adding_a_model_keeps_a_customised_endpoint() -> None:
+    """新建段落时用当前有效值播种, 而不是注册表默认值.
+
+    否则用户改过的 api_base 会因为"又加了一个模型"被默认值盖回去。
+    """
+    store = _MemoryStore(
+        {
+            "providers": {
+                "deepseek": {"api_base": "https://proxy.invalid/v1/chat/completions"}
+            }
+        }
+    )
+    LlmConfigService(store).add_model("deepseek", "deepseek-chat", {})
+
+    assert store.model_defaults[-1]["api_base"] == (
+        "https://proxy.invalid/v1/chat/completions"
+    )
+
+
+def test_an_unknown_provider_section_is_ignored() -> None:
+    """没有 adapter 能驱动它, 留着只会让下游每一处都要再判一次."""
+    providers = _service(
+        {**LEGACY_SECTION, "anthropic": {"models": {"x": {}}}}
+    ).providers()
+    assert [provider.id for provider in providers] == ["glm"]

@@ -41,6 +41,7 @@ from enum import Enum
 __all__ = [
     "GIT_LIKE",
     "GIT_READ_ONLY_SUBCOMMANDS",
+    "NETWORK_TOOLS",
     "ArgumentModel",
     "CommandFacts",
     "EffectKind",
@@ -106,6 +107,10 @@ class CommandFacts:
     write_flags: tuple[str, ...] = ()
 
 
+# ADR-0040 B 类表: 一条命令一条记录 (影响形态 + 参数结构). 它**不是**只读命令白名单 ——
+# ADR-0030 已经把"证明只读"从授权路径上取下来了.
+# 表外默认: 未登记的命令按"可能写"处理 (见 effects.py), 目标集合按 UNPROVEN 处理.
+# 漏一项的后果: 多打一次快照, 多问一次人.
 _COMMANDS: dict[str, CommandFacts] = {}
 
 
@@ -527,8 +532,14 @@ _register(
 # 对齐. 这里剩下的这一份是 ADR-0040 说的 B 类非承重表: 表外的子命令走 UNPROVEN/ASK,
 # 漏一项只会多问一次用户.
 
+# ADR-0040 B 类表: 哪些命令的第一个位置参数是子命令.
+# 表外默认: 认不出的 VCS 按普通命令处理, 影响形态由上面的记录表推导, 表外"可能写".
+# 漏一项的后果: 多问一次人.
 GIT_LIKE: frozenset[str] = frozenset({"git", "hg", "svn", "jj"})
 
+# ADR-0040 B 类表 (见上面那段: 它现在只服务 shell_run).
+# 表外默认: 未登记的子命令走 UNPROVEN/ASK.
+# 漏一项的后果: 多问一次人.
 GIT_READ_ONLY_SUBCOMMANDS: frozenset[str] = frozenset(
     {
         "status",
@@ -550,5 +561,40 @@ GIT_READ_ONLY_SUBCOMMANDS: frozenset[str] = frozenset(
         "reflog",
         "whatchanged",
         "verify-commit",
+    }
+)
+
+
+# ---- 网络工具 ----
+#
+# 这是 ADR-0040 §8.3 说的 **C 类** 表: 它已经退出授权路径. 命中不再决定要不要打断用户
+# (那由围栏决定, 见 domain/security/budget.py 的 _NEEDS_FENCE), 只剩两个用处:
+#
+# 1. 给人看的风险摘要 —— `PlanEffects.network_targets` 从命中的单元里摘出地址;
+# 2. Hard Deny 的 `curl | sh` 形状判定 —— 管线上游是不是在从网上取字节.
+#
+# 漏一条的后果因此从"少一次审批"降成"风险摘要少一行, 少一条纵深". 表外仍有围栏与
+# EXECUTE_SHELL 兜底.
+#
+# 合成一份是 2026-08-28 做的: 在那之前 `command_plan.py` 自带一份**只有 5 条**的副本
+# 供 Hard Deny 用, 于是 `nc`, `socat`, `ssh` 这些在风险摘要里算网络工具, 在
+# `xxx | sh` 的红线判定里却不算.
+NETWORK_TOOLS: frozenset[str] = frozenset(
+    {
+        "curl",
+        "wget",
+        "fetch",
+        "nc",
+        "ncat",
+        "netcat",
+        "socat",
+        "ssh",
+        "scp",
+        "rsync",
+        "sftp",
+        "ftp",
+        "telnet",
+        "Invoke-WebRequest",
+        "iwr",
     }
 )

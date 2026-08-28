@@ -23,7 +23,11 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forgecli.application.llm import providers as provider_registry
-from forgecli.application.llm.config.llm_config import PROVIDER_FIELDS, StandardField
+from forgecli.application.llm.config.llm_config import (
+    PROVIDER_FIELDS,
+    STANDARD_FIELDS,
+    StandardField,
+)
 from forgecli.application.planning.plan_review import PlanReviewChoice
 from forgecli.application.security.workspace_grants import GrantError
 from forgecli.domain.agent.run_events import AgentRunEventKind
@@ -672,6 +676,8 @@ def create_app(
             # 供应商表单该有哪些行, 每行叫什么, 是什么类型 —— 全从 ProviderConfig
             # 的字段声明派生 (ADR-0040 决策 4.2). 页面照着渲染, 不自己列一份.
             "provider_fields": [_field_view(field) for field in PROVIDER_FIELDS],
+            # 模型标准字段同样来自 ModelParams 声明；前端不再维护一份会漂移的字段表。
+            "model_fields": [_field_view(field) for field in STANDARD_FIELDS],
             "known_providers": [
                 {
                     "id": provider_id,

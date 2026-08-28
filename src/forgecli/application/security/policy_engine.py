@@ -82,7 +82,9 @@ def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
             Decision.DENY, findings.unrunnable, message="这条命令在当前环境下无法执行"
         )
 
-    if findings.mandatory_ask:
+    unrestricted = _only_hard_deny(context)
+
+    if findings.mandatory_ask and not unrestricted:
         return _Verdict(
             Decision.ASK,
             findings.requires_ask or DecisionReason.EXTERNAL_IRREVERSIBLE_EFFECT,
@@ -92,7 +94,7 @@ def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
 
     capabilities = _reliable_capabilities(findings, context)
 
-    never_auto = capabilities & _NEVER_AUTO
+    never_auto = frozenset() if unrestricted else capabilities & _NEVER_AUTO
     if never_auto:
         # mandatory=True 是这一支的要点. 不置位的话它只是一次普通 ASK, 而普通 ASK
         # 会被学习规则抬成 ALLOW —— 于是"读凭证永远需要人类在场"和 ADR-0013 §4.1
@@ -121,12 +123,29 @@ def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
             extra_facts=_capability_facts(outside_fence),
         )
 
-    if findings.requires_ask is not None:
+    if findings.requires_ask is not None and not unrestricted:
         return _Verdict(
             Decision.ASK, findings.requires_ask, message="分析结果不足以自动放行"
         )
 
     return _Verdict(Decision.ALLOW, _allow_reason(capabilities, context))
+
+
+def _only_hard_deny(context: PolicyContext) -> bool:
+    """这一档是不是"围栏就是全部边界" (ADR-0030 决策 4 的 2026-08-28 修订).
+
+    两个条件缺一不可:
+
+    - `fence.unrestricted` —— full_access 编译出来的围栏才带它;
+    - `confined` —— 围栏**确实立起来了**, 来自 Provider 的行为自测而不是"装了就算".
+
+    第二个条件是要点. full_access 的语义是"在沙箱边界内不再另设闸", 而 UNCONFINED 时
+    根本没有那条边界 —— 那时候放开这些分支等于什么都不拦, 所以退回逐项确认.
+
+    注意它免掉的是**闸**, 不是边界: Hard Deny 在这个函数之前就返回了, 围栏自己在系统
+    调用那一刻照常拦截, 工作区快照照常在破坏性写入前落盘 (ADR-0015).
+    """
+    return context.fence is not None and context.fence.unrestricted and context.confined
 
 
 # 目标集合没封闭时靠推导得出的越界能力. 它们的判据是"这个路径在不在工作区里", 而

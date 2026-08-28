@@ -34,6 +34,9 @@ __all__ = [
 
 # 只有这两个后缀表示"同一个程序的 Windows 写法". `.bat`, `.cmd`, `.ps1` 不能剥 ——
 # 它们是脚本, 后缀本身就是判定语言的依据.
+# ADR-0040 B 类表: 查表名归一时要去掉的 Windows 可执行后缀.
+# 表外默认: 去不掉就用原样名字查表, 查不到即表外, 而表外一律保守处理.
+# 漏一项的后果: 少一次表命中, 方向是更严不是更松.
 _EXECUTABLE_SUFFIXES = frozenset({"exe", "com"})
 
 
@@ -136,11 +139,29 @@ class ScriptPayload:
     language: str
     source: str | None = None
     path: str | None = None
-    origin: str = "inline"  # inline / heredoc / file / encoded
+    origin: str = "inline"  # inline / heredoc / file / encoded / unresolved
 
     @property
     def content_hash(self) -> str | None:
         return digest_text(self.source) if self.source is not None else None
+
+    @property
+    def bindable_path(self) -> str | None:
+        """能拿去 open() 的那个 path, 拿不了就是 None.
+
+        `path` 是各个生产方填的, 而"填进来的字符串真的是一个路径"从来没有人保证过.
+        `npm run build` 曾经把整条命令行填进这里, 于是读文件那一步去找一个叫
+        `npm run build` 的文件, 找不到就判整条命令跑不了 —— 那是一条任何机器上都
+        修不好的 DENY.
+
+        判据只有一条: **带空白的不是路径**. 真实脚本路径可以有空格, 但那种路径在
+        命令行里必然被引号或转义包着, 到这里已经是一个 token; 而带空白的 `path`
+        只可能是把 argv 拼回去的产物. 判不了就返回 None, 由调用方按"内容收集不
+        完整"处理 —— 那个方向是记风险事实, 不是拒绝执行.
+        """
+        if self.path is None or any(char.isspace() for char in self.path):
+            return None
+        return self.path
 
 
 @dataclass(frozen=True)
@@ -184,6 +205,9 @@ class CommandUnit:
         return bool(self.opaque_reasons) or self.name in _DYNAMIC_EXECUTORS
 
 
+# ADR-0040 B 类表: 名字本身就意味着"求值一段运行期才知道的东西".
+# 表外默认: `opaque_reasons` 非空同样使单元 dynamic_execution 为真, 两条判据取或.
+# 漏一项的后果: 少一条判据, 另一条仍在.
 _DYNAMIC_EXECUTORS = frozenset({"eval", "source", ".", "exec", "Invoke-Expression"})
 
 
@@ -263,39 +287,3 @@ class CommandPlan:
     @property
     def has_dynamic_execution(self) -> bool:
         return any(unit.dynamic_execution for unit in self.units)
-
-    @property
-    def pipes_into_interpreter(self) -> bool:
-        """是否存在"上一条的输出直接喂给解释器"这种形状.
-
-        `curl http://x | sh` 是下载后直接执行的经典形态, 它在 Hard Deny 清单里; 判定
-        依据是连接符加下游可执行文件, 不是命令串里有没有 "curl".
-        """
-        for previous, unit in zip(self.units, self.units[1:], strict=False):
-            if unit.connector not in (Connector.PIPE, Connector.PIPE_AMP):
-                continue
-            if unit.name in _INTERPRETERS and previous.name in _NETWORK_TOOLS:
-                return True
-        return False
-
-
-_INTERPRETERS = frozenset(
-    {
-        "sh",
-        "bash",
-        "zsh",
-        "dash",
-        "ksh",
-        "python",
-        "python2",
-        "python3",
-        "node",
-        "ruby",
-        "perl",
-        "php",
-        "pwsh",
-        "powershell",
-    }
-)
-
-_NETWORK_TOOLS = frozenset({"curl", "wget", "fetch", "Invoke-WebRequest", "iwr"})

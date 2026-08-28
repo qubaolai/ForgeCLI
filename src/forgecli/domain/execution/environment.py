@@ -33,6 +33,10 @@ ENVIRONMENT_SANITIZATION_VERSION = "2"
 
 # 能改变"这条命令实际执行什么"的变量. 清除而不是保留, 因为它们的危害不取决于取值内容,
 # 而取决于它们存在本身.
+# ADR-0040 C 类表: 它**不是**主机制. 主机制是下面那份正向 allowlist ——
+# 只有列进 DEFAULT_ENV_ALLOWLIST 的变量才会进子进程, 其余一律不传.
+# 表外默认: 没被这份 denylist 点名的变量, 只要不在 allowlist 里同样进不去.
+# 漏一项的后果: 无 —— 这份清单存在只是为了让"为什么清掉它"有个可读的理由.
 INJECTION_VARIABLES: tuple[str, ...] = (
     # POSIX shell 启动与命令查找
     "ENV",
@@ -72,10 +76,14 @@ INJECTION_VARIABLES: tuple[str, ...] = (
     "POWERSHELL_TELEMETRY_OPTOUT",
 )
 
-# 前缀匹配的清除项 (macOS 的 DYLD_* 一族, Bash 导出函数).
+# 前缀匹配的清除项. 与 INJECTION_VARIABLES 同一条: ADR-0040 C 类,
+# 正向 allowlist 才是主机制.
 INJECTION_VARIABLE_PREFIXES: tuple[str, ...] = ("DYLD_", "BASH_FUNC_")
 
 # 保留项白名单: 不影响命令查找与代码加载, 但缺了会让大量工具行为异常.
+# 这是**封闭策略**, 不是开放穷举: 它是"授予集合" —— 只有列进来的变量才会进子进程.
+# 加一项是明确的放宽决定, 漏一项只会让某个工具行为异常, 不会开洞. 与上面那份
+# INJECTION_VARIABLES 的方向正好相反, 两者不要混为一谈 (ADR-0040 §8.4).
 DEFAULT_ENV_ALLOWLIST: tuple[str, ...] = (
     "HOME",
     "LANG",

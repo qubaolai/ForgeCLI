@@ -311,7 +311,7 @@ button { color: inherit; }
 .warning-copy { margin: 12px 20px; color: var(--warning); }
 .approval-modal footer { display: flex; justify-content: flex-end; gap: 9px; padding: 16px 20px; border-top: 1px solid var(--border); }
 
-.settings-panel { width: min(880px, 96vw); height: min(640px, 90vh); display: grid; grid-template-rows: 70px 1fr; background: #151820; border: 1px solid var(--border); border-radius: 15px; overflow: hidden; }
+.settings-panel { position: relative; width: min(1040px, 96vw); height: min(720px, 92vh); display: grid; grid-template-rows: 70px 1fr; background: #151820; border: 1px solid var(--border); border-radius: 15px; overflow: hidden; }
 .settings-panel > header { padding: 15px 20px; display: flex; justify-content: space-between; border-bottom: 1px solid var(--border); }
 .settings-panel > header button { border: 0; background: transparent; font-size: 24px; cursor: pointer; }
 .settings-body { min-height: 0; display: grid; grid-template-columns: 180px 1fr; }
@@ -373,6 +373,121 @@ button { color: inherit; }
 .model-editor summary span { display: grid; gap: 3px; }
 .model-editor summary small { color: var(--muted); }
 
+.model-settings { min-height: 100%; }
+.model-subnav { width: fit-content; display: flex; gap: 3px; padding: 3px; border-radius: 9px; background: var(--surface-2); }
+.model-subnav button { border: 0; border-radius: 7px; padding: 7px 14px; background: transparent; color: var(--muted); cursor: pointer; font-size: 11px; }
+.model-subnav button.active { background: var(--surface-3); color: var(--text); box-shadow: 0 1px 3px #0003; }
+.model-page-heading { margin-top: 23px; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.settings-fields .model-page-heading h3 { margin: 0; color: var(--text); font-size: 20px; letter-spacing: -.02em; text-transform: none; }
+.model-page-heading p, .model-section-heading p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.primary-action { min-height: 36px; border: 1px solid #54cfa4; border-radius: 8px; padding: 8px 13px; background: var(--accent); color: #092017; cursor: pointer; font-weight: 700; }
+.primary-action:disabled { opacity: .5; cursor: default; }
+.current-model-card { min-height: 88px; margin-top: 22px; padding: 15px 17px; display: flex; align-items: center; gap: 13px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface-2); }
+.current-model-card.configured { border-color: color-mix(in srgb, var(--accent) 42%, var(--border)); background: color-mix(in srgb, var(--accent) 7%, var(--surface-2)); box-shadow: inset 3px 0 var(--accent); }
+.current-model-card > div { min-width: 0; flex: 1; display: grid; gap: 4px; }
+.current-model-card > div > span { color: var(--accent); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.current-model-card strong { font-size: 15px; }
+.current-model-card small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.current-model-card select { max-width: 240px; border: 1px solid var(--border); border-radius: 7px; padding: 8px; background: var(--surface-3); color: var(--text); }
+.provider-mark { width: 36px; height: 36px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 9px; background: #dcecff; color: #245bb5; font-weight: 800; }
+.provider-openai { background: #e7e8eb; color: #222832; }
+.provider-glm { background: #e9e2ff; color: #6750bb; }
+.provider-local { background: #ffe8cf; color: #a95818; }
+.provider-mimo { background: #ffe2ed; color: #a83362; }
+.provider-none { background: var(--surface-3); color: var(--muted); }
+.configured-models { margin-top: 28px; }
+.model-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.settings-fields .model-section-heading h4 { margin: 0; font-size: 13px; }
+.model-section-heading h4 span { margin-left: 5px; color: var(--muted); font-weight: 400; }
+.model-section-heading > button { border: 0; background: transparent; color: var(--accent); cursor: pointer; font-size: 11px; }
+.configured-model-list { margin-top: 11px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.configured-model-list .model-editor { border: 0; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 88%, var(--surface-2)); }
+.configured-model-list .model-editor:last-child { border-bottom: 0; }
+.configured-model-list .model-editor[open] { background: var(--surface-2); }
+.configured-model-list .model-editor > summary { min-height: 66px; padding: 11px 13px; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto 16px; gap: 12px; }
+.configured-model-list .model-editor > summary:hover { background: color-mix(in srgb, var(--surface-3) 52%, transparent); }
+.configured-model-list .model-editor > summary > span:nth-child(2) { min-width: 0; display: grid; gap: 4px; }
+.configured-model-list .model-editor > summary strong { font-size: 12px; }
+.configured-model-list .model-editor > summary strong em { margin-left: 7px; padding: 2px 6px; border-radius: 999px; background: var(--accent-dim); color: var(--accent); font-size: 9px; font-style: normal; }
+.configured-model-list .model-editor > summary small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-row-status { display: block !important; color: var(--accent); font-size: 10px; white-space: nowrap; }
+.model-row-status i { display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%; background: var(--accent); }
+.configured-model-list .model-editor > summary > .icon { width: 14px; color: var(--muted); transition: transform .16s; }
+.configured-model-list .model-editor[open] > summary > .icon { transform: rotate(180deg); }
+.configured-model-list .model-fields { border-top: 1px solid var(--border); }
+.model-remove-row { padding: 10px 14px 14px; display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+.model-remove-row span { margin-right: auto; color: var(--muted); font-size: 10px; }
+.model-remove-row button { color: var(--danger); }
+.model-remove-row button.confirm { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); background: color-mix(in srgb, var(--danger) 12%, var(--surface-3)); }
+.model-empty-state { margin-top: 11px; padding: 32px 20px; display: grid; justify-items: center; gap: 8px; border: 1px dashed var(--border); border-radius: 10px; text-align: center; }
+.model-empty-state p { margin: 0 0 6px; color: var(--muted); font-size: 11px; }
+.model-routing { margin-top: 17px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.model-routing > summary { padding: 13px 15px; display: flex; align-items: center; justify-content: space-between; gap: 12px; list-style: none; cursor: pointer; }
+.model-routing > summary::-webkit-details-marker, .provider-heading::-webkit-details-marker { display: none; }
+.model-routing > summary > span:first-child { display: grid; gap: 3px; }
+.model-routing > summary small, .model-routing > summary > span:last-child { color: var(--muted); font-size: 10px; }
+.model-routing > summary .icon { width: 13px; vertical-align: -3px; transition: transform .16s; }
+.model-routing[open] > summary .icon { transform: rotate(180deg); }
+.model-routing-body { padding: 0 15px 14px; border-top: 1px solid var(--border); }
+.settings-fields .model-routing-body h4 { margin: 20px 0 4px; }
+
+.provider-availability-list { margin-top: 20px; display: grid; gap: 9px; }
+.provider-editor { margin: 0; background: var(--surface-2); }
+.provider-heading { min-height: 65px; padding: 11px 13px; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto 16px; align-items: center; gap: 11px; list-style: none; cursor: pointer; }
+.provider-heading > span:nth-child(2) { min-width: 0; display: grid; gap: 4px; }
+.provider-heading > span small { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.provider-heading em { color: var(--warning); font-size: 10px; font-style: normal; white-space: nowrap; }
+.provider-heading em.ready { color: var(--accent); }
+.provider-heading > .icon { width: 14px; color: var(--muted); transition: transform .16s; }
+.provider-editor[open] .provider-heading > .icon { transform: rotate(180deg); }
+.provider-editor[open] .provider-heading { border-bottom: 1px solid var(--border); }
+.provider-protocol-help { padding-bottom: 16px; }
+
+.model-drawer-backdrop { position: absolute; z-index: 10; inset: 0; background: #050609aa; }
+.model-drawer { position: absolute; top: 0; right: 0; width: min(500px, 92%); height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); border-left: 1px solid var(--border); background: var(--surface); box-shadow: -20px 0 60px #0008; }
+.model-drawer > header { min-height: 76px; padding: 18px 22px; display: flex; align-items: flex-start; justify-content: space-between; border-bottom: 1px solid var(--border); }
+.settings-fields .model-drawer h3 { margin: 0; color: var(--text); font-size: 18px; text-transform: none; }
+.model-drawer header p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+.model-drawer header button { width: 32px; height: 32px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; font-size: 23px; }
+.model-drawer header button:hover { background: var(--surface-3); color: var(--text); }
+.model-drawer form { padding: 22px; overflow: auto; }
+.model-drawer fieldset { min-width: 0; margin: 0 0 23px; padding: 0; border: 0; }
+.model-drawer legend { margin-bottom: 10px; padding: 0; font-size: 11px; font-weight: 700; }
+.provider-choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.provider-choice-grid > button { min-width: 0; min-height: 68px; padding: 9px; display: grid; grid-template-columns: 34px minmax(0, 1fr) 14px; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); text-align: left; cursor: pointer; }
+.provider-choice-grid > button:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+.provider-choice-grid > button.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--surface-2)); box-shadow: inset 0 0 0 1px var(--accent); }
+.provider-choice-grid .provider-mark { width: 34px; height: 34px; }
+.provider-choice-grid button > span:nth-child(2) { min-width: 0; display: grid; gap: 4px; }
+.provider-choice-grid strong { font-size: 11px; }
+.provider-choice-grid small { color: var(--warning); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.provider-choice-grid small.ready { color: var(--accent); }
+.provider-choice-grid .icon { width: 14px; color: var(--accent); opacity: 0; }
+.provider-choice-grid button.active .icon { opacity: 1; }
+.model-input { display: grid; gap: 7px; }
+.model-input > span, .model-add-advanced label > span { font-size: 10px; font-weight: 700; }
+.model-input input, .model-add-advanced input { min-width: 0; width: 100%; border: 1px solid var(--border); border-radius: 7px; padding: 9px 10px; outline: 0; background: #0d1015; color: var(--text); }
+.model-input input:focus, .model-add-advanced input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.model-input small { color: var(--muted); font-size: 9px; }
+.provider-connection-summary { margin-top: 11px; padding: 9px 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-radius: 8px; background: var(--surface-2); font-size: 9px; }
+.provider-connection-summary > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.provider-connection-summary i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
+.provider-connection-summary.ready i { background: var(--accent); }
+.provider-connection-summary button { flex: 0 0 auto; border: 0; background: transparent; color: var(--accent); cursor: pointer; }
+.model-add-advanced { margin: 2px 0 18px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.model-add-advanced summary { padding: 12px 0; display: flex; justify-content: space-between; list-style: none; cursor: pointer; font-size: 11px; font-weight: 700; }
+.model-add-advanced summary::-webkit-details-marker { display: none; }
+.model-add-advanced summary > span { color: var(--muted); font-size: 9px; font-weight: 400; }
+.model-add-advanced summary .icon { width: 12px; vertical-align: -3px; transition: transform .16s; }
+.model-add-advanced[open] summary .icon { transform: rotate(180deg); }
+.model-add-advanced > div { padding-bottom: 13px; display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.model-add-advanced label { min-width: 0; display: grid; gap: 6px; }
+.model-validation-error { margin: -7px 0 14px; color: var(--danger); font-size: 10px; }
+.model-default-check { display: flex; align-items: center; gap: 7px; font-size: 11px; }
+.model-default-check input { width: 15px; height: 15px; accent-color: var(--accent); }
+.model-drawer form > footer { margin-top: 25px; padding-top: 17px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border); }
+.model-drawer form > footer > button:not(.primary-action) { border: 1px solid var(--border); border-radius: 8px; padding: 8px 13px; background: var(--surface-3); cursor: pointer; }
+
 @media (max-width: 1000px) {
   .workspace-grid, .workspace-grid.with-plan { grid-template-columns: 200px minmax(0, 1fr); }
   .context-resizer { display: none; }
@@ -395,6 +510,24 @@ button { color: inherit; }
   .settings-body { grid-template-columns: 108px minmax(0, 1fr); }
   .settings-body nav { padding: 8px; }
   .settings-fields { padding: 12px; }
+  .model-subnav { width: 100%; }
+  .model-subnav button { flex: 1; padding-inline: 7px; }
+  .model-page-heading { align-items: center; }
+  .model-page-heading p, .model-section-heading p, .model-section-heading > button { display: none; }
+  .settings-fields .model-page-heading h3 { font-size: 17px; }
+  .current-model-card { padding: 12px; }
+  .current-model-card > select { width: 38px; color: transparent; }
+  .configured-model-list .model-editor > summary { grid-template-columns: 34px minmax(0, 1fr) 14px; padding-inline: 10px; gap: 9px; }
+  .configured-model-list .model-editor > summary .provider-mark { width: 34px; height: 34px; }
+  .model-row-status { display: none !important; }
+  .model-remove-row { flex-wrap: wrap; }
+  .model-remove-row span { width: 100%; }
+  .provider-heading { grid-template-columns: 34px minmax(0, 1fr) 14px; }
+  .provider-heading em { display: none; }
+  .model-drawer { width: 100%; }
+  .model-drawer form { padding: 18px; }
+  .provider-choice-grid, .model-add-advanced > div { grid-template-columns: 1fr; }
+  .provider-connection-summary > span { max-width: 55%; }
   .setting-field, .editable-value { display: grid; grid-template-columns: 1fr; align-items: stretch; gap: 8px; }
   .setting-field > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
   .add-root, .model-add { grid-template-columns: 1fr; }
@@ -410,7 +543,7 @@ button { color: inherit; }
   .project-center { background: radial-gradient(circle at 15% 0, #dff7ee 0, transparent 30%), var(--bg); }
   .project-card { background: #fff; box-shadow: 0 12px 30px #34405415; }
   .approval-modal, .settings-panel { background: #fff; }
-  .approval-modal pre, .setting-field input, .setting-field select, .project-card.add-project input, .admin-row select { background: #f4f6f8; color: var(--text); }
+  .approval-modal pre, .setting-field input, .setting-field select, .project-card.add-project input, .admin-row select, .model-input input, .model-add-advanced input { background: #f4f6f8; color: var(--text); }
 }
 
 :root[data-theme="dark"] { --bg: #0d0f13; --surface: #13161c; --surface-2: #191d25; --surface-3: #202530; --border: #282e39; --muted: #9198a7; --text: #e7e9ee; --text-soft: #d5d9e2; color: var(--text); background: var(--bg); }
@@ -418,11 +551,11 @@ button { color: inherit; }
 :root[data-theme="dark"] .project-center { background: radial-gradient(circle at 15% 0, #183329 0, transparent 30%), var(--bg); }
 :root[data-theme="dark"] .project-card { background: linear-gradient(145deg, #171b22, #11141a); box-shadow: 0 14px 35px #0004; }
 :root[data-theme="dark"] .approval-modal, :root[data-theme="dark"] .settings-panel { background: #151820; }
-:root[data-theme="dark"] .admin-row select, :root[data-theme="dark"] .approval-modal pre, :root[data-theme="dark"] .setting-field input, :root[data-theme="dark"] .setting-field select, :root[data-theme="dark"] .project-card.add-project input, :root[data-theme="dark"] .editable-value input, :root[data-theme="dark"] .editable-value select, :root[data-theme="dark"] .add-root input, :root[data-theme="dark"] .add-root select { background: #0d1015; color: var(--text); }
+:root[data-theme="dark"] .admin-row select, :root[data-theme="dark"] .approval-modal pre, :root[data-theme="dark"] .setting-field input, :root[data-theme="dark"] .setting-field select, :root[data-theme="dark"] .project-card.add-project input, :root[data-theme="dark"] .editable-value input, :root[data-theme="dark"] .editable-value select, :root[data-theme="dark"] .add-root input, :root[data-theme="dark"] .add-root select, :root[data-theme="dark"] .model-input input, :root[data-theme="dark"] .model-add-advanced input { background: #0d1015; color: var(--text); }
 
 :root[data-theme="light"] { --bg: #f4f5f7; --surface: #fff; --surface-2: #f6f7f9; --surface-3: #e9edf1; --border: #d7dce3; --muted: #687182; --text: #1c2430; --text-soft: #394352; color: var(--text); background: var(--bg); }
 :root[data-theme="light"] .topbar, :root[data-theme="light"] .conversation { background: #fafbfc; }
 :root[data-theme="light"] .project-center { background: radial-gradient(circle at 15% 0, #dff7ee 0, transparent 30%), var(--bg); }
 :root[data-theme="light"] .project-card { background: #fff; box-shadow: 0 12px 30px #34405415; }
 :root[data-theme="light"] .approval-modal, :root[data-theme="light"] .settings-panel { background: #fff; }
-:root[data-theme="light"] .admin-row select, :root[data-theme="light"] .approval-modal pre, :root[data-theme="light"] .setting-field input, :root[data-theme="light"] .setting-field select, :root[data-theme="light"] .project-card.add-project input, :root[data-theme="light"] .editable-value input, :root[data-theme="light"] .editable-value select, :root[data-theme="light"] .add-root input, :root[data-theme="light"] .add-root select { background: #f4f6f8; color: var(--text); }
+:root[data-theme="light"] .admin-row select, :root[data-theme="light"] .approval-modal pre, :root[data-theme="light"] .setting-field input, :root[data-theme="light"] .setting-field select, :root[data-theme="light"] .project-card.add-project input, :root[data-theme="light"] .editable-value input, :root[data-theme="light"] .editable-value select, :root[data-theme="light"] .add-root input, :root[data-theme="light"] .add-root select, :root[data-theme="light"] .model-input input, :root[data-theme="light"] .model-add-advanced input { background: #f4f6f8; color: var(--text); }

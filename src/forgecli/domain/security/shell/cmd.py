@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from forgecli.domain.security.shell.command_plan import (
     CommandUnit,
@@ -36,11 +37,39 @@ _CONNECTORS: dict[str, Connector] = {
     "|": Connector.PIPE,
 }
 
-_REDIRECTS: dict[str, RedirectKind] = {
-    "<": RedirectKind.INPUT,
-    ">": RedirectKind.OUTPUT,
-    ">>": RedirectKind.APPEND,
+# 操作符 -> (种类, 省略 IO number 时的默认 fd). 与 POSIX 那份分开列是因为 cmd 的
+# 集合更小: 没有 heredoc, 没有 herestring.
+# ADR-0040 B 类表: cmd 的重定向操作符.
+# 表外默认: 不在表里就不是重定向, 前面的数字照旧当普通参数.
+# 漏一项的后果: 少认一种重定向, 该单元的写入目标少一条, 方向是更严不是更松.
+_REDIRECTS: dict[str, tuple[RedirectKind, int]] = {
+    "<": (RedirectKind.INPUT, 0),
+    ">": (RedirectKind.OUTPUT, 1),
+    ">>": (RedirectKind.APPEND, 1),
+    ">&": (RedirectKind.DUPLICATE, 1),
 }
+
+# 长的排前面: `>>` 必须先于 `>`, `>&` 必须先于 `>` 与 `&`, 否则 `2>&1` 会被切成
+# `>` 加一个叫 `&` 的文件名 —— 那正是这张表存在之前的行为.
+_CMD_OPERATORS: tuple[str, ...] = (
+    ">>",
+    ">&",
+    "&&",
+    "||",
+    "&",
+    "|",
+    "<",
+    ">",
+    "(",
+    ")",
+)
+
+
+class _CmdToken(NamedTuple):
+    text: str
+    quoted: bool
+    # 仅重定向操作符会带: `2>&1` 里那个 2.
+    fd: int | None = None
 
 
 @dataclass(frozen=True)
@@ -86,7 +115,8 @@ def parse_cmd_units(command: str, *, depth: int = 0) -> ParsedCmd:
 
     index = 0
     while index < len(tokens):
-        text, quoted = tokens[index]
+        token = tokens[index]
+        text, quoted = token.text, token.quoted
         if not quoted and text in _CONNECTORS:
             flush()
             pending = _CONNECTORS[text]
@@ -95,8 +125,13 @@ def parse_cmd_units(command: str, *, depth: int = 0) -> ParsedCmd:
         if not quoted and text in _REDIRECTS:
             if index + 1 >= len(tokens):
                 raise ScanError(f"重定向 {text} 缺少目标")
+            kind, default_fd = _REDIRECTS[text]
             redirects.append(
-                Redirect(kind=_REDIRECTS[text], target=tokens[index + 1][0])
+                Redirect(
+                    kind=kind,
+                    target=tokens[index + 1].text,
+                    fd=token.fd if token.fd is not None else default_fd,
+                )
             )
             index += 2
             continue
@@ -109,9 +144,9 @@ def parse_cmd_units(command: str, *, depth: int = 0) -> ParsedCmd:
     return ParsedCmd(units=tuple(units), opaque=tuple(dict.fromkeys(opaque)))
 
 
-def _tokenize(command: str) -> list[tuple[str, bool]]:
+def _tokenize(command: str) -> list[_CmdToken]:
     """cmd 分词: 处理 `^` 转义, 双引号, 以及多字符操作符."""
-    tokens: list[tuple[str, bool]] = []
+    tokens: list[_CmdToken] = []
     buffer = ""
     quoted = False
     has_content = False
@@ -120,8 +155,23 @@ def _tokenize(command: str) -> list[tuple[str, bool]]:
     def flush() -> None:
         nonlocal buffer, quoted, has_content
         if has_content:
-            tokens.append((buffer, quoted))
+            tokens.append(_CmdToken(buffer, quoted))
         buffer, quoted, has_content = "", False, False
+
+    def take_io_number(operator: str) -> int | None:
+        """`2>&1` 里的 2 属于重定向, 不是上一条命令的参数.
+
+        判据与 POSIX 扫描器那份相同: 缓冲区一遇到空白就 flush, 所以走到这里缓冲区
+        里还有东西就说明它紧挨着操作符. 被引用的 (`^2` 或 `"2"`) 不算 —— 那是文件名.
+        """
+        nonlocal buffer, quoted, has_content
+        if operator not in _REDIRECTS or not has_content or quoted:
+            return None
+        if not all(char in "0123456789" for char in buffer):
+            return None
+        number = int(buffer)
+        buffer, quoted, has_content = "", False, False
+        return number
 
     while index < len(command):
         char = command[index]
@@ -147,16 +197,13 @@ def _tokenize(command: str) -> list[tuple[str, bool]]:
             index += 1
             continue
         matched = next(
-            (
-                op
-                for op in (">>", "&&", "||", "&", "|", "<", ">", "(", ")")
-                if command.startswith(op, index)
-            ),
+            (op for op in _CMD_OPERATORS if command.startswith(op, index)),
             None,
         )
         if matched is not None:
+            fd = take_io_number(matched)
             flush()
-            tokens.append((matched, False))
+            tokens.append(_CmdToken(matched, False, fd))
             index += len(matched)
             continue
         buffer += char

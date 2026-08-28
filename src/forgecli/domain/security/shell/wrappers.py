@@ -26,10 +26,13 @@ from dataclasses import dataclass
 from enum import Enum
 
 from forgecli.domain.security.shell.command_plan import (
+    CommandPlan,
+    Connector,
     ScriptPayload,
     ShellKind,
     normalize_executable,
 )
+from forgecli.domain.security.shell.commands import NETWORK_TOOLS
 
 __all__ = [
     "PRIVILEGE_ESCALATORS",
@@ -41,6 +44,7 @@ __all__ = [
     "inline_code_of",
     "interpreter_of",
     "nested_command_of",
+    "pipes_into_interpreter",
     "script_entry_of",
     "strip_prefix",
 ]
@@ -81,8 +85,13 @@ class Interpreter:
     inline_subcommands: tuple[str, ...] = ()
 
 
+# 下面几张表共用的"shell 的内联代码选项". 不是独立判据, 只是避免重复书写 (封闭).
 _SHELL = ("c",)
 
+# ADR-0040 B 类表, 而且是**全项目唯一**一份解释器登记 (2026-08-28 合并):
+# `command_plan.py` 原先另有一份只含名字的副本, 两份会漂.
+# 表外默认: 认不出解释器就取不到内联代码, 该单元按 UNPROVEN 处理, 不放行.
+# 漏一项的后果: 少一次内容分析, 落回按能力裁决 —— 更严, 不更松.
 _INTERPRETERS: dict[str, Interpreter] = {
     "sh": Interpreter("shell", _SHELL, value_taking="o"),
     "bash": Interpreter("shell", _SHELL, value_taking="o"),
@@ -129,6 +138,9 @@ class StripRule:
 
 
 # 剥掉之后不改变"真正执行什么"的前缀.
+# ADR-0040 B 类表: 剥掉之后不改变"真正执行什么"的前缀.
+# 表外默认: 剥不掉就把这一层本身当成要执行的命令, 于是它按普通命令裁决.
+# 漏一项的后果: 认到的是外层而不是内层, 目标集合因此不封闭 -> UNPROVEN -> ASK.
 _STRIPPABLE: dict[str, StripRule] = {
     "env": StripRule("assignments"),
     "command": StripRule("flags"),
@@ -147,6 +159,10 @@ _STRIPPABLE: dict[str, StripRule] = {
 }
 
 # 提权入口. 永远不剥离: 它们是 Hard Deny 的判据本身 (ADR-0013 §4).
+# ADR-0040 B/C 类表: 提权前缀. 命中即 Hard Deny, 但它不是提权的**边界** ——
+# 边界是围栏与受控 PATH.
+# 表外默认: 未知的提权工具仍要经过可执行文件解析与围栏.
+# 漏一项的后果: 少一条红线, 不等于拿到 root.
 PRIVILEGE_ESCALATORS: frozenset[str] = frozenset(
     {
         "sudo",
@@ -170,14 +186,25 @@ PRIVILEGE_ESCALATORS: frozenset[str] = frozenset(
 # 点头。这与 ADR-0024 拒绝"只读命令白名单"是同一条理由的两个方向: 判据一旦作用在命令名
 # 上, 两个方向都会错。
 # 这些命令的存在本身就是为了跑别的东西, 没有"不委托"的形态.
+# ADR-0040 B 类表.
+# 表外默认: 认不出委托关系时, 该单元按"可能跑任意代码"处理 (UNPROVEN -> EXECUTE_SCRIPT).
+# 漏一项的后果: 多问一次人, 不是少问一次.
 _ALWAYS_INDIRECT: frozenset[str] = frozenset(
     {"xargs", "eval", "watch", "parallel", "entr", "Invoke-Expression"}
 )
 
 # 只在给了这些谓词时才执行内层的命令.
+#
+# ADR-0040 B 类表.
+# 表外默认: 认不出委托关系时该单元按"可能跑任意代码"处理 (UNPROVEN -> EXECUTE_SCRIPT).
+# 漏一项的后果: 多问一次人, 不是少问一次.
 _CONDITIONAL_INDIRECT: frozenset[str] = frozenset({"find", "fd"})
 
 # 会执行任意项目代码的入口命令. 不是白名单, 是"这些一定算脚本执行"的清单.
+#
+# ADR-0040 B 类表.
+# 表外默认: 取不到脚本正文时该单元是 UNPROVEN, 脚本分析器拿不到内容就不放行.
+# 漏一项的后果: 少一次内容分析, 落回按能力裁决.
 _SCRIPT_ENTRYPOINTS: dict[str, str] = {
     "pytest": "python",
     "tox": "python",
@@ -201,6 +228,9 @@ _SCRIPT_ENTRYPOINTS: dict[str, str] = {
 }
 
 # 脚本文件后缀 -> 语言.
+# ADR-0040 B 类表: 后缀**不是**权威判据 —— 权威的是 shebang 与文件 metadata.
+# 表外默认: 认不出语言时按"未知脚本"处理, 不放行.
+# 漏一项的后果: 少认出一种语言, 内容仍然进脚本分析.
 _SCRIPT_SUFFIXES: dict[str, str] = {
     ".py": "python",
     ".sh": "shell",
@@ -494,11 +524,19 @@ def script_entry_of(
     name = normalize_executable(executable)
     entry_language = _SCRIPT_ENTRYPOINTS.get(name)
     if entry_language is not None:
-        return ScriptPayload(
-            language=entry_language,
-            path=" ".join((executable, *argv)),
-            origin="file",
-        )
+        # **没有 path.** `npm run build` 跑的是 package.json 里那条 script, `make test`
+        # 跑的是 Makefile 里那条规则 —— 都不是"一个可以读进来算哈希的文件", 那份正文
+        # 要等入口程序自己去解析才知道.
+        #
+        # 这里原先填的是 `" ".join((executable, *argv))`, 即把整条命令行当成路径.
+        # 那个值在任何机器上都不可能是一个文件, 于是 ScriptBindingAnalyzer 每次都判
+        # "脚本不存在", 走 cannot_run -> DENY, 而 unrunnable 排在模式判断之前 ——
+        # 这张表里的 19 个入口命令因此在**所有模式**下都跑不了, full_access 也救不回来.
+        #
+        # 正确的形状与下面 `python -m pytest` 那一支相同: 认不出跑的是什么, 不等于
+        # 没跑. 给一份既无 source 也无 path 的 payload, 让脚本分析记一条风险事实,
+        # 由能力与围栏裁决.
+        return ScriptPayload(language=entry_language, origin="unresolved")
 
     suffix_language = _language_of_suffix(name)
     if suffix_language is not None:
@@ -521,12 +559,17 @@ def _interpreter_script(
         # 选项把参数吃光了, 但仍然会执行代码: `python -m pytest` 就是这种形状.
         # 认不出跑的是什么, 不等于没跑 —— 交给脚本分析按内容不完整走 ASK.
         return ScriptPayload(language=interpreter.language, origin="unresolved")
-    if any(char.isspace() for char in target):
+    candidate = ScriptPayload(language=interpreter.language, path=target, origin="file")
+    if candidate.bindable_path is None:
         # 取到的不像文件名而像一段代码 (内联匹配没覆盖到的写法). 不能当文件去读, 也
         # 不能当无事发生: 给一份既无 source 也无 path 的 payload, 让脚本分析按
         # "内容收集不完整"走 ASK.
+        #
+        # "像不像路径"这一条判据只有 ScriptPayload.bindable_path 一处 (ADR-0028 规则 B):
+        # 早先这里自带一份 `any(char.isspace(...))`, 而读文件那一步并不问, 于是另一个
+        # 生产方 (入口命令那一支) 把整条命令行填进 path 时没有任何东西拦得住.
         return ScriptPayload(language=interpreter.language, origin="unresolved")
-    return ScriptPayload(language=interpreter.language, path=target, origin="file")
+    return candidate
 
 
 def _first_positional(interpreter: Interpreter, argv: tuple[str, ...]) -> str | None:
@@ -562,10 +605,17 @@ def _language_of_suffix(name: str) -> str | None:
 # ---- 间接执行的内层命令 ----
 
 # find 的执行谓词, 以及它们的终止符.
+# ADR-0040 A/B 类表: find 一族里"后面跟着要执行的命令"的谓词, 以及那段命令的终止符.
+# 表外默认: 认不出谓词就认不出内层命令, 该单元按"可能跑任意代码"处理.
+# 漏一项的后果: 多问一次人.
 _EXEC_PREDICATES = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+# 那段内层命令的终止符. 与 _EXEC_PREDICATES 同一条: ADR-0040 A/B 类, 认不出就 UNPROVEN.
 _EXEC_TERMINATORS = frozenset({";", "+", "\\;"})
 
 # xargs 自己吃掉一个值的选项. 剩下的第一个非选项才是要跑的命令.
+# ADR-0040 B 类表: xargs 自己吃掉一个值的选项.
+# 表外默认: 认错了下游命令时, 整个单元标 UNPROVEN 而不是猜一个.
+# 漏一项的后果: 多问一次人.
 _XARGS_VALUE_OPTIONS = frozenset(
     {
         "I",
@@ -659,3 +709,22 @@ def _xargs_command(argv: tuple[str, ...]) -> tuple[tuple[str, tuple[str, ...]], 
             index += 1
         index += 1
     return ()
+
+
+def pipes_into_interpreter(plan: CommandPlan) -> bool:
+    """管线上游在从网上取字节, 下游是个解释器 —— `curl http://x | sh` 那个形状.
+
+    住在这里而不是 `CommandPlan` 上: 判据要问"这个名字是不是解释器", 而那份登记就在本
+    模块 (`_INTERPRETERS`). `CommandPlan` 原先自带一份**只有名字**的副本, 于是同一个
+    问题在两处各有一份答案, 且两份会漂 —— 那正是 ADR-0040 §8.2 要合掉的东西.
+
+    判据是连接符加两端的可执行文件身份, 不是命令串里有没有 "curl".
+    """
+    for previous, unit in zip(plan.units, plan.units[1:], strict=False):
+        if unit.connector not in (Connector.PIPE, Connector.PIPE_AMP):
+            continue
+        if interpreter_of(unit.name) is None:
+            continue
+        if normalize_executable(previous.name) in NETWORK_TOOLS:
+            return True
+    return False

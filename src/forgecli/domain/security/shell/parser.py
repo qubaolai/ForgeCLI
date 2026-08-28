@@ -40,7 +40,13 @@ from forgecli.domain.security.shell.wrappers import (
 __all__ = ["MAX_WRAPPER_DEPTH", "PARSER_VERSION", "parse_command"]
 
 MAX_WRAPPER_DEPTH = 6
-PARSER_VERSION = "1"
+# 进 CommandPlan.command_hash, 而学习规则以 command_hash 为键. 解析结果的形状变了就要
+# 加一档, 否则旧规则会继续命中一条**结构已经不同**的命令.
+#
+# "2": 2026-08-28. IO number 归到重定向上 —— `npm run build 2>&1` 的 argv 从
+# ("run", "build", "2") 变成 ("run", "build"), cmd 那边不再产出一条写向名为 `&` 的
+# 文件的重定向.
+PARSER_VERSION = "2"
 
 
 def parse_command(

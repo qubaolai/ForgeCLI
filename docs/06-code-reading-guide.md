@@ -59,7 +59,7 @@ tail -f ~/.forge/logs/forge-latest.log
 
 按顺序读这四份, 不要跳:
 
-### 1.1 `scripts/check_arch.py` (312 行) 与它的两个同伴
+### 1.1 `scripts/check_arch.py` (312 行) 与它的三个同伴
 
 **第一个读它, 而不是任何架构文档.** 它是这个项目唯一一份**可执行的**架构说明: 四组规则
 写成断言, 违反就在 `make ci` 停下.
@@ -78,13 +78,18 @@ tail -f ~/.forge/logs/forge-latest.log
   `application/llm/config` 与 `application/llm/gateway` 的包门面各自藏过一个环, 都是
   靠 import 顺序活着的.
 
-`make arch` 还跑另外两个脚本, 一起读:
+`make arch` 还跑另外三个脚本, 一起读:
 
 - `scripts/check_abstractions.py` (121 行, ADR-0028): 一个 ABC / Protocol 只在满足
   A1 依赖倒置, A2 多实现, A3 开放扩展点三条之一时才保留. `AgentLoop` 与 `ToolDispatcher`
   这两个抽象就是按这条判据删掉的 —— 只有一个实现, 且实现与抽象同层.
 - `scripts/check_prompt_text.py` (117 行, ADR-0031 / ADR-0039): 送进模型上下文的参数里
   不得出现含中文的字符串字面量. 正文一律从 `application/prompt/templates/` 渲染.
+- `scripts/check_deps.py` (151 行, ADR-0040): 依赖声明与真实 import 必须对得上, 两个
+  方向都守. **声明少了**会跑得好好的 —— 传递依赖把包装进了环境, 直到上游哪天换掉它;
+  `interfaces/web/app.py` 直接 import 的 `starlette` 与 `pydantic` 就这么靠 fastapi
+  蹭了很久. **声明多了**同样安静: `pathspec` 在依赖表里躺着但全库零 import, 照样要走
+  安装, 锁定, 许可证审查与 CVE 跟踪.
 
 **读完能回答**: 为什么 `application/tools` 里没有任何 `import ...security`?
 为什么 `AgentLoop` 这个 ABC 被删了, 而 `Tool` 这个 ABC 留着?
@@ -96,7 +101,7 @@ tail -f ~/.forge/logs/forge-latest.log
 
 ### 1.3 `docs/adr/README.md`
 
-40 份 ADR (0000-0039) 的索引与状态. **不要现在全读**, 只记住有这么一批东西, 以及哪几份
+41 份 ADR (0000-0040) 的索引与状态. **不要现在全读**, 只记住有这么一批东西, 以及哪几份
 已经不作数:
 
 | ADR | 状态 |
@@ -113,6 +118,13 @@ tail -f ~/.forge/logs/forge-latest.log
 **ADR-0030 是一次大改**: 它删掉了 LLM 安全分类器, 风险缓存与静态命令证明, 改由运行期
 围栏 (Seatbelt / bubblewrap / WSL2) 与工作区快照兜底. 读到任何提"分类器"的旧材料时,
 先确认它是不是在 0030 之前写的.
+
+**ADR-0040 是一份治理决策, 落地是分批的**: 它定了两件事 —— 通用机制优先交给成熟依赖
+(filelock, prompt-toolkit, sse-starlette, Pydantic, libgit2 已落地), 以及开放世界里的
+命令名 / 路径名 / 环境变量名这类穷举表**不得承担自动放行责任**. 它自己有两条在评审时
+被撤回 (4.1 官方 OpenAI SDK, 4.6 platformdirs), 撤回理由写在原位; 后半部分 (Tree-sitter
+Shell 解析, detect-secrets) 尚未落地. 它同时修订了 ADR-0011 的封闭 provider 注册表,
+ADR-0012 的 tokenizer / cache / 熔断实现方式, 以及 ADR-0035 的日志开关归属.
 
 ### 1.4 `src/forgecli` 的目录树
 
@@ -153,8 +165,11 @@ application/     用例编排. ABC 端口也在这里
   session/       会话服务与 resume
   config/        配置服务
 infrastructure/  适配器: 文件系统, 子进程, 沙箱 Provider, JSON, HTTP, LLM adapters
+                 第三方库的对象只到这一层为止 (ADR-0040 决策 3): libgit2 的
+                 Repository 出不了 workspace/pygit2_git_queries.py, 上面拿到的是
+                 application/tools/git_queries.py 里那几个纯数据类
 interfaces/
-  cli/           Typer 入口, REPL, 终端渲染, 斜杠命令, TTY 适配
+  cli/           Typer 入口, REPL, 终端渲染, 斜杠命令, 按键读取
   web/           FastAPI 应用, SSE 事件流, 审批 broker, 内嵌静态资源
   runtime/       CLI 与 Web **共用**的组合根: tool_wiring / llm_wiring / logging_wiring
 ```
@@ -177,7 +192,7 @@ interfaces/
 | 5 | `domain/intents.py` (152 行) | `SessionMode` 四档, `InputOrigin`, `UserIntent` 家族 | `_MODE_LADDER` 为什么不复用枚举声明顺序? |
 | 6 | `interfaces/cli/repl.py::Repl._dispatch` (314 行) | 意图分派 | Ctrl-C 为什么不抛异常而是设 CancelToken? |
 | 7 | `application/agent_turn/agent_turn_service.py` (755 行) | `handle_user_message` -> `_run_loop` -> `_outcome_from_stop` | 为什么说写文件与起子进程只经它一处发生? |
-| 8 | `application/agent_loop/builtin_loop.py` (1220 行) | ReAct 主体, 分两次读 | 模型一次要三个工具时会发生什么? |
+| 8 | `application/agent_loop/builtin_loop.py` (1267 行) | ReAct 主体, 分两次读 | 模型一次要三个工具时会发生什么? |
 | 9 | `application/tool_request/dispatcher.py` (92 行) | 循环与安全管线之间的唯一通道 | `PolicyContext` 为什么每次调用重新构造, 而不是一轮开始时算一次? |
 | 10 | `domain/agent/actions.py` (150 行) | `LoopAction` / `LoopObservation` / `ObservationDisposition` | `is_error` 与 `disposition` 为什么是两个字段? |
 | 11 | `domain/agent/stop.py` (78 行) | `LoopStopReason` 与 `StopClassification` | 文件末尾那个 `assert` 挡住了什么? |
@@ -249,8 +264,8 @@ _resolve:
 | `security/analyzers/registry.py` | 111 | 分析器注册表. 按 `Capability` 分派, **不认识工具名** |
 | `security/policy_engine.py` | 192 | 最终裁决. `Hard Deny > Mandatory Ask > 围栏边界 > 分析器 Ask > Allow`, 兜底 DENY |
 | `domain/security/budget.py` | 109 | 哪些能力可以不问人. **顶替了原先的 `modes.py` 能力预算表** |
-| `domain/security/hard_deny.py` | 257 | 结构化判定 + 原始串预扫描两层, 分工而不叠加 |
-| `domain/security/protected_paths.py` | 136 | Hard Deny 的路径判据. 只看 realpath |
+| `domain/security/hard_deny.py` | 265 | 结构化判定 + 原始串预扫描两层, 分工而不叠加 |
+| `domain/security/protected_paths.py` | 156 | Hard Deny 的路径判据. 只看 realpath |
 | `security/learned_rules.py` | 194 | `always` 规则. 注意它落盘, 且按项目分区 |
 | `tools/runtime.py::ToolRuntime.execute` | 201 | 唯一执行入口. 授权为空即拒, 且执行前复核 `FileStateBinding` |
 
@@ -277,7 +292,7 @@ _resolve:
 
 ### 3.3 工具实现 (`application/tools/`)
 
-先读 `tool.py` (72 行, `Tool` ABC) 和 `builtin/base.py` (285 行, 共享助手), 然后按
+先读 `tool.py` (72 行, `Tool` ABC) 和 `builtin/base.py` (249 行, 共享助手), 然后按
 **从简到繁**:
 
 ```text
@@ -290,8 +305,10 @@ fs_find.py         看 EXPANDABLE: 在 prepare 里把 glob 展开成封闭集合
 search_text.py     看它为什么不 shell out 到 grep/rg; 正则由 `regex` 的 timeout 兜底,
                    不再按语法拒绝
 code_definitions.py 看它与 search_text 的分工: 语法树只出定义, 不出 import 与调用点
-git_read.py        看它为什么声明 SPAWN_PROCESS 却不声明 EXECUTE_SHELL
-fs_apply_patch.py  最长的写入口 (557 行). 一个信封 = 一次审批 = 一个恢复点.
+git_read.py        看它为什么一个进程都不起. 查询走 libgit2 (application/tools/
+                   git_queries.py 是端口, infrastructure/workspace/
+                   pygit2_git_queries.py 是实现), 于是 SPAWN_PROCESS 也不用声明
+fs_apply_patch.py  最长的写入口 (591 行). 一个信封 = 一次审批 = 一个恢复点.
                    配套 patch_envelope.py (信封语法), patch_apply.py (施加),
                    text_edit.py (FIND 段的容差对齐)
 shell_run.py       能力上界最宽的一个. OPAQUE + 12 个能力
@@ -308,7 +325,9 @@ shell_run.py       能力上界最宽的一个. OPAQUE + 12 个能力
 `code_definitions`, `git_read`, `fs_apply_patch`, `shell_run`.
 
 **读完能回答**: 同样是读文件, 为什么 `fs_read` 在 plan 档可见而 `shell_run` 不可见?
-`git_read` 会起子进程, 它为什么也能进 plan 档目录?
+`git_read` 曾经要靠一张 git CLI 参数白名单才敢进 plan 档目录 (挡 `--ext-diff` /
+`--textconv` 跑外部程序, `--output=` 写文件, `-c core.pager=` 指定任意命令), 换成
+libgit2 之后那张表整个删了 —— 为什么删得掉?
 
 ## 4. 主线三: 一条 Shell 命令是怎么被处理的
 
@@ -325,7 +344,7 @@ ADR-0030 之后这条线分成两半, 而且**承重的是后一半**: 解析与
 | 2 | `parser.py` | 217 | 按方言分派 |
 | 3 | `posix.py` / `cmd.py` / `powershell.py` | 236 / 166 / 218 | 三种方言的语法模型 |
 | 4 | `command_plan.py` | 301 | 解析结果: `CommandPlan` |
-| 5 | `commands.py` | 549 | **一条命令一条记录**: 影响形态 + 参数结构 + 能否证明只读. ADR-0028 把原先散在三处的命令知识合到这里 |
+| 5 | `commands.py` | 554 | **一条命令一条记录**: 影响形态 + 参数结构 + 能否证明只读. ADR-0028 把原先散在三处的命令知识合到这里 |
 | 6 | `effects.py` | 72 | 查 `commands.py` 的表, 再处理两类查不出来的情形. **表外默认值是"可能写"** |
 | 7 | `arguments.py` | 128 | 一个单元的 argv 里哪几个是路径候选. 错了会**凭空造出目标** |
 | 8 | `expansion.py` | 152 | 受控目标展开: STATIC / FORGE_EXPANDED / DYNAMIC 的判据 |
@@ -337,8 +356,8 @@ ADR-0030 之后这条线分成两半, 而且**承重的是后一半**: 解析与
 | 文件 | 行数 | 职责 |
 |---|---|---|
 | `shell_analyzer.py` | 315 | 把解析结果变成能力集合 |
-| `shell_effects.py` | 270 | 把解析结果变成 `PlanEffects` (碰哪些路径, 怎么碰) |
-| `executable_binding.py` | 184 | 这条命令实际跑哪个文件 + 它裁决后有没有被换掉 |
+| `shell_effects.py` | 284 | 把解析结果变成 `PlanEffects` (碰哪些路径, 怎么碰) |
+| `executable_binding.py` | 185 | 这条命令实际跑哪个文件 + 它裁决后有没有被换掉 |
 | `script_binding.py` | 151 | 读脚本正文. **它不分析脚本做了什么** —— 只记住读到的是哪一份 |
 | `workspace_analyzer.py` | 109 | 不经 Shell 的工具 (如 `fs_apply_patch`) 的路径检查 |
 | `network_analyzer.py` | 44 | 网络能力 |
@@ -379,19 +398,28 @@ allowlist, 读**只能**用 denylist —— Seatbelt 下 `(deny default)` 会让
 
 | 支线 | 入口 | 配套 ADR | 什么时候读 |
 |---|---|---|---|
-| 上下文压缩 | `application/context/manager.py` (276 行) | 0032, 0037 | 想理解 `/compact` 与"历史怎么塞进窗口" |
+| 上下文压缩 | `application/context/manager.py` (285 行) | 0032, 0037 | 想理解 `/compact` 与"历史怎么塞进窗口" |
 | 跨会话记忆 | `application/memory/memory_service.py` (182 行) | 0033 | 想理解模型为什么记得上一轮的事 |
 | 计划与待办 | `application/planning/planning_service.py` (370 行) | 0022 | 想理解 `plan_write` 与 `/plan-doc` |
 | 计划评审 | `application/planning/plan_review.py` (143 行) | 0023, 0038 | 想理解 plan 档"同意并执行"为什么能升到 auto |
 | 工作区恢复 | `application/recovery/coordinator.py` (519 行) | 0015 | 想理解 `/undo` 与"首次破坏性写入屏障" |
 | 系统提示词 | `application/prompt/system_prompt_builder.py` (360 行) + `templates/` | 0018, 0031, 0039 | 想改模型行为 |
-| 本地 Web 控制面 | `interfaces/web/runtime.py` (532 行), `app.py` (1018 行), `web/src/App.tsx` | 0025 | 想理解产品主入口 |
-| 可观测性 | `shared/observability/` + `interfaces/runtime/diagnostics.py` | 0035 | 要排查线上行为 |
+| 本地 Web 控制面 | `interfaces/web/runtime.py` (532 行), `app.py` (1051 行), `web/src/App.tsx` | 0025 | 想理解产品主入口 |
+| 可观测性 | `shared/observability/` + `interfaces/runtime/logging_wiring.py` + `diagnostics.py` | 0035 | 要排查线上行为 |
 | 人工 Shell | `application/manual_shell/service.py` (140 行) | 0017 | 想理解 `#` 这条独立信任通道 (仅 `forge cli`) |
 | LLM 网关 | `application/llm/gateway/default_gateway.py` (1161 行) | 0011, 0012 | 要接新供应商 |
 | 会话存储 | `application/session/session_service.py` (310 行) | 0001, 0008, 0026 | 想理解 `/resume` |
 | 终端渲染 | `interfaces/cli/run_renderer.py` (479 行) | 0016 | 要改终端输出 |
-| 配置系统 | `application/config/config_service.py` (67 行) | 0005, 0008 | 要加配置项 |
+| 配置系统 | `domain/config/config_keys.py` + `application/config/config_service.py` (67 行) | 0005, 0008 | 要加配置项 |
+| 依赖与穷举治理 | `scripts/check_deps.py` + `application/tools/git_queries.py` | 0040 | 想知道什么该交给依赖, 什么表不能承重 |
+
+**配置项是一份封闭登记, 不是散落各处的字符串**: `domain/config/config_keys.py` 的
+`SCHEMA` 是唯一权威 —— 键名, 类型, 默认值, 允许取值, 属于应用级还是项目级, 以及**给人
+看的中文名与一句说明**, 全在那一条 `ConfigKey` 上. 加配置项 = 加一条, CLI 的"常规配置"
+子菜单与 Web 设置页都从它派生, 不各写一份文案. 这条纪律是有代价换来的: 日志的五个开关
+原先是 `FORGE_LOG_*` 环境变量, 在设置面板里看不见也改不了, 而 `FORGE_LOG_LEVEL` 还压在
+`logging.level` 配置项上 —— "面板显示 info, 实际按 debug 在写"这种状态没有任何界面能
+解释. 现在它们各是一条 `logging.*` 配置项.
 
 **Web 与 CLI 的关系值得单独说一句**: 它们**不是两套业务**. 两条路径共用
 `interfaces/runtime/` 下的三个组合根, 共用同一套 application 与同一条安全管线; 差别只在
@@ -422,25 +450,30 @@ git log 快.
 **`__all__` 是模块的对外边界.** 没进 `__all__` 的名字是内部实现.
 
 **测试是第二份文档.** 测试函数名是完整的英文句子, 读测试名就知道系统承诺了什么.
-91 个测试文件按主题分组:
+共 1319 例, 按主题分组:
 
 ```text
-tests/tools/         工具行为 (117 例)
-tests/security/      安全裁决与回归 (146 例). 文件名带 regressions 的都是真实事故
-tests/tool_request/  管线接缝 (20 例)
-tests/agent_run/     循环与事件时间线 (151 例)
-tests/prompt/        提示词编译与指纹 (85 例)
-tests/planning/      计划, 待办与计划评审 (72 例)
-tests/context/       上下文压缩与去重 (26 例)
-tests/memory/        记忆边界 (29 例)
-tests/observability/ 日志, 读数与链路追踪 (35 例)
-tests/web/           Web API 与事件流 (32 例)
-tests/manual_shell/  人工 Shell 的信任边界 (65 例)
-tests/commands/      斜杠命令 (50 例)
-tests/execution/     围栏 (21 例)
-tests/llm/           网关流式解析 (5 例)
+tests/security/      安全裁决与回归 (266 例). 文件名带 regressions 的都是真实事故
+tests/tools/         工具行为 (209 例)
+tests/agent_run/     循环与事件时间线 (166 例)
+tests/llm/           网关流式解析, 模型/供应商配置校验 (113 例)
+tests/prompt/        提示词编译与指纹 (102 例)
+tests/manual_shell/  人工 Shell 的信任边界 (79 例)
+tests/planning/      计划, 待办与计划评审 (76 例)
+tests/commands/      斜杠命令与配置项呈现 (62 例)
+tests/observability/ 日志装配, 读数与链路追踪 (49 例)
+tests/web/           Web API 与事件流 (42 例)
+tests/memory/        记忆边界 (36 例)
+tests/context/       上下文压缩与去重 (34 例)
+tests/execution/     围栏 (32 例)
+tests/tool_request/  管线接缝 (31 例)
+tests/cli/           按键读取 (11 例). 用伪终端 (pty) 驱动, 不需要真终端
+tests/project/       项目排他锁 (11 例)
 tests/support/       共享替身与循环夹具
 ```
+
+> 数字会漂, 别照抄; 值得记的是**比例**: 安全与工具两块占了三分之一还多, 而它们正是
+> 这个项目"改错了会出事"的地方.
 
 ## 7. 用改动验证理解
 
@@ -491,6 +524,9 @@ tests/support/       共享替身与循环夹具
 | 没有上下文压缩 | 已实现. ADR-0032 + ADR-0037 |
 | 没有跨会话记忆 | 已实现. ADR-0033 |
 | 没有结构化日志 | 已实现. ADR-0035 |
+| `git_read` 靠一张 git CLI 参数白名单保证只读 | 已换成 libgit2 进程内调用, 白名单删除, 不再声明 SPAWN_PROCESS. ADR-0040 决策 4.4 |
+| 日志开关是 `FORGE_LOG_*` 环境变量 (ADR-0035 决策 3 原文) | 已改成 `logging.*` 配置项, 见 ADR-0035 的 2026-08-28 修订段 |
+| `telemetry.enabled` 没有任何消费者 | 已接上: 它现在控制 `shared/observability/metrics.py` 的采集, 默认关 |
 
 **冲突时的裁定顺序**: 已接受的 ADR > 最新日期的 roadmap > `02-detailed-design.md`.
 见 `docs/05-acceptance-standards.md` §9. 同一主题有多份 ADR 时以编号大的为准, 并注意
@@ -548,7 +584,7 @@ SIBLING_BAN —— 记忆之所以敢做静默写入, 全部承重就在这一�
 - `docs/02-detailed-design.md` —— 领域模型与事件 schema (注意 §3.5 已漂移)
 - `docs/04-engineering-standards.md` —— 命名, 提交, 测试规范
 - `docs/05-acceptance-standards.md` —— 验收标准与文档一致性要求
-- `docs/adr/README.md` —— 40 份架构决策记录
+- `docs/adr/README.md` —— 41 份架构决策记录
 - `docs/SYNC-TO-MAIN.md` —— 副本到主仓的回流记录
 - `AGENTS.md` —— 命名约定与禁用名
 - `src/forgecli/application/prompt/templates/README.md` —— 模型可读正文的组织与改动纪律

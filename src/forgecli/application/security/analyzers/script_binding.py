@@ -77,8 +77,11 @@ class ScriptBindingAnalyzer(CapabilityAnalyzer):
         source = payload.source
         binding: FileStateBinding | None = None
 
-        if source is None and payload.path:
-            absolute = context.resolve(payload.path)
+        # bindable_path 而不是 path: 只有真的像路径的才拿去读文件. 拿不了的落到下面
+        # 那条 `source is None` 分支记一条风险事实, 不判这条命令跑不了.
+        script_path = payload.bindable_path
+        if source is None and script_path:
+            absolute = context.resolve(script_path)
             facts = context.filesystem.facts(absolute)
             if not facts.is_regular_file:
                 # 早失败, 且说清是哪个文件. 这条命令跑起来也会失败, 不如现在就说.

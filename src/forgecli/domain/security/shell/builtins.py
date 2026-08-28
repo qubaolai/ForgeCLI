@@ -28,6 +28,10 @@ from forgecli.domain.security.shell.command_plan import ShellKind
 __all__ = ["dialect_has_closed_builtin_set", "is_builtin"]
 
 # POSIX 特殊内建 + 常用内建. 覆盖 sh / bash / zsh 的公共部分.
+# ADR-0040 B 类表: 内建命令只服务**可执行文件解析** —— 认不出它们, `export FOO=1`
+# 会被判成"找不到可执行文件".
+# 表外默认: 不是内建就去受控 PATH 上找真实文件, 找不到即 EXECUTABLE_NOT_FOUND -> DENY.
+# 漏一项的后果: 一条合法的内建命令被拒, 方向是更严不是更松.
 _POSIX: frozenset[str] = frozenset(
     {
         # POSIX 特殊内建
@@ -97,6 +101,8 @@ _POSIX: frozenset[str] = frozenset(
 )
 
 # cmd.exe 内建. 这些在 Windows 上没有对应的 .exe.
+# ADR-0040 B 类表: 与 _POSIX 同一条判据, 服务的是 cmd 方言的可执行文件解析.
+# 表外默认 / 漏项后果同 _POSIX: 更严, 不更松.
 _CMD: frozenset[str] = frozenset(
     {
         "assoc",
@@ -145,6 +151,11 @@ _CMD: frozenset[str] = frozenset(
     }
 )
 
+# 按方言分派上面两张表. 它本身是**封闭**的: 成员就是 ShellKind 的取值, 加方言必须
+# 同时改这里, 漏了会在 dialect_has_closed_builtin_set 那里显式落到"没有封闭内建集".
+
+# 按方言分派上面两张表. 本身是**封闭**的: 成员就是 ShellKind 的取值, 加方言必须同时改
+# 这里, 漏了会在 dialect_has_closed_builtin_set 那里显式落到"没有封闭内建集".
 _BY_DIALECT: dict[ShellKind, frozenset[str]] = {
     ShellKind.POSIX: _POSIX,
     ShellKind.CMD: _CMD,

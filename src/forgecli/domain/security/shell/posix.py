@@ -20,11 +20,13 @@ from forgecli.domain.security.shell.command_plan import (
     UnitOrigin,
 )
 from forgecli.domain.security.shell.tokens import (
+    REDIRECT_OPERATORS,
     ScanError,
     Substitution,
     SubstitutionKind,
     Token,
     TokenKind,
+    default_fd_of,
     tokenize_posix,
 )
 from forgecli.domain.security.shell.wrappers import script_entry_of
@@ -69,17 +71,6 @@ _CONNECTORS: dict[str, Connector] = {
     "|&": Connector.PIPE_AMP,
     "&": Connector.BACKGROUND,
     "\n": Connector.NEWLINE,
-}
-
-_REDIRECTS: dict[str, RedirectKind] = {
-    "<": RedirectKind.INPUT,
-    ">": RedirectKind.OUTPUT,
-    ">>": RedirectKind.APPEND,
-    "<<": RedirectKind.HEREDOC,
-    "<<-": RedirectKind.HEREDOC,
-    "<<<": RedirectKind.HERESTRING,
-    ">&": RedirectKind.DUPLICATE,
-    "<&": RedirectKind.DUPLICATE,
 }
 
 
@@ -129,8 +120,8 @@ class _Builder:
 
     def _handle_operator(self, token: Token, index: int) -> int:
         text = token.text
-        if text in _REDIRECTS:
-            return self._handle_redirect(text, index)
+        if text in REDIRECT_OPERATORS:
+            return self._handle_redirect(token, index)
         if text in ("(", ")"):
             # 子 shell 的括号本身不是命令; 体内命令与外层同级分析.
             return index + 1
@@ -142,8 +133,12 @@ class _Builder:
         self._pending_connector = connector
         return index + 1
 
-    def _handle_redirect(self, operator: str, index: int) -> int:
-        kind = _REDIRECTS[operator]
+    def _handle_redirect(self, token: Token, index: int) -> int:
+        operator = token.text
+        kind, _ = REDIRECT_OPERATORS[operator]
+        # 写明了就用写明的, 省略就用该操作符的默认 fd. 于是 `fd` 永远答得上
+        # "这条重定向作用在哪个描述符上", 不必让调用方再判一次 None.
+        fd = token.fd if token.fd is not None else default_fd_of(operator)
         target_index = index + 1
         if target_index >= len(self._tokens):
             raise ScanError(f"重定向 {operator} 缺少目标")
@@ -156,7 +151,7 @@ class _Builder:
             self._heredoc = target.text
         else:
             self._collect_substitutions(target)
-            self._redirects.append(Redirect(kind=kind, target=target.text))
+            self._redirects.append(Redirect(kind=kind, target=target.text, fd=fd))
         return target_index + 1
 
     # ---- 单元产出 ----

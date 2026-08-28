@@ -29,6 +29,12 @@ class FencePolicy:
     writable_roots: tuple[str, ...] = ()
     denied_read_paths: tuple[str, ...] = ()
     network_allowed: bool = False
+    # full_access: 围栏就是全部边界, 裁决侧除 Hard Deny 外不再另设闸 (ADR-0030 决策 4
+    # 的 2026-08-28 修订). 它进 policy_hash, 所以切模式会让旧授权失效.
+    #
+    # 放在围栏上而不是让裁决侧自己看 SessionMode: "把模式编译成边界"就是这个模块的
+    # 职责, 多一个地方解释模式, 就多一处会和它不一致.
+    unrestricted: bool = False
     # 实例私有临时目录. 单独一个字段而**不是**并进 writable_roots: 并进去之后
     # `read_only` 会永远是 False, 而 plan 档的全部意义就是那个 True.
     instance_temp_root: str = ""
@@ -76,6 +82,7 @@ def fence_for(
         writable_roots=writable,
         denied_read_paths=tuple(sorted(dict.fromkeys(protected_paths))),
         network_allowed=mode is SessionMode.FULL_ACCESS,
+        unrestricted=mode is SessionMode.FULL_ACCESS,
         # 实例私有临时目录始终可写, 否则连 mktemp 都用不了, 而那会让绝大多数真实命令
         # 失败. 它不算"工作区可写", 所以不进 writable_roots.
         instance_temp_root=instance_temp_root,

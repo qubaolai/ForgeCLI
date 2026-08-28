@@ -8,15 +8,23 @@
 两者形状相似 (都是"表外一律 ASK"), 但前者要靠分析器从命令串里推导出一个准确的能力
 集合才成立, 后者不需要 —— 围栏在系统调用那一刻说了算, 分析器只是在描述它.
 
-三个能力仍然在任何情况下都不自动放行, 理由与围栏无关:
+五个能力在**围栏之外**另设一道闸, 理由与围栏无关:
 
-    CREDENTIAL_ACCESS             读凭证永远需要人类在场.
-    EXTERNAL_IRREVERSIBLE_EFFECT  ADR-0013 §4.1 要求逐次批准.
-    UNKNOWN                       无法自证的能力走最保守路径.
+    CREDENTIAL_ACCESS              读凭证要人类在场.
+    EXTERNAL_IRREVERSIBLE_EFFECT   ADR-0013 §4.1 要求逐次批准.
+    EXTERNAL_READ / EXTERNAL_WRITE 工作区之外的宿主文件系统.
+    UNKNOWN                        无法自证的能力走最保守路径.
 
-EXTERNAL_READ / EXTERNAL_WRITE 同样不进自动集合, 而且**含 full_access**. 这是相对
-旧预算表的一处收紧: `full_access` 的语义是放开网络, 不是放开宿主文件系统.
-围栏对工作区外一律只读 allowlist, 要读 allowlist 之外的东西就得人类点头.
+## full_access 不受这道闸约束 (2026-08-28, ADR-0030 决策 4 修订)
+
+`fence.unrestricted` 为真且围栏**确实立起来了**时, 上面五个也自动放行. 那一档的语义就是
+"只剩红线兜底" —— `/mode` 的说明一直是这么写的, 而这个模块此前并没有兑现它.
+
+这不是把边界拆了, 是把边界**收归一处**: 工作区外写入与受保护路径读取仍然被围栏在系统
+调用那一刻拦下, 凭证外泄仍然是 Hard Deny 而不是 ASK (见 workspace_analyzer). 变的只是
+"围栏拦不住的那些要不要先问一次人", full_access 的回答是不问.
+
+**UNCONFINED 时这条不生效.** 没有围栏就没有"在边界内执行"这回事, 那一档退回逐项确认.
 """
 
 from __future__ import annotations
@@ -72,11 +80,26 @@ _WORKSPACE_MUTATION = frozenset(
 # 这是本模块的核心: 旧预算表把 EXECUTE_SHELL 放进 auto 档, 靠的是分析器证明这条命令
 # 不会伸出去; 现在靠的是围栏让它伸不出去. 没有围栏 (UNCONFINED) 时这一组落回 ASK,
 # 而不是退回去证明 —— ADR-0030 决策 5.
+#
+# NETWORK_ACCESS 在这一组里, 而**不是**"围栏放开网络时才自动放行" (ADR-0040 §8.3 的
+# C 类处置, 2026-08-28):
+#
+# 批准一次 NETWORK_ACCESS 并不会让围栏放宽 —— 围栏由 mode 编译 (dispatcher 的
+# `fence_factory(mode)`), 授权信封里没有它. 于是在 auto 档问"要不要联网", 用户点同意
+# 之后命令照样被围栏拦下. 那是一个答案不起作用的问题.
+#
+# 网络到底通不通由 `fence.network_allowed` 在系统调用那一刻说了算. 围栏立起来了就不必
+# 问; 没立起来时, shell_run 必然声明 EXECUTE_SHELL, 这一组本来就落回 ASK.
+#
+# 于是 `NETWORK_TOOLS` 那张命令名表退出授权路径, 只剩两个用处: 生成给人看的风险摘要
+# (`PlanEffects.network_targets`), 以及 Hard Deny 的 `curl | sh` 形状判定. 表里漏一条
+# 网络工具, 后果从"少一次审批"变成"风险摘要少一行".
 _NEEDS_FENCE = frozenset(
     {
         Capability.EXECUTE_SHELL,
         Capability.EXECUTE_SCRIPT,
         Capability.MODEL_CALL,
+        Capability.NETWORK_ACCESS,
     }
 )
 
@@ -88,12 +111,13 @@ def fence_allowed_capabilities(
     allowed = set(_ALWAYS)
     if fence is None:
         return frozenset(allowed)
+    if fence.unrestricted and confined:
+        # full_access + 真围栏: 边界只剩围栏本身与 Hard Deny.
+        return frozenset(Capability)
     if not fence.read_only:
         allowed |= _WORKSPACE_MUTATION
     if confined:
         allowed |= _NEEDS_FENCE
-        if fence.network_allowed:
-            allowed.add(Capability.NETWORK_ACCESS)
     return frozenset(allowed - _NEVER_AUTO)
 
 

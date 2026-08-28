@@ -172,6 +172,24 @@ def test_provider_form_rows_come_from_the_backend(tmp_path: Any) -> None:
     assert {field["kind"] for field in fields} == {"str", "int"}
 
 
+def test_model_form_rows_come_from_the_backend(tmp_path: Any) -> None:
+    """模型参数与供应商参数遵循同一规则，避免前端字段少于实际配置能力。"""
+    payload = _client(tmp_path).get("/api/v1/models").json()
+    fields = payload["model_fields"]
+    assert [field["name"] for field in fields] == [
+        "context_window",
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "cost_per_1k_input",
+        "cost_per_1k_output",
+        "cost_per_1k_cached_input",
+        "cost_per_1k_reasoning",
+    ]
+    assert all(field["label"] for field in fields)
+    assert {field["kind"] for field in fields} == {"int", "float"}
+
+
 def test_unconfigured_providers_are_still_editable(tmp_path: Any) -> None:
     """要能在添加第一个模型**之前**把端点和密钥变量名填好."""
     payload = _client(tmp_path).get("/api/v1/models").json()

@@ -32,6 +32,11 @@ __all__ = ["build_protected_path_policy"]
 #
 # macOS 上 /var, /tmp 等都是指向 /private/... 的软链接, 而 classify() 看的是 realpath,
 # 所以 /private 那一份必须同时列出 —— 只写 /var 的话判定时根本匹配不上.
+# ADR-0040 A/C 类表: 平台系统目录. **主要边界不是它**, 是围栏 ——
+# 工作区外一律不在可写集合里, 与这张表列没列到无关.
+# 表外默认: 工作区外的路径本来就写不进去; 读取靠围栏的 denied_read_paths.
+# 漏一项的后果: macOS 上少一条 deny-read 纵深 (Seatbelt 的读边界只能用 denylist,
+# ADR-0030 实测记录第二节); Linux 由 bubblewrap 的 mount namespace 兜住.
 _POSIX_SYSTEM = (
     "/System",
     "/Library",
@@ -57,12 +62,21 @@ _POSIX_SYSTEM = (
 )
 
 # 读取即外泄或直接影响运行中的服务.
+# ADR-0040 C 类表: 设备与内核接口. sandbox 与 workspace grant 是上界.
+# 表外默认: 不在可写集合里.
+# 漏一项的后果: 同 _POSIX_SYSTEM —— 少一条纵深, 不是少一道边界.
 _POSIX_DEVICES = ("/dev", "/proc", "/sys", "/run", "/var/run", "/private/var/run")
 
 # root 的家目录. 普通用户读不到, 但以 root 运行时它是可写的 —— 而 Forge 自己的状态在
 # sudo 下也会落到这里.
+# ADR-0040 C 类表: root 的家目录. 由 sandbox 与 workspace grant 上界兜底.
+# 表外默认: 工作区外不授权.
+# 漏一项的后果: 少一条纵深.
 _ROOT_HOMES = ("/root", "/var/root", "/private/var/root")
 
+# ADR-0040 A 类表: 名字来自 Windows 环境/Known Folder API, 取值由 OS 给, 不是猜的.
+# 表外默认: 取不到就退回内置默认路径 (platform_paths.windows_known_directory).
+# 漏一项的后果: 少保护一个系统目录, 它仍在工作区之外.
 _WINDOWS_SYSTEM_VARS = (
     "SYSTEMROOT",
     "WINDIR",
@@ -74,9 +88,15 @@ _WINDOWS_SYSTEM_VARS = (
 
 # 家目录所在的容器. 用它枚举"其他用户", 而不是靠当前 home 的父目录 —— 后者在 root 下
 # 会变成 / 或 /var, 把一整批系统目录误标成其他用户的家目录.
+# ADR-0040 B/C 类表: 用它枚举"其他用户的家目录".
+# 表外默认: 工作区外的路径默认不可读写, 不因为没枚举到就变成可访问.
+# 漏一项的后果: 少枚举一批其他用户目录, 它们仍在工作区之外.
 _HOME_CONTAINERS = ("/home", "/Users", "/export/home", "/var/home")
 
 # 用户目录下的凭证. 读取它们本身就是外泄, 因此 deny_read.
+# ADR-0040 B 类表. **不声称完整** —— 凭证路径是开放集合.
+# 表外默认: 它承担 workspace grant 的上界与 macOS 上的 deny-read 纵深.
+# 漏一项的后果: 少一条纵深; 主要保护是"工作区外不授权"与围栏的读边界.
 _CREDENTIAL_SUBPATHS = (
     # SSH, GPG 与通用凭证文件
     ".ssh",
@@ -156,6 +176,9 @@ _CREDENTIAL_SUBPATHS = (
 #   .cargo/credentials.toml, 那个仍然 deny_read).
 # - .config/pip/pip.conf: 同理, 多数情况下只是一个镜像地址; 挡掉读取会让 Agent 没法
 #   诊断安装问题.
+# ADR-0040 B 类表: 写进去就等于下次开 shell 时执行任意代码的那些文件.
+# 表外默认: 工作区外不可写.
+# 漏一项的后果: 在隔离不足的平台上少一条纵深.
 _STARTUP_SUBPATHS = (
     # Shell 启动文件. .zshenv 排第一位: 它连非交互 shell 都会读, 比 .zshrc 更危险,
     # 而 Agent 跑的每一条命令都是非交互 shell.

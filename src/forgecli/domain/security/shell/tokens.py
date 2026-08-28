@@ -18,14 +18,44 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from forgecli.domain.security.shell.command_plan import RedirectKind
+
 __all__ = [
+    "REDIRECT_OPERATORS",
     "ScanError",
     "Substitution",
     "SubstitutionKind",
     "Token",
     "TokenKind",
+    "default_fd_of",
     "tokenize_posix",
 ]
+
+# 重定向操作符 -> 种类, 外加各自省略 IO number 时的默认文件描述符.
+#
+# **全项目唯一一份**: posix.py 原先自带一份键集相同的副本, 而这里要用它判断"`2>` 里
+# 的 2 归谁". 两份漂了的后果是扫描器把 2 收进操作符, 解析器却不认这个操作符, 于是那条
+# 重定向凭空消失 —— 比现在这个 bug 更难发现.
+#
+# ADR-0040 B 类表: POSIX XCU 2.7 的重定向操作符, 是封闭集合.
+# 表外默认: 不在表里就不是重定向, 前面的数字照旧当普通参数.
+# 漏一项的后果: 少认一种重定向, 该单元的写入目标少一条, 方向是更严不是更松.
+REDIRECT_OPERATORS: dict[str, tuple[RedirectKind, int]] = {
+    "<": (RedirectKind.INPUT, 0),
+    ">": (RedirectKind.OUTPUT, 1),
+    ">>": (RedirectKind.APPEND, 1),
+    "<<": (RedirectKind.HEREDOC, 0),
+    "<<-": (RedirectKind.HEREDOC, 0),
+    "<<<": (RedirectKind.HERESTRING, 0),
+    ">&": (RedirectKind.DUPLICATE, 1),
+    "<&": (RedirectKind.DUPLICATE, 0),
+}
+
+
+def default_fd_of(operator: str) -> int:
+    """省略 IO number 时这个操作符作用在哪个 fd 上. `> x` 是 1, `< x` 是 0."""
+    return REDIRECT_OPERATORS[operator][1]
+
 
 # 病态嵌套的深度上限: $( $( $( ... ) ) ) 不该把栈打穿.
 MAX_NESTING_DEPTH = 8
@@ -81,6 +111,8 @@ class Token:
     text: str
     kind: TokenKind = TokenKind.WORD
     quoted: bool = False
+    # 仅重定向操作符 token 会带: `2>&1` 里那个 2. 见 _Scanner._take_io_number.
+    fd: int | None = None
     # 该 token 里嵌的可执行片段. 它们要递归分析, 不能当普通字符串.
     substitutions: tuple[Substitution, ...] = ()
     # 该 token 里出现的未展开变量引用 (目标集合因此可能是 DYNAMIC).
@@ -147,8 +179,9 @@ class _Scanner:
             else:
                 operator = self._match_operator()
                 if operator is not None:
+                    fd = self._take_io_number(operator)
                     self._flush()
-                    self._emit_operator(operator)
+                    self._emit_operator(operator, fd)
                     self._pos += len(operator)
                     if operator in ("<<", "<<-"):
                         self._expect_heredoc_word = True
@@ -300,8 +333,35 @@ class _Scanner:
         self._subs = []
         self._vars = []
 
-    def _emit_operator(self, operator: str) -> None:
-        self._tokens.append(Token(text=operator, kind=TokenKind.OPERATOR))
+    def _emit_operator(self, operator: str, fd: int | None = None) -> None:
+        self._tokens.append(Token(text=operator, kind=TokenKind.OPERATOR, fd=fd))
+
+    def _take_io_number(self, operator: str) -> int | None:
+        """`2>&1` 里的 2 属于重定向, 不是 npm 的参数 (POSIX XCU 2.7 IO_NUMBER).
+
+        **只有扫描器判得了这件事**, 因为判据是"紧挨着, 中间没有空白": 缓冲区一遇到
+        空白就会 flush, 所以走到这里时缓冲区里还有东西, 就说明它与操作符之间没有空白.
+        到了 token 列表那一层这个区别已经没了 —— `echo 2 >f` 与 `echo 2>f` 的 token
+        序列完全相同, 而前者要把 2 交给 echo, 后者不能.
+
+        四个条件缺一不可:
+
+        - 操作符是重定向. `cmd 2 && x` 里的 2 是参数.
+        - 未被引用. POSIX 明写 IO number 必须是 unquoted, `echo "2">f` 的 2 是参数.
+        - 没有替换与变量引用. `$n>f` 的 fd 要运行期才知道, 静态判不了就别判.
+        - 全部是 ASCII 数字. 不用 str.isdigit(): 它对全角数字与上标也返回真,
+          而 shell 只认 ASCII —— 那种字符构成的是文件名, 不是 fd.
+        """
+        if operator not in REDIRECT_OPERATORS:
+            return None
+        if not self._has_content or self._quoted or self._subs or self._vars:
+            return None
+        if not all(char in "0123456789" for char in self._buffer):
+            return None
+        number = int(self._buffer)
+        self._buffer = ""
+        self._has_content = False
+        return number
 
     def _consume_heredoc_bodies(self) -> None:
         """把 heredoc 正文从源码里取出来, 挂到对应的分隔符 token 上."""

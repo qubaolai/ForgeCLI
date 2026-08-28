@@ -113,6 +113,43 @@ def _as_origins(
     return tuple(origins)
 
 
+def _merge_provider_sections(
+    section: Mapping[str, object],
+) -> dict[str, dict[str, object]]:
+    """按归一后的 id 把供应商段落合成一份, 未知供应商丢掉.
+
+    为什么会有两个段落: 注册表的 key 曾经是 `"GLM"`, 早期版本的菜单照着它写出了
+    `providers.GLM`. key 改回 `"glm"` 之后, 新的写入落在 `providers.glm` 上, 于是同一
+    家供应商在文件里有了两份. 不合并的话 `LlmConfig.provider()` 只会命中先出现的那一份,
+    另一份里的模型就成了"存进去了但找不到"。
+
+    合并规则是**后面的段落覆盖前面的同名键**, 模型按 id 取并集. 一个键只有在有人往那个
+    段落里写过的时候才会出现, 所以"后写的赢"就是"最近一次编辑赢".
+
+    未知供应商在这里就丢掉: 没有 adapter 能驱动它们, 留着只会让下游每一处都要再判一次.
+    """
+    merged: dict[str, dict[str, object]] = {}
+    for raw_id, body in section.items():
+        provider_id = provider_registry.normalize_provider_id(str(raw_id))
+        if not provider_registry.is_known_provider(provider_id) or not isinstance(
+            body, Mapping
+        ):
+            continue
+        target = merged.setdefault(provider_id, {})
+        carried = target.get("models")
+        models: dict[str, object] = (
+            dict(carried) if isinstance(carried, Mapping) else {}
+        )
+        for key, value in body.items():
+            if key != "models":
+                target[key] = value
+        incoming = body.get("models")
+        if isinstance(incoming, Mapping):
+            models.update(incoming)
+        target["models"] = models
+    return merged
+
+
 class LlmConfigService:
     """读取 / 校验 / 更新 LLM 配置的用例；只有一个实现，故不设抽象基类。"""
 
@@ -121,19 +158,15 @@ class LlmConfigService:
 
     def config(self) -> LlmConfig:
         section = self._store.load().get("providers", {})
-        providers: list[ProviderConfig] = []
-        if isinstance(section, Mapping):
-            for raw_id, body in section.items():
-                # 配置文件是外部数据: 这里归一一次, 下游一律拿注册表的 key. 早期版本的
-                # 菜单写出过 "GLM" (当时注册表 key 就是它), 归一让那些文件继续能读.
-                provider_id = provider_registry.normalize_provider_id(raw_id)
-                # 未知供应商：没有 adapter 能驱动，忽略而非报错。
-                if not provider_registry.is_known_provider(provider_id):
-                    continue
-                if not isinstance(body, Mapping):
-                    continue
-                providers.append(self._parse_provider(provider_id, body))
-        return LlmConfig(providers=tuple(providers))
+        if not isinstance(section, Mapping):
+            return LlmConfig(providers=())
+        merged = _merge_provider_sections(section)
+        return LlmConfig(
+            providers=tuple(
+                self._parse_provider(provider_id, body)
+                for provider_id, body in merged.items()
+            )
+        )
 
     def providers(self) -> tuple[ProviderConfig, ...]:
         return self.config().providers
@@ -155,7 +188,7 @@ class LlmConfigService:
     def add_model(
         self, provider_id: str, model_id: str, params: Mapping[str, object]
     ) -> None:
-        provider_registry.require_known_provider(provider_id)
+        provider_id = self._canonical(provider_id)
         if not model_id.strip():
             raise ConfigValidationError("模型 id 不能为空")
         # 用同一套校验，保证菜单写入与手改文件得到一致约束。
@@ -168,8 +201,7 @@ class LlmConfigService:
         )
 
     def remove_model(self, provider_id: str, model_id: str) -> None:
-        provider_registry.require_known_provider(provider_id)
-        self._store.remove_model(provider_id, model_id)
+        self._store.remove_model(self._canonical(provider_id), model_id)
 
     def update_model_thinking(
         self,
@@ -185,7 +217,7 @@ class LlmConfigService:
         使用并保留强度配置。候选配置会在唯一一次持久化前完整校验。
         返回配置文件是否实际发生变化。
         """
-        provider_registry.require_known_provider(provider_id)
+        provider_id = self._canonical(provider_id)
         fields = self._existing_fields(provider_id, model_id)
         before = dict(fields)
         if mode is not None:
@@ -198,6 +230,7 @@ class LlmConfigService:
         self, provider_id: str, model_id: str, raw: str
     ) -> bool:
         """以逗号分隔文本设置模型支持的开放 effort 集合。"""
+        provider_id = self._canonical(provider_id)
         values = tuple(item.strip().lower() for item in raw.split(",") if item.strip())
         try:
             efforts = tuple(ThinkingEffortName(item) for item in values)
@@ -222,6 +255,7 @@ class LlmConfigService:
         self, provider_id: str, model_id: str, raw: str
     ) -> bool:
         """设置默认 effort；留空表示该模型不配置默认强度。"""
+        provider_id = self._canonical(provider_id)
         entry = self._thinking_entry(provider_id, model_id)
         text = raw.strip().lower()
         fields = self._existing_fields(provider_id, model_id)
@@ -250,6 +284,7 @@ class LlmConfigService:
     def set_model_field(
         self, provider_id: str, model_id: str, field: str, raw: str
     ) -> None:
+        provider_id = self._canonical(provider_id)
         fields = self._existing_fields(provider_id, model_id)
         text = raw.strip()
         if text == "":
@@ -262,6 +297,7 @@ class LlmConfigService:
         )
 
     def set_model_extra(self, provider_id: str, model_id: str, raw_json: str) -> None:
+        provider_id = self._canonical(provider_id)
         fields = self._existing_fields(provider_id, model_id)
         extra = parse_extra(raw_json)
         if extra:
@@ -274,7 +310,7 @@ class LlmConfigService:
         )
 
     def set_provider_field(self, provider_id: str, field: str, raw: str) -> None:
-        provider_registry.require_known_provider(provider_id)
+        provider_id = self._canonical(provider_id)
         value = coerce_provider_field(field, raw)
         self._store.upsert_provider_field(
             provider_id, field, value, provider_defaults=self._defaults(provider_id)
@@ -388,8 +424,31 @@ class LlmConfigService:
 
     # ---- 解析 ----
 
+    @staticmethod
+    def _canonical(provider_id: str) -> str:
+        """校验并换成注册表的 key.
+
+        **每一个写入口都要过这里.** 归一只做在读那一侧的话, 会写出第二个段落: 页面上
+        看到的 id 是归一后的 `glm`, 而文件里躺着的是早期版本写的 `GLM` —— 于是
+        `upsert_model("glm", ...)` 新建一个 `glm` 段, 同一家供应商在文件里有了两份,
+        往后每次查找都只命中先出现的那一份, 新加的模型"存进去了但找不到".
+        """
+        return provider_registry.require_known_provider(provider_id).id
+
     def _defaults(self, provider_id: str) -> dict[str, object]:
+        """新建供应商段落时填什么.
+
+        已经配过这家供应商就用它现在的有效值, 而不是注册表默认值: 用户改过的 api_base
+        不该因为"又加了一个模型"被默认值盖回去.
+        """
         spec = provider_registry.require_known_provider(provider_id)
+        current = self.config().provider(spec.id)
+        if current is not None:
+            return {
+                "name": current.name,
+                "api_base": current.api_base,
+                "api_key_env": current.api_key_env or "",
+            }
         return {
             "name": spec.label,
             "api_base": spec.default_api_base,
@@ -397,7 +456,7 @@ class LlmConfigService:
         }
 
     def _existing_fields(self, provider_id: str, model_id: str) -> dict[str, object]:
-        provider_registry.require_known_provider(provider_id)
+        provider_id = self._canonical(provider_id)
         model = self.config().model(provider_id, model_id)
         if model is None:
             raise ConfigValidationError(f"模型不存在: {provider_id}/{model_id}")
@@ -417,6 +476,7 @@ class LlmConfigService:
         before: Mapping[str, object],
         fields: Mapping[str, object],
     ) -> bool:
+        provider_id = self._canonical(provider_id)
         if fields == before:
             return False
         parsed = ModelParams.parse(fields)
@@ -428,7 +488,10 @@ class LlmConfigService:
         models = tuple(
             replacement if model.id == model_id else model for model in provider.models
         )
-        candidate_provider = replace(provider, models=models)
+        # ProviderConfig 已从 dataclass 迁移为 frozen Pydantic model；这里如果继续用
+        # dataclasses.replace，Thinking / effort 的编辑会在落盘前直接抛 TypeError，
+        # Web 层最终只能返回一个没有业务信息的 422。
+        candidate_provider = provider.model_copy(update={"models": models})
         candidate = replace(
             config,
             providers=tuple(

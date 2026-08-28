@@ -19,6 +19,7 @@ from forgecli.domain.security.shell.command_plan import (
     CommandPlan,
     CommandUnit,
 )
+from forgecli.domain.security.shell.commands import NETWORK_TOOLS
 from forgecli.domain.security.shell.effects import (
     EffectKind,
     effect_kind_of,
@@ -38,24 +39,6 @@ __all__ = [
 
 # 会产生网络访问的命令. 判据仍是命令语义而不是名字白名单: 命中只是"声明 NETWORK_ACCESS
 # 这个能力", 允不允许由规则层按目标裁决.
-NETWORK_TOOLS = frozenset(
-    {
-        "curl",
-        "wget",
-        "nc",
-        "ncat",
-        "netcat",
-        "socat",
-        "ssh",
-        "scp",
-        "rsync",
-        "sftp",
-        "ftp",
-        "telnet",
-        "Invoke-WebRequest",
-        "iwr",
-    }
-)
 
 # 不可逆外部副作用 (ADR-0013 §4.1). 命中即 Mandatory Ask, 所有模式一视同仁.
 # 围栏外不可回滚的操作 (ADR-0030 决策 7.3).
@@ -78,6 +61,12 @@ NETWORK_TOOLS = frozenset(
 #     上只能靠表.
 #
 # 子命令元组为空表示"这个命令的任何调用都算".
+# ADR-0040 **D 类**表 —— 全项目仅剩的一张承重穷举.
+# 表外默认: **放行**. 这是它承重的原因, 也是它必须极少, 逐条可审计的原因.
+# 漏一项的后果: 一次围栏够不着的不可逆外部操作不问人就跑了.
+#
+# 2026-08-28 起它的承重范围收窄到 plan / accept_edits / auto 三档: full_access 已改为
+# "只剩 Hard Deny 兜底" (ADR-0030 决策 4 修订), 该表在那一档不再产生 ASK.
 _IRREVERSIBLE: tuple[tuple[str, tuple[str, ...], str], ...] = (
     # (a) 不可逆的外部操作
     ("git", ("push",), "推送到远端"),
@@ -104,6 +93,8 @@ _IRREVERSIBLE: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("docker", ("stop", "kill", "rm", "restart"), "改动容器生命周期"),
 )
 
+# **封闭**集合: 成员是 EffectKind 这个枚举的取值, 加一档必须同时改这里
+# (ADR-0040 决策 9 说的封闭枚举, 不是开放穷举).
 _MAY_WRITE_KINDS = (
     EffectKind.WRITE,
     EffectKind.DELETE,

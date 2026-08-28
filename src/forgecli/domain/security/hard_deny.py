@@ -28,7 +28,10 @@ from forgecli.domain.security.shell.command_plan import (
     CommandUnit,
     Connector,
 )
-from forgecli.domain.security.shell.wrappers import PRIVILEGE_ESCALATORS
+from forgecli.domain.security.shell.wrappers import (
+    PRIVILEGE_ESCALATORS,
+    pipes_into_interpreter,
+)
 from forgecli.domain.security.vocabulary import DecisionReason
 
 __all__ = ["HardDenyHit", "inspect_command", "prefilter_raw"]
@@ -87,6 +90,9 @@ _PRIVILEGE = re.compile(
     re.IGNORECASE,
 )
 
+# ADR-0040 B 类表: 解析失败时对**原始命令串**的模式预扫描, 是纵深而不是主要边界.
+# 表外默认: 走不到这里的一律回到结构化路径, 而解析失败在那条路上是 UNPROVEN -> ASK.
+# 漏一项的后果: 少一层纵深, 不会把本该拦的放过去 —— 拦不拦得住最终由围栏说了算.
 _PREFILTER_RULES: tuple[tuple[re.Pattern[str], DecisionReason, str], ...] = (
     (_BLOCK_DEVICE, DecisionReason.HARD_DENY_DESTRUCTIVE, "块设备或卷操作"),
     (_ROOT_WIPE, DecisionReason.HARD_DENY_DESTRUCTIVE, "对根或家目录的递归删除"),
@@ -118,7 +124,7 @@ def prefilter_raw(raw_command: str) -> HardDenyHit | None:
 
 def inspect_command(plan: CommandPlan) -> HardDenyHit | None:
     """基于结构化计划的 Hard Deny 判定. 解析成功时用它."""
-    if plan.pipes_into_interpreter:
+    if pipes_into_interpreter(plan):
         return _hit(
             DecisionReason.HARD_DENY_REMOTE_CODE_EXECUTION,
             "上级输出经管道直接进入解释器",
@@ -135,9 +141,15 @@ def inspect_command(plan: CommandPlan) -> HardDenyHit | None:
 
 # ---- 结构化判定 ----
 
+# ADR-0040 B/C 类表: 把"往裸设备上写"这种没有恢复手段的形状提前拒掉.
+# 表外默认: 由围栏与受保护路径兜底 (设备路径不在可写集合里).
+# 漏一项的后果: 少一次提前拒绝, 命令会在系统调用那一刻失败而不是在裁决时.
 _DESTRUCTIVE_DEVICE_TOOLS = frozenset(
     {"mkfs", "fdisk", "parted", "shred", "blkdiscard", "wipefs", "hdparm"}
 )
+# ADR-0040 B/C 类表: 凭证外泄形状里"送出去"的那一半.
+# 表外默认: 网络通不通由围栏决定 (domain/security/budget.py 的 _NEEDS_FENCE).
+# 漏一项的后果: 少一条红线, 该调用退回按能力与围栏正常裁决.
 _NETWORK_SINKS = frozenset(
     {
         "curl",
@@ -151,6 +163,9 @@ _NETWORK_SINKS = frozenset(
         "iwr",
     }
 )
+# ADR-0040 B/C 类表: 命令串里出现的凭证路径特征.
+# 表外默认: 真正的边界是受保护路径 (围栏的 denied_read_paths) 与 workspace grant 上界.
+# 漏一项的后果: 少一条红线; 读取本身仍被围栏在系统调用那一刻拦下.
 _CREDENTIAL_MARKERS = (
     ".ssh/id_",
     "id_rsa",
@@ -162,8 +177,17 @@ _CREDENTIAL_MARKERS = (
     ".docker/config.json",
     ".kube/config",
 )
+# ADR-0040 B 类表: 递归删除的目标是不是"根".
+# 表外默认: 普通路径走正常的写入裁决 —— 工作区内有快照, 工作区外要围栏放行.
+# 漏一项的后果: 少一次提前拒绝, 不等于放行.
 _ROOT_TARGETS = frozenset({"/", "/*", "~", "~/", "/.", "C:\\", "C:/", "C:\\*"})
+# ADR-0040 B/C 类表: 哪些路径前缀算设备.
+# 表外默认: 不在可写集合里的路径本来就写不进去.
+# 漏一项的后果: 少一次提前拒绝.
 _DEVICE_PREFIXES = ("/dev/", "\\\\.\\", "\\\\?\\")
+# ADR-0040 B 类表: 哪些命令名意味着删除. 与 _ROOT_TARGETS 配对.
+# 表外默认: 删除效果仍由 commands.py 的影响形态表推导, 表外按"可能写"处理.
+# 漏一项的后果: 少一次提前拒绝.
 _DELETERS = frozenset({"rm", "del", "rmdir", "Remove-Item"})
 
 
