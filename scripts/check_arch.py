@@ -110,36 +110,6 @@ SIBLING_BANS: tuple[tuple[str, str, str], ...] = (
         "application.session",
         "工具链路不认识会话写入口, 只发 ToolAuditSink (ADR-0028 规则 A1)",
     ),
-    (
-        "application.manual_shell",
-        "application.tool_request",
-        "人工 Shell 不经过工具管线 (ADR-0017 §2)",
-    ),
-    (
-        "application.manual_shell",
-        "application.tools",
-        "人工 Shell 不是工具, 也不注册进 ToolCatalog (ADR-0017 §2)",
-    ),
-    (
-        "application.manual_shell",
-        "application.security",
-        "人工 Shell 只受 OS 用户权限约束, 不走策略裁决 (ADR-0017 决策 2)",
-    ),
-    (
-        "application.manual_shell",
-        "application.agent_loop",
-        "人工 Shell 跳过 LLM 与 AgentLoop (ADR-0017 决策 2)",
-    ),
-    (
-        "application.tools",
-        "application.manual_shell",
-        "ShellTool 不得以「需要交互」为由转发到人工 Shell (ADR-0017 §2)",
-    ),
-    (
-        "application.agent_loop",
-        "application.manual_shell",
-        "AgentLoop 不得构造 ManualShellIntent (ADR-0017 §2)",
-    ),
 )
 
 

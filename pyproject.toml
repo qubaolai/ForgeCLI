@@ -33,7 +33,6 @@ requires-python = ">=3.13,<4.0"
 dependencies = [
     "typer (>=0.26.7,<0.27.0)",
     "rich (>=15.0.0,<16.0.0)",
-    "prompt-toolkit (>=3.0,<4.0)",
     "httpx (>=0.28,<0.29)",
     "fastapi (>=0.135,<0.136)",
     "uvicorn (>=0.41,<0.42)",
@@ -62,7 +61,7 @@ dependencies = [
 [project.scripts]
 # 安装后会生成 forge 命令。
 # 执行 forge 时，会调用 forgecli.interfaces.cli.app 模块中的 main 函数。
-forge = "forgecli.interfaces.cli.app:main"
+forge = "forgecli.interfaces.app:main"
 
 # -----------------------------------------------------------------------------
 # Poetry 专用配置

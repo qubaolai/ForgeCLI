@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-from forgecli.application.manual_shell.provider import ManualShellObserver
 from forgecli.application.prompt.project_instruction_reader import (
     ProjectInstruction,
     ProjectInstructionReader,
@@ -32,8 +31,6 @@ from forgecli.domain.execution.environment import (
 )
 from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
 from forgecli.domain.intents import SessionMode
-from forgecli.domain.manual_shell.request import ManualShellRequest
-from forgecli.domain.manual_shell.result import ManualShellResult
 from forgecli.domain.prompt.blocks import PromptSnapshot
 from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.hashing import digest_text
@@ -257,18 +254,3 @@ class MemoryArtifactStore(ArtifactStore):
         removed = len(self.contents)
         self.contents.clear()
         return removed
-
-
-class NullManualShellObserver(ManualShellObserver):
-    """什么都不打的人工 Shell 观察者.
-
-    **只在测试里存在.** ManualShellService 把 observer 声明成**必填**, 理由写在它的
-    构造函数注释里: 给它默认值就意味着漏接 observer 的组合根不会报错. 生产代码里再
-    放一个空实现, 等于把那条理由绕开了.
-    """
-
-    def entered(self, request: ManualShellRequest) -> None:
-        return None
-
-    def exited(self, result: ManualShellResult) -> None:
-        return None

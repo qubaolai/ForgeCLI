@@ -186,7 +186,6 @@ class ProjectRuntime:
             planning=self.tools.planning,
             run_bus=self.event_bus,
             tools=self.tools.dispatcher,
-            barrier=self.tools.barrier,
         )
 
     @property

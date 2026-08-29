@@ -29,9 +29,7 @@ SRC = Path(__file__).resolve().parent.parent / "src" / "forgecli"
 OPEN_EXTENSION_POINTS: frozenset[str] = frozenset(
     {
         "Tool",
-        "CommandHandler",
         "CapabilityAnalyzer",
-        "UserIntent",
         "ModelSelection",
     }
 )

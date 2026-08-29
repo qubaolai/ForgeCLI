@@ -49,4 +49,4 @@ PRs should include a short summary, linked issue or roadmap date, test results, 
 
 ## Agent-Specific Instructions
 
-Follow the daily plan in `docs/roadmap/mvp`. Prefer guidance, review, and validation over unrequested implementation. Keep changes scoped to the current phase and update docs when behavior or architecture decisions change. Bare `forge` activates an interactive workspace conversation; slash commands like `/config` should reuse application services instead of duplicating CLI-layer business logic.
+Follow the daily plan in `docs/roadmap/mvp`. Prefer guidance, review, and validation over unrequested implementation. Keep changes scoped to the current phase and update docs when behavior or architecture decisions change. Bare `forge` starts the local Web control plane, which is the only product entry point (ADR-0025). There is no terminal REPL and no slash commands; control-plane routes must reuse application services instead of growing business logic in `interfaces/web`.

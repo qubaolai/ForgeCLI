@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 from forgecli.application.agent_run.scrubbing import scrub_arguments, scrub_text
-from forgecli.interfaces.cli.run_renderer import _clean
 
 
 def test_newlines_survive_into_the_event() -> None:
@@ -30,15 +29,3 @@ def test_arguments_are_sorted_so_the_same_call_always_looks_the_same() -> None:
         ("content", "x"),
         ("path", "a.py"),
     )
-
-
-def test_the_terminal_escapes_newlines_instead_of_deleting_them() -> None:
-    """活动区一行一条: 留着换行会撑开布局, 删掉则让多行拼成一行看不出接缝."""
-    rendered = _clean("def hi():\n    return 1")
-
-    assert "\n" not in rendered
-    assert "\\n" in rendered
-
-
-def test_the_terminal_caps_a_huge_argument_so_it_cannot_flood_the_screen() -> None:
-    assert len(_clean("x" * 5000)) <= 401

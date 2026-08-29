@@ -5,7 +5,7 @@
 去请求一个动作, 然后照常撞上 ADR-0013 / ADR-0020 / ADR-0027 那整条链.
 
 `scripts/check_arch.py` 里有同样的规则; 这两条测试是给"忘了跑 make arch"兜底
-(与 tests/manual_shell/test_trust_boundary.py 同一个理由).
+(与信任边界那一组用例同一个理由).
 """
 
 from __future__ import annotations

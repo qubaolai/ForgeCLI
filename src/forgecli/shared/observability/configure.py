@@ -1,6 +1,6 @@
 """日志装配: 决定写到哪, 写多细, 以及谁来收未捕获的异常.
 
-只在两个进程入口各调一次 (`interfaces/cli/bootstrap.run`, `interfaces/web/server.run`).
+只在进程入口调一次 (`interfaces/web/server.run`).
 业务代码只 `get_log(__name__)` 然后写, 永远不碰 handler —— 一个模块自己加 handler,
 另一个模块的日志就会莫名其妙地写两份.
 

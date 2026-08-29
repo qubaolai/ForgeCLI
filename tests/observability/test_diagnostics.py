@@ -14,10 +14,8 @@ from forgecli.application.llm.gateway.observability import (
     GatewayCallSample,
     InProcessGatewayMetrics,
 )
-from forgecli.domain.intents import SlashCommand
 from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.response import FinishReason
-from forgecli.interfaces.cli.commands.diagnostics_command import DiagnosticsCommand
 from forgecli.interfaces.runtime.diagnostics import (
     diagnostics_report,
     render_diagnostics,
@@ -34,19 +32,6 @@ def _collect_metrics() -> Iterator[None]:
         yield
     finally:
         METRICS.set_enabled(False)
-
-
-class _Output:
-    def __init__(self) -> None:
-        self.lines: list[str] = []
-
-    def print(self, text: str) -> None:
-        self.lines.append(text)
-
-
-def _command(*args: str) -> SlashCommand:
-    raw = " ".join(("/diagnostics", *args))
-    return SlashCommand(raw, "diagnostics", args)
 
 
 def test_report_names_the_log_file(tmp_path: Path) -> None:
@@ -91,24 +76,3 @@ def test_render_mentions_the_unconfigured_case() -> None:
     """没装配过日志时不能只显示一个空的 level: 那看起来像装配了但没写东西."""
     text = render_diagnostics({"process": {}, "logging": {"configured": False}})
     assert "未装配" in text
-
-
-def test_command_prints_the_report(tmp_path: Path) -> None:
-    configure_logging(directory=tmp_path, level="info")
-    output = _Output()
-
-    changed = DiagnosticsCommand(output).execute(_command())
-
-    assert changed is False  # 纯查看
-    assert "日志文件" in output.lines[0]
-
-
-def test_reset_clears_counters_but_not_the_log(tmp_path: Path) -> None:
-    configure_logging(directory=tmp_path, level="info")
-    METRICS.observe("tool.execute", 1.0)
-    output = _Output()
-
-    DiagnosticsCommand(output).execute(_command("--reset"))
-
-    assert METRICS.snapshot() == {"counters": {}, "durations": {}}
-    assert "已清空" in output.lines[0]

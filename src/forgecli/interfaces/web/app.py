@@ -395,7 +395,7 @@ def create_app(
 
     @app.get("/api/v1/diagnostics")
     async def diagnostics(request: Request) -> dict[str, object]:
-        """开发者诊断读数 (ADR-0035): 与 CLI 的 /diagnostics 同一份读模型.
+        """开发者诊断读数 (ADR-0035).
 
         网关那部分要激活项目才有 —— LLM 运行时是按项目装配的, 没激活项目时进程里
         根本没有网关.

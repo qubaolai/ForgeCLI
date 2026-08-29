@@ -4,7 +4,7 @@
 副作用的 application service——事件成对落盘、usage 草稿写入、观察回填都在这里；
 loop 只产出结构化意图（LoopDecision / LoopAction / LoopStop）。
 
-约束（ADR-0003 / 概要设计 §6.5）：service 不依赖 Rich/Typer/prompt_toolkit；
+约束（ADR-0003 / 概要设计 §6.5）：service 不依赖任何界面库；
 **所有事件落盘只经 SessionService 单一门面**，本类不持有 EventStore/StateStore。
 
 一轮 = 一个 turn：成对写 user_message / assistant_message，共享 turn_id；
@@ -25,7 +25,6 @@ from dataclasses import dataclass
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.context.manager import ContextFitResult, ContextManager
-from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
 from forgecli.application.memory.memory_service import MemoryService
 from forgecli.application.planning.planning_service import (
     ActivePlanning,
@@ -131,7 +130,6 @@ class AgentTurnService:
         planning: PlanningService | None = None,
         run_bus: AgentRunEventBus | None = None,
         tools: CoordinatorToolDispatcher | None = None,
-        barrier: ManualMutationBarrier | None = None,
         max_steps: int = _DEFAULT_MAX_LOOP_STEPS,
     ) -> None:
         self._session = session
@@ -153,9 +151,6 @@ class AgentTurnService:
         # 工具分发器缺省为 None: 没接工具时循环产出 ToolRequestAction 会得到一条明确的
         # "工具不可用" observation, 而不是被静默忽略.
         self._tools = tools
-        # 人工 Shell 的失效屏障 (ADR-0017 §10). 缺省新建一个空屏障: 没接人工 Shell 时
-        # 它永远不 trip, 也就永远不阻塞。
-        self._barrier = barrier or ManualMutationBarrier()
         self._max_steps = max_steps
         self._turns = 0
         self._history: list[ChatMessage] = []
@@ -189,19 +184,6 @@ class AgentTurnService:
             text=text,
             history_messages=len(self._history),
         )
-        if self._barrier.blocked:
-            # 人工 Shell 回来后清缓存失败 (ADR-0017 §12). 清不掉就无法证明后续裁决基于
-            # 当前事实, 而"基于过期事实的 Allow"正是这套机制要防的 —— 宁可让用户重启。
-            # 仍然成对落盘: 这一轮确实发生过, 只是被拒绝了。
-            self._session.record_user_message(text, turn_id=turn_id, origin=origin)
-            refusal = self._barrier.block_reason
-            self._session.record_assistant_message(
-                refusal, turn_id=turn_id, status=TurnStatus.FAILED
-            )
-            _log.warning("turn.refused", reason="manual_shell_barrier", message=refusal)
-            return AssistantResponse(
-                turn_id=turn_id, text=refusal, status=TurnStatus.FAILED
-            )
         self._session.record_user_message(text, turn_id=turn_id, origin=origin)
         if self._memory is not None:
             # 记一次"当前是哪一轮", 供本轮内 memory_write 取来源 (ADR-0033 决策 7).

@@ -24,7 +24,6 @@ from pathlib import Path
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_run.tool_observer import EventBusToolRunObserver
 from forgecli.application.llm.gateway.gateway import LlmGateway
-from forgecli.application.manual_shell.mutation_barrier import ManualMutationBarrier
 from forgecli.application.memory.memory_service import MemoryService
 from forgecli.application.planning.planning_service import PlanningService
 from forgecli.application.recovery.coordinator import WorkspaceMutationCoordinator
@@ -134,8 +133,6 @@ class ToolStack:
     # 归档存储 (ADR-0032). 上下文管理要它来判断降级之后取不取得回来, 所以它必须与
     # 工具写进去的是**同一个实例** —— 各建一个的话, 写在 A 里的内容 B 说不存在.
     artifacts: ArtifactStore
-    # 人工 Shell 回来之后要清的缓存都注册在它上面 (ADR-0017 §10).
-    barrier: ManualMutationBarrier
 
 
 def build_tool_stack(
@@ -269,7 +266,6 @@ def build_tool_stack(
     # 4. 安全层. ADR-0030 之后没有 LLM 分类器与风险缓存了: 它们的唯一调用点是脚本正文
     #    的风险分析, 而那一层随围栏落地整体删除. 裁决改由围栏边界决定, 不由"分类器说
     #    没问题"决定 —— 后者本来就带着非确定性与提示词注入两个问题.
-    barrier = ManualMutationBarrier()
     #    学习规则 (always) 由授权服务查, 由协调器写 —— 共用同一个实例.
     learned = LearnedRuleService(
         JsonLearnedRuleStore(learned_rules_file(workspace_id)),
@@ -329,7 +325,6 @@ def build_tool_stack(
         planning=planning,
         memory=memory,
         artifacts=store,
-        barrier=barrier,
     )
 
 

@@ -89,7 +89,7 @@ def test_sigint_stops_server_while_event_stream_is_open(tmp_path: Path) -> None:
         [
             sys.executable,
             "-c",
-            "from forgecli.interfaces.cli.app import main; main()",
+            "from forgecli.interfaces.app import main; main()",
             "--port",
             "0",
         ],

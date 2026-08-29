@@ -1,17 +1,15 @@
 """项目用例：目录信任、项目查找、工作区目录列表。
 
-ProjectService 只依赖两个存储抽象与领域值对象，不碰 Rich/Typer/TTY；
-首启编排 WorkspaceStartup 把「命中绑定 / 非 TTY / 询问→信任 / 拒绝」收敛成纯逻辑，
-交互通过 TrustPrompter 端口注入，便于单测用 fake 覆盖。
+ProjectService 只依赖两个存储抽象与领域值对象，不碰任何界面细节：信任与否是
+Web 控制面问出来的，问法不进这一层。
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 
-from forgecli.application.interaction_ports import TrustPrompter
 from forgecli.application.project.project_store import (
     ProjectConfigStore,
     ProjectIndexStore,
@@ -153,33 +151,3 @@ class ProjectService:
         )
         self._configs.save(updated)
         return updated
-
-
-@dataclass(frozen=True)
-class StartupResult:
-    """首启解析结果：project 为 None 表示不进入 REPL。
-
-    reason 取 ``bound`` / ``trusted`` / ``declined`` / ``no_tty``，供上层决定提示语。
-    """
-
-    project: ProjectConfig | None
-    reason: str
-
-
-class WorkspaceStartup:
-    """裸 forge 进入 REPL 前的目录信任编排（纯逻辑，交互经端口注入）。"""
-
-    def __init__(self, service: ProjectService, prompter: TrustPrompter) -> None:
-        self._service = service
-        self._prompter = prompter
-
-    def resolve(self, cwd: Path, *, interactive: bool) -> StartupResult:
-        existing = self._service.find_trusted(cwd)
-        if existing is not None:
-            return StartupResult(existing, "bound")
-        if not interactive:
-            # 非 TTY 无法询问信任：不卡住、不创建配置，交由上层提示并退出。
-            return StartupResult(None, "no_tty")
-        if self._prompter.confirm(str(canonical_path(cwd))):
-            return StartupResult(self._service.trust(cwd), "trusted")
-        return StartupResult(None, "declined")
