@@ -2,15 +2,15 @@
 # install               poetry install
 # lock                  poetry lock
 # check                 poetry check
-# lint                  poetry run ruff check .
-# format                poetry run ruff format .
+# lint                  poetry run ruff check $(LINT_PATHS)
+# format                poetry run ruff format $(LINT_PATHS)
 # type                  poetry run mypy
 # arch                  poetry run python scripts/check_arch.py + check_abstractions.py
 #                       + check_prompt_text.py + check_deps.py
 # test                  poetry run pytest
 # ci                    check + lint + format-check + type + arch + test
 # run                   poetry run forge
-# format-check          poetry run ruff format --check .
+# format-check          poetry run ruff format --check $(LINT_PATHS)
 # package               poetry build
 # install-cli           build wheel and install forge with pip
 # uninstall-cli         uninstall forgecli with pip
@@ -24,6 +24,9 @@ PACKAGE_NAME ?= forgecli
 VERSION = $(shell $(POETRY) version -s)
 WHEEL = dist/$(PACKAGE_NAME)-$(VERSION)-py3-none-any.whl
 PIP_INSTALL_ARGS ?= --user --force-reinstall
+# lint / format 的范围. 写成显式目录而不是 `.`: 仓库根下会挂进编辑器与工具的本地
+# 目录 (.claude/ 之类), 它们不是本仓库的代码, 却会让 `make lint` 报一堆与改动无关的错.
+LINT_PATHS ?= src tests scripts
 
 # 帮助
 help:
@@ -58,13 +61,13 @@ check:
 	$(POETRY) check
 
 lint: 
-	$(POETRY) run ruff check .
+	$(POETRY) run ruff check $(LINT_PATHS)
 
 format: 
-	$(POETRY) run ruff format .
+	$(POETRY) run ruff format $(LINT_PATHS)
 
 format-check: 
-	$(POETRY) run ruff format --check .
+	$(POETRY) run ruff format --check $(LINT_PATHS)
 
 type: 
 	$(POETRY) run mypy
