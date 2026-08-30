@@ -55,7 +55,7 @@ _UNQUOTED_MAX = 64
 _NEEDS_QUOTING = set(" \t\r\n\"'=")
 
 # 库的惯例: 没人配置过 handler 时安静地丢弃, 而不是让 logging 的 lastResort 把
-# WARNING 打到 stderr —— 那会在测试输出与 REPL 画面里冒出来.
+# WARNING 打到 stderr —— 那会在测试输出里冒出来.
 logging.getLogger(ROOT_LOGGER_NAME).addHandler(logging.NullHandler())
 
 

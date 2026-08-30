@@ -251,11 +251,6 @@ def test_zero_costs_are_not_written_back() -> None:
     )
 
 
-def test_extra_json_is_a_single_line() -> None:
-    assert ModelParams.parse({}).extra_json() == ""
-    assert ModelParams.parse({"extra": {"a": 1}}).extra_json() == '{"a": 1}'
-
-
 # ---- 菜单文本输入 ----
 
 

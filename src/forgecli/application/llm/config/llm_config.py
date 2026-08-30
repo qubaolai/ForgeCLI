@@ -258,12 +258,6 @@ class ModelParams(BaseModel):
         """
         return self.model_dump(mode="json", exclude_defaults=True)
 
-    def extra_json(self) -> str:
-        """extra 的单行 JSON 文本，供菜单展示与编辑初值。"""
-        if not self.extra:
-            return ""
-        return json.dumps(dict(self.extra), ensure_ascii=False)
-
     @classmethod
     def parse(cls, raw: Mapping[str, object]) -> ModelParams:
         """从模型配置构造参数对象；非法值抛 ConfigValidationError。"""

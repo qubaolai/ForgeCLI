@@ -147,9 +147,8 @@ class ProjectRuntime:
         self._agent_turn = self._build_agent_turn()
 
     def _build_agent_turn(self) -> AgentTurnService:
-        # 与 CLI 同一份装配 (ADR-0032): 必须拿工具栈里那个 ArtifactStore 实例, 否则
-        # 工具写进去的内容, 降级时会被判成"已过期回收".
-        # 计量器与循环共用同一个 (ADR-0037), 理由见 CLI 侧同一处.
+        # 必须拿工具栈里那个 ArtifactStore 实例 (ADR-0032), 否则工具写进去的内容,
+        # 降级时会被判成"已过期回收". 计量器与循环也共用同一个 (ADR-0037).
         context_manager = ContextManager(
             artifacts=self.tools.artifacts,
             gateway=self.llm.gateway,

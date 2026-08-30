@@ -35,7 +35,6 @@ class DirectoryGrant:
     path: str
     access: GrantAccess
     granted_at: str
-    granted_by: str = "user"
 
 
 class GrantError(Exception):

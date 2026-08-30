@@ -32,6 +32,7 @@ from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.context import PolicyContext
 from forgecli.domain.security.decision import AuthorizationDecision
 from forgecli.domain.security.protected_paths import ProtectedPathPolicy
+from forgecli.domain.session.events import EventType
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.domain.tool.result import ToolResult
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
@@ -63,10 +64,9 @@ class _Audit(ToolAuditSink):
     ) -> None:
         return None
 
-    def approval_event(self, name: str, payload: Mapping[str, object]) -> None:
-        return None
-
-    def recovery_event(self, name: str, payload: Mapping[str, object]) -> None:
+    def recovery_event(
+        self, event_type: EventType, payload: Mapping[str, object]
+    ) -> None:
         return None
 
 

@@ -16,6 +16,7 @@ from forgecli.application.tool_request.audit import ToolAuditSink
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.recovery.mutation import Operation
 from forgecli.domain.security.context import PolicyContext
+from forgecli.domain.session.events import EventType
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.domain.tool.result import ToolResult, ToolResultStatus
 
@@ -66,7 +67,7 @@ class RecoveryFlow:
             transaction.record_write(pair.source, Operation.MOVE)
             transaction.record_write(pair.target, Operation.REPLACE)
         self._audit.recovery_event(
-            "checkpoint_created", transaction.checkpoint.to_payload()
+            EventType.CHECKPOINT_CREATED, transaction.checkpoint.to_payload()
         )
         return transaction
 
@@ -80,7 +81,9 @@ class RecoveryFlow:
             return
         if result.workspace_mutated is False:
             checkpoint = transaction.complete(failed=True)
-            self._audit.recovery_event("mutation_recorded", checkpoint.to_payload())
+            self._audit.recovery_event(
+                EventType.MUTATION_RECORDED, checkpoint.to_payload()
+            )
             return
         effects = plan.effects
         for target in effects.write_paths:
@@ -93,7 +96,7 @@ class RecoveryFlow:
         checkpoint = transaction.complete(
             failed=result.status is not ToolResultStatus.OK
         )
-        self._audit.recovery_event("mutation_recorded", checkpoint.to_payload())
+        self._audit.recovery_event(EventType.MUTATION_RECORDED, checkpoint.to_payload())
 
     def abort(self, transaction: MutationTransaction | None) -> None:
         """执行入口驳回, 进程没起来: 事务按失败收尾, 不留一个悬挂的 ARMED 检查点."""

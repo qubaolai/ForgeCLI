@@ -1,6 +1,6 @@
 """跨层通用异常基类。
 
-ForgeError 是所有 forge 领域错误的根，便于上层(REPL)统一兜底。
+ForgeError 是所有 forge 领域错误的根，便于上层统一兜底。
 ConfigError 及其子类是「面向用户的配置错误」：message 可直接展示给用户、
 不暴露 traceback。它们被标量配置(application/config)、LLM 配置
 (application/llm/config) 以及 TOML 基础设施共用，因此住在 shared，而不归属任一上下文。

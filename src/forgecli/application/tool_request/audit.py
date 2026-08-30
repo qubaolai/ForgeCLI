@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 
 from forgecli.domain.security.decision import AuthorizationDecision
+from forgecli.domain.session.events import EventType
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.domain.tool.result import ToolResult
 
@@ -56,12 +57,16 @@ class ToolAuditSink(ABC):
     ) -> None: ...
 
     @abstractmethod
-    def approval_event(self, name: str, payload: Mapping[str, object]) -> None:
-        """approval_requested / approval_resolved 等审批生命周期事件."""
+    def recovery_event(
+        self, event_type: EventType, payload: Mapping[str, object]
+    ) -> None:
+        """恢复层的检查点与改写记录.
 
-    @abstractmethod
-    def recovery_event(self, name: str, payload: Mapping[str, object]) -> None:
-        """checkpoint_created / mutation_recorded / recovery_performed."""
+        收的是 `EventType` 而不是事件名字符串: 早先这里是一对按名字查表的通用出口
+        (`approval_event` / `recovery_event` 共用一张 `_EVENT_NAMES`), 查不到就静默
+        返回 —— 一个拼错的名字不会报错, 只会让那条审计凭空消失. 审计的全部价值就是
+        事后能回答"这件事发生没发生", 悄悄丢一条比不记还糟.
+        """
 
 
 class NullToolAudit(ToolAuditSink):
@@ -92,8 +97,7 @@ class NullToolAudit(ToolAuditSink):
     ) -> None:
         return None
 
-    def approval_event(self, name: str, payload: Mapping[str, object]) -> None:
-        return None
-
-    def recovery_event(self, name: str, payload: Mapping[str, object]) -> None:
+    def recovery_event(
+        self, event_type: EventType, payload: Mapping[str, object]
+    ) -> None:
         return None

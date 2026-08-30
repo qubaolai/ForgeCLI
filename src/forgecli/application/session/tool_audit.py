@@ -32,16 +32,6 @@ __all__ = ["SessionToolAudit"]
 # 让 events.jsonl 里一行顶过整个会话的其余部分; 完整数量由 mutating_target_count 给出.
 _MAX_LOGGED_PATHS = 40
 
-_EVENT_NAMES: dict[str, EventType] = {
-    "approval_requested": EventType.APPROVAL_REQUESTED,
-    "approval_resolved": EventType.APPROVAL_RESOLVED,
-    "classifier_invoked": EventType.CLASSIFIER_INVOKED,
-    "checkpoint_created": EventType.CHECKPOINT_CREATED,
-    "mutation_recorded": EventType.MUTATION_RECORDED,
-    "recovery_performed": EventType.RECOVERY_PERFORMED,
-    "dir_grant_changed": EventType.DIR_GRANT_CHANGED,
-}
-
 
 class SessionToolAudit(ToolAuditSink):
     def __init__(self, session: SessionService, *, turn_id: str = "") -> None:
@@ -108,14 +98,7 @@ class SessionToolAudit(ToolAuditSink):
             turn_id=self._turn_id,
         )
 
-    def approval_event(self, name: str, payload: Mapping[str, object]) -> None:
-        self._emit(name, payload)
-
-    def recovery_event(self, name: str, payload: Mapping[str, object]) -> None:
-        self._emit(name, payload)
-
-    def _emit(self, name: str, payload: Mapping[str, object]) -> None:
-        event_type = _EVENT_NAMES.get(name)
-        if event_type is None:
-            return
+    def recovery_event(
+        self, event_type: EventType, payload: Mapping[str, object]
+    ) -> None:
         self._session.record_tool_event(event_type, payload, turn_id=self._turn_id)
