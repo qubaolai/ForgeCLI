@@ -7,7 +7,8 @@ ForgeCLI 是本地优先、由浏览器控制的对话式软件工程 Agent。Ag
 
 ```text
 poetry install
-cd web && npm ci && cd ..
+make web-install
+make web-build
 poetry run forge
 ```
 

@@ -11,7 +11,7 @@
 # ci                    check + lint + format-check + type + arch + test
 # run                   poetry run forge
 # format-check          poetry run ruff format --check $(LINT_PATHS)
-# package               poetry build
+# package               web-build + poetry build
 # install-cli           build wheel and install forge with pip
 # uninstall-cli         uninstall forgecli with pip
 # verify-cli            verify installed forge command
@@ -98,7 +98,9 @@ ci: check lint format-check type arch web-type web-test web-build test
 run: 
 	$(POETRY) run forge $(FORGE_RUN_ARGS)
 
-package:
+# 先重建前端再打包: wheel 里的静态资源不入库 (见 .gitignore), 打包时现生成.
+# 少了这条依赖, 打出来的 wheel 带的是上一次谁在本机构建过的那一版.
+package: web-build
 	$(POETRY) build
 
 install-cli: package

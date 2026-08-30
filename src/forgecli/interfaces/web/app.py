@@ -1047,5 +1047,13 @@ def create_app(
         )
 
     assets = static_dir or Path(__file__).with_name("static")
+    if not assets.is_dir():
+        # 源码树里这个目录是构建产物, 不入库 (ADR-0025 决策 10: 最终用户装的 wheel
+        # 里带着它, 所以只有从源码跑的人会撞上). StaticFiles 自己也会抛, 但它只说
+        # "Directory does not exist", 不说该跑什么.
+        raise RuntimeError(
+            f"前端静态资源不存在: {assets}\n"
+            "  从源码运行需要先构建一次: make web-install && make web-build"
+        )
     app.mount("/", StaticFiles(directory=assets, html=True), name="web")
     return app
