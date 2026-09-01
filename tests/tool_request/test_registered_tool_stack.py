@@ -128,7 +128,9 @@ def test_creating_then_editing_a_file_goes_through_the_whole_pipeline(
     """建 -> 改 -> 读: 三次都要真的落盘, 而且走的是裁决与恢复那条链路."""
     target = tmp_path / "ws" / "notes.txt"
 
-    created = _call(stack, "fs_apply_patch", patch="*** NEW notes.txt\nv = 1\n")
+    created = _call(
+        stack, "fs_apply_patch", patch="*** NEW START notes.txt\nv = 1\n\n*** NEW END"
+    )
     assert created.kind is ObservationKind.TOOL_RESULT
     assert target.read_text(encoding="utf-8") == "v = 1\n"
 
@@ -149,16 +151,22 @@ def test_creating_then_editing_a_file_goes_through_the_whole_pipeline(
 def test_creating_over_an_existing_file_fails_and_says_which_tool_to_use(
     stack: ToolStack,
 ) -> None:
-    _call(stack, "fs_apply_patch", patch="*** NEW a.txt\n原内容\n")
+    _call(stack, "fs_apply_patch", patch="*** NEW START a.txt\n原内容\n\n*** NEW END")
 
-    again = _call(stack, "fs_apply_patch", patch="*** NEW a.txt\n覆盖\n")
+    again = _call(
+        stack, "fs_apply_patch", patch="*** NEW START a.txt\n覆盖\n\n*** NEW END"
+    )
 
     assert again.kind is ObservationKind.PREPARATION_FAILED
     assert "UPDATE" in again.message
 
 
 def test_scanning_the_workspace_returns_a_tree(stack: ToolStack) -> None:
-    _call(stack, "fs_apply_patch", patch="*** NEW src/main.py\nprint(1)\n")
+    _call(
+        stack,
+        "fs_apply_patch",
+        patch="*** NEW START src/main.py\nprint(1)\n\n*** NEW END",
+    )
 
     scanned = _call(stack, "fs_find")
 
@@ -194,9 +202,9 @@ def test_a_multi_file_envelope_lands_every_section(
         stack,
         "fs_apply_patch",
         patch=(
-            "*** NEW backend/pom.xml\n<project/>\n\n"
-            "*** NEW backend/src/Main.java\nclass Main {}\n\n"
-            "*** NEW backend/src/App.java\nclass App {}"
+            "*** NEW START backend/pom.xml\n<project/>\n\n\n*** NEW END\n"
+            "*** NEW START backend/src/Main.java\nclass Main {}\n\n\n*** NEW END\n"
+            "*** NEW START backend/src/App.java\nclass App {}\n*** NEW END"
         ),
     )
 
@@ -213,7 +221,7 @@ def test_a_failed_write_tells_the_model_what_went_wrong(
     """失败回给模型的曾经是空字符串: 只填 error 不填 content_parts."""
     (tmp_path / "ws" / "a.txt").write_text("x", encoding="utf-8")
 
-    result = _call(stack, "fs_apply_patch", patch="*** NEW a.txt\ny")
+    result = _call(stack, "fs_apply_patch", patch="*** NEW START a.txt\ny\n*** NEW END")
 
     assert result.render().strip()
 
@@ -225,7 +233,10 @@ def test_an_invented_patch_verb_is_reported_not_written(
     result = _call(
         stack,
         "fs_apply_patch",
-        patch="*** NEW schema.sql\n*** INSERT\nCREATE TABLE t (id int);",
+        patch=(
+            "*** NEW START schema.sql\n*** INSERT\n"
+            "CREATE TABLE t (id int);\n*** NEW END"
+        ),
     )
 
     assert result.kind is ObservationKind.PREPARATION_FAILED

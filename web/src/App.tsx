@@ -1,9 +1,9 @@
-import { CSSProperties, FormEvent, Fragment, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckIcon, ChevronIcon, GearIcon, PlanIcon, ShieldIcon } from "./icons";
 import { CopyButton, Markdown } from "./Markdown";
 import { Approval, canLearn, defaultOpenSections, headlineOf, isConsequential, learnHintOf, severityOf, shownTargetGroups } from "./approvalModel";
 import { RunProcess } from "./RunProcess";
-import { buildInitialModelParams, modelPlaceholder, modelRef, providerAvailabilityCopy, splitModelRef } from "./modelSettings";
+import { buildInitialModelParams, DEFAULT_TEMPERATURE, DEFAULT_TOP_P, modelPlaceholder, modelRef, providerAvailabilityCopy, splitModelRef } from "./modelSettings";
 import { appendRunEvent, failUnboundTurn, finishLocalTurn, formatTokens, isTerminalEvent, LocalTurn, metricsFor, newLocalTurn, restoreTurn, RunEvent, RunSnapshot, shouldAutoFollow, shouldSendOnEnter, ToolDirectory } from "./runModel";
 
 type Project = {
@@ -100,7 +100,7 @@ type Provider = {
   max_retries: number;
   models: Model[];
 };
-type KnownProvider = { id: string; label: string; api_key_env?: string; available: boolean };
+type KnownProvider = { id: string; label: string; api_key_env?: string; available: boolean; builtin?: boolean };
 type ThinkingView = {
   model: string;
   configured: boolean;
@@ -117,6 +117,8 @@ type ToolSpec = {
 };
 /** `/tools` 的 `all`: 与模式无关的全量展示名, 见后端那个路由的说明。 */
 type ToolDirectoryItem = { name: string; title: string; action: string };
+/** 三种协议全都列出来; 不支持的要看得见但选不了。 */
+type ProviderProtocol = { value: string; label: string; supported: boolean };
 type ToolsResponse = { items: ToolSpec[]; all: ToolDirectoryItem[] };
 
 /** 后端给的是数组 (顺序稳定, 便于诊断), 展示要的是按名字查 —— 转一次即可。 */
@@ -154,7 +156,6 @@ type AdminActions = {
   onSetCurrentModel: (providerId: string, modelId: string) => Promise<boolean>;
   onSetOverride: (origin: string, providerId: string, modelId: string) => void;
   onClearOverride: (origin: string) => void;
-  onUpdateThinking: (mode: string, effort: string) => void;
   onPruneRules: () => void;
   onUndo: () => void;
   onPreviewCheckpoint: (id: string) => Promise<string>;
@@ -168,6 +169,7 @@ type ModelsResponse = {
   provider_fields: FieldSpec[];
   model_fields: FieldSpec[];
   known_providers: KnownProvider[];
+  provider_protocols: ProviderProtocol[];
   runtime: LlmRuntimeSettings;
   current_model: string;
   overrides: Record<string, string>;
@@ -301,6 +303,7 @@ function App() {
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [knownProviders, setKnownProviders] = useState<KnownProvider[]>([]);
+  const [providerProtocols, setProviderProtocols] = useState<ProviderProtocol[]>([]);
   const [providerSettings, setProviderSettings] = useState<Provider[]>([]);
   const [providerFields, setProviderFields] = useState<FieldSpec[]>([]);
   const [modelFields, setModelFields] = useState<FieldSpec[]>([]);
@@ -382,7 +385,8 @@ function App() {
     } catch {
       setTranscript([]);
     }
-    // 处理过程只活在进程内：服务重启后拿不到，但刷新页面仍然能展开看。
+    // 处理过程现在落盘 (sessions/<id>/runs.jsonl)，所以历史轮次也展得开。
+    // 后端把落盘的与进程内还没收尾的那一轮合并后一起发。
     try {
       const runs = await api<{ items: RunSnapshot[] }>("/runs");
       setRestoredRuns(runs.items.map((item) => restoreTurn(item)));
@@ -398,6 +402,7 @@ function App() {
     setProviderFields(models.provider_fields);
     setModelFields(models.model_fields);
     setKnownProviders(models.known_providers);
+    setProviderProtocols(models.provider_protocols ?? []);
     setLlmRuntime(models.runtime);
     setCurrentModel(models.current_model);
     setOverrides(models.overrides);
@@ -800,6 +805,23 @@ function App() {
     } catch (reason) { setError((reason as Error).message); }
   }
 
+  async function updateThinking(mode: string, effort: string) {
+    try {
+      const result = await api<{ thinking: ThinkingView }>("/thinking", {
+        method: "POST", body: JSON.stringify({ mode, effort }),
+      });
+      setThinking(result.thinking);
+    } catch (reason) { setError((reason as Error).message); }
+  }
+
+  async function addProvider(body: { provider_id: string; name: string; api_base: string; protocol: string; api_key_env: string }) {
+    try {
+      await api("/providers", { method: "POST", body: JSON.stringify(body) });
+      await loadAdministration();
+      return true;
+    } catch (reason) { setError((reason as Error).message); return false; }
+  }
+
   async function addModel(providerId: string, modelId: string, params: Record<string, unknown>) {
     try {
       await api("/models", {
@@ -876,14 +898,6 @@ function App() {
     } catch (reason) { setError((reason as Error).message); }
   }
 
-  async function updateThinking(mode: string, effort: string) {
-    try {
-      const result = await api<{ thinking: ThinkingView }>("/thinking", {
-        method: "POST", body: JSON.stringify({ mode, effort }),
-      });
-      setThinking(result.thinking);
-    } catch (reason) { setError((reason as Error).message); }
-  }
 
   async function pruneRules() {
     try {
@@ -974,7 +988,10 @@ function App() {
             {!transcript.length && !localTurns.length && <div className="welcome"><div className="forge-mark">F</div><h2>准备好了</h2><p>描述你想理解、规划或修改的工程任务。</p></div>}
             {transcript.map((item) => {
               const run = item.payload.role === "assistant" ? restoredByTurn.get(item.payload.turn_id ?? "") : undefined;
-              return <Fragment key={item.event_id}>{run && <RunProcess turn={run} directory={toolDirectory} />}<Message item={item} /></Fragment>;
+              // 有过程就渲染过程 —— 最终回答是它最后一块叙述, 再画一遍 Message 就重复了。
+              // 没有过程的旧会话 (runs.jsonl 之前的) 仍然只渲染回答, 那是它们全部的内容。
+              if (run) return <RestoredTurnView run={run} item={item} directory={toolDirectory} key={item.event_id} />;
+              return <Message item={item} key={item.event_id} />;
             })}
             {localTurns.map((turn) => <LocalTurnView turn={turn} directory={toolDirectory} key={turn.clientId} />)}
           </div>
@@ -1014,7 +1031,6 @@ function App() {
           onSetCurrentModel: chooseCurrentModel,
           onSetOverride: setModelOverride,
           onClearOverride: clearModelOverride,
-          onUpdateThinking: updateThinking,
           onPruneRules: pruneRules,
           onUndo: undoLatest,
           onPreviewCheckpoint: previewCheckpoint,
@@ -1022,6 +1038,7 @@ function App() {
         onClose={() => setShowSettings(false)} onSave={saveSetting} onAddRoot={addWorkspace}
         onRemoveRoot={removeWorkspace} onRevokeRule={revokeRule} onRestore={restoreCheckpoint}
         onAddModel={addModel} onRemoveModel={removeModel} onSaveModel={saveModelFields}
+        providerProtocols={providerProtocols} onAddProvider={addProvider}
         onSaveProvider={saveProviderFields} onSaveLlmRuntime={saveLlmRuntime} />}
     </main>
   );
@@ -1033,11 +1050,36 @@ function Message({ item }: { item: TranscriptEvent }) {
   return <article className={`message ${user ? "user" : "assistant"}`}><div className="avatar">{user ? "你" : "F"}</div><div><strong>{user ? "你" : "Forge"}</strong>{user ? <p>{text}</p> : <><Markdown content={text} /><div className="message-footer"><span /><CopyButton content={text} className="message-copy-outside" /></div></>}</div></article>;
 }
 
+/** 历史轮次: 与 LocalTurnView 同一个形状, 只是数据来自落盘的过程快照。 */
+function RestoredTurnView({ run, item, directory }: { run: LocalTurn; item: TranscriptEvent; directory: ToolDirectory }) {
+  const text = item.payload.text ?? "";
+  return <article className="message assistant"><div className="avatar">F</div><div>
+    <strong>Forge</strong>
+    <RunProcess turn={run} directory={directory} />
+    <div className="message-footer"><span />{text && <CopyButton content={text} className="message-copy-outside" />}</div>
+  </div></article>;
+}
+
 function LocalTurnView({ turn, directory }: { turn: LocalTurn; directory: ToolDirectory }) {
-  const text = turn.assistantText || turn.error;
   const metrics = metricsFor(turn.events, Date.now(), turn.startedAt);
+  // 最终回答**不再单独渲染一段**: 它是 RunProcess 里最后一块叙述。两边都画一遍的话,
+  // 同一段文字会出现两次 —— 而这正是把叙述从折叠块里放出来之后的必然结果。
+  //
+  // 只剩 error 要单独说: 它不来自任何一次模型调用, 时间线里没有它的位置。
+  //
   // 占位轮次没有本地用户文本（刷新页面后接上的 turn），用户消息已经在 transcript 里。
-  return <section className="local-turn">{turn.userText && <article className="message user"><div className="avatar">你</div><div><strong>你</strong><p>{turn.userText}</p></div></article>}<RunProcess turn={turn} directory={directory} />{text && <article className="message assistant streaming"><div className="avatar">F</div><div><strong>Forge</strong><Markdown content={text} />{turn.status === "running" && <i className="stream-caret" />}<div className="message-footer">{turn.status !== "running" ? <FinalMetrics metrics={metrics} /> : <span />}<CopyButton content={text} className="message-copy-outside" /></div></div></article>}</section>;
+  return <section className="local-turn">
+    {turn.userText && <article className="message user"><div className="avatar">你</div><div><strong>你</strong><p>{turn.userText}</p></div></article>}
+    <article className="message assistant"><div className="avatar">F</div><div>
+      <strong>Forge</strong>
+      <RunProcess turn={turn} directory={directory} />
+      {turn.error && <p className="run-flow-error">{turn.error}</p>}
+      <div className="message-footer">
+        {turn.status !== "running" ? <FinalMetrics metrics={metrics} /> : <span />}
+        {turn.assistantText && <CopyButton content={turn.assistantText} className="message-copy-outside" />}
+      </div>
+    </div></article>
+  </section>;
 }
 
 function FinalMetrics({ metrics }: { metrics: ReturnType<typeof metricsFor> }) {
@@ -1059,7 +1101,11 @@ function FinalMetrics({ metrics }: { metrics: ReturnType<typeof metricsFor> }) {
   </span>;
 }
 
-/** 输入框旁的模型与思考强度入口: 这两项调得最勤, 不该每次都进设置页。 */
+/** 输入框旁的模型与思考强度入口: 这两项调得最勤, 不该每次都进设置页。
+ *
+ * 强度尤其如此 —— 它是随任务变的: 读代码用低档, 设计方案用高档, 而进设置页要三次点击。
+ * 模型自己的默认值仍然在模型配置里填, 这里改的是**本进程**的临时覆盖, 不落盘。
+ */
 function ModelMenu({ current, models, thinking, disabled, onChoose, onThinking }: {
   current: string;
   models: string[];
@@ -1107,10 +1153,10 @@ function ModelMenu({ current, models, thinking, disabled, onChoose, onThinking }
           <button type="button" className={thinkingOn ? "" : "active"} onClick={() => onThinking("off", "")}>关闭</button>
           <button type="button" className={thinkingOn ? "active" : ""} onClick={() => onThinking("on", "")}>开启</button>
         </div>
-        {efforts.length > 0 && <div className="thinking-row">
+        {thinkingOn && efforts.length > 0 && <div className="thinking-row">
           {efforts.map((item) => <button type="button" key={item} className={thinking.effort === item ? "active" : ""} onClick={() => onThinking("", item)}>{item}</button>)}
         </div>}
-        {!efforts.length && <p className="field-help">该模型未声明可用强度。</p>}
+        {thinkingOn && !efforts.length && <p className="field-help">该模型未声明可用强度。</p>}
       </>}
     </div>}
   </div>;
@@ -1312,13 +1358,15 @@ type SettingsPanelProps = {
   onRevokeRule: (id: string) => void;
   onRestore: (id: string) => void;
   onAddModel: (providerId: string, modelId: string, params: Record<string, unknown>) => Promise<boolean>;
+  providerProtocols: ProviderProtocol[];
+  onAddProvider: (body: { provider_id: string; name: string; api_base: string; protocol: string; api_key_env: string }) => Promise<boolean>;
   onRemoveModel: (providerId: string, modelId: string) => void;
   onSaveModel: (providerId: string, modelId: string, changed: Record<string, string>) => void;
   onSaveProvider: (providerId: string, changed: Record<string, string>) => void;
   onSaveLlmRuntime: (changed: Record<string, string>) => void;
 };
 
-function SettingsPanel({ items, roots, rules, checkpoints, providers, providerSettings, providerFields, modelFields, knownProviders, llmRuntime, catalog, actions, onClose, onSave, onAddRoot, onRemoveRoot, onRevokeRule, onRestore, onAddModel, onRemoveModel, onSaveModel, onSaveProvider, onSaveLlmRuntime }: SettingsPanelProps) {
+function SettingsPanel({ items, roots, rules, checkpoints, providers, providerSettings, providerFields, modelFields, knownProviders, providerProtocols, llmRuntime, catalog, actions, onClose, onSave, onAddRoot, onRemoveRoot, onRevokeRule, onRestore, onAddModel, onAddProvider, onRemoveModel, onSaveModel, onSaveProvider, onSaveLlmRuntime }: SettingsPanelProps) {
   const [tab, setTab] = useState<"general" | "models" | "security" | "recovery" | "status">("general");
   const [path, setPath] = useState("");
   const [access, setAccess] = useState("read");
@@ -1328,6 +1376,7 @@ function SettingsPanel({ items, roots, rules, checkpoints, providers, providerSe
       providers={providers} providerSettings={providerSettings} providerFields={providerFields}
       modelFields={modelFields} knownProviders={knownProviders} llmRuntime={llmRuntime}
       catalog={catalog} actions={actions} onAddModel={onAddModel} onRemoveModel={onRemoveModel}
+      providerProtocols={providerProtocols} onAddProvider={onAddProvider}
       onSaveModel={onSaveModel} onSaveProvider={onSaveProvider} onSaveLlmRuntime={onSaveLlmRuntime}
     />}
     {tab === "security" && <><h3>工作区目录</h3>{roots.map((root, index) => <div className="admin-row" key={root.path}><div><strong>{root.path}</strong><small>{root.access === "write" ? "可读写" : "只读"}</small></div>{index > 0 && <button onClick={() => onRemoveRoot(root.path)}>移除</button>}</div>)}<div className="add-root"><input value={path} onChange={(event) => setPath(event.target.value)} placeholder="额外目录路径" /><select value={access} onChange={(event) => setAccess(event.target.value)}><option value="read">只读</option><option value="write">读写</option></select><button onClick={() => { if (path.trim()) { onAddRoot(path, access); setPath(""); } }}>添加</button></div><h3>学习规则</h3>{rules.length ? rules.map((rule) => <div className="admin-row" key={rule.rule_id}><div><strong>{rule.label || rule.rule_id}</strong><small>{rule.scope} · {rule.match.mode}</small></div><button onClick={() => onRevokeRule(rule.rule_id)}>撤销</button></div>) : <p className="empty-copy">没有工作区学习规则。</p>}
@@ -1370,6 +1419,8 @@ type ModelSettingsProps = {
   catalog: AdminCatalog;
   actions: AdminActions;
   onAddModel: (providerId: string, modelId: string, params: Record<string, unknown>) => Promise<boolean>;
+  providerProtocols: ProviderProtocol[];
+  onAddProvider: (body: { provider_id: string; name: string; api_base: string; protocol: string; api_key_env: string }) => Promise<boolean>;
   onRemoveModel: (providerId: string, modelId: string) => void;
   onSaveModel: (providerId: string, modelId: string, changed: Record<string, string>) => void;
   onSaveProvider: (providerId: string, changed: Record<string, string>) => void;
@@ -1380,9 +1431,15 @@ function ProviderMark({ providerId, label }: { providerId: string; label?: strin
   return <span className={`provider-mark provider-${providerId}`}>{(label || providerId).slice(0, 1).toUpperCase()}</span>;
 }
 
-function ModelSettings({ providers, providerSettings, providerFields, modelFields, knownProviders, llmRuntime, catalog, actions, onAddModel, onRemoveModel, onSaveModel, onSaveProvider, onSaveLlmRuntime }: ModelSettingsProps) {
+function ModelSettings({ providers, providerSettings, providerFields, modelFields, knownProviders, providerProtocols, llmRuntime, catalog, actions, onAddModel, onAddProvider, onRemoveModel, onSaveModel, onSaveProvider, onSaveLlmRuntime }: ModelSettingsProps) {
   const [view, setView] = useState<"models" | "providers" | "gateway">("models");
   const [showAdd, setShowAdd] = useState(false);
+  const [showAddProvider, setShowAddProvider] = useState(false);
+  // 配置里有、但不在内置注册表里的那几家 = 用户自己加的。
+  // knownProviders 现在同时包含内置与自建的, 由后端的 builtin 标记分开 —— 前端手抄
+  // 一份内置清单的话, 加一家内置供应商就会让它出现在"自建"那一组下, 而不会有任何东西报错。
+  const builtinProviders = knownProviders.filter((item) => item.builtin !== false);
+  const customProviders = knownProviders.filter((item) => item.builtin === false);
   const configured = useMemo(() => providers.flatMap((provider) => provider.models.map((model) => ({ provider, model, ref: modelRef(provider.id, model.id) }))), [providers]);
   const configuredRefs = configured.map((item) => item.ref);
   const [currentProviderId, currentModelId] = splitModelRef(catalog.currentModel);
@@ -1432,7 +1489,6 @@ function ModelSettings({ providers, providerSettings, providerFields, modelField
       <details className="model-routing">
         <summary><span><strong>高级路由</strong><small>Thinking 与按任务用途覆盖默认模型</small></span><span>{overrideCount ? `${overrideCount} 项已配置` : "使用默认模型"} <ChevronIcon /></span></summary>
         <div className="model-routing-body">
-          <ThinkingEditor thinking={catalog.thinking} onUpdate={actions.onUpdateThinking} />
           <h4>用途模型覆盖</h4>
           <p className="field-help">未设置的用途自动使用当前默认模型。</p>
           {catalog.origins.map((origin) => <div className="admin-row" key={origin}>
@@ -1450,13 +1506,28 @@ function ModelSettings({ providers, providerSettings, providerFields, modelField
     </>}
 
     {view === "providers" && <>
-      <div className="model-page-heading"><div><h3>供应商</h3><p>配置兼容端点与密钥环境变量；API 密钥不会在页面中读取或保存。</p></div></div>
-      <div className="provider-availability-list">{knownProviders.map((known) => {
+      <div className="model-page-heading">
+        <div><h3>供应商</h3><p>配置兼容端点与密钥环境变量；API 密钥不会在页面中读取或保存。</p></div>
+        <button type="button" className="primary-action" onClick={() => setShowAddProvider(true)}>＋ 添加供应商</button>
+      </div>
+      <div className="provider-availability-list">{builtinProviders.map((known) => {
         const provider = providerSettings.find((item) => item.id === known.id);
         if (!provider) return null;
         return <ProviderEditor key={known.id} provider={provider} known={known} fields={providerFields} onSaveProvider={onSaveProvider} />;
       })}</div>
-      <p className="field-help provider-protocol-help">仅支持 OpenAI Compatible <code>/chat/completions</code> 协议；Ollama、vLLM 等本地端点使用 Local。</p>
+      {/* 自建的单独一组: 它们没有注册表默认值可以回落, 而且用户需要一眼看出哪几家是自己加的。
+          可用性一律从 knownProviders 里取 —— 这里曾经自己编过一个 available: true,
+          于是一家根本没配环境变量的供应商在界面上显示"密钥已就绪"。 */}
+      {customProviders.length > 0 && <>
+        <h4 className="provider-group-heading">自建供应商</h4>
+        <div className="provider-availability-list">{customProviders.map((known) => {
+          const provider = providerSettings.find((item) => item.id === known.id);
+          if (!provider) return null;
+          return <ProviderEditor key={known.id} provider={provider} known={known}
+            fields={providerFields} onSaveProvider={onSaveProvider} />;
+        })}</div>
+      </>}
+      <p className="field-help provider-protocol-help">目前只有 OpenAI Compatible <code>/chat/completions</code> 协议有对应的适配器；Ollama、vLLM 等本地端点属于这一类。</p>
     </>}
 
     {view === "gateway" && <>
@@ -1473,11 +1544,74 @@ function ModelSettings({ providers, providerSettings, providerFields, modelField
       ]} onSave={onSaveLlmRuntime} />}
     </>}
 
+    {showAddProvider && <AddProviderDrawer
+      protocols={providerProtocols}
+      onClose={() => setShowAddProvider(false)}
+      onAdd={onAddProvider}
+    />}
+
     {showAdd && <AddModelDrawer
       knownProviders={knownProviders} providerSettings={providerSettings}
       onClose={() => setShowAdd(false)} onEditProvider={() => { setShowAdd(false); setView("providers"); }}
       onAdd={onAddModel} onSetCurrent={actions.onSetCurrentModel}
     />}
+  </div>;
+}
+
+function AddProviderDrawer({ protocols, onClose, onAdd }: {
+  protocols: ProviderProtocol[];
+  onClose: () => void;
+  onAdd: (body: { provider_id: string; name: string; api_base: string; protocol: string; api_key_env: string }) => Promise<boolean>;
+}) {
+  const supported = protocols.find((item) => item.supported)?.value ?? "openai_compatible";
+  const [providerId, setProviderId] = useState("");
+  const [name, setName] = useState("");
+  const [apiBase, setApiBase] = useState("");
+  const [apiKeyEnv, setApiKeyEnv] = useState("");
+  const [protocol, setProtocol] = useState(supported);
+  const [saving, setSaving] = useState(false);
+  const ready = providerId.trim().length > 0 && apiBase.trim().length > 0;
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!ready || saving) return;
+    setSaving(true);
+    const done = await onAdd({
+      provider_id: providerId.trim(), name: name.trim(), api_base: apiBase.trim(),
+      protocol, api_key_env: apiKeyEnv.trim(),
+    });
+    setSaving(false);
+    if (done) onClose();
+  }
+
+  return <div className="model-drawer-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <aside className="model-drawer" role="dialog" aria-modal="true" aria-label="添加供应商">
+      <header><div><h3>添加供应商</h3><p>端点讲 OpenAI 兼容协议就能直接接入，不需要改代码。</p></div><button type="button" aria-label="关闭添加供应商" onClick={onClose}>×</button></header>
+      <form onSubmit={submit}>
+        <fieldset><legend>1. 协议</legend>
+          {/* 不支持的也列出来并禁用: 看不到这一项会让人以为 Forge 不打算支持, 于是去找别的工具。 */}
+          <label className="model-input"><span>端点协议</span>
+            <select value={protocol} onChange={(event) => setProtocol(event.target.value)}>
+              {protocols.map((item) => (
+                <option key={item.value} value={item.value} disabled={!item.supported}>
+                  {item.label}{item.supported ? "" : "（暂不支持）"}
+                </option>
+              ))}
+            </select>
+            <small>目前只有 OpenAI Compatible 有对应的适配器，另外两种还没有。</small>
+          </label>
+        </fieldset>
+
+        <fieldset><legend>2. 连接信息</legend>
+          <label className="model-input"><span>供应商 ID</span><input autoFocus value={providerId} onChange={(event) => setProviderId(event.target.value)} placeholder="acme" /><small>小写标识符，配置文件与模型引用都用它。</small></label>
+          <label className="model-input"><span>展示名</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Acme" /><small>留空则用 ID。</small></label>
+          <label className="model-input"><span>API 地址</span><input value={apiBase} onChange={(event) => setApiBase(event.target.value)} placeholder="https://acme.example.com/v1/chat/completions" /><small>完整的 /chat/completions 端点。</small></label>
+          <label className="model-input"><span>API Key 环境变量</span><input value={apiKeyEnv} onChange={(event) => setApiKeyEnv(event.target.value)} placeholder="ACME_API_KEY" /><small>Forge 只读环境变量名，不保存密钥本身。免密钥的本地端点可留空。</small></label>
+        </fieldset>
+
+        <footer><button type="button" onClick={onClose}>取消</button><button type="submit" className="primary-action" disabled={!ready || saving}>{saving ? "添加中…" : "添加供应商"}</button></footer>
+      </form>
+    </aside>
   </div>;
 }
 
@@ -1493,6 +1627,12 @@ function AddModelDrawer({ knownProviders, providerSettings, onClose, onEditProvi
   const [modelId, setModelId] = useState("");
   const [contextWindow, setContextWindow] = useState("");
   const [maxTokens, setMaxTokens] = useState("");
+  // 采样与 thinking 在**添加时**就填: 它们是这个模型怎么用的一部分, 不是事后想起来
+  // 才去某个单独入口调的东西。
+  const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE);
+  const [topP, setTopP] = useState(DEFAULT_TOP_P);
+  const [thinkingMode, setThinkingMode] = useState("off");
+  const [thinkingEffort, setThinkingEffort] = useState("");
   const [makeDefault, setMakeDefault] = useState(true);
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState("");
@@ -1514,7 +1654,7 @@ function AddModelDrawer({ knownProviders, providerSettings, onClose, onEditProvi
     if (!providerId || !modelId.trim() || saving) return;
     let params: Record<string, unknown>;
     try {
-      params = buildInitialModelParams(contextWindow, maxTokens);
+      params = buildInitialModelParams(contextWindow, maxTokens, { temperature, topP, thinkingMode, thinkingEffort });
       setValidationError("");
     } catch (reason) {
       setValidationError((reason as Error).message);
@@ -1544,7 +1684,23 @@ function AddModelDrawer({ knownProviders, providerSettings, onClose, onEditProvi
           </div>
         </fieldset>
 
+        <fieldset><legend>3. 思考</legend>
+          <label className="model-input"><span>Thinking</span>
+            <select value={thinkingMode} onChange={(event) => setThinkingMode(event.target.value)}>
+              <option value="off">关闭</option>
+              <option value="on">开启</option>
+            </select>
+            <small>开启后模型会先推理再回答，更准也更慢更贵。</small>
+          </label>
+          {thinkingMode === "on" && <label className="model-input"><span>思考强度</span>
+            <input value={thinkingEffort} onChange={(event) => setThinkingEffort(event.target.value)} placeholder="留空用模型默认" />
+            <small>填模型自己声明的强度名，例如 low / medium / high。</small>
+          </label>}
+        </fieldset>
+
         <details className="model-add-advanced"><summary>高级参数 <span>添加后也可以修改 <ChevronIcon /></span></summary><div>
+          <label><span>温度</span><input inputMode="decimal" value={temperature} onChange={(event) => setTemperature(event.target.value)} /></label>
+          <label><span>top_p</span><input inputMode="decimal" value={topP} onChange={(event) => setTopP(event.target.value)} /></label>
           <label><span>上下文窗口</span><input inputMode="numeric" value={contextWindow} onChange={(event) => setContextWindow(event.target.value)} placeholder="使用供应商默认值" /></label>
           <label><span>最大输出 Tokens</span><input inputMode="numeric" value={maxTokens} onChange={(event) => setMaxTokens(event.target.value)} placeholder="使用供应商默认值" /></label>
         </div></details>
@@ -1553,25 +1709,6 @@ function AddModelDrawer({ knownProviders, providerSettings, onClose, onEditProvi
         <footer><button type="button" onClick={onClose}>取消</button><button type="submit" className="primary-action" disabled={!providerId || !modelId.trim() || saving}>{saving ? "添加中…" : makeDefault ? "添加并使用" : "添加模型"}</button></footer>
       </form>
     </aside>
-  </div>;
-}
-
-function ThinkingEditor({ thinking, onUpdate }: { thinking: ThinkingView; onUpdate: (mode: string, effort: string) => void }) {
-  if (!thinking.configured) {
-    return <p className="field-help">选择当前模型后可以在这里调 thinking 开关与强度。</p>;
-  }
-  const efforts = thinking.supported_efforts ?? [];
-  return <div className="admin-row">
-    <div><strong>Thinking · {thinking.model}</strong><small>只影响当前 Forge 进程, 不写入模型配置</small></div>
-    <div className="row-actions">
-      <select value={thinking.mode ?? "off"} onChange={(event) => onUpdate(event.target.value, "")}>
-        <option value="off">off</option><option value="on">on</option>
-      </select>
-      <select value={thinking.effort ?? ""} onChange={(event) => onUpdate("", event.target.value)} disabled={!efforts.length}>
-        <option value="" disabled>{efforts.length ? "选择强度" : "该模型未声明强度"}</option>
-        {efforts.map((item) => <option key={item} value={item}>{item}</option>)}
-      </select>
-    </div>
   </div>;
 }
 
@@ -1614,6 +1751,7 @@ function ModelEditor({ provider, model, fields, isCurrent, onSave, onRemove }: {
       fields={[
         { key: "thinking_mode", label: "Thinking", value: model.params.thinking_mode ?? "off", choices: ["off", "on"] },
         ...fields.map((field) => ({ key: field.name, label: field.label, value: String(model.params[field.name] ?? "") })),
+        { key: "thinking_effort", label: "当前 Thinking 强度", value: String(model.params.thinking_effort ?? "") },
         { key: "thinking_efforts", label: "Thinking 强度（逗号分隔）", value: (model.params.thinking_efforts ?? []).join(",") },
         { key: "thinking_default_effort", label: "默认 Thinking 强度", value: String(model.params.thinking_default_effort ?? "") },
         { key: "extra", label: "厂商扩展 JSON", value: JSON.stringify(model.params.extra ?? {}) },

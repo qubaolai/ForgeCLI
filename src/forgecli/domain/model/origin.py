@@ -32,3 +32,49 @@ class RequestOrigin(Enum):
     REVIEW = "review"
     DEBUG = "debug"
     STRUCTURED_CLASSIFICATION = "structured_classification"
+
+
+# 哪些用途**不需要**思考 (ADR-0011 §3.3 明写 origin 用于"参数默认").
+#
+# 判据是这次调用要不要**推理**: 起标题, 压缩上下文, 做摘要与结构化分类, 都是把已经在
+# 上下文里的东西换个形状, 推理预算花在那里是纯浪费. 实测一次 `act` 调用花了 5,569 个
+# 思考 token 去决定把待办第 5 项打勾 —— 那一类才是要治的, 只是 origin 分不出来 (见下).
+#
+# **穷尽覆盖**, 不用默认分支 (ADR-0040 决策 9): 新增一个用途时, 遗漏会让测试红, 而不是
+# 悄悄按"要思考"处理. 有一条用例专查这张表覆盖了枚举的每一个成员.
+#
+# 已知上限: `act` 是循环里唯一的用途, 而它既包含"读三个文件再决定改哪里", 也包含"把
+# 待办打个勾". origin 是调用发出**之前**就定好的标签, 分不出这两者 —— 所以这张表治不了
+# 循环内的浪费, 那要么靠调低模型自身的 effort, 要么需要一个 origin 表达不了的判据.
+_THINKING_BY_ORIGIN: dict[RequestOrigin, bool] = {}
+
+
+def _register_thinking_defaults() -> None:
+    thinks = {
+        RequestOrigin.CHAT,
+        RequestOrigin.ACT,
+        RequestOrigin.PLAN,
+        RequestOrigin.REVIEW,
+        RequestOrigin.DEBUG,
+        RequestOrigin.TOOL_OBSERVATION,
+    }
+    mechanical = {
+        RequestOrigin.TITLE,
+        RequestOrigin.SUMMARY,
+        RequestOrigin.FINAL_SUMMARY,
+        RequestOrigin.COMPACT,
+        RequestOrigin.STRUCTURED_CLASSIFICATION,
+    }
+    missing = set(RequestOrigin) - thinks - mechanical
+    if missing:
+        raise ValueError(f"新增用途未归类: {sorted(item.value for item in missing)}")
+    _THINKING_BY_ORIGIN.update(dict.fromkeys(thinks, True))
+    _THINKING_BY_ORIGIN.update(dict.fromkeys(mechanical, False))
+
+
+_register_thinking_defaults()
+
+
+def benefits_from_thinking(origin: RequestOrigin) -> bool:
+    """这个用途值不值得花思考预算."""
+    return _THINKING_BY_ORIGIN[origin]

@@ -12,8 +12,10 @@ from forgecli.domain.conversation.turn import MessageRole
 from forgecli.domain.tool.tool_call import ToolCall
 
 _PATCH = (
-    "*** NEW backend/src/main/java/com/example/demo/security/JwtTokenProvider.java\n"
+    "*** NEW START "
+    "backend/src/main/java/com/example/demo/security/JwtTokenProvider.java\n"
     + "code line\n" * 200
+    + "*** NEW END"
 )
 
 

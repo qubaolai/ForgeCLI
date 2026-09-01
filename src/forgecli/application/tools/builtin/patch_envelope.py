@@ -15,8 +15,9 @@ r"""补丁信封的语法与解析 (ADR-0029 规则三 C 类).
     *** REPLACE
     x = 2
 
-    *** NEW src/b.py
+    *** NEW START src/b.py
     print("hello")
+    *** NEW END
 
     *** DELETE src/c.py
 
@@ -43,6 +44,11 @@ r"""补丁信封的语法与解析 (ADR-0029 规则三 C 类).
    `\*** ` 就写 `\\*** `.
 3. **正文逐字**: 标记行的换行之后, 到下一个标记行之前的那个换行为止. 想要末尾换行就
    多空一行.
+
+   新建文件是**闭合的**: `*** NEW START 路径` 开, `*** NEW END` 关. 其余几种段靠"下一个
+   标记"隐式收尾, 而新建段的正文是整份文件内容 —— 最容易出现没转义的 `*** ` 行. 隐式收尾
+   下那种情况是**静默截断**: 文件写进去了, 只是少了一半, 而工具照样回"已应用". 显式收尾
+   把它变成一次解析报错, 模型当场就能改对.
 4. **解析失败指到段和处**: 错误里带段序号, 路径与第几处替换, 不整封退回 (ADR-0029
    约束 3).
 """
@@ -66,6 +72,10 @@ _MARKER = "*** "
 _ESCAPE = "\\"
 _MOVE_ARROW = " -> "
 _VERBS = ("UPDATE", "NEW", "DELETE", "MOVE", "FIND", "REPLACE")
+# `*** NEW` 的两个半边. 它们是**参数**而不是动词: 动词表是给 `_marker_at` 认第一个词用
+# 的, 把 `NEW START` 塞进去会让"不认识的动词"那条报错列出一堆两个词的组合.
+_NEW_OPEN = "START"
+_NEW_CLOSE = "END"
 
 
 @dataclass(frozen=True)
@@ -210,13 +220,44 @@ def _read_section(
         )
 
     if marker.verb == "NEW":
-        body = _body(lines, marker, _next_marker(markers, position))
-        return NewFile(path=marker.argument, content=body, index=ordinal), position + 1
+        return _read_new(lines, markers, position, ordinal, where)
 
     if marker.verb == "UPDATE":
         return _read_update(lines, markers, position, ordinal, where)
 
     raise PatchSyntaxError(f"`*** {marker.verb}` 不能开启一个文件段", where=where)
+
+
+def _read_new(
+    lines: list[str],
+    markers: list[_Marker],
+    position: int,
+    ordinal: int,
+    where: str,
+) -> tuple[PatchSection, int]:
+    """新建文件段: `*** NEW START 路径` … `*** NEW END`.
+
+    闭合而不是靠下一个标记收尾 —— 理由见模块说明第 3 条: 新建段的正文是整份文件, 里面
+    出现没转义的 `*** ` 行时, 隐式收尾会静默截断, 而工具照样回"已应用".
+    """
+    marker = markers[position]
+    kind, _, path = marker.argument.partition(" ")
+    if kind.upper() != _NEW_OPEN or not path.strip():
+        raise PatchSyntaxError(
+            "新建文件要写成 `*** NEW START 路径`, 正文之后用 `*** NEW END` 收尾",
+            where=where,
+        )
+    closer = _next_marker(markers, position)
+    if closer is None or closer.verb != "NEW" or closer.argument.upper() != _NEW_CLOSE:
+        raise PatchSyntaxError(
+            "`*** NEW START` 缺少配对的 `*** NEW END`. "
+            f"正文里以 `{_MARKER}` 开头的行要写成 `\\{_MARKER}...`",
+            where=where,
+        )
+    return (
+        NewFile(path=path.strip(), content=_body(lines, marker, closer), index=ordinal),
+        position + 2,
+    )
 
 
 def _read_update(
@@ -251,7 +292,7 @@ def _read_update(
     if not replacements:
         raise PatchSyntaxError(
             "UPDATE 段里没有任何 `*** FIND` / `*** REPLACE`. "
-            "整体重写文件请改用 `*** NEW`.",
+            "整体重写文件请改用 `*** NEW START` … `*** NEW END`.",
             where=where,
         )
     if cursor < len(markers) and markers[cursor].verb == "REPLACE":

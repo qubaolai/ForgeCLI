@@ -43,6 +43,7 @@ from forgecli.application.llm.errors import ConfigValidationError
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.provider_spec import ProviderProtocol, ProviderSpec
 from forgecli.domain.model.thinking import (
     ModelThinkingCapabilities,
     ThinkingEffortName,
@@ -160,6 +161,9 @@ class LlmConfigService:
         section = self._store.load().get("providers", {})
         if not isinstance(section, Mapping):
             return LlmConfig(providers=())
+        # 登记必须在合并之前: `_merge_provider_sections` 会丢掉"未知供应商", 而用户
+        # 自建的那几家在登记之前正是未知的 —— 顺序反了就永远读不回来.
+        _register_user_providers(section)
         merged = _merge_provider_sections(section)
         return LlmConfig(
             providers=tuple(
@@ -180,9 +184,56 @@ class LlmConfigService:
         于是界面上也就没有一行可以编辑.
         """
         configured = {provider.id: provider for provider in self.providers()}
+        # 内置的都要有一行 (哪怕还没配过); 用户自建的只有配过才存在, 所以直接取配置里
+        # 那几条 —— 它们没有"注册表默认值"可以回落.
+        listed = sorted({*provider_registry.REGISTRY, *configured})
         return tuple(
             configured.get(provider_id) or self._parse_provider(provider_id, {})
-            for provider_id in sorted(provider_registry.REGISTRY)
+            for provider_id in listed
+        )
+
+    def add_provider(
+        self,
+        provider_id: str,
+        *,
+        name: str,
+        api_base: str,
+        protocol: str,
+        api_key_env: str = "",
+    ) -> None:
+        """加一家用户自建的供应商.
+
+        只收讲 OpenAI 兼容协议的: 另外两种协议的 adapter 还不存在, 让它存进配置只会把
+        失败推迟到第一次真正调用 —— 那时用户已经填完所有字段并选好了模型.
+        """
+        parsed = _require_supported_protocol(protocol)
+        provider_id = provider_registry.normalize_provider_id(provider_id)
+        if not provider_id:
+            raise ConfigValidationError("供应商 id 不能为空")
+        if provider_id in provider_registry.REGISTRY:
+            raise ConfigValidationError(f"{provider_id} 是内置供应商, 直接编辑它即可")
+        if not api_base.strip():
+            raise ConfigValidationError("API 地址不能为空")
+        provider_registry.register_user_provider(
+            ProviderSpec(
+                id=provider_id,
+                label=name.strip() or provider_id,
+                default_api_base=api_base.strip(),
+                api_key_env=api_key_env.strip(),
+                protocol=parsed,
+            )
+        )
+        # 借 upsert_provider_field 的"段不存在就按默认建立"把四个字段一次写进去:
+        # 逐字段写会在中途留下一个只有半截的段落, 而那一刻崩了就是一家配不出请求的
+        # 供应商躺在文件里.
+        defaults = {
+            "name": name.strip() or provider_id,
+            "api_base": api_base.strip(),
+            "api_key_env": api_key_env.strip(),
+            "protocol": parsed.value,
+        }
+        self._store.upsert_provider_field(
+            provider_id, "protocol", parsed.value, provider_defaults=defaults
         )
 
     def add_model(
@@ -533,6 +584,7 @@ class LlmConfigService:
             "name": body.get("name", spec.label),
             "api_base": body.get("api_base", spec.default_api_base),
             "api_key_env": str(api_key_env) if api_key_env else None,
+            "protocol": str(body.get("protocol", spec.protocol.value)),
             "models": tuple(models),
         }
         for optional in ("timeout", "max_retries", "credential_refs"):
@@ -542,3 +594,59 @@ class LlmConfigService:
             return ProviderConfig.model_validate(provider_fields)
         except ValidationError as exc:
             raise ConfigValidationError(explain_validation_error(exc)) from exc
+
+
+def _register_user_providers(section: Mapping[str, object]) -> None:
+    """把配置里非内置的那几家登记回注册表.
+
+    每次读配置都跑一遍, 而不是只在 `add_provider` 时登记一次: 登记住在进程内存里, 重启
+    之后就没了, 而配置文件还在 —— 少了这一步, 用户加的供应商能写进文件, 重启之后
+    `require_known_provider` 却说它不存在, 而那时模型已经配在它下面了.
+
+    直接读**原始段落**而不是解析后的 ProviderConfig: 解析那一步要先认得这家供应商, 而
+    认得它正是这里要建立的前提.
+    """
+    provider_registry.forget_user_providers()
+    for raw_id, body in section.items():
+        provider_id = provider_registry.normalize_provider_id(str(raw_id))
+        if provider_id in provider_registry.REGISTRY or not isinstance(body, Mapping):
+            continue
+        api_base = str(body.get("api_base", "")).strip()
+        if not api_base:
+            # 没有端点就发不出请求. 登记它只会让它出现在列表里然后每次调用都失败.
+            continue
+        try:
+            protocol = ProviderProtocol(str(body.get("protocol", "")).strip())
+        except ValueError:
+            # 手改配置写了个认不出的协议. 跳过它而不是抛 —— 抛会让整个配置读不出来,
+            # 而后果是所有供应商一起消失, 包括内置的.
+            continue
+        provider_registry.register_user_provider(
+            ProviderSpec(
+                id=provider_id,
+                label=str(body.get("name", "")).strip() or provider_id,
+                default_api_base=api_base,
+                api_key_env=str(body.get("api_key_env", "")).strip(),
+                protocol=protocol,
+            )
+        )
+
+
+def _require_supported_protocol(raw: str) -> ProviderProtocol:
+    """认协议名, 并挡住还没有 adapter 的那两种.
+
+    分两句话说: "不认识这个名字"和"认识但还不支持"要给出不同的提示 —— 后者是用户看着
+    界面上那一项选的, 告诉他"未知协议"只会让他以为自己填错了.
+    """
+    try:
+        protocol = ProviderProtocol(raw.strip())
+    except ValueError:
+        allowed = " / ".join(item.value for item in ProviderProtocol)
+        raise ConfigValidationError(
+            f"未知协议 {raw!r}; 取值只能是 [{allowed}]"
+        ) from None
+    if not protocol.supported:
+        raise ConfigValidationError(
+            f"{protocol.label} 目前还没有对应的 adapter, 暂时不能添加"
+        )
+    return protocol

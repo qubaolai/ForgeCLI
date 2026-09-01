@@ -534,9 +534,10 @@ class BuiltinAgentLoop:
         self._remember_assistant(outcome)
         if outcome.tool_calls:
             self._pending_calls = list(outcome.tool_calls)
-            return self._dispatch_next(
-                reason=f"模型请求 {len(outcome.tool_calls)} 个工具调用"
-            )
+            # 不发决策摘要: "模型请求 N 个工具调用"只是把界面上已经画着的东西再说一遍,
+            # 而它会占掉展开层里最显眼的那一行, 把真正的摘要 (连续无新信息, 格式损坏
+            # 重试) 挤成同一种东西。派发本身不是一次需要解释的决策。
+            return self._dispatch_next(reason="")
         self._dispatched = None
         self._step_index += 1
         self._publish(
@@ -650,6 +651,13 @@ class BuiltinAgentLoop:
             chars=len(observation.content),
             content=observation.content,
         )
+        # 变更通知追加在这条结果的末尾, 而不是回头改写前面那次读: 改写 transcript 中段
+        # 会让它之后的全部内容丢掉前缀缓存 (见 application/context/dedup 的模块说明).
+        # 这里是尾部, 缓存代价为零, 而且一次工具结果只回填一次, 天生不会重复追加.
+        content = _labelled(call, observation.content)
+        notice = self._change_notice(observation)
+        if notice:
+            content = f"{content}\n\n{notice}"
         self._messages = (
             *self._messages,
             ChatMessage(
@@ -657,7 +665,7 @@ class BuiltinAgentLoop:
                 content=(
                     ToolResultBlock(
                         tool_call_id=call.tool_call_id,
-                        content=_labelled(call, observation.content),
+                        content=content,
                         is_error=observation.is_error,
                         provenance=observation.provenance,
                     ),
@@ -712,6 +720,16 @@ class BuiltinAgentLoop:
         else:
             self._barren_streak = 0
         self._last_observation = content
+
+    def _change_notice(self, observation: LoopObservation) -> str:
+        """这次结果让前面哪几次读作废 —— 改过的, 或者同路径读到了不同状态的.
+
+        没接 ContextManager 时返回空串: 通知是锦上添花, 缺了它模型只是少一条线索,
+        而这一层本来就允许在没有上下文管理的情况下跑 (测试与最小装配都走那条路).
+        """
+        if self._context is None:
+            return ""
+        return self._context.change_notice(self._messages, observation.provenance)
 
     def _barren_nudge(self) -> str | None:
         """到了连续次数就给一句提醒, 并把计数清零 —— 否则之后每一步都会再提醒一次."""
@@ -1141,12 +1159,16 @@ class BuiltinAgentLoop:
 
         DECISION_SUMMARY 是 ForgeCLI 自己能解释的行动摘要, 与供应商 reasoning 分开命名:
         混成一栏, 用户会以为看到的是模型在想什么 (ADR-0016 §6).
+
+        空摘要不发事件: 大多数派发没有需要解释的理由, 而发一条内容等于"我要调这个工具"
+        的摘要, 只会把真正的摘要 (连续无新信息, 格式损坏重试) 挤成同一种东西.
         """
-        self._publish(
-            AgentRunEventKind.DECISION_SUMMARY,
-            DecisionSummaryPayload(reason_summary=reason_summary),
-            step_index=self._step_index,
-        )
+        if reason_summary:
+            self._publish(
+                AgentRunEventKind.DECISION_SUMMARY,
+                DecisionSummaryPayload(reason_summary=reason_summary),
+                step_index=self._step_index,
+            )
         return LoopDecision(reason_summary=reason_summary, next_action=action)  # type: ignore[arg-type]
 
     def _finish_model_call(

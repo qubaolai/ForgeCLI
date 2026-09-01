@@ -8,8 +8,8 @@
 - 五个入口意味着五套 prepare / plan / content_previews 逻辑, 那是 865 行的由来.
 - 未来所有写入场景的变化都在信封语法里表达, **不占新工具位, 不加新参数**.
 
-`fs_create_directory` 没有对应的段: `*** NEW` 会按需建父目录, 于是那个操作本身消失了
-(ADR-0029 约束 1 只列了新建 / 更新 / 删除 / 移动四种).
+`fs_create_directory` 没有对应的段: `*** NEW START` 会按需建父目录, 于是那个操作本身
+消失了 (ADR-0029 约束 1 只列了新建 / 更新 / 删除 / 移动四种).
 
 **安全性质一条不减** (ADR-0029): 每个文件段各自绑定 `expected_state`, 计划生成后文件
 变了就拒绝写入; write / delete / move 目标逐项进 `PlanEffects`, 恢复层照常逐项建点;
@@ -86,7 +86,7 @@ _SPEC = ToolSpec(
         "<替换成什么>\n"
         "(同一个 UPDATE 段里 FIND/REPLACE 可以重复多次)\n"
         "\n"
-        "*** NEW 路径          新建文件, 之后到下一个标记之前的原文就是全部内容; "
+        "*** NEW START 路径    新建文件, 正文写在下一行起, 用 *** NEW END 收尾; "
         "父目录按需自动创建; 目标已存在时失败\n"
         "*** DELETE 路径       删除文件或整个目录\n"
         "*** MOVE 源 -> 目标   移动或重命名, 目标已存在时失败\n"
@@ -351,7 +351,7 @@ def _plan_update(
     if not facts.exists:
         return _error(
             f"第 {section.index} 段: 要更新的文件不存在: {absolute}. "
-            "新建请用 *** NEW."
+            "新建请用 *** NEW START … *** NEW END."
         )
     if facts.kind is not PathKind.FILE:
         return _error(f"第 {section.index} 段: 不是普通文件: {absolute}")

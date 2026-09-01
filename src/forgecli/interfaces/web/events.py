@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 from forgecli.application.agent_run.events import AgentRunEventSubscriber
 from forgecli.domain.agent.run_events import AgentRunEvent
-from forgecli.interfaces.web.serialization import to_jsonable
+from forgecli.shared.serialization import to_jsonable
 
 
 @dataclass(frozen=True)

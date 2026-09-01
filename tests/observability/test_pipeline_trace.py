@@ -101,7 +101,9 @@ def _events(records: pytest.LogCaptureFixture) -> list[str]:
 def test_a_write_leaves_the_whole_pipeline_in_the_log(
     stack: ToolStack, records: pytest.LogCaptureFixture
 ) -> None:
-    result = _call(stack, "fs_apply_patch", patch="*** NEW notes.txt\nv = 1\n")
+    result = _call(
+        stack, "fs_apply_patch", patch="*** NEW START notes.txt\nv = 1\n\n*** NEW END"
+    )
 
     assert result.kind is ObservationKind.TOOL_RESULT
     events = _events(records)
@@ -121,7 +123,9 @@ def test_prepared_line_names_the_files_that_will_change(
     stack: ToolStack, records: pytest.LogCaptureFixture
 ) -> None:
     """ "它到底改了哪个文件"必须能从一行里读出来, 而不是靠事后 diff 工作区."""
-    _call(stack, "fs_apply_patch", patch="*** NEW notes.txt\nv = 1\n")
+    _call(
+        stack, "fs_apply_patch", patch="*** NEW START notes.txt\nv = 1\n\n*** NEW END"
+    )
 
     line = _line(records, "pipeline.prepared")
     assert "notes.txt" in line
@@ -132,7 +136,9 @@ def test_invocation_id_ties_the_lines_together(
     stack: ToolStack, records: pytest.LogCaptureFixture
 ) -> None:
     """同一次调用的每一行都带同一个 inv: 少了它, 并发或连续调用就分不开."""
-    _call(stack, "fs_apply_patch", patch="*** NEW notes.txt\nv = 1\n")
+    _call(
+        stack, "fs_apply_patch", patch="*** NEW START notes.txt\nv = 1\n\n*** NEW END"
+    )
 
     identifiers = {
         field

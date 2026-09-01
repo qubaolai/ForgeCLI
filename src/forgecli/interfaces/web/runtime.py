@@ -29,7 +29,7 @@ from forgecli.application.prompt.system_prompt_builder import SystemPromptBuilde
 from forgecli.application.security.workspace_grants import GrantAccess
 from forgecli.application.session.resume_service import ResumeService
 from forgecli.application.session.session_service import SessionService
-from forgecli.domain.conversation.turn import AssistantResponse, TurnPause
+from forgecli.domain.conversation.turn import AssistantResponse, TurnPause, TurnStatus
 from forgecli.domain.intents import InputOrigin, SessionMode
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
@@ -47,13 +47,14 @@ from forgecli.infrastructure.prompt import FsProjectInstructionReader
 from forgecli.infrastructure.session.fs_session_catalog import FsSessionCatalog
 from forgecli.infrastructure.session.json_state_store import JsonStateStore
 from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
+from forgecli.infrastructure.session.jsonl_run_store import JsonlRunStore
 from forgecli.interfaces.runtime.llm_wiring import LlmRuntime, build_llm_runtime
 from forgecli.interfaces.runtime.tool_wiring import ToolStack, build_tool_stack
 from forgecli.interfaces.web.approval import WebApprovalBroker
 from forgecli.interfaces.web.events import WebEventHub
-from forgecli.interfaces.web.serialization import to_jsonable
 from forgecli.shared.errors import SessionStateError
 from forgecli.shared.observability.log import get_log
+from forgecli.shared.serialization import to_jsonable
 
 _log = get_log(__name__)
 
@@ -104,6 +105,12 @@ class ProjectRuntime:
             self.event_bus = AgentRunEventBus()
             self.events = WebEventHub()
             self.event_bus.subscribe(self.events)
+            # 处理过程落盘 (展示用, 不是恢复真相源). 内存缓冲只有 2048 条且随进程消失,
+            # 而"回看上周那一轮到底做了什么"要的正是跨进程的那一份.
+            self.runs = JsonlRunStore(
+                sessions_dir, lambda: self.session.current().session_id
+            )
+            self.event_bus.subscribe(self.runs)
             self.approvals = WebApprovalBroker()
             self.tools = self._build_tool_stack()
             self._run_lock = threading.Lock()
@@ -227,11 +234,15 @@ class ProjectRuntime:
         )
         try:
             response = self._agent_turn.handle_user_message(text, origin=origin)
-            status = (
-                "waiting_plan_review"
-                if response.pause is TurnPause.PLAN_REVIEW
-                else "completed"
-            )
+            # 终态照 response 说的报, 不一律当成 completed: 驱动抛异常时 service 会
+            # 把它隔离成一个 FAILED 的轮次并如实写进会话事件, 而这里报 completed 就是
+            # 在日志与 `/turns/current` 上把那次失败说成成功。
+            if response.pause is TurnPause.PLAN_REVIEW:
+                status = "waiting_plan_review"
+            elif response.status is TurnStatus.FAILED:
+                status = "failed"
+            else:
+                status = "completed"
             completed = TurnRun(run_id=run_id, status=status, response=response)
             _log.info("web.turn.finished", run_id=run_id, status=status)
         except Exception as exc:  # noqa: BLE001 - 后台边界必须转成可查询状态

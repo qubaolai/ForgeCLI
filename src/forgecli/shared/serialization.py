@@ -1,4 +1,9 @@
-"""Web DTO 的安全 JSON 转换。"""
+"""值对象的安全 JSON 转换。
+
+住在 shared 而不是 interfaces: 处理过程要落盘 (infrastructure/session/jsonl_run_store),
+而落下去的形状必须与发给页面的那一份**逐字节相同** —— 前端因此不需要为"历史的"和
+"进行中的"各写一套渲染。两边各写一个转换器就是两份会漂的真相。
+"""
 
 from __future__ import annotations
 

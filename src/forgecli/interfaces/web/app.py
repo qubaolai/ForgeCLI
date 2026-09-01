@@ -34,9 +34,11 @@ from forgecli.domain.agent.run_events import AgentRunEventKind
 from forgecli.domain.config import config_keys
 from forgecli.domain.intents import ApprovalPolicy, SandboxLevel, SessionMode
 from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.provider_spec import ProviderProtocol, ProviderSpec
 from forgecli.domain.model.thinking import ThinkingEffortName, ThinkingMode
 from forgecli.domain.workspace.project import WorkspaceError
 from forgecli.infrastructure.project import ProjectLockedError
+from forgecli.infrastructure.session.jsonl_run_store import MAX_STORED_OUTPUT
 from forgecli.interfaces.runtime.diagnostics import diagnostics_report
 from forgecli.interfaces.web.events import WebEventHub
 from forgecli.interfaces.web.runtime import (
@@ -44,10 +46,10 @@ from forgecli.interfaces.web.runtime import (
     ProjectRuntimeRegistry,
     build_project_service,
 )
-from forgecli.interfaces.web.serialization import to_jsonable
 from forgecli.shared import __version__
-from forgecli.shared.errors import SessionStateError
+from forgecli.shared.errors import ConfigValidationError, SessionStateError
 from forgecli.shared.observability.log import get_log
+from forgecli.shared.serialization import to_jsonable
 
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _SESSION_COOKIE = "forge_web_session"
@@ -71,7 +73,6 @@ _STREAM_KEEP_ALIVE_SECONDS = 15
 _IMMUTABLE_PREFIX = "/assets/"
 _ASSET_CACHE = "public, max-age=31536000, immutable"
 _DOCUMENT_CACHE = "no-cache"
-_MAX_RESTORED_OUTPUT = 4000
 # 直接用浏览器打开陈旧地址时给出可操作的说明，而不是一行裸 "Unauthorized"。
 _UNAUTHORIZED_PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
@@ -157,6 +158,14 @@ class ModelOverrideRequest(BaseModel):
 class ThinkingRequest(BaseModel):
     mode: str = ""
     effort: str = ""
+
+
+class ProviderCreateRequest(BaseModel):
+    provider_id: str = Field(min_length=1)
+    name: str = ""
+    api_base: str = Field(min_length=1)
+    protocol: str = Field(min_length=1)
+    api_key_env: str = ""
 
 
 class ModelCreateRequest(BaseModel):
@@ -326,8 +335,30 @@ def _turn_snapshots(hub: WebEventHub) -> list[dict[str, object]]:
         outputs = entry["outputs"]
         assert isinstance(outputs, dict)
         key = str(item.data.get("request_id") or "")
-        outputs[key] = f"{outputs.get(key, '')}{text}"[:_MAX_RESTORED_OUTPUT]
+        outputs[key] = f"{outputs.get(key, '')}{text}"[:MAX_STORED_OUTPUT]
     return list(turns.values())
+
+
+def _listed_providers(runtime: ProjectRuntime) -> list[ProviderSpec]:
+    """内置的按注册表顺序, 用户自建的跟在后面, 都按 id 排序.
+
+    自建的从**配置**里取而不是从进程内的登记表: 登记发生在读配置那一刻, 而这个路由
+    可能先被调到.
+    """
+    builtin = [
+        provider_registry.REGISTRY[key] for key in sorted(provider_registry.REGISTRY)
+    ]
+    custom = [
+        ProviderSpec(
+            id=provider.id,
+            label=provider.name,
+            default_api_base=provider.api_base,
+            api_key_env=provider.api_key_env or "",
+        )
+        for provider in sorted(runtime.llm_config.providers(), key=lambda item: item.id)
+        if provider.id not in provider_registry.REGISTRY
+    ]
+    return builtin + custom
 
 
 def _project_payload(project: object) -> dict[str, object]:
@@ -592,12 +623,23 @@ def create_app(
 
     @app.get("/api/v1/runs")
     async def runs(request: Request) -> dict[str, object]:
-        """进程内仍保留的运行事件，按 turn 分组。
+        """当前会话的处理过程，按 turn 分组。
 
-        刷新页面后据此重建"处理过程"。它不是恢复真相源 (ADR-0016 §9)：服务重启后为空，
-        会话正文仍由 transcript 提供。
+        两个来源合并: 已经落盘的历史轮次 (`runs.jsonl`) 加上进程内还没收尾的那一轮。
+        **落盘的在前**，因为它们先发生；同一个 turn 以内存那份为准，它更新。
+
+        它仍然不是恢复真相源 (ADR-0016 §9)：这份丢了只是历史过程展不开，会话正文由
+        transcript 提供。
         """
-        return {"items": _turn_snapshots(_runtime(request).events)}
+        runtime = _runtime(request)
+        stored = runtime.runs.read(runtime.session.current().session_id)
+        live = _turn_snapshots(runtime.events)
+        merged: dict[str, dict[str, object]] = {
+            str(item.get("turn_id", "")): item for item in stored
+        }
+        for item in live:
+            merged[str(item.get("turn_id", ""))] = item
+        return {"items": list(merged.values())}
 
     @app.get("/api/v1/approvals")
     async def approvals(request: Request) -> dict[str, object]:
@@ -711,15 +753,32 @@ def create_app(
             "provider_fields": [_field_view(field) for field in PROVIDER_FIELDS],
             # 模型标准字段同样来自 ModelParams 声明；前端不再维护一份会漂移的字段表。
             "model_fields": [_field_view(field) for field in STANDARD_FIELDS],
+            # 内置的与用户自建的一起发: 页面据此显示"密钥已就绪 / 缺少 XXX / 无需密钥",
+            # 而自建的那几家缺席时, 页面只能自己编一个可用性 —— 编出来的那个一律是
+            # "已就绪", 于是一家根本没配环境变量的供应商看起来是好的.
             "known_providers": [
                 {
-                    "id": provider_id,
+                    "id": spec.id,
                     "label": spec.label,
                     "api_key_env": spec.api_key_env,
                     # 只看环境变量在不在, 不读它的值 (application/llm/availability).
-                    "available": runtime.availability.is_available(provider_id),
+                    "available": runtime.availability.is_available(spec.id),
+                    # 哪几家是内置的由后端说. 前端手抄一份清单的话, 加一家内置供应商就
+                    # 会让它出现在"自建"那一组下, 而不会有任何东西报错.
+                    "builtin": spec.id in provider_registry.REGISTRY,
                 }
-                for provider_id, spec in provider_registry.REGISTRY.items()
+                for spec in _listed_providers(runtime)
+            ],
+            # 三种协议全都列出来, 带上 supported 标记 —— 不支持的要在界面上看得见但
+            # 选不了. 只列支持的那一种, 用户会以为 Forge 不打算支持另外两种, 于是去
+            # 找别的工具.
+            "provider_protocols": [
+                {
+                    "value": protocol.value,
+                    "label": protocol.label,
+                    "supported": protocol.supported,
+                }
+                for protocol in ProviderProtocol
             ],
             "current_model": "" if current is None else str(current),
             "overrides": runtime.model_overrides(),
@@ -875,6 +934,31 @@ def create_app(
         except Exception as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
         return {"updated": True}
+
+    @app.post("/api/v1/providers", status_code=status.HTTP_201_CREATED)
+    async def add_provider(
+        body: ProviderCreateRequest, request: Request
+    ) -> dict[str, bool]:
+        """加一家用户自建的供应商 (只收 OpenAI 兼容协议)."""
+        runtime = _runtime(request)
+        if runtime.busy:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "turn 运行期间不能修改模型配置"
+            )
+        try:
+            runtime.llm_config.add_provider(
+                body.provider_id,
+                name=body.name,
+                api_base=body.api_base,
+                protocol=body.protocol,
+                api_key_env=body.api_key_env,
+            )
+            runtime.reload_llm()
+        except ConfigValidationError as error:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, str(error)
+            ) from None
+        return {"created": True}
 
     @app.patch("/api/v1/providers/{provider_id}/{field}")
     async def update_provider_field(

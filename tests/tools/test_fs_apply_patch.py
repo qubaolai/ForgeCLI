@@ -81,7 +81,7 @@ def _operations(plan: ToolPlan) -> tuple[dict[str, object], ...]:
 
 
 def test_creating_a_file_carries_the_whole_content(workspace: Path) -> None:
-    plan = _prepare(workspace, "*** NEW a.py\nprint(1)\n")
+    plan = _prepare(workspace, "*** NEW START a.py\nprint(1)\n\n*** NEW END")
 
     assert isinstance(plan, ToolPlan)
     assert _operations(plan)[0]["content"] == "print(1)\n"
@@ -90,7 +90,7 @@ def test_creating_a_file_carries_the_whole_content(workspace: Path) -> None:
 
 def test_the_plan_shows_what_the_file_will_contain(workspace: Path) -> None:
     """审批界面逐字展示最终形态 —— 内容已由 normalized_input 绑定, 预览只是交出来."""
-    plan = _prepare(workspace, "*** NEW a.py\nhello\n")
+    plan = _prepare(workspace, "*** NEW START a.py\nhello\n\n*** NEW END")
 
     assert isinstance(plan, ToolPlan)
     assert [preview.content for preview in plan.content_previews] == ["hello\n"]
@@ -100,7 +100,7 @@ def test_creating_over_an_existing_file_is_refused(workspace: Path) -> None:
     """新建不覆盖. 错误必须指向 UPDATE, 否则模型只会原地重试."""
     (workspace / "a.py").write_text("old", encoding="utf-8")
 
-    error = _prepare(workspace, "*** NEW a.py\nnew\n")
+    error = _prepare(workspace, "*** NEW START a.py\nnew\n\n*** NEW END")
 
     assert isinstance(error, PreparationError)
     assert "已存在" in error.message
@@ -113,7 +113,7 @@ def test_a_new_file_creates_its_missing_parents(workspace: Path) -> None:
     建父目录是"新建文件"这个动作的一部分, 单独占一个工具位换不来任何东西. 目录逐个
     进 write_paths —— 空目录同样是需要恢复的用户状态.
     """
-    plan = _prepare(workspace, "*** NEW pkg/deep/a.py\nx\n")
+    plan = _prepare(workspace, "*** NEW START pkg/deep/a.py\nx\n\n*** NEW END")
 
     assert isinstance(plan, ToolPlan)
     assert plan.effects.write_paths == (
@@ -129,7 +129,7 @@ def test_a_new_file_gets_its_trailing_newline_back(workspace: Path) -> None:
     补上并在结果里说明, 好过让每个新建文件都缺一个换行 —— 那种缺失 diff 里看得见,
     但模型不会想到.
     """
-    plan = _prepare(workspace, "*** NEW a.py\nx = 1")
+    plan = _prepare(workspace, "*** NEW START a.py\nx = 1\n*** NEW END")
 
     assert isinstance(plan, ToolPlan)
     operation = _operations(plan)[0]
@@ -194,7 +194,7 @@ def test_the_error_says_which_section_and_which_replacement(workspace: Path) -> 
 
     error = _prepare(
         workspace,
-        "*** NEW b.py\nx\n"
+        "*** NEW START b.py\nx\n\n*** NEW END\n"
         "*** UPDATE a.py\n"
         "*** FIND\na = 1\n*** REPLACE\na = 9\n"
         "*** FIND\nnowhere\n*** REPLACE\nz",
@@ -345,7 +345,7 @@ def test_one_envelope_is_one_plan_with_every_target(workspace: Path) -> None:
     plan = _prepare(
         workspace,
         "*** UPDATE a.py\n*** FIND\nx = 1\n*** REPLACE\nx = 2\n"
-        "*** NEW b.py\nnew\n"
+        "*** NEW START b.py\nnew\n\n*** NEW END\n"
         "*** DELETE gone.py\n"
         "*** MOVE m.py -> moved.py",
     )
@@ -371,7 +371,7 @@ def test_the_whole_envelope_applies(workspace: Path) -> None:
     plan = _prepare(
         workspace,
         "*** UPDATE a.py\n*** FIND\nx = 1\n*** REPLACE\nx = 2\n"
-        "*** NEW pkg/b.py\nnew\n"
+        "*** NEW START pkg/b.py\nnew\n\n*** NEW END\n"
         "*** DELETE gone.py\n"
         "*** MOVE m.py -> moved.py",
     )
@@ -419,7 +419,7 @@ def test_a_write_reports_every_path_it_touched(workspace: Path) -> None:
     result = _perform(
         workspace,
         "*** UPDATE a.py\n*** FIND\nold\n*** REPLACE\nnew\n\n"
-        "*** NEW b.py\nfresh\n\n"
+        "*** NEW START b.py\nfresh\n\n\n*** NEW END\n"
         "*** DELETE gone.py",
     )
 

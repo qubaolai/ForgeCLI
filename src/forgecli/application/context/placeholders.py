@@ -14,7 +14,7 @@ from forgecli.application.context.transcript import Slot
 from forgecli.application.prompt.template_renderer import render_notice
 from forgecli.application.tools.artifact_store import ArtifactStore
 
-__all__ = ["archived_notice", "dedup_notice", "stale_notice"]
+__all__ = ["archived_notice", "changed_notice", "dedup_notice"]
 
 
 def _retrievable(slot: Slot, artifacts: ArtifactStore | None) -> str:
@@ -48,14 +48,25 @@ def archived_notice(slot: Slot, artifacts: ArtifactStore | None) -> str:
     )
 
 
-def stale_notice(slot: Slot, artifacts: ArtifactStore | None) -> str:
-    """决策 4: 这一条读到的内容, 之后文件被改过了."""
-    artifact_id = _retrievable(slot, artifacts)
-    if not artifact_id:
-        return render_notice("context.archived_expired", index=slot.ordinal)
+def changed_notice(stale: tuple[Slot, ...]) -> str:
+    """写入之后追加的一句话: 前面这几次读到的内容不再代表当前状态.
+
+    不带 artifact 引用: 那份旧内容还原样躺在 transcript 里, 模型往回翻就看得到, 让它
+    去取一次只是白花一次工具调用. 这与降级占位不同 —— 那里正文已经被换掉了, 不给引用
+    就真的找不回来.
+
+    列序号而不是路径: 序号能对上 transcript 里那一条, 而同一个路径可能被读过好几次,
+    只说路径分不清指的是哪一次.
+    """
     return render_notice(
-        "context.archived_stale", index=slot.ordinal, artifact_id=artifact_id
+        "context.changed_after_write",
+        entries=tuple((slot.ordinal, _path_of(slot)) for slot in stale),
     )
+
+
+def _path_of(slot: Slot) -> str:
+    provenance = slot.block.provenance
+    return "" if provenance is None else provenance.source_path
 
 
 def dedup_notice(anchor: Slot, duplicate: Slot, artifacts: ArtifactStore | None) -> str:

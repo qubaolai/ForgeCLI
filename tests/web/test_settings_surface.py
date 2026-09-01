@@ -206,3 +206,20 @@ def test_provider_settings_carry_registry_defaults(tmp_path: Any) -> None:
     settings = {item["id"]: item for item in payload["provider_settings"]}
     assert settings["glm"]["api_key_env"] == "GLM_API_KEY"
     assert settings["deepseek"]["api_base"].endswith("/chat/completions")
+
+
+def test_all_three_protocols_are_listed_with_their_support_flag(tmp_path: Any) -> None:
+    """不支持的也要发给前端.
+
+    看不到这一项会让人以为 Forge 不打算支持, 于是去找别的工具.
+    """
+    payload = _client(tmp_path).get("/api/v1/models").json()
+    protocols = payload["provider_protocols"]
+
+    assert [item["value"] for item in protocols] == [
+        "openai_compatible",
+        "anthropic_messages",
+        "google_gemini",
+    ]
+    assert [item["supported"] for item in protocols] == [True, False, False]
+    assert all(item["label"] for item in protocols)

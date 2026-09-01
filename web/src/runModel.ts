@@ -314,9 +314,66 @@ export type ToolGroup = { id: string; events: RunEvent[] };
 
 export type ToolCategory = { id: string; label: string };
 
+/**
+ * 工具活动收成的那一行。
+ *
+ * `mono` 表示它是一条命令, 该用等宽显示。`count` 交给渲染层单独摆一列, 不拼进 text ——
+ * 拼进去就要在标题里做"读取文件"→"读取 6 个文件"这种动宾拆分, 而那对
+ * "执行 Shell 命令""按符号名找定义"根本拆不开。
+ */
+export type ToolSummary = { text: string; mono: boolean; count: number };
+
+
+/**
+ * 把一组工具活动收成一行。
+ *
+ * 写的是**已经发生的事**, 不是"准备干嘛": 工具名与参数只有在派发之后才拿得到, 而模型
+ * 说"我要读文件"是叙述, 不是工具事件。
+ *
+ * 名字一律取后端目录里的 title (`toolActionLabel`), 不在前端另写一套动词表。
+ *
+ * **多次调用只报次数, 不摆目标**: 摆第一个再跟一句"等 N 项", 等于让一个随机挑出来的
+ * 文件占满整行, 而它并不比另外几个更值得看。要看是哪几个就展开。
+ */
+export function summariseTools(groups: ToolGroup[], directory: ToolDirectory = {}): ToolSummary {
+  const names = [...new Set(groups.map((group) => toolNameOf(group.events)))];
+  const labels = names.map((name) => toolActionLabel(name, directory));
+  // 目录里没有这个名字时 toolActionLabel 退回工具名本身 —— 那不是一个可信的说法。
+  const known = labels.every((label, index) => label !== names[index]);
+  const count = groups.length;
+  if (!known) return { text: "工具调用", mono: false, count };
+
+  // 一组里混了好几种工具 (同属一个动作才会被并到一起): 把种类列出来。
+  if (names.length > 1) return { text: labels.join(" / "), mono: false, count };
+
+  const label = labels[0];
+  // 一条 shell 命令: 命令本身就是最好的说明, 而它不是路径, 留着有用。
+  if (count === 1 && names[0].startsWith("shell_")) {
+    const command = commandOf(groups[0].events);
+    if (command) return { text: command, mono: true, count };
+  }
+  // 其余一律只给动作名: 具体读了哪个文件展开才看得到。收起时摆一个路径, 等于让一个
+  // 随机挑出来的文件占满整行, 而它并不比另外几个更值得看。
+  return { text: label, mono: false, count };
+}
+
+/** 这次调用跑的是哪条命令。只有 shell 摘要用得到 —— 别的工具在摘要行只给动作名。 */
+function commandOf(events: RunEvent[]): string {
+  const source = events.find((event) => event.kind === "tool_prepared")
+    ?? events.find((event) => event.kind === "tool_queued");
+  const raw = source?.payload.arguments;
+  if (!Array.isArray(raw)) return "";
+  for (const pair of raw) {
+    const values = Array.isArray(pair) ? pair : [];
+    if (stringValue(values[0]) === "command") return stringValue(values[1]);
+  }
+  return "";
+}
+
+
 export type TimelineItem =
   | { id: string; kind: "model"; key: string; sequence: number; events: RunEvent[]; reason: string }
-  | { id: string; kind: "tools"; sequence: number; category: ToolCategory; groups: ToolGroup[]; reason: string }
+  | { id: string; kind: "tools"; sequence: number; category: ToolCategory; mergeKey: string; groups: ToolGroup[]; reason: string }
   | { id: string; kind: "note"; sequence: number; event: RunEvent; reason: string };
 
 const NOTE_KINDS = ["todo_updated", "plan_proposed", "context_compacted"];
@@ -480,21 +537,53 @@ export function activityOf(turn: LocalTurn, directory: ToolDirectory = {}): stri
   return turn.events.length ? "正在处理" : "正在建立本轮事件流…";
 }
 
-export function buildTimeline(events: RunEvent[], directory: ToolDirectory = {}): TimelineItem[] {
-  const items: TimelineItem[] = groupModelEvents(events).map((group) => ({
-    id: `model-${group.id}`,
-    kind: "model",
-    key: group.id,
-    events: group.events,
-    sequence: Math.min(...group.events.map((event) => event.sequence)),
-    reason: "",
-  }));
+/**
+ * 这一次模型调用有没有话可显示。
+ *
+ * 判据必须用**渲染器用的那份数据** (outputs), 不能用 model_completed 里的 text_chars:
+ * 实测模型在每次工具调用旁边会吐一个空白字符, 于是 text_chars=1 —— 计数说"它说话了",
+ * 而屏幕上什么都没有。那个看不见的节点横在中间, 让相邻的工具活动永远合并不了。
+ *
+ * 规则是"渲染不出东西就不进时间线", 所以判据和渲染必须看同一份东西。
+ */
+function speaks(events: RunEvent[], text: string): boolean {
+  if (events.some((event) => event.kind === "model_failed")) return true;
+  const completed = events.find((event) => event.kind === "model_completed");
+  // 还没收尾: 留着, 那是"思考中…/生成中…"的位置。
+  return !completed || text.trim().length > 0;
+}
+
+export function buildTimeline(
+  events: RunEvent[],
+  directory: ToolDirectory = {},
+  outputs: Record<string, string> = {},
+): TimelineItem[] {
+  const items: TimelineItem[] = groupModelEvents(events)
+    // 一个字都没吐、只发了工具调用的模型节点不进时间线。
+    //
+    // 它渲染不出任何东西, 却横在两组工具活动中间, 让相邻合并永远不成立 —— 实测一屏
+    // 18 次工具调用一次都没并起来, 就是因为每次调用前面都隔着一个看不见的模型节点。
+    // "模型跑了几次"由底部的指标行回答, 不需要在流里占位。
+    .filter((group) => speaks(group.events, outputs[group.id] ?? ""))
+    .map((group) => ({
+      id: `model-${group.id}`,
+      kind: "model",
+      key: group.id,
+      events: group.events,
+      sequence: Math.min(...group.events.map((event) => event.sequence)),
+      reason: "",
+    }));
   for (const group of groupToolEvents(events)) {
+    const name = toolNameOf(group.events);
     items.push({
       id: `tools-${group.id}`,
       kind: "tools",
       sequence: Math.min(...group.events.map((event) => event.sequence)),
-      category: categoryOf(toolNameOf(group.events), capabilitiesOf(group.events), directory),
+      category: categoryOf(name, capabilitiesOf(group.events), directory),
+      // 合并粒度用**动作**而不是类别: 四种定位与读取全都属于"读取文件"这一类, 按类别
+      // 并会把 6 次 fs_find 与 10 次 fs_read 压成一行"18 次工具调用" —— 从一个极端跳到
+      // 另一个。动作是后端 ToolAction 的粒度, 正好分得开。
+      mergeKey: directory[name]?.action ?? categoryOf(name, capabilitiesOf(group.events), directory).id,
       groups: [group],
       reason: "",
     });
@@ -537,7 +626,7 @@ function merge(items: TimelineItem[]): TimelineItem[] {
   const merged: TimelineItem[] = [];
   for (const item of items) {
     const previous = merged.at(-1);
-    if (item.kind === "tools" && previous?.kind === "tools" && previous.category.id === item.category.id) {
+    if (item.kind === "tools" && previous?.kind === "tools" && previous.mergeKey === item.mergeKey) {
       previous.groups.push(...item.groups);
       continue;
     }

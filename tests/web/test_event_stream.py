@@ -25,7 +25,13 @@ from forgecli.interfaces.web.events import WebEventHub
 class FakeRegistry:
     def __init__(self, hub: WebEventHub) -> None:
         self.projects = SimpleNamespace(list_trusted=tuple)
-        self.active = SimpleNamespace(events=hub)
+        # runs 落盘为空: 这组用例问的是"内存里那一轮怎么折叠", 历史那一份由
+        # tests/web/test_run_history.py 单独覆盖。
+        self.active = SimpleNamespace(
+            events=hub,
+            runs=SimpleNamespace(read=lambda session_id: []),
+            session=SimpleNamespace(current=lambda: SimpleNamespace(session_id="s1")),
+        )
 
     def close(self) -> None:
         return None

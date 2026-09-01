@@ -82,6 +82,7 @@ from forgecli.application.prompt.template_renderer import render_notice
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.credentials import Credential
 from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.origin import benefits_from_thinking
 from forgecli.domain.model.params import (
     ModelParams,
     ThinkingConfig,
@@ -891,9 +892,17 @@ class DefaultLlmGateway(LlmGateway):
         ref: ModelRef,
         entry: ModelCatalogEntry,
     ) -> ThinkingConfig:
-        """读取模型配置并生成 provider 运行时参数。"""
-        mode = entry.thinking_mode
-        enabled = mode is ThinkingMode.ON
+        """读取模型配置与调用用途, 生成 provider 运行时参数。
+
+        用途参与判断而不只看模型配置: 起标题, 压缩上下文与做摘要都是把已经在上下文里的
+        东西换个形状, 推理预算花在那里是纯浪费 —— 而它们与真正要推理的调用共用同一个
+        模型, 只按模型配就只能一起开或一起关 (ADR-0011 §3.3 明写 origin 用于参数默认)。
+
+        这个参数以前收了但没用, 于是 `compact` 与 `act` 拿的是同一份思考预算。
+        """
+        if not benefits_from_thinking(request.origin):
+            return ThinkingConfig(enabled=False, effort=None)
+        enabled = entry.thinking_mode is ThinkingMode.ON
         return ThinkingConfig(
             enabled=enabled,
             effort=(entry.effective_thinking_effort if enabled else None),

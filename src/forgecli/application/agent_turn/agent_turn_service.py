@@ -59,6 +59,7 @@ from forgecli.domain.agent.run_events import (
     PlanProposedPayload,
     RunEventPayload,
     TodoUpdatedPayload,
+    TurnFinishedPayload,
 )
 from forgecli.domain.agent.state import ContextPackage, LoopInput
 from forgecli.domain.agent.stop import LoopStopReason
@@ -367,6 +368,20 @@ class AgentTurnService:
                 "turn.driver_failed",
                 error=type(error).__name__,
                 message=str(error),
+            )
+            # **运行事件流也要收尾.** 循环的 `_publish_turn_finished` 只在 `_stop()` 里
+            # 调, 而抛异常根本走不到那儿 —— 于是会话事件成对落了盘, 而页面听的那条流
+            # 没有终态, 一直显示"处理中"直到用户自己刷新。
+            #
+            # 实测过一次: 一个 NameError 让整轮在第一次模型调用就炸了, 后端如实记了
+            # turn.driver_failed 并写了 assistant 事件, 前端却一直转圈。
+            self._publish_run(
+                AgentRunEventKind.TURN_FAILED,
+                TurnFinishedPayload(
+                    status="driver_failed",
+                    detail=f"{type(error).__name__}: {error}",
+                ),
+                turn_id,
             )
             return _TurnOutcome(
                 text=f"助手处理出错: {type(error).__name__}: {error}",

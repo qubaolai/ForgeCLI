@@ -19,7 +19,7 @@ from forgecli.application.llm.config.llm_config import (
 )
 from forgecli.domain.planning import PlanIndex
 from forgecli.interfaces.web.app import create_app
-from forgecli.interfaces.web.serialization import to_jsonable
+from forgecli.shared.serialization import to_jsonable
 
 
 class FakeRegistry:

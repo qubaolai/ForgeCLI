@@ -150,9 +150,9 @@ def test_the_text_is_pinned_by_fingerprint() -> None:
     指纹不含 `{# #}` 注释: 注释一个字都不会进模型上下文, 让改注释也要升版本, 唯一的后果
     是没人再写注释.
     """
-    assert PROMPT_TEXT_VERSION == 16
+    assert PROMPT_TEXT_VERSION == 17
     assert templates_fingerprint() == (
-        "sha256:66a67f9b0b5097260a6d297c9837bdc5884934cfe3e2ca153ab9e2e0f508ac01"
+        "sha256:04e5176d35dfdf1a1a1b23cb698d19c9c97554cd28142f4ddd1b1fb248607616"
     )
 
 

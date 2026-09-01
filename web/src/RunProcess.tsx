@@ -9,17 +9,20 @@ import {
   metricsFor,
   numberValue,
   RunEvent,
-  showsOutput,
   stringValue,
-  ToolCategory,
   ToolDirectory,
   ToolGroup,
+  summariseTools,
   toolActionLabel,
   toolNameOf,
   wasExecuted,
 } from "./runModel";
 
 type StepState = "running" | "done" | "failed" | "cancelled";
+
+// 耗时低于这个数就不显示。只读工具普遍是个位数毫秒, 逐行标出来只会让真正慢的那一次
+// 淹没在里面。
+const SLOW_ENOUGH_MS = 200;
 
 /** `<details>` 的 toggle 是异步事件；受控用法必须自己同步翻转，否则会被重渲染覆盖。 */
 function toggle(setOpen: (update: (value: boolean) => boolean) => void) {
@@ -30,17 +33,15 @@ function toggle(setOpen: (update: (value: boolean) => boolean) => void) {
 }
 
 export function RunProcess({ turn, directory }: { turn: LocalTurn; directory: ToolDirectory }) {
-  // **默认收起。** 处理过程是排查用的, 不是读的; 摊开一屏中间步骤会把真正要看的东西
-  // (最终回答) 推到屏幕外面。
+  // **叙述常驻, 工具折叠。**
   //
-  // 收起不等于没有进度: 摘要行上的 activityOf 一直在说当下在干什么, 所以运行中不打开
-  // 也不会让用户对着一个静止的折叠条干等 —— 那正是它原先必须自动展开的理由。
+  // 原先是整轮塞进一个默认收起的 `<details>`, 而最终回答另起一段。那个形状撑不住一条
+  // 硬约束: 最终回答必须流式, 而循环在发请求之前分不出哪一次调用是最后一次 —— 于是
+  // 只能每次都流, 流出来的叙述必然已经显示过。既然已经显示过, 就不能再撤回它 (撤回
+  // 的表现是"一段话闪一下又消失"), 只能让它留下。
   //
-  // 手动开合一旦发生就一直算数, 包括手动展开后不再被任何自动逻辑收回去。
-  const [manual, setManual] = useState<boolean | null>(null);
-  const open = manual ?? false;
+  // 留下之后, "最终回答"不再是特例: 它只是最后一段叙述。两边不再各画一遍同一段文字。
   const [, tick] = useState(0);
-
   useEffect(() => {
     if (turn.status !== "running") return;
     const timer = window.setInterval(() => tick((value) => value + 1), 1000);
@@ -48,31 +49,49 @@ export function RunProcess({ turn, directory }: { turn: LocalTurn; directory: To
   }, [turn.status]);
 
   const metrics = metricsFor(turn.events, Date.now(), turn.startedAt);
-  // 收起时**不建**时间线, 也不渲染它: 一轮长任务有上百个节点, 留在 DOM 里的话, 最终
-  // 回答每流入一帧都要多走一遍这棵树。
-  const timeline = open ? buildTimeline(turn.events, directory) : [];
+  const timeline = buildTimeline(turn.events, directory, turn.outputs);
 
   return (
-    <details className={`run-process ${turn.status}`} open={open}>
-      <summary onClick={toggle((update) => setManual((value) => update(value ?? open)))}>
+    <section className={`run-flow ${turn.status}`}>
+      {timeline.map((item) => {
+        if (item.kind === "model") {
+          return <NarrationBlock events={item.events} output={turn.outputs[item.key] ?? ""} key={item.id} />;
+        }
+        if (item.kind === "tools") return <ToolRun groups={item.groups} turnStatus={turn.status} reason={item.reason} directory={directory} key={item.id} />;
+        return <NoteStep event={item.event} key={item.id} />;
+      })}
+      {!timeline.length && <p className="run-flow-pending">正在建立本轮事件流…</p>}
+      {/* 指标行放在最后: 一轮跑完之后才有意义, 跑的过程中它一直在变, 摆在顶上会让眼睛
+          跟着数字跑而不是跟着内容走。 */}
+      <footer className="run-flow-meta">
         <span className={turn.status === "running" ? "pulse" : "run-status-dot"} />
-        <strong>{statusText(turn.status)}</strong>
-        <span className="run-activity">{activityOf(turn, directory)}</span>
+        <span className="run-activity">{turn.status === "running" ? activityOf(turn, directory) : statusText(turn.status)}</span>
         <RunMetrics metrics={metrics} />
-        <ChevronIcon className="disclosure" />
-      </summary>
-      {open && <ol className="run-steps">
-        {timeline.map((item) => {
-          if (item.kind === "model") {
-            return <ModelStep events={item.events} output={turn.outputs[item.key] ?? ""} turnStatus={turn.status} reason={item.reason} key={item.id} />;
-          }
-          if (item.kind === "tools") return <ToolCategoryStep category={item.category} groups={item.groups} turnStatus={turn.status} reason={item.reason} directory={directory} key={item.id} />;
-          return <NoteStep event={item.event} key={item.id} />;
-        })}
-        {!timeline.length && <li className="run-step pending"><span className="step-dot" /><div className="step-main"><p className="step-line">正在建立本轮事件流…</p></div></li>}
-      </ol>}
-    </details>
+      </footer>
+    </section>
   );
+}
+
+/**
+ * 一次模型调用说的话。**总是可见**, 不折叠。
+ *
+ * 它可能是过程叙述 ("我先看一下目录"), 也可能是最终回答 —— 在这里不区分, 因为区分
+ * 需要等调用收尾, 而那时字已经流完了。
+ */
+function NarrationBlock({ events, output }: { events: RunEvent[]; output: string }) {
+  const completed = events.find((event) => event.kind === "model_completed");
+  const failed = events.find((event) => event.kind === "model_failed");
+  const reasoning = [...events].reverse().find((event) => event.kind === "model_reasoning_status");
+  const thinking = stringValue(reasoning?.payload.status) === "started";
+
+  if (failed) {
+    return <p className="run-flow-error">{stringValue(failed.payload.message) || stringValue(failed.payload.error_kind)}</p>;
+  }
+  if (!output.trim()) {
+    // 还没吐字。思考与生成分开说 —— 思考可能持续很久且一个字都不吐, 看起来像卡住了。
+    return completed ? null : <p className="run-flow-waiting">{thinking ? "思考中…" : "生成中…"}</p>;
+  }
+  return <div className="run-flow-text"><Markdown content={output} /></div>;
 }
 
 function RunMetrics({ metrics }: { metrics: ReturnType<typeof metricsFor> }) {
@@ -93,61 +112,58 @@ function tokenBreakdown(metrics: ReturnType<typeof metricsFor>) {
   return parts.join(" · ");
 }
 
-function ModelStep({ events, output, turnStatus, reason }: { events: RunEvent[]; output: string; turnStatus: LocalTurn["status"]; reason: string }) {
-  const started = events.find((event) => event.kind === "model_started");
-  const completed = events.find((event) => event.kind === "model_completed");
-  const failed = events.find((event) => event.kind === "model_failed");
-  const usage = events.find((event) => event.kind === "model_usage");
-  const reasoning = [...events].reverse().find((event) => event.kind === "model_reasoning_status");
-  const thinking = stringValue(reasoning?.payload.status) === "started";
-  const state = settle(failed ? "failed" : completed ? "done" : "running", turnStatus);
-  const label = stringValue(started?.payload.model) || "模型调用";
-
-  // 标题跟着状态走: 一个恒定的"模型"字样在跑的时候什么也没说, 而这一格正是用户盯着看
-  // 的地方。思考与生成分开 —— 前者可能持续很久且不吐字, 看起来像卡住了。
-  const title = state !== "running" ? "模型" : thinking ? "模型思考中…" : "模型生成中…";
-
-  return <Step state={state} title={title} subject={label} meta={completed ? formatDuration(numberValue(completed.payload.elapsed_ms)) : ""} reason={reason}>
-    {showsOutput(completed) && output && <div className="step-answer"><Markdown content={output} compact /></div>}
-    {usage && <p className="step-line muted">
-      <span className="step-chip">输入 {formatTokens(numberValue(usage.payload.input_tokens))}</span>
-      <span className="step-chip">输出 {formatTokens(numberValue(usage.payload.output_tokens))}</span>
-      {numberValue(usage.payload.reasoning_tokens) > 0 && <span className="step-chip">思考 {formatTokens(numberValue(usage.payload.reasoning_tokens))}</span>}
-      {numberValue(usage.payload.cached_tokens) > 0 && <span className="step-chip">缓存 {formatTokens(numberValue(usage.payload.cached_tokens))}</span>}
-      {Boolean(usage.payload.estimated) && <span className="step-chip">估算</span>}
-    </p>}
-    {failed && <p className="step-line danger">{stringValue(failed.payload.message) || stringValue(failed.payload.error_kind)}</p>}
-  </Step>;
-}
-
-function ToolCategoryStep({ category, groups, turnStatus, reason, directory }: { category: ToolCategory; groups: ToolGroup[]; turnStatus: LocalTurn["status"]; reason: string; directory: ToolDirectory }) {
+/** 一组同一动作的工具活动: 收起时一行, 展开是一张平表。 */
+function ToolRun({ groups, turnStatus, reason, directory }: { groups: ToolGroup[]; turnStatus: LocalTurn["status"]; reason: string; directory: ToolDirectory }) {
   const states = groups.map((group) => stateOfTool(group.events, turnStatus));
   const state: StepState = states.includes("running")
     ? "running"
     : states.includes("failed") ? "failed" : states.includes("cancelled") ? "cancelled" : "done";
   const elapsed = groups.reduce((total, group) => total + elapsedOfTool(group.events), 0);
-  const names = [...new Set(groups.map((group) => toolNameOf(group.events)))];
-  // 类别回答"哪一类事", 动作名回答"具体哪件事": 五个任务工具全归在"任务"这一类下,
-  // 而"更新任务状态"与"创建任务列表"对看的人不是一回事。
-  const actions = [...new Set(names.map((name) => toolActionLabel(name, directory)))];
-  return <Step
-    state={state}
-    title={category.label}
-    subject={actions.join(" · ")}
-    badge={groups.length > 1 ? `${groups.length} 次` : undefined}
-    meta={elapsed > 0 ? formatDuration(elapsed) : ""}
-    reason={reason}
-  >
-    {groups.map((group) => <ToolCall events={group.events} turnStatus={turnStatus} directory={directory} key={group.id} />)}
-  </Step>;
+  const failures = states.filter((item) => item === "failed").length;
+  const summary = summariseTools(groups, directory);
+  const [open, setOpen] = useState(false);
+
+  // 运行中不给折叠三角: 还没有"详情"可展开, 摆一个点不动的三角只会让人去点。
+  // 那一行自己说清楚在干嘛, 加一个呼吸点表示它还在跑。
+  if (state === "running") {
+    return <p className="tool-line running">
+      <span className="pulse" />
+      {/* 命令要一个动词才读得通:「正在mvn -q compile」不是话。 */}
+      {summary.mono
+        ? <><span className="tool-running-verb">正在跑</span><span className="tool-what mono">{summary.text}</span></>
+        : <span className="tool-what">正在{summary.text}</span>}
+      {summary.count > 1 && <span className="tool-count">{summary.count} 次</span>}
+    </p>;
+  }
+
+  return <details className={`tool-line ${state}`} open={open}>
+    <summary onClick={toggle(setOpen)}>
+      <ChevronIcon className="tool-caret" />
+      <span className={`tool-what ${summary.mono ? "mono" : ""}`}>{summary.text}</span>
+      {/* 次数单独一列, 不拼进文字: 拼进去要做"读取文件"→"读取 6 个文件"的动宾拆分,
+          而那对"执行 Shell 命令"这类标题拆不开。 */}
+      {summary.count > 1 && <span className="tool-count">{summary.count} 次</span>}
+      {/* 失败计数上到摘要行: 一屏十几行里唯一发生了事的就是它, 收起时也得看得见。 */}
+      {failures > 0 && <span className="tool-flag">{failures} 个失败</span>}
+      {state === "cancelled" && <span className="tool-flag">已取消</span>}
+      {/* 耗时只在够久时才占一列: 一屏 17 行 1–4ms 是噪音, 而它们挤掉的正是 31 秒那一行
+          该有的显眼程度。 */}
+      {elapsed >= SLOW_ENOUGH_MS && <span className="tool-took">{formatDuration(elapsed)}</span>}
+    </summary>
+    <div className="tool-line-body">
+      {/* 类别与裁决理由只在展开后给: 收起时那一行要回答"它做了什么", 不是"它属于哪一类"。 */}
+      {/* 派发本身不再发决策摘要, 所以这里剩下的都是真的有话说的 (连续无新信息, 格式
+          损坏重试)。 */}
+      {reason && <p className="step-reason">{reason}</p>}
+      {groups.map((group) => <ToolCall events={group.events} turnStatus={turnStatus} directory={directory} key={group.id} />)}
+    </div>
+  </details>;
 }
 
 function stateOfTool(events: RunEvent[], turnStatus: LocalTurn["status"]): StepState {
   const completed = [...events].reverse().find((event) => event.kind === "tool_completed" || event.kind === "tool_cancelled");
   return settle(
-    !completed
-      ? "running"
-      : completed.kind === "tool_cancelled" ? "cancelled" : completed.payload.error_summary ? "failed" : "done",
+    completed ? (completed.kind === "tool_cancelled" ? "cancelled" : completed.payload.error_summary ? "failed" : "done") : "running",
     turnStatus,
   );
 }
@@ -166,6 +182,15 @@ function argumentsOf(event: RunEvent | undefined): Array<[string, string]> {
   });
 }
 
+/**
+ * 展开层里的一行 = 一次调用。
+ *
+ * 原先这里是三层嵌套 (决策摘要 → 类别 → 工具名 → 状态 → 调用详情), 把摘要行已经说过的
+ * 话又说了三遍, 而真正要看的参数与目标躺在第四层。一次读文件因此占掉半屏。
+ *
+ * 现在一次调用就是一行: 工具 · 目标 · 结果 · 耗时。参数和裁决只在真的有话说时才多给
+ * 一行 —— 大多数只读调用没有。
+ */
 function ToolCall({ events, turnStatus, directory }: { events: RunEvent[]; turnStatus: LocalTurn["status"]; directory: ToolDirectory }) {
   const latest = events.at(-1);
   const queued = events.find((event) => event.kind === "tool_queued");
@@ -179,43 +204,25 @@ function ToolCall({ events, turnStatus, directory }: { events: RunEvent[]; turnS
   const args = prepared ? argumentsOf(prepared) : argumentsOf(queued);
   const targets = Array.isArray(prepared?.payload.targets) ? prepared.payload.targets.map(stringValue) : [];
   const targetCount = numberValue(prepared?.payload.target_count);
-  const pending = !completed;
   const state = stateOfTool(events, turnStatus);
-
-  // 逐层点开: 处理过程 -> 步骤 -> 调用详情。这一层也默认收起, 展开过就一直算数。
-  const [open, setOpen] = useState(false);
-
   const summary = completed
     ? stringValue(completed.payload.error_summary) || stringValue(completed.payload.result_summary)
     : "";
+  // 目标优先于入参: 它是裁决层解析出来的结果, 比模型写进去的那一份准。
+  const subject = targets.length
+    ? targets.slice(0, 3).join(", ") + (targetCount > targets.length ? ` 等 ${targetCount} 个` : "")
+    : args.map(([key, value]) => `${key}=${clip(value)}`).join(" ");
 
-  return <div className={`tool-call ${state}`}>
-    <div className="tool-call-head">
-      <span className="tool-call-name" title={name}>{toolActionLabel(name, directory)}</span>
-      <span className="step-badge">{toolState(latest, completed, awaiting, state)}</span>
-      {/* 没执行过的终态与"执行了然后失败了"是两回事, 摘要行必须说得出区别。 */}
-      {completed && !wasExecuted(completed) && <span className="step-badge">未执行</span>}
-      {completed && <span className="step-meta">{formatDuration(numberValue(completed.payload.elapsed_ms))}</span>}
-    </div>
-    {summary && <p className={`step-line ${state === "failed" ? "danger" : ""}`}>{summary}</p>}
-    {awaiting && <p className="step-line warn">等待人类审批</p>}
-    {(args.length > 0 || policy || targets.length > 0) && (
-      <details className="step-detail" open={open}>
-        <summary onClick={toggle(setOpen)}><ChevronIcon className="step-detail-caret" />调用详情</summary>
-        {args.length > 0 && <dl className="step-args">{args.map(([key, value], index) => (
-          <div key={`${key}-${index}`}><dt>{key}</dt><dd title={value}>{clip(value)}</dd></div>
-        ))}</dl>}
-        {targets.length > 0 && <dl className="step-args"><div>
-          <dt>目标</dt>
-          <dd title={targets.join("\n")}>
-            {targets.slice(0, 6).join(", ")}
-            {targetCount > targets.length ? ` 等 ${targetCount} 个` : ""}
-          </dd>
-        </div></dl>}
-        {policy && <PolicyLine event={policy} />}
-        {completed && <CompletionLine event={completed} />}
-      </details>
-    )}
+  return <div className={`call-row ${state}`}>
+    <span className="call-tool">{toolActionLabel(name, directory)}</span>
+    <span className="call-subject" title={subject}>{subject}</span>
+    <span className="call-state">{toolState(latest, completed, awaiting, state)}</span>
+    {/* 没执行过的终态与"执行了然后失败了"是两回事。 */}
+    {completed && !wasExecuted(completed) && <span className="call-state">未执行</span>}
+    <span className="call-took">{completed ? formatDuration(numberValue(completed.payload.elapsed_ms)) : ""}</span>
+    {summary && <p className={`call-note ${state === "failed" ? "danger" : ""}`}>{summary}</p>}
+    {awaiting && <p className="call-note warn">等待人类审批</p>}
+    {policy && <div className="call-note"><PolicyLine event={policy} /></div>}
   </div>;
 }
 

@@ -36,6 +36,7 @@ from pydantic import (
 
 from forgecli.application.llm.errors import ConfigValidationError
 from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.provider_spec import ProviderProtocol
 from forgecli.domain.model.thinking import (
     ModelThinkingCapabilities,
     ModelThinkingSettings,
@@ -211,6 +212,10 @@ class ModelParams(BaseModel):
     thinking_default_effort: EffortName | None = None
 
     # 用户对当前模型的 thinking 设置.
+    #
+    # 不进 `_menu`: 菜单字段只支持 int / float / str, 而这两个一个是枚举一个是带校验的
+    # 值对象. 它们由 `update_model_thinking` 原子更新 —— 那条路还会顺带校验强度名在这个
+    # 模型声明过的列表里, 而菜单的通用 coercion 做不到这一层.
     thinking_mode: ThinkingMode | None = Field(default=None, strict=False)
     thinking_effort: EffortName | None = None
 
@@ -328,6 +333,13 @@ class ProviderConfig(BaseModel):
     id: str
     name: str = Field(json_schema_extra=_menu("展示名"))
     api_base: str = Field(json_schema_extra=_menu("API 地址"))
+    # 端点协议. 默认 OpenAI 兼容 —— 已有配置文件里没有这个字段, 而它们全都是那一种,
+    # 所以默认值就是它们的真实情况, 不需要迁移.
+    #
+    # **刻意不进 `_menu`**: 它是添加供应商时从固定列表里选的, 不是一个可以随手改的文本
+    # 字段. 让它可编辑的话, 把一家 OpenAI 兼容的改成 anthropic 只会把失败推迟到下一次
+    # 真正调用, 而那时用户早就忘了自己改过这一行.
+    protocol: str = ProviderProtocol.OPENAI_COMPATIBLE.value
     api_key_env: str | None = Field(
         default=None, json_schema_extra=_menu("API Key 环境变量")
     )

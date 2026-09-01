@@ -61,16 +61,44 @@ def normalize_provider_id(raw: str) -> str:
     return raw.strip().lower()
 
 
+# 用户自建的供应商 (ADR-0011 §5 的补充): 只要端点讲 OpenAI 兼容协议, 加一家就不需要
+# 写任何代码 —— adapter 已经在那儿了, 缺的只是一条注册.
+#
+# 与 REGISTRY 分开而不是混进去: REGISTRY 是**代码事实** (内置几家, 各自的默认端点与
+# 环境变量名), 它随版本走; 这一份是**用户事实**, 随配置文件走. 混在一起之后, "为什么
+# 我的配置在另一台机器上不见了"就没有答案了.
+_USER_PROVIDERS: dict[str, ProviderSpec] = {}
+
+
+def register_user_provider(spec: ProviderSpec) -> None:
+    """登记一家用户自建的供应商. 由配置加载时调用, 覆盖同名的上一次登记.
+
+    不允许盖掉内置的: 内置那几家的默认端点是代码事实, 用户要改端点走配置里的
+    `api_base`, 而不是重新定义这家供应商是什么.
+    """
+    provider_id = normalize_provider_id(spec.id)
+    if provider_id in REGISTRY:
+        raise UnknownProvider(f"{spec.id!r} 是内置供应商, 改端点请编辑它的 api_base")
+    _USER_PROVIDERS[provider_id] = spec
+
+
+def forget_user_providers() -> None:
+    """清空用户自建登记. 配置重载与测试用."""
+    _USER_PROVIDERS.clear()
+
+
 def is_known_provider(provider_id: str) -> bool:
-    return normalize_provider_id(provider_id) in REGISTRY
+    normalized = normalize_provider_id(provider_id)
+    return normalized in REGISTRY or normalized in _USER_PROVIDERS
 
 
 def require_known_provider(provider_id: str) -> ProviderSpec:
-    spec = REGISTRY.get(normalize_provider_id(provider_id))
+    normalized = normalize_provider_id(provider_id)
+    spec = REGISTRY.get(normalized) or _USER_PROVIDERS.get(normalized)
     if spec is None:
-        allowed = " / ".join(sorted(REGISTRY))
+        allowed = " / ".join(sorted({*REGISTRY, *_USER_PROVIDERS}))
         raise UnknownProvider(
-            f"未知供应商 {provider_id!r}；只支持内置供应商 [{allowed}]，"
-            f"新增供应商需要实现对应 adapter。"
+            f"未知供应商 {provider_id!r}；已知的有 [{allowed}]。"
+            f"要加一家讲 OpenAI 兼容协议的, 在设置页的供应商标签里添加。"
         )
     return spec

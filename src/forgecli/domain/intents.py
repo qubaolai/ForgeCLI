@@ -17,6 +17,7 @@ from typing import ClassVar
 
 __all__ = [
     "MODE_PRESETS",
+    "PRESET_NAMES",
     "ApprovalPolicy",
     "InputOrigin",
     "SandboxLevel",
@@ -99,14 +100,18 @@ class SessionMode:
 
     @classmethod
     def from_value(cls, raw: str) -> SessionMode:
-        """解析 `value`. 认得四个旧预设名, 因为已落盘的学习规则里存的是那些.
+        """解析 `value`, 也认四个预设名.
 
-        那些规则在环境画像变更之后本来就不再命中, 但读不出来该跳过它们, 不该让整个
-        规则库加载失败.
+        预设名是**在用的接口快捷方式**, 不是遗留兼容: `POST /api/v1/mode` 收
+        `{"mode": "auto"}` 就是一次点击换整档, 而按轴调是 `{"sandbox": ...}`.
+
+        认不出就抛 ValueError. 已落盘的学习规则里可能存着更早的写法, 那时
+        `json_learned_rules_store._rule_of` 会把那一条跳过 —— 后果是那条规则失效, 不是
+        整个规则库加载失败, 而它们在执行画像变更之后本来也已经不再命中.
         """
-        legacy = _LEGACY_NAMES.get(raw)
-        if legacy is not None:
-            return legacy
+        preset = PRESET_NAMES.get(raw)
+        if preset is not None:
+            return preset
         sandbox, _, approval = raw.partition("/")
         return cls(sandbox=SandboxLevel(sandbox), approval=ApprovalPolicy(approval))
 
@@ -137,7 +142,8 @@ MODE_PRESETS: tuple[SessionMode, ...] = (
     SessionMode.FULL_ACCESS,
 )
 
-_LEGACY_NAMES: dict[str, SessionMode] = {
+# 预设的名字. 接口上按名字换整档走它, Tab 循环走 MODE_PRESETS —— 同一批取值的两种用法.
+PRESET_NAMES: dict[str, SessionMode] = {
     "plan": SessionMode.PLAN,
     "accept_edits": SessionMode.ACCEPT_EDITS,
     "auto": SessionMode.AUTO,

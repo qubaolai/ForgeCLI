@@ -31,6 +31,7 @@ from forgecli.domain.context.budget import ContextBudget
 from forgecli.domain.context.compaction import CompactionDraft, CompactionLevel
 from forgecli.domain.conversation.message import ChatMessage
 from forgecli.domain.model.usage import UsageRecordDraft
+from forgecli.domain.tool.result import ResultProvenance
 from forgecli.domain.tool.tool_call import ToolSchema
 from forgecli.shared.observability.log import get_log
 
@@ -142,6 +143,17 @@ class ContextManager:
             estimated_input=estimated,
             over_allowance=budget.over_allowance(estimated),
         )
+
+    def change_notice(
+        self, messages: tuple[ChatMessage, ...], provenance: ResultProvenance | None
+    ) -> str:
+        """一次写入之后要追加的变更通知; 没有历史读取就返回空串.
+
+        与 `fit` 分开是刻意的: `fit` 每次调模型之前都跑, 是幂等的; 这一条只在工具结果
+        回填的那一刻跑一次, 结果拼进那条结果的正文. 混进 `fit` 就要回答"怎么不重复
+        追加", 而那个问题只有靠认自己写过的文本才答得上来.
+        """
+        return dedup.changed_notice(transcript.slots_of(messages), provenance)
 
     def summarize_now(
         self,

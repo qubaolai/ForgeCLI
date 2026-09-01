@@ -61,7 +61,7 @@ __all__ = [
 #
 # 接 MAIN_AGENT_PROMPT_VERSION 的 5 与 PROMPT_TEXT_VERSION 的 10 往下数: 三个常量数的是
 # 同一件事 (Forge 撰写的正文改了没有), 只是管辖范围一次比一次大.
-PROMPT_TEXT_VERSION = 16
+PROMPT_TEXT_VERSION = 17
 
 TEMPLATE_SUFFIX = ".md.j2"
 _ANCHOR = "forgecli.application.prompt"

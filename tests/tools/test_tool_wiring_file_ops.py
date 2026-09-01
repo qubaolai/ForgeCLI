@@ -85,8 +85,8 @@ def test_envelope_with_a_shared_new_ancestor_applies_every_section(
         profile=PROFILE,
     )
     patch = (
-        "*** NEW backend/pom.xml\n<project/>\n\n"
-        "*** NEW backend/src/Main.java\nclass Main {}"
+        "*** NEW START backend/pom.xml\n<project/>\n\n*** NEW END\n"
+        "*** NEW START backend/src/Main.java\nclass Main {}\n*** NEW END"
     )
     plan = tool.prepare(
         ToolInvocationRequest(

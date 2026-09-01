@@ -5,12 +5,22 @@
 
 - 状态相同 -> 后一条是重复的, 换成一行引用. **省的是 token 不是 IO**: 文件照读,
   stat 照做, 省掉的是把同一份 16 KiB 再塞一遍进上下文.
-- 状态不同 -> 前一条已经过时, 降级并写明"该文件此后被修改过". 这是**主动**通知,
-  模型不需要想起来去问.
+- 状态不同 -> 前一条已经过时. 这里只把它从锚点位置上摘下来, **不改写它**.
 
-写入也要报到这里. 只比对读与读的话, 这条通知**对写入完全不生效** —— 模型改完一个文件,
-transcript 里那份改动前的内容仍然摆在那里, 不带任何标记, 而它下一次拼 FIND 段照的就是
-那一份. 写入没有可比对的"下一次读", 所以它走 ``mutated_paths``: 直接说出自己动过谁.
+## 为什么变更通知不再原地改写 (2026-09-01 修订)
+
+原先这一条会把前面那次读改写成一行 stale 占位. 语义没问题, 代价是致命的: 在前缀缓存
+下, 改写 transcript 中段会让它之后的**全部内容**重新计费.
+
+实测: 一次 `fs_apply_patch` 之后, 输入 17,154 里有 7,298 未命中缓存, 占那一轮未缓存
+输入的 20%; 改文件密集的那一轮里三次改写合计 79,321, 占 57%. 而省下来的不过是把一份
+4k 的正文换成 40 token 的占位 —— 拿 4k 的节省换 25k 从缓存价变成全价, 净亏五到十倍.
+
+所以那套压缩机制的正确定位是**溢出保护**, 不是成本控制. 窗口没满时动它只会更贵.
+
+通知本身仍然要发, 只是改成**追加到写入那条结果的正文末尾** (`changed_notice`, 由循环
+在回填工具结果时调一次). 那个位置在尾部, 天生只发生一次, 不需要任何幂等技巧, 而且
+缓存代价为零 —— 尾部本来就是新内容要去的地方.
 
 ## 为什么这个 pass 是无状态的
 
@@ -34,8 +44,9 @@ from __future__ import annotations
 from forgecli.application.context import placeholders
 from forgecli.application.context.transcript import Slot
 from forgecli.application.tools.artifact_store import ArtifactStore
+from forgecli.domain.tool.result import ResultProvenance
 
-__all__ = ["plan_rewrites"]
+__all__ = ["changed_notice", "plan_rewrites"]
 
 
 def plan_rewrites(
@@ -50,13 +61,15 @@ def plan_rewrites(
         if provenance is None:
             continue
         for path in provenance.mutated_paths:
-            # 决策 4 的另一半: 改过之后, 前面那次读到的内容不再代表当前状态.
+            # 改过之后, 前面那次读不再代表当前状态 —— 所以它不能继续当锚点, 否则下一次
+            # 读回来会被误判成"与前面相同"而换成引用.
             #
-            # 写入自己**不接任**新锚点: 它的正文是一行改动说明, 当不了后来那次读的
-            # 引用目标. 下一次真的读回来, 那一条才是新的代表.
-            mutated = anchors.pop(path, None)
-            if mutated is not None:
-                rewrites[mutated.key] = placeholders.stale_notice(mutated, artifacts)
+            # 只摘锚点, **不改写它**: 改写会打断前缀缓存 (见模块说明). 通知走
+            # `changed_notice`, 追加在写入那条结果的尾部.
+            #
+            # 写入自己也不接任新锚点: 它的正文是一行改动说明, 当不了后来那次读的引用
+            # 目标. 下一次真的读回来, 那一条才是新的代表.
+            anchors.pop(path, None)
         if not provenance.dedupable:
             # shell_run 一类填不出来源身份. 它们的输出不是某个路径在某个状态下的快照,
             # 重跑一次也不保证一样, 所以不参与去重 —— 但仍然可以被降级.
@@ -71,10 +84,46 @@ def plan_rewrites(
             # 决策 3: 同一份内容第二次出现, 后一条换成引用, 锚点不动.
             rewrites[slot.key] = placeholders.dedup_notice(anchor, slot, artifacts)
             continue
-        # 决策 4: 文件变了. 前一条降级并写明它已经不代表当前内容, 这一条成为新锚点.
-        #
-        # **不是**去改这一条: 那条旧记录陈述的是"我在第 N 次调用时读到的内容是 X",
-        # 这在此刻依然为真, 它是历史. 变的是它还代不代表当前状态.
-        rewrites[anchor.key] = placeholders.stale_notice(anchor, artifacts)
+        # 文件在两次读之间变了. 旧那条留在原地不动 —— 它陈述的是"我在第 N 次调用时读到
+        # 的内容是 X", 这在此刻依然为真, 它是历史; 变的只是它还代不代表当前状态, 而这
+        # 一条由紧随其后的新读自己说明.
         anchors[provenance.source_path] = slot
     return rewrites
+
+
+def changed_notice(slots: tuple[Slot, ...], provenance: ResultProvenance | None) -> str:
+    """一条新结果让前面哪几次读作废.
+
+    两种来源, 同一句话:
+
+    - ``mutated_paths`` —— 写入直接说出自己动过谁.
+    - ``source_path`` + ``source_state`` —— 同一个路径在不同状态下又读了一次, 那么
+      前面那几次读的都不再代表当前内容. 这一条覆盖"文件被工作区之外的东西改了"的情况,
+      写入报不出来.
+
+    由循环在回填工具结果时调一次, 结果拼在那条结果的正文末尾. 一次工具结果只回填一次,
+    所以天生不会重复 —— 不需要像原地改写那样依赖"改写是幂等的"这个性质.
+
+    没有对应的历史读取就返回空串: 改了一个从没读过的文件, 说"你之前读的不作数了"是废话,
+    而废话会稀释真正要紧的那几句.
+    """
+    if provenance is None:
+        return ""
+    stale = [slot for slot in slots if _is_stale(slot, provenance)]
+    if not stale:
+        return ""
+    return placeholders.changed_notice(tuple(stale))
+
+
+def _is_stale(slot: Slot, incoming: ResultProvenance) -> bool:
+    earlier = slot.block.provenance
+    if earlier is None or not earlier.dedupable:
+        return False
+    if earlier.source_path in incoming.mutated_paths:
+        return True
+    # 同路径不同状态: 后一次读回来的才是当前内容.
+    return (
+        incoming.dedupable
+        and earlier.source_path == incoming.source_path
+        and earlier.source_state != incoming.source_state
+    )

@@ -11,6 +11,7 @@ import {
   groupToolEvents,
   metricsFor,
   newLocalTurn,
+  summariseTools,
   toolActionLabel,
   restoreTurn,
   shouldAutoFollow,
@@ -93,12 +94,12 @@ test("compaction usage does not become a phantom model step", () => {
   // 结束的"模型调用", 而且永远显示成运行中。
   const events = [
     event("model_started", 1, {}, { request_id: "r1" }),
-    event("model_completed", 2, { tool_call_count: 0 }, { request_id: "r1" }),
+    event("model_completed", 2, { tool_call_count: 0, text_chars: 12 }, { request_id: "r1" }),
     event("context_compacted", 3, { level: "summary", tokens_saved: 100, messages_replaced: 2 }),
     event("model_usage", 4, { origin: "compact", total_tokens: 500 }, { request_id: "r-compact" }),
   ];
   assert.equal(groupModelEvents(events).length, 1);
-  const timeline = buildTimeline(events);
+  const timeline = buildTimeline(events, {}, { r1: "最终回答" });
   assert.deepEqual(timeline.map((item) => item.kind), ["model", "note"]);
 });
 
@@ -291,13 +292,13 @@ test("consecutive same-kind tool calls aggregate even with a decision between th
   // "相邻"的, 时间线摊成六行 —— 而聚合本来就是为了不摊。
   const events = [
     event("model_started", 1, {}, { request_id: "r1" }),
-    event("model_completed", 2, { tool_call_count: 3 }, { request_id: "r1" }),
+    event("model_completed", 2, { tool_call_count: 3, text_chars: 20 }, { request_id: "r1" }),
     ...toolCall(10, "fs_read", "i1"),
     ...toolCall(20, "fs_read", "i2"),
     ...toolCall(30, "fs_scan_tree", "i3"),
     ...toolCall(40, "shell_run", "i4", ["execute_shell"]),
   ];
-  const timeline = buildTimeline(events);
+  const timeline = buildTimeline(events, {}, { r1: "我来看几个文件" });
   assert.deepEqual(
     timeline.map((item) => `${item.kind}:${item.kind === "tools" ? item.category.id : ""}`),
     ["model:", "tools:read", "tools:shell"],
@@ -306,16 +307,32 @@ test("consecutive same-kind tool calls aggregate even with a decision between th
   assert.equal(timeline[1].reason, "模型请求 1 个工具调用", "决策摘要挂到它解释的那一步上");
 });
 
-test("tool calls separated by a model call are not merged across it", () => {
-  // 只在"工具列表"里判相邻, 会把隔着一次模型调用的两次读文件也合起来, 合出来的那段
-  // 还带着更早的 sequence, 于是排到模型调用前面 —— 时间线说了假话。
+test("tool calls separated by something the model said are not merged across it", () => {
+  // 只在"工具列表"里判相邻, 会把隔着一段叙述的两次读文件也合起来, 合出来的那段还带着
+  // 更早的 sequence, 于是排到叙述前面 —— 时间线说了假话。
   const events = [
     ...toolCall(10, "fs_read", "i1"),
     event("model_started", 20, {}, { request_id: "r2" }),
     event("model_completed", 21, { tool_call_count: 1 }, { request_id: "r2" }),
     ...toolCall(30, "fs_read", "i2"),
   ];
-  assert.deepEqual(buildTimeline(events).map((item) => item.kind), ["tools", "model", "tools"]);
+  const timeline = buildTimeline(events, {}, { r2: "接着看下一个" });
+  assert.deepEqual(timeline.map((item) => item.kind), ["tools", "model", "tools"]);
+});
+
+test("a silent model call does not break the run of tool calls around it", () => {
+  // 这个循环一次只派发一个工具调用, 而模型常常一个字都不说就要下一个工具。那种节点
+  // 渲染不出任何东西, 却横在中间让相邻合并永远不成立 —— 实测一屏 18 次调用一次都没并
+  // 起来。它不进时间线, "模型跑了几次"由底部指标行回答。
+  const events = [
+    ...toolCall(10, "fs_read", "i1"),
+    event("model_started", 20, {}, { request_id: "r2" }),
+    event("model_completed", 21, { tool_call_count: 1, text_chars: 1 }, { request_id: "r2" }),
+    ...toolCall(30, "fs_read", "i2"),
+  ];
+  // 实测: 模型在工具调用旁边会吐一个空白字符, 于是 text_chars=1 而屏幕上什么都没有。
+  // 判据看的是渲染器用的那份 outputs, 不是这个计数。
+  assert.deepEqual(buildTimeline(events, {}, { r2: " " }).map((item) => item.kind), ["tools"]);
 });
 
 test("an unregistered tool still shows what the model passed in", () => {
@@ -403,4 +420,132 @@ test("an unknown tool falls back to its own name rather than an invented action"
   assert.equal(toolActionLabel("mcp_acme_do_thing", DIRECTORY), "mcp_acme_do_thing");
   // 目录还没拉回来的那几帧: 显示工具名, 不显示一个猜出来的中文。
   assert.equal(toolActionLabel("todo_write"), "todo_write");
+});
+
+test("every model call's text stays in the flow, none of it is retracted", () => {
+  // 最终回答必须流式, 而循环发请求之前分不出哪次是最后一次 —— 于是只能每次都流。
+  // 流出来的叙述必然已经显示过, 所以不能再撤回它, 只能让它留下。
+  //
+  // 这条钉的是"留下": 两次调用的正文都要能从 outputs 里取到, 时间线也要给出两块。
+  let turns = [newLocalTurn("改个文件", 1000)];
+  turns = appendRunEvent(turns, event("model_started", 1, { call_index: 0 }, { request_id: "r1" }));
+  turns = appendRunEvent(turns, event("model_output_delta", 2, { text: "我先看看目录" }, { request_id: "r1" }));
+  turns = appendRunEvent(turns, event("model_completed", 3, { tool_call_count: 1, text_chars: 6 }, { request_id: "r1" }));
+  turns = appendRunEvent(turns, event("tool_started", 4, { tool_name: "fs_find" }, { invocation_id: "i1" }));
+  turns = appendRunEvent(turns, event("tool_completed", 5, { tool_name: "fs_find" }, { invocation_id: "i1" }));
+  turns = appendRunEvent(turns, event("model_started", 6, { call_index: 1 }, { request_id: "r2" }));
+  turns = appendRunEvent(turns, event("model_output_delta", 7, { text: "改好了" }, { request_id: "r2" }));
+  turns = appendRunEvent(turns, event("model_completed", 8, { tool_call_count: 0, text_chars: 3 }, { request_id: "r2" }));
+
+  const turn = turns[0];
+  assert.equal(turn.outputs.r1, "我先看看目录", "叙述留在流里, 不被撤回");
+  assert.equal(turn.outputs.r2, "改好了");
+  // assistantText 仍然只认最终回答: 复制按钮与落盘用它, 那两处要的确实只是回答。
+  assert.equal(turn.assistantText, "改好了");
+
+  const kinds = buildTimeline(turn.events, {}, turn.outputs).map((item) => item.kind);
+  assert.deepEqual(kinds, ["model", "tools", "model"], "叙述-工具-叙述, 按发生顺序");
+});
+
+test("a merged group shows only what it did, never which file", () => {
+  // 收起时摆一个路径, 等于让一个随机挑出来的文件占满整行, 而它并不比另外几个更值得看。
+  // 具体是哪几个展开就有。
+  const directory = { fs_read: { title: "读取文件", action: "read" } };
+  const call = (id, target) => ({ id, events: [
+    event("tool_prepared", 1, { tool_name: "fs_read", targets: [target] }, { invocation_id: id }),
+  ] });
+
+  assert.deepEqual(summariseTools([call("a", "/x/y/Login.tsx")], directory),
+    { text: "读取文件", mono: false, count: 1 });
+  assert.deepEqual(
+    summariseTools([call("a", "/x/A.tsx"), call("b", "/x/B.tsx")], directory),
+    { text: "读取文件", mono: false, count: 2 },
+  );
+});
+
+test("no separator dot and no path ever reach the collapsed line", () => {
+  // 回归: 那一行曾经是"按符号名找定义 · /Users/.../SysUserServiceImpl.java" —— 一条
+  // 一百多字符的绝对路径占满整行。
+  const directory = { code_definitions: { title: "按符号名找定义", action: "locate_symbol" } };
+  const summary = summariseTools([{ id: "a", events: [
+    event("tool_prepared", 1, {
+      tool_name: "code_definitions",
+      arguments: [["symbol", "SysUserServiceImpl"]],
+      targets: ["/Users/almond/Desktop/tmp_ant/test/backend/src/main/java/SysUserServiceImpl.java"],
+    }, { invocation_id: "i1" }),
+  ] }], directory);
+
+  assert.equal(summary.text, "按符号名找定义");
+  assert.ok(!summary.text.includes("·"), "不要点符号分割");
+  assert.ok(!summary.text.includes("/"), "路径一个字符都不该上这一行");
+});
+
+test("a single shell command stays on the line, because it is not a path", () => {
+  const directory = { shell_run: { title: "执行 Shell 命令", action: "execute" } };
+  const summary = summariseTools([{ id: "a", events: [
+    event("tool_prepared", 1, { tool_name: "shell_run", arguments: [["command", "mvn -q compile"]] }, { invocation_id: "i1" }),
+  ] }], directory);
+
+  assert.deepEqual(summary, { text: "mvn -q compile", mono: true, count: 1 });
+});
+
+test("the count is a separate field, never spliced into the label", () => {
+  // 拼进文字要做"读取文件"→"读取 6 个文件"的动宾拆分, 而那对"执行 Shell 命令"
+  // "按符号名找定义"这类标题根本拆不开。
+  const directory = { fs_find: { title: "定位文件与认识目录", action: "locate_path" } };
+  const summary = summariseTools(
+    [1, 2, 3].map((n) => ({ id: `g${n}`, events: [event("tool_prepared", n, { tool_name: "fs_find" }, { invocation_id: `i${n}` })] })),
+    directory,
+  );
+
+  assert.equal(summary.text, "定位文件与认识目录");
+  assert.equal(summary.count, 3);
+});
+
+test("an unknown tool falls back to a count rather than inventing a verb", () => {
+  // 目录里没有它就没有可信的名字。编一个动词出来会让一次没发生过的操作看起来发生过。
+  const summary = summariseTools([
+    { id: "a", events: [event("tool_prepared", 1, { tool_name: "mcp_acme_x" }, { invocation_id: "i1" })] },
+    { id: "b", events: [event("tool_prepared", 2, { tool_name: "mcp_acme_y" }, { invocation_id: "i2" })] },
+  ]);
+
+  assert.equal(summary.text, "工具调用");
+  assert.equal(summary.count, 2);
+});
+test("different tools merged into one line still name their kinds", () => {
+  // 同一类的工具会被并进一组。退化成"3 次工具调用"就把信息全丢了。
+  const directory = {
+    fs_read: { title: "读取文件", action: "read" },
+    search_text: { title: "搜索文本", action: "locate_text" },
+  };
+  const summary = summariseTools([
+    { id: "a", events: [event("tool_prepared", 1, { tool_name: "fs_read" }, { invocation_id: "i1" })] },
+    { id: "b", events: [event("tool_prepared", 2, { tool_name: "search_text" }, { invocation_id: "i2" })] },
+    { id: "c", events: [event("tool_prepared", 3, { tool_name: "fs_read" }, { invocation_id: "i3" })] },
+  ], directory);
+
+  assert.equal(summary.text, "读取文件 / 搜索文本");
+  assert.equal(summary.count, 3);
+});
+
+test("merging is by action, not by the coarser category", () => {
+  // 四种定位与读取全都属于"读取文件"这一类。按类别并会把 6 次 fs_find 与 10 次 fs_read
+  // 压成一行"18 次工具调用" —— 从平铺一个极端跳到另一个极端。
+  const directory = {
+    fs_find: { title: "定位文件与认识目录", action: "locate_path" },
+    fs_read: { title: "读取文件", action: "read" },
+  };
+  const events = [
+    ...toolCall(10, "fs_find", "i1"),
+    ...toolCall(20, "fs_find", "i2"),
+    ...toolCall(30, "fs_read", "i3"),
+    ...toolCall(40, "fs_read", "i4"),
+  ];
+
+  const timeline = buildTimeline(events, directory);
+
+  assert.equal(timeline.length, 2, "定位归定位, 读取归读取");
+  assert.deepEqual(timeline.map((item) => item.groups.length), [2, 2]);
+  assert.deepEqual(summariseTools(timeline[0].groups, directory), { text: "定位文件与认识目录", mono: false, count: 2 });
+  assert.deepEqual(summariseTools(timeline[1].groups, directory), { text: "读取文件", mono: false, count: 2 });
 });
