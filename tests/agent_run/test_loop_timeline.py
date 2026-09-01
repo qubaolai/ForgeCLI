@@ -77,7 +77,7 @@ def test_turn_started_reports_mode_and_tool_count() -> None:
 
     payload = collector.of(K.TURN_STARTED)[0].payload
     assert isinstance(payload, TurnStartedPayload)
-    assert payload.mode == "accept_edits"
+    assert payload.mode == "workspace_write/always"
     assert payload.tool_count == 3
 
 

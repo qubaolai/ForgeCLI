@@ -122,7 +122,7 @@ button { color: inherit; }
 .composer.offline { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
 .composer-bar { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--border); }
 .composer-hint { margin-left: auto; font-size: 10px; color: var(--muted); }
-.composer-bar > button, .plan-actions button, .approval-modal footer button, .approval-card footer button { border: 1px solid var(--border); background: var(--surface-3); border-radius: 7px; padding: 7px 13px; cursor: pointer; }
+.composer-bar > button, .plan-actions button, .approval-card footer button { border: 1px solid var(--border); background: var(--surface-3); border-radius: 7px; padding: 7px 13px; cursor: pointer; }
 .composer-bar > button[type="submit"], button.primary { border-color: #54cfa4; background: var(--accent); color: #092017; font-weight: 700; }
 .composer-bar > button:disabled { opacity: .4; cursor: default; }
 .composer-bar .stop { color: var(--danger); }
@@ -134,12 +134,20 @@ button { color: inherit; }
 .mode-caret { width: 14px; height: 14px; color: var(--muted); transition: transform .15s; }
 .mode-trigger[aria-expanded="true"] .mode-caret { transform: rotate(180deg); }
 .mode-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
-.mode-dot.plan { background: #7aa2f7; }
-.mode-dot.accept_edits { background: var(--accent); }
-.mode-dot.auto { background: var(--warning); }
+/* 圆点跟着隔离档走: 它回答的是"能造成多大后果". */
+.mode-dot.read_only { background: #7aa2f7; }
+.mode-dot.workspace_write { background: var(--accent); }
 .mode-dot.full_access { background: var(--danger); }
-.mode-options { position: absolute; z-index: 20; bottom: calc(100% + 9px); left: 0; width: 276px; max-width: calc(100vw - 40px); margin: 0; padding: 5px; list-style: none; display: grid; gap: 2px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 18px 46px #0007; }
-.mode-options button { width: 100%; display: grid; grid-template-columns: 7px minmax(0, 1fr) 16px; align-items: center; gap: 10px; border: 0; background: transparent; border-radius: 8px; padding: 8px 10px; text-align: left; cursor: pointer; }
+.mode-options { position: absolute; z-index: 20; bottom: calc(100% + 9px); left: 0; width: 276px; max-width: calc(100vw - 40px); margin: 0; padding: 5px; display: grid; gap: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 18px 46px #0007; }
+/* 两个轴各成一组: 它们是独立的选择, 摆成一条连续列表会让人以为只能选一个. */
+.stance-group { display: grid; gap: 2px; }
+.stance-group + .stance-group { border-top: 1px solid var(--border); padding-top: 6px; }
+.stance-group > header { display: flex; align-items: baseline; gap: 6px; padding: 2px 10px 4px; }
+.stance-group > header strong { font-size: 11px; font-weight: 600; }
+.stance-group > header small { color: var(--muted); font-size: 10px; }
+.stance-group ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.mode-options button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 16px; align-items: center; gap: 10px; border: 0; background: transparent; border-radius: 8px; padding: 8px 10px; text-align: left; cursor: pointer; }
+.mode-options button:has(.mode-dot) { grid-template-columns: 7px minmax(0, 1fr) 16px; }
 .mode-options button:hover { background: var(--surface-2); }
 .mode-options button.active { background: var(--surface-3); }
 .mode-options button > span { min-width: 0; display: grid; gap: 2px; }
@@ -200,7 +208,10 @@ button { color: inherit; }
 .run-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
 .run-process.failed .run-status-dot { background: var(--danger); }
 .run-process.cancelled .run-status-dot { background: var(--warning); }
-.run-process > summary strong { color: var(--text); font-size: 12px; font-weight: 550; }
+.run-process > summary strong { color: var(--text); font-size: 12px; font-weight: 550; flex: 0 0 auto; }
+/* 收起时这一行是唯一的进度来源, 所以它压在指标前面, 且允许挤掉指标而不是被挤掉。 */
+.run-activity { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+.run-process.running .run-activity { color: var(--text-soft); }
 .run-metrics { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .run-metrics > span { color: var(--muted); font-size: 9px; }
 .run-metrics > span + span::before { content: "·"; margin-right: 5px; }
@@ -253,20 +264,57 @@ button { color: inherit; }
 @keyframes caret { 50% { opacity: 0; } }
 .jump-bottom { position: absolute; z-index: 3; right: clamp(24px, 6vw, 76px); top: -40px; border: 1px solid var(--border); background: var(--surface-3); color: var(--text); border-radius: 18px; padding: 7px 12px; cursor: pointer; box-shadow: 0 8px 24px #0005; font-size: 11px; }
 
-.approval-card { margin: 0 clamp(18px, 5vw, 68px) 12px; max-height: 44vh; overflow: auto; background: linear-gradient(135deg, color-mix(in srgb, var(--surface-2) 92%, var(--warning)), var(--surface-2)); border-radius: 16px; box-shadow: 0 12px 36px #0004, inset 0 1px #ffffff0b; }
-.approval-card > header { display: flex; gap: 11px; align-items: center; padding: 15px 16px 11px; }
-.approval-card h2 { margin: 0; font-size: 14px; }
+/* 审批卡片. 三档危险程度由 approvalModel.severityOf 决定, 这里只把它翻成颜色:
+   --sev 是唯一的开关, 描边条, 徽标, 命令左边框与计数高亮全都跟着它走。 */
+.approval-card { position: relative; margin: 0 clamp(18px, 5vw, 68px) 12px; overflow: hidden; background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 12px 36px #0004; font-size: 13px; }
+.approval-card.sev-calm { --sev: var(--accent); }
+.approval-card.sev-caution { --sev: var(--warning); }
+.approval-card.sev-critical { --sev: var(--danger); }
+.approval-card .ac-stripe { display: block; height: 3px; background: var(--sev); }
+.approval-card > header { display: flex; gap: 11px; align-items: flex-start; padding: 14px 16px 12px; }
+.approval-card .ac-badge { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 9px; background: color-mix(in srgb, var(--sev) 16%, transparent); color: var(--sev); }
+.approval-card .ac-badge svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.approval-card .ac-heading { min-width: 0; }
+.approval-card h2 { margin: 0; font-size: 14px; font-weight: 650; }
 .approval-card header p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
-.approval-card .warning-icon { width: 30px; height: 30px; background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); font-size: 12px; }
-.approval-card .warning-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.approval-card > details { margin: 0 16px; padding: 0 11px; background: color-mix(in srgb, var(--surface) 70%, transparent); border-radius: 10px; }
-.approval-card > details > summary { padding: 10px 0; color: var(--muted); cursor: pointer; font-size: 10px; }
-.approval-card pre { margin: 1px 0 10px; padding: 10px 0; background: transparent; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 10px; }
-.approval-card .target-group { margin: 8px 0; }
-.approval-card footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; padding: 12px 16px 15px; }
-.approval-card footer button { border: 0; background: color-mix(in srgb, var(--surface-3) 75%, transparent); border-radius: 9px; }
-.approval-card footer button:hover { filter: brightness(1.08); }
-.approval-card footer button.primary { background: var(--accent); }
+.approval-card .ac-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.approval-card .ac-chip { padding: 3px 7px; border-radius: 5px; background: var(--surface-3); color: var(--text-soft); font-size: 10px; white-space: nowrap; }
+.approval-card .ac-chip.tool { background: color-mix(in srgb, var(--sev) 13%, transparent); color: var(--sev); font-weight: 700; }
+.approval-card .ac-cmd { margin: 0 16px; padding: 12px 13px; background: var(--surface); border: 1px solid var(--border); border-left: 2px solid var(--sev); border-radius: 8px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.approval-card .ac-root { margin: 7px 16px 0; color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.approval-card .ac-counts { display: flex; flex-wrap: wrap; gap: 7px; padding: 13px 16px 0; }
+.approval-card .ac-count { padding: 4px 9px; border-radius: 6px; background: var(--surface-3); color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.approval-card .ac-count b { font-size: 12px; }
+.approval-card .ac-count[data-on="1"] { background: color-mix(in srgb, var(--sev) 14%, transparent); color: var(--sev); }
+.approval-card .ac-body { display: flex; flex-direction: column; gap: 10px; padding: 13px 16px 0; }
+.approval-card .ac-body:empty { display: none; }
+.approval-card .ac-sec { border: 1px solid var(--border); border-radius: 9px; background: var(--surface); overflow: hidden; }
+.approval-card .ac-sec > summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; color: var(--muted); font-size: 10.5px; list-style: none; }
+.approval-card .ac-sec > summary::-webkit-details-marker { display: none; }
+.approval-card .ac-sec b { color: var(--text-soft); }
+.approval-card .ac-sec-caret { width: 13px; height: 13px; flex: 0 0 auto; transition: transform .15s; }
+.approval-card .ac-sec[open] .ac-sec-caret { transform: rotate(90deg); }
+.approval-card .ac-sec-meta { margin-left: auto; }
+.approval-card .ac-sec-body { padding: 0 12px 11px; }
+.approval-card .ac-file + .ac-file { margin-top: 9px; }
+.approval-card .ac-file-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding-bottom: 5px; color: var(--muted); font-size: 10.5px; }
+.approval-card .ac-file-head code { color: var(--text-soft); font-size: 11px; overflow-wrap: anywhere; }
+/* 单块正文限高, 卡片本身不限高: 长脚本在一个 44vh 的盒子里滚动是读不下去的。 */
+.approval-card .ac-pre { margin: 0; padding: 10px 11px; max-height: 40vh; overflow: auto; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; font-size: 11px; line-height: 1.62; white-space: pre; color: var(--text); }
+.approval-card .ac-trunc { margin: 5px 0 0; color: var(--muted); font-size: 10px; }
+.approval-card .ac-tgroup { display: grid; grid-template-columns: 58px 1fr; gap: 3px 11px; align-items: start; }
+.approval-card .ac-tgroup + .ac-tgroup { margin-top: 9px; }
+.approval-card .ac-tlabel { padding-top: 2px; color: var(--muted); font-size: 10.5px; text-align: right; }
+.approval-card .ac-tpaths { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.approval-card .ac-tpaths code { font-size: 11px; color: var(--text-soft); overflow-wrap: anywhere; }
+.approval-card > footer { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 13px; padding: 13px 16px 14px; border-top: 1px solid var(--border); }
+.approval-card .ac-learn { flex: 1 1 210px; min-width: 0; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.approval-card .ac-btns { display: flex; gap: 7px; margin-left: auto; }
+.approval-card footer button { border: 1px solid var(--border); background: var(--surface-3); border-radius: 8px; padding: 8px 15px; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+.approval-card footer button:hover:not(:disabled) { filter: brightness(1.08); }
+.approval-card footer button:disabled { opacity: .42; cursor: not-allowed; }
+.approval-card footer button.ac-deny { background: transparent; color: var(--danger); border-color: color-mix(in srgb, var(--danger) 34%, var(--border)); }
+.approval-card footer button.primary { background: var(--accent); color: #07130f; border-color: transparent; font-weight: 650; }
 
 .project-switcher-layer { position: fixed; inset: 0; z-index: 45; overflow: auto; background: var(--bg); }
 .project-switcher { position: relative; min-height: 100vh; }
@@ -297,19 +345,8 @@ button { color: inherit; }
 .error-banner button:hover { opacity: 1; }
 .workspace-error { position: fixed; z-index: 30; top: 59px; left: 50%; transform: translateX(-50%); max-width: min(720px, calc(100vw - 32px)); box-shadow: 0 12px 32px #0006; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: #050609cc; backdrop-filter: blur(5px); padding: 24px; }
-.approval-modal { width: min(720px, 96vw); max-height: 88vh; overflow: auto; background: #151820; border: 1px solid #3a414d; border-radius: 15px; box-shadow: 0 24px 90px #000; }
-.approval-modal > header { display: flex; gap: 13px; align-items: center; padding: 20px; border-bottom: 1px solid var(--border); }
-.approval-modal h2, .settings-panel h2 { margin: 0; font-size: 18px; }
-.approval-modal header p, .settings-panel header p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
-.warning-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: #4b3718; color: var(--warning); font-weight: 900; }
-.approval-meta { display: flex; justify-content: space-between; padding: 12px 20px; color: var(--muted); font-size: 11px; }
-.approval-modal > label { display: block; padding: 4px 20px; color: var(--muted); font-size: 10px; text-transform: uppercase; }
-.approval-modal pre { margin: 6px 20px 16px; padding: 13px; border: 1px solid var(--border); border-radius: 8px; background: #0b0d11; color: #eef2f7; white-space: pre-wrap; overflow-wrap: anywhere; }
-.target-group { margin: 10px 20px; padding: 10px; background: var(--surface-2); border-radius: 8px; display: grid; gap: 7px; }
-.target-group strong { font-size: 11px; color: var(--warning); }
-.target-group code { font-size: 10px; color: #c9ced8; overflow-wrap: anywhere; }
-.warning-copy { margin: 12px 20px; color: var(--warning); }
-.approval-modal footer { display: flex; justify-content: flex-end; gap: 9px; padding: 16px 20px; border-top: 1px solid var(--border); }
+.settings-panel h2 { margin: 0; font-size: 18px; }
+.settings-panel header p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
 
 .settings-panel { position: relative; width: min(1040px, 96vw); height: min(720px, 92vh); display: grid; grid-template-rows: 70px 1fr; background: #151820; border: 1px solid var(--border); border-radius: 15px; overflow: hidden; }
 .settings-panel > header { padding: 15px 20px; display: flex; justify-content: space-between; border-bottom: 1px solid var(--border); }
@@ -542,20 +579,20 @@ button { color: inherit; }
   .topbar, .conversation { background: #fafbfc; }
   .project-center { background: radial-gradient(circle at 15% 0, #dff7ee 0, transparent 30%), var(--bg); }
   .project-card { background: #fff; box-shadow: 0 12px 30px #34405415; }
-  .approval-modal, .settings-panel { background: #fff; }
-  .approval-modal pre, .setting-field input, .setting-field select, .project-card.add-project input, .admin-row select, .model-input input, .model-add-advanced input { background: #f4f6f8; color: var(--text); }
+  .settings-panel { background: #fff; }
+  .setting-field input, .setting-field select, .project-card.add-project input, .admin-row select, .model-input input, .model-add-advanced input { background: #f4f6f8; color: var(--text); }
 }
 
 :root[data-theme="dark"] { --bg: #0d0f13; --surface: #13161c; --surface-2: #191d25; --surface-3: #202530; --border: #282e39; --muted: #9198a7; --text: #e7e9ee; --text-soft: #d5d9e2; color: var(--text); background: var(--bg); }
 :root[data-theme="dark"] .topbar, :root[data-theme="dark"] .conversation { background: #101319; }
 :root[data-theme="dark"] .project-center { background: radial-gradient(circle at 15% 0, #183329 0, transparent 30%), var(--bg); }
 :root[data-theme="dark"] .project-card { background: linear-gradient(145deg, #171b22, #11141a); box-shadow: 0 14px 35px #0004; }
-:root[data-theme="dark"] .approval-modal, :root[data-theme="dark"] .settings-panel { background: #151820; }
-:root[data-theme="dark"] .admin-row select, :root[data-theme="dark"] .approval-modal pre, :root[data-theme="dark"] .setting-field input, :root[data-theme="dark"] .setting-field select, :root[data-theme="dark"] .project-card.add-project input, :root[data-theme="dark"] .editable-value input, :root[data-theme="dark"] .editable-value select, :root[data-theme="dark"] .add-root input, :root[data-theme="dark"] .add-root select, :root[data-theme="dark"] .model-input input, :root[data-theme="dark"] .model-add-advanced input { background: #0d1015; color: var(--text); }
+:root[data-theme="dark"] .settings-panel { background: #151820; }
+:root[data-theme="dark"] .admin-row select, :root[data-theme="dark"] .setting-field input, :root[data-theme="dark"] .setting-field select, :root[data-theme="dark"] .project-card.add-project input, :root[data-theme="dark"] .editable-value input, :root[data-theme="dark"] .editable-value select, :root[data-theme="dark"] .add-root input, :root[data-theme="dark"] .add-root select, :root[data-theme="dark"] .model-input input, :root[data-theme="dark"] .model-add-advanced input { background: #0d1015; color: var(--text); }
 
 :root[data-theme="light"] { --bg: #f4f5f7; --surface: #fff; --surface-2: #f6f7f9; --surface-3: #e9edf1; --border: #d7dce3; --muted: #687182; --text: #1c2430; --text-soft: #394352; color: var(--text); background: var(--bg); }
 :root[data-theme="light"] .topbar, :root[data-theme="light"] .conversation { background: #fafbfc; }
 :root[data-theme="light"] .project-center { background: radial-gradient(circle at 15% 0, #dff7ee 0, transparent 30%), var(--bg); }
 :root[data-theme="light"] .project-card { background: #fff; box-shadow: 0 12px 30px #34405415; }
-:root[data-theme="light"] .approval-modal, :root[data-theme="light"] .settings-panel { background: #fff; }
-:root[data-theme="light"] .admin-row select, :root[data-theme="light"] .approval-modal pre, :root[data-theme="light"] .setting-field input, :root[data-theme="light"] .setting-field select, :root[data-theme="light"] .project-card.add-project input, :root[data-theme="light"] .editable-value input, :root[data-theme="light"] .editable-value select, :root[data-theme="light"] .add-root input, :root[data-theme="light"] .add-root select, :root[data-theme="light"] .model-input input, :root[data-theme="light"] .model-add-advanced input { background: #f4f6f8; color: var(--text); }
+:root[data-theme="light"] .settings-panel { background: #fff; }
+:root[data-theme="light"] .admin-row select, :root[data-theme="light"] .setting-field input, :root[data-theme="light"] .setting-field select, :root[data-theme="light"] .project-card.add-project input, :root[data-theme="light"] .editable-value input, :root[data-theme="light"] .editable-value select, :root[data-theme="light"] .add-root input, :root[data-theme="light"] .add-root select, :root[data-theme="light"] .model-input input, :root[data-theme="light"] .model-add-advanced input { background: #f4f6f8; color: var(--text); }

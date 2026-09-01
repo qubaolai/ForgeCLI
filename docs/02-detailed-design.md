@@ -851,7 +851,7 @@ git 写不做硬性限制，按普通命令走。高危 deny 穿透所有模式�
 - 读：`fs.scan_tree`、`fs_read`、`fs.list_files`、`search_text`、`git_read`
 - 写：`fs.create_file`、`fs.edit_file`、`fs.move`、`fs.delete`
 - 执行：`shell_run`
-- 计划与待办：`plan_read`、`plan_write`、`todo_read`、`todo_write`、`todo_set_status`
+- 计划与待办：`plan_read`、`plan_write`、`todo_write`、`todo_set_status`
 
 > 2026-08-20 修订：本节此前列的是首版设想（`fs.write_patch`、`git.status`、`git.diff`、
 > `git.show`、`test.run`），其中后四个从未实现——git 只读查询合并成了一个 `git_read`，

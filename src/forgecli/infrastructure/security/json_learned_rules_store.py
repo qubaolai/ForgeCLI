@@ -84,7 +84,7 @@ def _rule_of(item: object) -> LearnedAllowRule | None:
         return None
     try:
         match = RuleMatch(
-            mode=SessionMode(str(item["mode"])),
+            mode=SessionMode.from_value(str(item["mode"])),
             script_content_hash=(
                 str(item["script_content_hash"])
                 if item.get("script_content_hash")

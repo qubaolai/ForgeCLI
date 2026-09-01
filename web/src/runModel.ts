@@ -334,31 +334,55 @@ const CAPABILITY_CATEGORIES: Array<{ id: string; label: string; capabilities: st
   { id: "shell", label: "执行命令", capabilities: ["execute_shell", "execute_script"] },
   { id: "write", label: "修改文件", capabilities: ["workspace_write", "workspace_delete", "path_move", "external_write"] },
   { id: "read", label: "读取文件", capabilities: ["workspace_read", "external_read"] },
-  { id: "planning", label: "计划与待办", capabilities: ["plan_only"] },
+  { id: "planning", label: "任务", capabilities: ["plan_only"] },
 ];
 
 /**
- * 连 prepare 都没走到的调用没有能力可看, 只能按名字认 —— 而且只认**确切认识**的那些。
+ * 后端工具目录里的一条, 取自 `GET /api/v1/tools` 的 `all`。
  *
- * 不按命名空间猜: 模型编出来的 `fs_write_file` 也以 `fs_` 开头, 猜成"读取文件"就是在
- * 替一次没发生过的写入洗白。归到"其他工具"才是实话 —— 那次调用是什么, 我们确实不知道。
- *
- * 名字随 ADR-0036 从点号改成下划线; 清单同时清掉了 ADR-0029 就删掉的 fs.create_file /
- * fs.list_files 之类 —— 正是上面那段注释警告过的"悄悄过期"。
+ * `title` 与 `action` 都是 `ToolSpec` 上的字段, 前端不另存一份。这里曾经有一张手抄的
+ * 名字表, 它按定义会过期: 后端把 `artifact_read` 的 title 改成"读回已归档的输出"之后,
+ * 界面上仍然写着"读取产物", 而没有任何东西会因此报错。
  */
-const NAME_CATEGORIES: Array<{ id: string; label: string; match: (name: string) => boolean }> = [
-  { id: "shell", label: "执行命令", match: (name) => name.startsWith("shell_") },
-  { id: "write", label: "修改文件", match: (name) => ["fs_apply_patch"].includes(name) },
-  { id: "read", label: "读取文件", match: (name) => ["fs_read", "fs_find", "search_text", "git_read", "artifact_read"].includes(name) },
-  { id: "planning", label: "计划与待办", match: (name) => name.startsWith("plan_") || name.startsWith("todo_") },
-];
+export type ToolDirectoryEntry = { title: string; action: string };
+export type ToolDirectory = Record<string, ToolDirectoryEntry>;
 
-export function categoryOf(toolName: string, capabilities: string[] = []): ToolCategory {
+/**
+ * 动作 -> 类别。类别比动作粗一档: 三种定位在看的人眼里都是"读取文件"。
+ *
+ * 认不出的动作不猜, 归"其他工具" —— 与下面按能力归类同一条判据。
+ */
+const ACTION_CATEGORIES: Record<string, { id: string; label: string }> = {
+  locate_symbol: { id: "read", label: "读取文件" },
+  locate_text: { id: "read", label: "读取文件" },
+  locate_path: { id: "read", label: "读取文件" },
+  read: { id: "read", label: "读取文件" },
+  write: { id: "write", label: "修改文件" },
+  execute: { id: "shell", label: "执行命令" },
+  process: { id: "planning", label: "任务" },
+  memory: { id: "memory", label: "记忆" },
+};
+
+/**
+ * 步骤标题上那一行: 认得的用它自己的 title, 认不得的老老实实显示工具名。
+ *
+ * 类别 ("任务" / "读取文件") 回答的是"哪一类事", 这个回答"具体哪件事" —— 四个任务工具
+ * 全落在同一类里, 而"更新待办状态"和"重写待办"对看的人不是一回事。
+ *
+ * 目录里没有的名字退回工具名本身: 编一个动作名出来会让一次没发生过的操作看起来发生过。
+ * 目录还没拉回来时整张表是空的, 那时每一行都显示工具名, 不显示错的中文。
+ */
+export function toolActionLabel(toolName: string, directory: ToolDirectory = {}) {
+  return directory[toolName]?.title || toolName;
+}
+
+export function categoryOf(toolName: string, capabilities: string[] = [], directory: ToolDirectory = {}): ToolCategory {
   // 顺序即优先级: 一次调用同时声明读和写时, 它是一次写入。
   const byCapability = CAPABILITY_CATEGORIES.find((item) => item.capabilities.some((name) => capabilities.includes(name)));
   if (byCapability) return { id: byCapability.id, label: byCapability.label };
-  const byName = NAME_CATEGORIES.find((item) => item.match(toolName));
-  return byName ? { id: byName.id, label: byName.label } : OTHER_TOOLS;
+  // 连 prepare 都没走到的调用没有能力可看, 这时才查目录。不按命名空间猜: 模型编出来的
+  // `fs_write_file` 也以 `fs_` 开头, 猜成"读取文件"就是在替一次没发生过的写入洗白。
+  return ACTION_CATEGORIES[directory[toolName]?.action ?? ""] ?? OTHER_TOOLS;
 }
 
 /** 这次调用声明的能力, 取自 prepare 之后的那条事件。 */
@@ -380,7 +404,83 @@ export function toolNameOf(events: RunEvent[]) {
  * 只含工具的列表里判"相邻" —— 会把中间隔着一次模型调用的两次读文件也当成连续的, 于是
  * 合并出来的那一段带着更早的 sequence, 排到模型调用前面去, 时间线就说了假话。
  */
-export function buildTimeline(events: RunEvent[]): TimelineItem[] {
+/**
+ * 折叠状态下那一行"现在在干什么"。
+ *
+ * 处理过程默认是收起的, 所以这一行是运行期间用户唯一看得到的进度 —— 它必须说得具体,
+ * "处理中"三个字等于没说。取的是**最后一件还没收尾的事**, 不是最后一条事件: 工具跑完
+ * 之后紧跟着的那条 model_started 才是当下在发生的。
+ */
+export function activityOf(turn: LocalTurn, directory: ToolDirectory = {}): string {
+  if (turn.status === "completed") return "处理完成";
+  if (turn.status === "cancelled") return "处理已取消";
+  if (turn.status === "failed") return "处理失败";
+
+  const open = new Map<string, string>();
+  let modelRunning = false;
+  let thinking = false;
+  let awaiting = false;
+  let lastNote = "";
+
+  for (const event of turn.events) {
+    const callId = event.tool_call_id ?? event.invocation_id ?? "";
+    switch (event.kind) {
+      case "tool_queued":
+      case "tool_prepared":
+      case "policy_resolved":
+      case "tool_started":
+        if (callId) open.set(callId, toolNameOf([event]) || open.get(callId) || "");
+        break;
+      case "tool_completed":
+      case "tool_cancelled":
+        if (callId) open.delete(callId);
+        break;
+      case "approval_requested":
+        awaiting = true;
+        break;
+      case "approval_resolved":
+        awaiting = false;
+        break;
+      case "model_started":
+        modelRunning = true;
+        thinking = false;
+        break;
+      case "model_completed":
+      case "model_failed":
+        modelRunning = false;
+        thinking = false;
+        break;
+      case "model_reasoning_status":
+        thinking = stringValue(event.payload.status) === "started";
+        break;
+      case "todo_updated":
+        lastNote = "更新任务";
+        break;
+      case "plan_proposed":
+        lastNote = "提交计划";
+        break;
+      case "context_compacted":
+        lastNote = "压缩上下文";
+        break;
+      default:
+        break;
+    }
+  }
+
+  // 等审批排在最前: 这时候什么都没在跑, 而用户正是那个卡住流程的人。
+  if (awaiting) return "等待你的审批";
+  if (open.size > 0) {
+    const names = [...new Set([...open.values()].filter(Boolean))];
+    if (names.length === 1) return `正在${toolActionLabel(names[0], directory)}`;
+    if (names.length > 1) return `正在并行处理 ${names.length} 个工具`;
+    return "正在调用工具";
+  }
+  if (modelRunning) return thinking ? "模型思考中…" : "模型生成中…";
+  if (lastNote) return lastNote;
+  return turn.events.length ? "正在处理" : "正在建立本轮事件流…";
+}
+
+export function buildTimeline(events: RunEvent[], directory: ToolDirectory = {}): TimelineItem[] {
   const items: TimelineItem[] = groupModelEvents(events).map((group) => ({
     id: `model-${group.id}`,
     kind: "model",
@@ -394,7 +494,7 @@ export function buildTimeline(events: RunEvent[]): TimelineItem[] {
       id: `tools-${group.id}`,
       kind: "tools",
       sequence: Math.min(...group.events.map((event) => event.sequence)),
-      category: categoryOf(toolNameOf(group.events), capabilitiesOf(group.events)),
+      category: categoryOf(toolNameOf(group.events), capabilitiesOf(group.events), directory),
       groups: [group],
       reason: "",
     });

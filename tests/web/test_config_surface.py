@@ -238,3 +238,39 @@ def test_an_unknown_type_is_still_refused() -> None:
 
     with pytest.raises(TypeError):
         to_jsonable(_Opaque())
+
+
+def test_one_axis_moves_without_touching_the_other(tmp_path) -> None:
+    """正交性在接口上的样子: 调隔离档不该顺手把审批档也改了.
+
+    早先两个轴压在一个四档枚举里, 这件事表达不出来 —— 想让 Shell 自动跑就必须同时
+    放开网络与逐次裁决, 因为 full_access 是那条线上唯一带自动的位置.
+    """
+    from forgecli.domain.intents import ApprovalPolicy, SandboxLevel, SessionMode
+    from forgecli.interfaces.web.app import ModeRequest, _resolve_mode
+
+    current = SessionMode(SandboxLevel.WORKSPACE_WRITE, ApprovalPolicy.ALWAYS)
+
+    only_sandbox = _resolve_mode(ModeRequest(sandbox="full_access"), current)
+    assert only_sandbox.sandbox is SandboxLevel.FULL_ACCESS
+    assert only_sandbox.approval is ApprovalPolicy.ALWAYS
+
+    only_approval = _resolve_mode(ModeRequest(approval="never"), current)
+    assert only_approval.sandbox is SandboxLevel.WORKSPACE_WRITE
+    assert only_approval.approval is ApprovalPolicy.NEVER
+
+    # 预设名仍然接受: 界面上那四个常用组合是一次点击的快捷方式.
+    assert _resolve_mode(ModeRequest(mode="auto"), current) == SessionMode.AUTO
+
+
+def test_a_combination_outside_the_presets_is_expressible(tmp_path) -> None:
+    """强隔离 + 全自动: 这个组合在旧的四档线上没有位置."""
+    from forgecli.domain.execution.fence import fence_for
+    from forgecli.domain.intents import ApprovalPolicy, SandboxLevel, SessionMode
+
+    stance = SessionMode(SandboxLevel.READ_ONLY, ApprovalPolicy.NEVER)
+    fence = fence_for(stance, workspace_roots=("/ws",))
+
+    assert fence.read_only is True
+    assert fence.automatic_shell is True
+    assert fence.network_allowed is False

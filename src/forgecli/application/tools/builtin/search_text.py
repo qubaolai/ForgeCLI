@@ -41,6 +41,7 @@ from forgecli.domain.tool.result import (
 )
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
+    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -62,8 +63,7 @@ _SPEC = ToolSpec(
     title="搜索文本",
     description=(
         "在**文件内容**里搜索一段文字, 按文件分组返回 行号:内容. "
-        "要找一个类或函数**定义在哪**, 用 code_definitions —— 那个不会命中 import "
-        "与调用点; 要按文件名找文件, 用 fs_find.\n"
+        "它命中的是文字出现的每一处, 定义, import, 注释与调用点都算.\n"
         "query 是要在内容里查的文字. "
         "path 可以是目录, 也可以是单个文件. "
         "默认递归扫描 path 下的整棵树 (in_files 默认 '**/*'), 不需要先列目录. "
@@ -132,6 +132,7 @@ _SPEC = ToolSpec(
     ),
     target_declaration_ability=TargetDeclarationAbility.EXPANDABLE,
     default_timeout_seconds=30.0,
+    action=ToolAction.LOCATE_TEXT,
 )
 
 

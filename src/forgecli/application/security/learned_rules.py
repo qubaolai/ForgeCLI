@@ -82,6 +82,15 @@ class LearnedRuleService:
         allowed, _ = can_learn(decision, ApprovalScope.WORKSPACE)
         return allowed
 
+    def block_reason(self, decision: AuthorizationDecision) -> str:
+        """不能给"always"时的那条理由; 能给时返回空串.
+
+        判据与 learnable 同源 —— 同一次 can_learn 的两半. 分成两个方法而不是让
+        learnable 返回二元组: 调用方多数只关心能不能, 而理由只有审批界面要.
+        """
+        allowed, reason = can_learn(decision, ApprovalScope.WORKSPACE)
+        return "" if allowed else reason
+
     def find(
         self, decision: AuthorizationDecision, policy: PolicyContext
     ) -> LearnedAllowRule | None:

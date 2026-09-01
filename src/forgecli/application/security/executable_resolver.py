@@ -90,11 +90,6 @@ class ExecutableResolver:
         if _is_project_toolchain(realpath):
             return TrustZone.TOOLCHAIN
         if any(
-            is_within(realpath, entry)
-            for entry in context.profile.writable_toolchain_path
-        ):
-            return TrustZone.TOOLCHAIN
-        if any(
             is_within(path, entry)
             for path in (realpath, absolute)
             for entry in context.profile.trusted_path

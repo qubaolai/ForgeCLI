@@ -38,6 +38,7 @@ from forgecli.domain.tool.capability import Capability
 from forgecli.domain.tool.catalog import ToolCatalog
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
+    ToolAction,
     ToolSpec,
 )
 from forgecli.domain.tool.tool_call import ToolCall
@@ -65,6 +66,7 @@ def _spec(name: str) -> ToolSpec:
         declared_capabilities=frozenset({Capability.WORKSPACE_READ}),
         target_declaration_ability=TargetDeclarationAbility.STATIC,
         default_timeout_seconds=10.0,
+        action=ToolAction.READ,
     )
 
 
@@ -189,7 +191,7 @@ def loop_input(*, with_tools: bool = True) -> LoopInput:
                 tools=()
                 if catalog is None
                 else tuple(
-                    ToolBrief(name=spec.name, title=spec.title)
+                    ToolBrief(name=spec.name, title=spec.title, action=spec.action)
                     for spec in catalog.entries
                 )
             ),

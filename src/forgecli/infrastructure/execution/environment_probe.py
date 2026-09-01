@@ -6,15 +6,19 @@
 `infrastructure/execution/sandbox/` 的行为自测 —— 那一步会真的去写一个边界外的文件并
 确认失败. 缺省不是"探测不出来先当有围栏用".
 
-受控 PATH 的构造原则: 只收标准系统目录与用户显式配置的工具链目录. 不含 `.`, 不含工作
-区, 不含临时目录, 不含 node_modules/.bin —— 那些目录 Agent 自己能写.
+受控 PATH 由**启动 shell 的 PATH 减去 Agent 可写的部分**得到, 不再是一份写死的候选
+目录清单. 减的只有两类: 相对路径条目, 以及落在工作区里的目录. 判据与理由见
+`domain/execution/environment` 的模块说明.
+
+拿不到继承 PATH 时不再兜底猜一份系统目录: 猜出来的那份既不等于开发者的环境, 又让
+"为什么这个工具找不到"变成一个查不出来的问题. 空 PATH 会让 ExecutionProfile 直接拒绝
+构造, 那是一个响亮的失败, 好过一个安静的错误答案.
 """
 
 from __future__ import annotations
 
 import os
 import platform
-import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -22,7 +26,7 @@ from forgecli.application.security.executable_resolver import (
     EXECUTABLE_RESOLUTION_VERSION,
 )
 from forgecli.domain.execution.environment import (
-    DEFAULT_ENV_ALLOWLIST,
+    EnvironmentInheritance,
     ShellLaunch,
     sanitize_environment,
 )
@@ -32,48 +36,75 @@ from forgecli.infrastructure.platform_paths import windows_known_directory
 
 __all__ = ["build_execution_environment", "probe_execution_profile"]
 
-_POSIX_PATH_CANDIDATES: tuple[str, ...] = (
-    "/usr/local/bin",
-    "/opt/homebrew/bin",
-    "/usr/bin",
-    "/bin",
-    "/usr/sbin",
-    "/sbin",
-)
-
 
 def probe_execution_profile(
     *,
     protected_roots_hash: str,
-    toolchain_dirs: Sequence[str] = (),
+    workspace_roots: Sequence[str] = (),
+    inherited_path: str | None = None,
+    inheritance: EnvironmentInheritance = EnvironmentInheritance.ALL,
 ) -> ExecutionProfile:
-    """按当前平台生成执行画像.
+    """按当前平台与启动 shell 生成执行画像.
 
-    toolchain_dirs 是用户**显式配置**的工具链目录 (例如项目虚拟环境). 它们会进 PATH,
-    但 ADR-0014 §4.2 要求把这类目录标记为可写/不可信 —— 标记发生在可执行文件身份解析
-    那一步 (阶段 4), 这里只负责如实把它们放进画像, 让 profile hash 能反映这个选择.
+    `workspace_roots` 是唯一的减项来源: 工作区是所有隔离档下都确定属于 Agent 可写的
+    地方. 其余目录不减 —— 有围栏时 Agent 写不进去, 没围栏时每条 shell 命令都要人点头,
+    而且可执行文件身份那一闸还会拒绝让 Agent 可写位置的文件继承同名系统工具的授权
+    (`ExecutableIdentity.eligible_for_plain_allow`). 在这里再筛一遍是重复.
     """
     is_windows = os.name == "nt"
-    toolchains = tuple(
-        dict.fromkeys(
-            str(Path(entry).expanduser().resolve()) for entry in toolchain_dirs if entry
-        )
+    separator = os.pathsep
+    raw_path = os.environ.get("PATH", "") if inherited_path is None else inherited_path
+    trusted_path = filter_inherited_path(
+        raw_path, workspace_roots=workspace_roots, path_separator=separator
     )
-    entries = list(toolchains)
-    entries.extend(_platform_path_entries(is_windows))
-    trusted_path = tuple(dict.fromkeys(entry for entry in entries if entry != "."))
     return ExecutionProfile(
         platform=f"{platform.system()}-{platform.machine()}",
         isolation_level=IsolationLevel.UNCONFINED,
-        trusted_path=trusted_path or (str(Path(sys.executable).parent),),
-        writable_toolchain_path=toolchains,
+        trusted_path=trusted_path,
         shell_launch=_shell_launch(is_windows),
-        environment_allowlist=DEFAULT_ENV_ALLOWLIST,
+        environment_inheritance=inheritance,
         controlled_environment=_controlled_environment(is_windows),
         protected_roots_hash=protected_roots_hash,
         executable_resolution_version=EXECUTABLE_RESOLUTION_VERSION,
-        path_separator=os.pathsep,
+        path_separator=separator,
     )
+
+
+def filter_inherited_path(
+    raw_path: str,
+    *,
+    workspace_roots: Sequence[str] = (),
+    path_separator: str = ":",
+) -> tuple[str, ...]:
+    """继承的 PATH 减去 Agent 可写的部分, 顺序与去重都保持继承时的样子.
+
+    顺序要保住: 开发者把 temurin-11 排在 `/usr/bin` 前面是有意的, 重排等于换了一个
+    java. 这正是"等价性"要的东西.
+
+    丢掉的两类:
+
+    - 相对路径 (含 `.` 与空串). PATH 里的 `.` 会让"当前目录下有个同名文件"变成一次
+      代码执行, 而 Agent 恰好一直在往当前目录写文件.
+    - 工作区内的目录. `node_modules/.bin` 与 `.venv/bin` 都落在这里.
+    """
+    roots = tuple(str(Path(root).expanduser()) for root in workspace_roots if root)
+    kept: list[str] = []
+    for entry in raw_path.split(path_separator):
+        if not entry or not Path(entry).is_absolute():
+            continue
+        resolved = str(Path(entry).expanduser())
+        if any(_is_within(resolved, root) for root in roots):
+            continue
+        kept.append(resolved)
+    return tuple(dict.fromkeys(kept))
+
+
+def _is_within(path: str, root: str) -> bool:
+    try:
+        Path(path).relative_to(Path(root))
+    except ValueError:
+        return False
+    return True
 
 
 def build_execution_environment(
@@ -83,7 +114,7 @@ def build_execution_environment(
     return sanitize_environment(
         dict(os.environ if raw is None else raw),
         trusted_path=profile.trusted_path,
-        allowlist=profile.environment_allowlist,
+        inheritance=profile.environment_inheritance,
         controlled=dict(profile.controlled_environment),
         path_separator=profile.path_separator,
     )
@@ -133,17 +164,6 @@ def _system_temp(is_windows: bool) -> str:
         root = windows_known_directory("windows") or r"C:\Windows"
         return str(Path(root) / "Temp")
     return "/tmp"
-
-
-def _platform_path_entries(is_windows: bool) -> list[str]:
-    if is_windows:
-        system_root = windows_known_directory("windows") or r"C:\Windows"
-        return [
-            str(Path(system_root) / "System32"),
-            system_root,
-            str(Path(system_root) / "System32" / "Wbem"),
-        ]
-    return [entry for entry in _POSIX_PATH_CANDIDATES if Path(entry).is_dir()]
 
 
 def _shell_launch(is_windows: bool) -> ShellLaunch:

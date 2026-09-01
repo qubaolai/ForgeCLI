@@ -42,6 +42,7 @@ from forgecli.domain.tool.result import (
 from forgecli.domain.tool.spec import (
     ArtifactPolicy,
     TargetDeclarationAbility,
+    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -55,7 +56,7 @@ _SPEC = ToolSpec(
     description=(
         "读取一个文件的文本内容. 默认读全文; "
         "大文件可以传 offset (从第几行开始, 从 1 起) 与 limit (读多少行) 只取一段, "
-        "返回时会附带这一段在全文中的位置. 超长内容会截断并落为产物."
+        "返回时会附带这一段在全文中的位置. 超长内容会截断并归档."
     ),
     input_schema={
         "type": "object",
@@ -78,6 +79,7 @@ _SPEC = ToolSpec(
     ),
     target_declaration_ability=TargetDeclarationAbility.STATIC,
     default_timeout_seconds=10.0,
+    action=ToolAction.READ,
     artifact_policy=ArtifactPolicy(max_inline_bytes=16 * 1024),
 )
 

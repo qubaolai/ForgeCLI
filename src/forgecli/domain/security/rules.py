@@ -150,11 +150,14 @@ class RuleSet:
 
 # 这些理由下不允许创建学习规则.
 #
-# 后三条是"分析没做完"或"分析说别自动跑", 沉淀成规则等于把一次退让变成永久放行:
-#   SCRIPT_EXECUTION       分类器明确说了不能自动执行, 或脚本里有看不透的构造.
-#   CLASSIFIER_UNAVAILABLE 分类器超时/未配置. 学下来等于"以后分类器坏掉就自动放行".
-#   CLASSIFIER_LOW_CONFIDENCE 同上, 只是失败形式不同.
+# 后两条是"分析没做完", 沉淀成规则等于把一次退让变成永久放行:
+#   SCRIPT_EXECUTION       脚本正文里有看不透的构造, 这次放行绑的是那一份内容哈希.
 #   PARSE_INCOMPLETE       连命令结构都没解析完整, 规则绑不到可靠事实.
+#
+# 早先还有 CLASSIFIER_UNAVAILABLE 与 CLASSIFIER_LOW_CONFIDENCE 两条 ("分类器超时/未
+# 配置"与"分类器没把握", 学下来等于"以后分类器坏掉就自动放行"). ADR-0030 删掉了 LLM
+# 安全分类器, 这两个理由码没有任何产出方, 已随枚举一起删除 —— 一条永远命不中的规则
+# 只会让读表的人以为系统里还有个分类器.
 _UNLEARNABLE_REASONS = frozenset(
     {
         DecisionReason.EXTERNAL_IRREVERSIBLE_EFFECT,
@@ -167,8 +170,6 @@ _UNLEARNABLE_REASONS = frozenset(
         DecisionReason.UNRESOLVED_TARGET_SET,
         DecisionReason.UNEVALUATED_CAPABILITY,
         DecisionReason.SCRIPT_EXECUTION,
-        DecisionReason.CLASSIFIER_UNAVAILABLE,
-        DecisionReason.CLASSIFIER_LOW_CONFIDENCE,
         DecisionReason.PARSE_INCOMPLETE,
     }
 )

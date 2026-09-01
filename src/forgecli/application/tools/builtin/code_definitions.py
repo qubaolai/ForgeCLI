@@ -62,7 +62,11 @@ from forgecli.domain.tool.plan import (
     ToolPlan,
 )
 from forgecli.domain.tool.result import ToolMetrics, ToolResult, ToolResultStatus
-from forgecli.domain.tool.spec import TargetDeclarationAbility, ToolSpec
+from forgecli.domain.tool.spec import (
+    TargetDeclarationAbility,
+    ToolAction,
+    ToolSpec,
+)
 from forgecli.shared.cancellation import CancelToken
 
 __all__ = ["CodeDefinitionsTool"]
@@ -82,7 +86,6 @@ _SPEC = ToolSpec(
     description=(
         "找一个类, 函数, 方法, 接口或常量**定义在哪一行**, 按语法树判断, "
         "不会命中 import, 注释, 字符串或调用点. "
-        "要找这个符号被**用在**哪里, 用 search_text. "
         "symbol 是符号名, 默认精确匹配 (区分大小写); "
         "传 prefix=true 时按前缀匹配, 用来一次看完一族同名开头的符号. "
         "path 可以是目录或单个文件, 省略时从工作区根开始. "
@@ -118,6 +121,7 @@ _SPEC = ToolSpec(
     ),
     target_declaration_ability=TargetDeclarationAbility.EXPANDABLE,
     default_timeout_seconds=60.0,
+    action=ToolAction.LOCATE_SYMBOL,
 )
 
 

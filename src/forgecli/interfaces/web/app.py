@@ -32,7 +32,7 @@ from forgecli.application.planning.plan_review import PlanReviewChoice
 from forgecli.application.security.workspace_grants import GrantError
 from forgecli.domain.agent.run_events import AgentRunEventKind
 from forgecli.domain.config import config_keys
-from forgecli.domain.intents import SessionMode
+from forgecli.domain.intents import ApprovalPolicy, SandboxLevel, SessionMode
 from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.thinking import ThinkingEffortName, ThinkingMode
 from forgecli.domain.workspace.project import WorkspaceError
@@ -120,7 +120,15 @@ class PlanReviewRequest(BaseModel):
 
 
 class ModeRequest(BaseModel):
-    mode: SessionMode
+    """按轴设置姿态.
+
+    两个轴独立: 只给 `sandbox` 就只动隔离档, 审批档保持不变, 反之亦然. `mode` 是整档
+    预设的快捷方式 (也接受 `sandbox/approval` 形式的整串), 与另外两个字段互斥使用.
+    """
+
+    mode: str = ""
+    sandbox: str = ""
+    approval: str = ""
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -159,6 +167,29 @@ class ModelCreateRequest(BaseModel):
 
 class LlmFieldUpdateRequest(BaseModel):
     value: str = ""
+
+
+def _resolve_mode(body: ModeRequest, current: SessionMode) -> SessionMode:
+    """把一次请求折成目标姿态.
+
+    没给的那个轴保持不变 —— 这就是"正交"在接口上的样子: 调隔离档不该顺手把审批档也
+    改了. 早先两个轴压在一个四档枚举里, 想只动其中一件事是表达不出来的.
+    """
+    if body.mode:
+        try:
+            return SessionMode.from_value(body.mode)
+        except ValueError:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, f"未知模式: {body.mode}"
+            ) from None
+    try:
+        sandbox = SandboxLevel(body.sandbox) if body.sandbox else current.sandbox
+        approval = ApprovalPolicy(body.approval) if body.approval else current.approval
+    except ValueError as error:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, f"未知取值: {error}"
+        ) from None
+    return SessionMode(sandbox=sandbox, approval=approval)
 
 
 class _SecurityState:
@@ -621,7 +652,9 @@ def create_app(
     @app.post("/api/v1/mode")
     async def set_mode(body: ModeRequest, request: Request) -> object:
         try:
-            return to_jsonable(_runtime(request).set_mode(body.mode))
+            runtime = _runtime(request)
+            target = _resolve_mode(body, runtime.session.current().mode)
+            return to_jsonable(runtime.set_mode(target))
         except RuntimeError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
@@ -917,9 +950,25 @@ def create_app(
 
     @app.get("/api/v1/tools")
     async def tools(request: Request) -> dict[str, object]:
+        """两份清单, 因为界面上有两个问题.
+
+        `items` 是**当前模式下模型可见的**工具, 管理面板照这个语义展示 —— 换模式这份
+        就该跟着变.
+
+        `all` 是全部已注册工具的展示名与动作, 与模式无关: 运行过程视图要把历史事件里的
+        工具名翻成中文, 而那些调用可能发生在换模式之前, 按当前模式过滤的那份里没有它们.
+        前端曾经为此自带一张手抄表, 于是 `artifact_read` 在后端叫"读回已归档的输出",
+        在界面上叫"读取产物".
+        """
         runtime = _runtime(request)
         catalog = runtime.tools.dispatcher.catalog_for(runtime.session.current().mode)
-        return {"items": [to_jsonable(item) for item in catalog.entries]}
+        return {
+            "items": [to_jsonable(item) for item in catalog.entries],
+            "all": [
+                {"name": spec.name, "title": spec.title, "action": spec.action.value}
+                for spec in runtime.tools.registry.describe_all()
+            ],
+        }
 
     @app.get("/api/v1/workspace-roots")
     async def workspace_roots(request: Request) -> dict[str, object]:

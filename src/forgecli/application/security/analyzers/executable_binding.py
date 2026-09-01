@@ -170,8 +170,9 @@ def _unresolved(
             detail=(
                 f"{token}: 在 {context.profile.platform} 的 "
                 f"{command.shell_kind.value} 环境里既不是内建命令, "
-                "也不在受控 PATH 上. 它确实装在本机而只是不在受控 PATH 上时, "
-                "把所在目录配进 execution.toolchain_dirs"
+                "也不在受控 PATH 上. 受控 PATH 继承自启动 forge 的那个 shell, "
+                "所以你在终端里跑得起来它就应该在 —— 跑不起来说明它确实没装, "
+                "或者装它的目录不在启动 forge 时的 PATH 上"
             ),
         ),
     )

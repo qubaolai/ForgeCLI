@@ -59,7 +59,11 @@ from forgecli.domain.tool.result import (
     ToolResult,
     ToolResultStatus,
 )
-from forgecli.domain.tool.spec import TargetDeclarationAbility, ToolSpec
+from forgecli.domain.tool.spec import (
+    TargetDeclarationAbility,
+    ToolAction,
+    ToolSpec,
+)
 from forgecli.shared.cancellation import CancelToken
 
 __all__ = ["ApplyPatchTool"]
@@ -118,6 +122,7 @@ _SPEC = ToolSpec(
     # 删目录时 prepare 会展开成逐个文件并给出 FORGE_EXPANDED, STATIC 只允许 STATIC.
     target_declaration_ability=TargetDeclarationAbility.EXPANDABLE,
     default_timeout_seconds=30.0,
+    action=ToolAction.WRITE,
 )
 
 

@@ -78,8 +78,9 @@ class DecisionReason(Enum):
     EXTERNAL_IRREVERSIBLE_EFFECT = "external_irreversible_effect"
     UNRESOLVED_TARGET_SET = "unresolved_target_set"
     SCRIPT_EXECUTION = "script_execution"
-    CLASSIFIER_UNAVAILABLE = "classifier_unavailable"
-    CLASSIFIER_LOW_CONFIDENCE = "classifier_low_confidence"
+    # 早先这里还有 CLASSIFIER_UNAVAILABLE 与 CLASSIFIER_LOW_CONFIDENCE, 表达"分类器
+    # 超时/未配置"与"分类器没把握". ADR-0030 删掉了 LLM 安全分类器, 两者随之零产出方,
+    # 却还留在 rules.py 的不可学理由表里 —— 读那张表的人会以为现在仍有个分类器在跑.
     PARSE_INCOMPLETE = "parse_incomplete"
     OUTSIDE_WORKSPACE = "outside_workspace"
     # 命令解析成功, 但这个可执行文件的影响范围推导不出来 (`java -jar x.jar` 会碰什么?).
@@ -98,7 +99,7 @@ class DecisionReason(Enum):
     HARD_DENY_REMOTE_CODE_EXECUTION = "hard_deny_remote_code_execution"
     HARD_DENY_SCRIPT_SIGNAL = "hard_deny_script_signal"
     RULE_DENY = "rule_deny"
-    # fail closed 兜底: 分析器既无法证明安全, 也无法把请求交给人类确认时用它
-    # (例如非交互环境下分类器不可用). 默认后果必须是拒绝, 不是"没有规则匹配所以放行".
+    # fail closed 兜底: 分析器既无法证明安全, 也无法把请求交给人类确认时用它.
+    # 默认后果必须是拒绝, 不是"没有规则匹配所以放行".
     UNEVALUATED_CAPABILITY = "unevaluated_capability"
     RECOVERY_UNAVAILABLE = "recovery_unavailable"

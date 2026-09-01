@@ -8,6 +8,8 @@
    所有执行统一走 ToolRuntime 的强制授权前置. 真正不需要裁决的纯函数不该注册为工具.
 3. **没有 risk_level.** 静态风险等级表达不了"同一个工具读工作区文件与读凭证文件"的
    差异, 留着它会诱导安全模块按等级而不是按事实裁决.
+4. **`action` 是展示分类, 不是第 3 条的例外.** 它只决定工具表在提示词里怎么分组;
+   裁决与目录过滤一概不读它. 详见 `ToolAction`.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from forgecli.domain.tool.tool_call import ToolSchema
 __all__ = [
     "ArtifactPolicy",
     "TargetDeclarationAbility",
+    "ToolAction",
     "ToolSpec",
 ]
 
@@ -38,6 +41,41 @@ __all__ = [
 # 叫 run 的工具与另一个叫 read 的工具放在同一张表里, 模型分不出谁管什么.
 # 段内不允许空段, 所以 `fs__read` 与 `fs_read_` 都不合法.
 _NAME_PATTERN = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
+
+
+class ToolAction(Enum):
+    """这个工具承担哪一个**动作**. 只用于把工具表按动作分组渲染进提示词.
+
+    ## 为什么它不违反"没有 risk_level"那一条
+
+    本文件口径 3 反对的是**按静态标签裁决**. 这个字段与裁决完全无关: 目录过滤只看
+    `declared_capabilities` (`catalog_predicates._plan_mode_visible`), 策略引擎只看
+    `AnalysisFindings` 与 `ToolPlan`. 谁都不读 action. 加一个按 action 放行的分支就是
+    在重造 risk_level, 那时该删的是那条分支, 不是这个枚举.
+
+    ## 为什么它是 spec 上的字段, 而不是提示词层的一张表
+
+    工具表按动作分组之后, "检索顺序"那一节就能只写动作, 不点工具名 —— 两处的对应关系
+    由渲染算出来, 不再靠人手抄 (那份手抄原先散在三个工具的 description 里, 加一个工具
+    要回头改别人的文案, 删一个会留下指向空气的引用).
+
+    放在 spec 上, 新工具漏填在**构造期**就报错; 放在提示词层的名字表里, 漏填只会让它
+    静默掉进"其他", 而提示词类缺陷没有任何一层会说话.
+
+    ## 定位为什么拆成三个成员
+
+    "检索顺序"分的是按符号 / 按内容 / 按文件名三种意图, 一个笼统的 LOCATE 让表回答不了
+    模型正在问的那个问题. 拆到与那一节同一粒度, 组名与条目才对得上.
+    """
+
+    LOCATE_SYMBOL = "locate_symbol"
+    LOCATE_TEXT = "locate_text"
+    LOCATE_PATH = "locate_path"
+    READ = "read"
+    WRITE = "write"
+    EXECUTE = "execute"
+    PROCESS = "process"
+    MEMORY = "memory"
 
 
 class TargetDeclarationAbility(Enum):
@@ -94,6 +132,7 @@ class ToolSpec:
     declared_capabilities: frozenset[Capability]
     target_declaration_ability: TargetDeclarationAbility
     default_timeout_seconds: float
+    action: ToolAction
     artifact_policy: ArtifactPolicy = field(default_factory=ArtifactPolicy)
     # 派生字段: 不由调用方传入, __post_init__ 算好后写入.
     spec_hash: str = field(default="", compare=False)
@@ -133,5 +172,6 @@ class ToolSpec:
             "declared_capabilities": self.declared_capabilities,
             "target_declaration_ability": self.target_declaration_ability,
             "default_timeout_seconds": self.default_timeout_seconds,
+            "action": self.action,
             "artifact_policy": self.artifact_policy,
         }

@@ -1,8 +1,12 @@
-"""计划与待办的五个专用工具 (ADR-0022 决策 5).
+"""计划与待办的四个专用工具 (ADR-0022 决策 5).
 
-`plan_read` / `plan_write` / `todo_read` / `todo_write` / `todo_set_status`.
+`plan_read` / `plan_write` / `todo_write` / `todo_set_status`.
 
-**这五个工具不经过审批, 而理由不是"计划这件事不重要".**
+没有 `todo_read`: 待办全文每轮由 `todo_state` 块进提示词, 两个写工具的返回值也是渲染
+后的同一份清单. 一个读回模型手上已有内容的工具, 占的是工具表的位置与一次选择的机会.
+计划则相反 —— `plan_state` 块刻意只放元数据, 正文只能靠 `plan_read` 取.
+
+**这四个工具不经过审批, 而理由不是"计划这件事不重要".**
 
 - 表层原因: 它们只声明 `PLAN_ONLY`, 而 `_PLAN` 集合是四档模式预算的公共子集,
   `PolicyEngine` 另有 `PLAN_ONLY_FAST_PATH`. "不经 ASK"不是为它们新开的特例.
@@ -15,7 +19,7 @@
 EXTERNAL_READ / EXTERNAL_WRITE 从而逐次 ASK; 更要紧的是它把 `~/.forge` 下的**任意位置**
 暴露给一个由模型填写的路径参数. 专用工具是更窄的通道, 不是更宽的.
 
-边界: 不经审批 != 不记审计. 五个工具照常经 ToolRequestCoordinator, 照常写 tool_requested
+边界: 不经审批 != 不记审计. 四个工具照常经 ToolRequestCoordinator, 照常写 tool_requested
 与 tool_completed, 照常受 ToolRuntime 的 spec 上界与授权信封校验. 少的只有 ASK 那一步.
 """
 
@@ -54,13 +58,16 @@ from forgecli.domain.tool.result import (
     ToolResultStatus,
     TurnDisposition,
 )
-from forgecli.domain.tool.spec import TargetDeclarationAbility, ToolSpec
+from forgecli.domain.tool.spec import (
+    TargetDeclarationAbility,
+    ToolAction,
+    ToolSpec,
+)
 from forgecli.shared.cancellation import CancelToken
 
 __all__ = [
     "PlanReadTool",
     "PlanWriteTool",
-    "TodoReadTool",
     "TodoSetStatusTool",
     "TodoWriteTool",
 ]
@@ -75,7 +82,7 @@ def _spec(
     properties: Mapping[str, object],
     required: Sequence[str] = (),
 ) -> ToolSpec:
-    """五个工具共用的声明形状.
+    """四个工具共用的声明形状.
 
     `additionalProperties: False` 不是洁癖: 它连同"没有路径字段"一起, 构成了这批工具
     目标集合在**机制上**封闭的证明. 允许额外字段等于允许将来某个实现悄悄加一个路径参数.
@@ -95,6 +102,7 @@ def _spec(
         declared_capabilities=frozenset({Capability.PLAN_ONLY}),
         target_declaration_ability=TargetDeclarationAbility.STATIC,
         default_timeout_seconds=5.0,
+        action=ToolAction.PROCESS,
     )
 
 
@@ -303,21 +311,6 @@ class PlanWriteTool(_PlanningTool):
 # ---- 待办 ----
 
 
-class TodoReadTool(_PlanningTool):
-    _SPEC = _spec("todo_read", "读取待办", "读当前待办清单.", {})
-
-    def perform(
-        self,
-        plan: ToolPlan,
-        context: ExecutionContext,
-        cancel: CancelToken | None = None,
-    ) -> ToolResult:
-        todo = self._planning.read_todo()
-        if todo is None:
-            return self._ok(plan, "当前没有待办清单.")
-        return self._ok(plan, todo.render())
-
-
 class TodoWriteTool(_PlanningTool):
     _SPEC = _spec(
         "todo_write",
@@ -362,7 +355,7 @@ class TodoSetStatusTool(_PlanningTool):
         "todo_set_status",
         "更新待办状态",
         (
-            "改一项或多项待办的状态. index 从 0 起, 与 todo_read 打印的序号一致. "
+            "改一项或多项待办的状态. index 从 0 起, 与待办清单打印的序号一致. "
             "同一时刻最多一条 in_progress."
         ),
         {

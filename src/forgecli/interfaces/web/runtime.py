@@ -124,7 +124,7 @@ class ProjectRuntime:
             gateway=self.llm.gateway,
             run_bus=self.event_bus,
             approval=self.approvals,
-            toolchain_dirs=self.config.effective().toolchain_dirs,
+            environment_inheritance=self.config.effective().environment_inheritance,
         )
         granted_at = datetime.now().astimezone().isoformat()
         for root in self.project.workspace_roots[1:]:

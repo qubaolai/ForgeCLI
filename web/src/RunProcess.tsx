@@ -1,7 +1,8 @@
-import { MouseEvent, ReactNode, useEffect, useRef, useState } from "react";
+import { MouseEvent, ReactNode, useEffect, useState } from "react";
 import { ChevronIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import {
+  activityOf,
   buildTimeline,
   formatTokens,
   LocalTurn,
@@ -11,7 +12,9 @@ import {
   showsOutput,
   stringValue,
   ToolCategory,
+  ToolDirectory,
   ToolGroup,
+  toolActionLabel,
   toolNameOf,
   wasExecuted,
 } from "./runModel";
@@ -26,14 +29,16 @@ function toggle(setOpen: (update: (value: boolean) => boolean) => void) {
   };
 }
 
-export function RunProcess({ turn }: { turn: LocalTurn }) {
-  // 干活的时候摊开, 答案出来就收起。流式正文现在只在这里渲染一次, 不再先去回答区闪
-  // 一下, 所以运行中必须是打开的 —— 否则用户盯着一个折叠条等答案。
+export function RunProcess({ turn, directory }: { turn: LocalTurn; directory: ToolDirectory }) {
+  // **默认收起。** 处理过程是排查用的, 不是读的; 摊开一屏中间步骤会把真正要看的东西
+  // (最终回答) 推到屏幕外面。
   //
-  // 手动开合一旦发生就一直算数: 用户特意展开去看某一步, 不该被答案到达时的自动收拢
-  // 一把关掉。
+  // 收起不等于没有进度: 摘要行上的 activityOf 一直在说当下在干什么, 所以运行中不打开
+  // 也不会让用户对着一个静止的折叠条干等 —— 那正是它原先必须自动展开的理由。
+  //
+  // 手动开合一旦发生就一直算数, 包括手动展开后不再被任何自动逻辑收回去。
   const [manual, setManual] = useState<boolean | null>(null);
-  const open = manual ?? (turn.status === "running" && !turn.answerRequestId);
+  const open = manual ?? false;
   const [, tick] = useState(0);
 
   useEffect(() => {
@@ -45,13 +50,14 @@ export function RunProcess({ turn }: { turn: LocalTurn }) {
   const metrics = metricsFor(turn.events, Date.now(), turn.startedAt);
   // 收起时**不建**时间线, 也不渲染它: 一轮长任务有上百个节点, 留在 DOM 里的话, 最终
   // 回答每流入一帧都要多走一遍这棵树。
-  const timeline = open ? buildTimeline(turn.events) : [];
+  const timeline = open ? buildTimeline(turn.events, directory) : [];
 
   return (
     <details className={`run-process ${turn.status}`} open={open}>
       <summary onClick={toggle((update) => setManual((value) => update(value ?? open)))}>
         <span className={turn.status === "running" ? "pulse" : "run-status-dot"} />
         <strong>{statusText(turn.status)}</strong>
+        <span className="run-activity">{activityOf(turn, directory)}</span>
         <RunMetrics metrics={metrics} />
         <ChevronIcon className="disclosure" />
       </summary>
@@ -60,7 +66,7 @@ export function RunProcess({ turn }: { turn: LocalTurn }) {
           if (item.kind === "model") {
             return <ModelStep events={item.events} output={turn.outputs[item.key] ?? ""} turnStatus={turn.status} reason={item.reason} key={item.id} />;
           }
-          if (item.kind === "tools") return <ToolCategoryStep category={item.category} groups={item.groups} turnStatus={turn.status} reason={item.reason} key={item.id} />;
+          if (item.kind === "tools") return <ToolCategoryStep category={item.category} groups={item.groups} turnStatus={turn.status} reason={item.reason} directory={directory} key={item.id} />;
           return <NoteStep event={item.event} key={item.id} />;
         })}
         {!timeline.length && <li className="run-step pending"><span className="step-dot" /><div className="step-main"><p className="step-line">正在建立本轮事件流…</p></div></li>}
@@ -97,8 +103,11 @@ function ModelStep({ events, output, turnStatus, reason }: { events: RunEvent[];
   const state = settle(failed ? "failed" : completed ? "done" : "running", turnStatus);
   const label = stringValue(started?.payload.model) || "模型调用";
 
-  return <Step state={state} title="模型" subject={label} meta={completed ? formatDuration(numberValue(completed.payload.elapsed_ms)) : ""} reason={reason}>
-    {thinking && state === "running" && <p className="step-line muted"><span className="step-chip thinking">思考中…</span></p>}
+  // 标题跟着状态走: 一个恒定的"模型"字样在跑的时候什么也没说, 而这一格正是用户盯着看
+  // 的地方。思考与生成分开 —— 前者可能持续很久且不吐字, 看起来像卡住了。
+  const title = state !== "running" ? "模型" : thinking ? "模型思考中…" : "模型生成中…";
+
+  return <Step state={state} title={title} subject={label} meta={completed ? formatDuration(numberValue(completed.payload.elapsed_ms)) : ""} reason={reason}>
     {showsOutput(completed) && output && <div className="step-answer"><Markdown content={output} compact /></div>}
     {usage && <p className="step-line muted">
       <span className="step-chip">输入 {formatTokens(numberValue(usage.payload.input_tokens))}</span>
@@ -111,22 +120,25 @@ function ModelStep({ events, output, turnStatus, reason }: { events: RunEvent[];
   </Step>;
 }
 
-function ToolCategoryStep({ category, groups, turnStatus, reason }: { category: ToolCategory; groups: ToolGroup[]; turnStatus: LocalTurn["status"]; reason: string }) {
+function ToolCategoryStep({ category, groups, turnStatus, reason, directory }: { category: ToolCategory; groups: ToolGroup[]; turnStatus: LocalTurn["status"]; reason: string; directory: ToolDirectory }) {
   const states = groups.map((group) => stateOfTool(group.events, turnStatus));
   const state: StepState = states.includes("running")
     ? "running"
     : states.includes("failed") ? "failed" : states.includes("cancelled") ? "cancelled" : "done";
   const elapsed = groups.reduce((total, group) => total + elapsedOfTool(group.events), 0);
   const names = [...new Set(groups.map((group) => toolNameOf(group.events)))];
+  // 类别回答"哪一类事", 动作名回答"具体哪件事": 五个任务工具全归在"任务"这一类下,
+  // 而"更新任务状态"与"创建任务列表"对看的人不是一回事。
+  const actions = [...new Set(names.map((name) => toolActionLabel(name, directory)))];
   return <Step
     state={state}
     title={category.label}
-    subject={names.join(" · ")}
+    subject={actions.join(" · ")}
     badge={groups.length > 1 ? `${groups.length} 次` : undefined}
     meta={elapsed > 0 ? formatDuration(elapsed) : ""}
     reason={reason}
   >
-    {groups.map((group) => <ToolCall events={group.events} turnStatus={turnStatus} key={group.id} />)}
+    {groups.map((group) => <ToolCall events={group.events} turnStatus={turnStatus} directory={directory} key={group.id} />)}
   </Step>;
 }
 
@@ -154,7 +166,7 @@ function argumentsOf(event: RunEvent | undefined): Array<[string, string]> {
   });
 }
 
-function ToolCall({ events, turnStatus }: { events: RunEvent[]; turnStatus: LocalTurn["status"] }) {
+function ToolCall({ events, turnStatus, directory }: { events: RunEvent[]; turnStatus: LocalTurn["status"]; directory: ToolDirectory }) {
   const latest = events.at(-1);
   const queued = events.find((event) => event.kind === "tool_queued");
   const prepared = events.find((event) => event.kind === "tool_prepared");
@@ -170,12 +182,8 @@ function ToolCall({ events, turnStatus }: { events: RunEvent[]; turnStatus: Loca
   const pending = !completed;
   const state = stateOfTool(events, turnStatus);
 
-  const [open, setOpen] = useState(pending);
-  const wasPending = useRef(pending);
-  useEffect(() => {
-    if (wasPending.current && !pending) setOpen(false);
-    wasPending.current = pending;
-  }, [pending]);
+  // 逐层点开: 处理过程 -> 步骤 -> 调用详情。这一层也默认收起, 展开过就一直算数。
+  const [open, setOpen] = useState(false);
 
   const summary = completed
     ? stringValue(completed.payload.error_summary) || stringValue(completed.payload.result_summary)
@@ -183,7 +191,7 @@ function ToolCall({ events, turnStatus }: { events: RunEvent[]; turnStatus: Loca
 
   return <div className={`tool-call ${state}`}>
     <div className="tool-call-head">
-      <span className="tool-call-name">{name}</span>
+      <span className="tool-call-name" title={name}>{toolActionLabel(name, directory)}</span>
       <span className="step-badge">{toolState(latest, completed, awaiting, state)}</span>
       {/* 没执行过的终态与"执行了然后失败了"是两回事, 摘要行必须说得出区别。 */}
       {completed && !wasExecuted(completed) && <span className="step-badge">未执行</span>}
@@ -255,12 +263,19 @@ function NoteStep({ event }: { event: RunEvent }) {
   }
   if (event.kind === "todo_updated") {
     const current = stringValue(event.payload.current);
-    return <Step state="done" title="待办" subject={`${numberValue(event.payload.done)}/${numberValue(event.payload.total)}`}>
+    const done = numberValue(event.payload.done);
+    const total = numberValue(event.payload.total);
+    // 同一个事件既可能是"刚建好一张单子", 也可能是"划掉了一项"。done 为零且有条目时是
+    // 前者 —— 说成"更新任务状态"会让一次新建看起来像一次改动。
+    const action = total > 0 && done === 0 ? "创建任务列表" : "更新任务状态";
+    return <Step state="done" title="任务" subject={action} badge={total > 0 ? `${done}/${total}` : undefined}>
       {current && <p className="step-line">当前：{current}</p>}
     </Step>;
   }
-  return <Step state="done" title="计划" subject={stringValue(event.payload.title)}>
-    <p className="step-line muted">修订 {numberValue(event.payload.revision)} · {numberValue(event.payload.step_count)} 个步骤</p>
+  return <Step state="done" title="任务" subject={numberValue(event.payload.revision) > 1 ? "更新计划" : "创建计划"}>
+    <p className="step-line muted">
+      {stringValue(event.payload.title)} · 修订 {numberValue(event.payload.revision)} · {numberValue(event.payload.step_count)} 个步骤
+    </p>
   </Step>;
 }
 

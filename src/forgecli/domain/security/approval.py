@@ -142,6 +142,14 @@ class ApprovalView:
     # 目标集合为什么没封闭. 空表示已封闭.
     unresolved_reason: str | None = None
     allowed_scopes: tuple[ApprovalScope, ...] = (ApprovalScope.ONCE,)
+    # 为什么这次不能选"始终允许". 空表示可以选.
+    #
+    # 与 mode 同理, 展示用, 不进 view_hash: 它是 allowed_scopes 的说明文字, 而
+    # allowed_scopes 本身已经在哈希里. 两处都算等于同一个事实存两遍.
+    #
+    # 界面不自己推这句话: 前端只看得到 allowed_scopes 少了一档, 看不到少的是哪一条
+    # 判据 —— 于是只能猜, 而猜错的那次用户会照着错的理由去改命令.
+    learn_blocked_reason: str = ""
 
     # ---- 从 plan 读出的展示事实 ----
 
@@ -244,6 +252,9 @@ class ApprovalView:
         """
         return {
             "mode": self.mode,
+            # 界面上那个工具名徽标. raw_command 对非 shell 工具是动作摘要, 从里面切一段
+            # 出来当工具名就是在解析自己刚拼出来的字符串.
+            "tool_name": self.plan.tool_name,
             "workspace_roots": list(self.workspace_roots),
             "raw_command": self.raw_command,
             "target_resolution": self.target_resolution,
@@ -270,6 +281,13 @@ class ApprovalView:
             ],
             "unresolved_reason": self.unresolved_reason,
             "allowed_scopes": [scope.value for scope in self.allowed_scopes],
+            "learn_blocked_reason": self.learn_blocked_reason,
+            # 计数在这里算好再送: "含为零的类别"这条规则 (见 counts 的 docstring) 只该
+            # 有一份实现. 让界面自己从 target_groups 数, 那条规则就在前后端各写一遍,
+            # 而漂移的那一份不会报错.
+            "counts": [
+                {"label": label, "count": count} for label, count in self.counts
+            ],
         }
 
 

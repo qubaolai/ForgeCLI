@@ -34,7 +34,11 @@ from forgecli.domain.tool.plan import (
     ToolPlan,
 )
 from forgecli.domain.tool.result import ContentPart, ToolResult, ToolResultStatus
-from forgecli.domain.tool.spec import TargetDeclarationAbility, ToolSpec
+from forgecli.domain.tool.spec import (
+    TargetDeclarationAbility,
+    ToolAction,
+    ToolSpec,
+)
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
 from forgecli.shared.cancellation import CancelToken
 from support.fakes import PROFILE, SilentToolRunObserver
@@ -82,6 +86,7 @@ def _spec(ability: TargetDeclarationAbility) -> ToolSpec:
         declared_capabilities=frozenset({Capability.WORKSPACE_READ}),
         target_declaration_ability=ability,
         default_timeout_seconds=5.0,
+        action=ToolAction.READ,
     )
 
 

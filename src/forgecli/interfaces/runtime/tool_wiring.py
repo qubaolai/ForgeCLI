@@ -55,7 +55,6 @@ from forgecli.application.tools.builtin.memory_tools import (
 from forgecli.application.tools.builtin.planning_tools import (
     PlanReadTool,
     PlanWriteTool,
-    TodoReadTool,
     TodoSetStatusTool,
     TodoWriteTool,
 )
@@ -66,6 +65,7 @@ from forgecli.application.tools.registry import ToolRegistry
 from forgecli.application.tools.resource_governor import ResourceGovernor
 from forgecli.application.tools.runtime import ToolRuntime
 from forgecli.application.workspace.execution_context import ExecutionContext
+from forgecli.domain.execution.environment import EnvironmentInheritance
 from forgecli.domain.execution.fence import FencePolicy, fence_for
 from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
 from forgecli.domain.intents import SessionMode
@@ -144,7 +144,7 @@ def build_tool_stack(
     approval: ApprovalService | None = None,
     artifacts: ArtifactStore | None = None,
     run_bus: AgentRunEventBus,
-    toolchain_dirs: tuple[str, ...] = (),
+    environment_inheritance: EnvironmentInheritance = EnvironmentInheritance.ALL,
 ) -> ToolStack:
     """按依赖顺序装配三层."""
     # 0. 工作区根先 resolve. macOS 上 /var 与 /tmp 都是指向 /private/... 的软链接,
@@ -160,9 +160,12 @@ def build_tool_stack(
     grants = WorkspaceGrants(protected)
 
     # 2. 执行画像与受控环境.
+    # 工作区根传进去是为了把它们从继承的 PATH 里减掉: `node_modules/.bin` 与
+    # `.venv/bin` 都在里面, 而那是 Agent 自己能写的目录.
     profile = probe_execution_profile(
         protected_roots_hash=protected.protected_roots_hash,
-        toolchain_dirs=toolchain_dirs,
+        workspace_roots=workspace_roots,
+        inheritance=environment_inheritance,
     )
     environment = build_execution_environment(profile)
 
@@ -241,7 +244,6 @@ def build_tool_stack(
         (
             PlanReadTool(planning),
             PlanWriteTool(planning),
-            TodoReadTool(planning),
             TodoWriteTool(planning),
             TodoSetStatusTool(planning),
             ArtifactReadTool(governor, store),

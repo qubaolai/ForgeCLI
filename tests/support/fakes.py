@@ -26,7 +26,7 @@ from forgecli.application.tools.artifact_store import (
     ArtifactStore,
 )
 from forgecli.domain.execution.environment import (
-    DEFAULT_ENV_ALLOWLIST,
+    EnvironmentInheritance,
     ShellLaunch,
 )
 from forgecli.domain.execution.profile import ExecutionProfile, IsolationLevel
@@ -51,7 +51,7 @@ PROFILE = ExecutionProfile(
     isolation_level=IsolationLevel.UNCONFINED,
     trusted_path=("/usr/bin", "/bin"),
     shell_launch=ShellLaunch(program="/bin/sh", args=("-c",), kind="posix"),
-    environment_allowlist=DEFAULT_ENV_ALLOWLIST,
+    environment_inheritance=EnvironmentInheritance.ALL,
     protected_roots_hash="test-protected-roots",
     executable_resolution_version=EXECUTABLE_RESOLUTION_VERSION,
     path_separator=":",

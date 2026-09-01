@@ -61,9 +61,25 @@ class ToolRegistry:
     def describe(self, name: str) -> ToolSpec:
         return self.get(name).spec
 
+    def describe_all(self) -> tuple[ToolSpec, ...]:
+        """全部已注册的 spec, 按名字排序. **不是目录** —— 没有快照哈希.
+
+        给展示用: 界面要把历史事件里的工具名翻成中文, 而那些调用可能发生在换模式之前,
+        按当前模式过滤出来的目录里根本没有它们.
+
+        刻意不返回 `ToolCatalog`: 那个类型的每一次出现都进模型请求记录, 事件与授权信封
+        (见它的模块说明). 让一次纯展示查询也产出一份快照哈希, 等于在审计里多出一份没有
+        任何调用与之对应的目录.
+        """
+        return tuple(sorted((tool.spec for tool in self._tools.values()), key=_by_name))
+
     def list(self, query: CatalogQuery) -> ToolCatalog:
         """按谓词过滤出目录快照. 谓词只看 ToolSpec, 看不到工具实现."""
         entries = tuple(
             tool.spec for tool in self._tools.values() if query.predicate(tool.spec)
         )
         return ToolCatalog(entries=entries, reason_tag=query.reason_tag)
+
+
+def _by_name(spec: ToolSpec) -> str:
+    return spec.name

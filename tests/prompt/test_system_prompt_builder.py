@@ -21,7 +21,7 @@ from forgecli.application.prompt.system_prompt_builder import (
 )
 from forgecli.domain.execution.fence import fence_for
 from forgecli.domain.execution.profile import IsolationLevel
-from forgecli.domain.intents import SessionMode
+from forgecli.domain.intents import MODE_PRESETS, SessionMode
 from forgecli.domain.planning import (
     PlanDocument,
     PlanStatus,
@@ -33,15 +33,16 @@ from forgecli.domain.planning import (
 from forgecli.domain.prompt.blocks import PromptBlockId, PromptSnapshot
 from forgecli.domain.security.budget import fence_allowed_capabilities
 from forgecli.domain.tool.capability import Capability
+from forgecli.domain.tool.spec import ToolAction
 from support.fakes import FACTS, PROFILE, prompt
 
 _TOOLS = (
-    ToolBrief("fs_read", "读取文件"),
-    ToolBrief("fs_list_files", "列出文件"),
-    ToolBrief("search_text", "搜索文本"),
-    ToolBrief("git_read", "读取 git 状态"),
-    ToolBrief("fs_edit_file", "精确替换文件片段"),
-    ToolBrief("shell_run", "执行 Shell 命令"),
+    ToolBrief("fs_read", "读取文件", ToolAction.READ),
+    ToolBrief("fs_list_files", "列出文件", ToolAction.LOCATE_PATH),
+    ToolBrief("search_text", "搜索文本", ToolAction.LOCATE_TEXT),
+    ToolBrief("git_read", "读取 git 状态", ToolAction.READ),
+    ToolBrief("fs_edit_file", "精确替换文件片段", ToolAction.WRITE),
+    ToolBrief("shell_run", "执行 Shell 命令", ToolAction.EXECUTE),
 )
 
 
@@ -86,14 +87,14 @@ def test_the_builtin_profile_is_pinned_by_fingerprint() -> None:
     snapshot = prompt(
         SessionMode.ACCEPT_EDITS,
         tools=(
-            ToolBrief("fs_read", "读取文件"),
-            ToolBrief("search_text", "搜索文本"),
-            ToolBrief("shell_run", "执行 Shell 命令"),
+            ToolBrief("fs_read", "读取文件", ToolAction.READ),
+            ToolBrief("search_text", "搜索文本", ToolAction.LOCATE_TEXT),
+            ToolBrief("shell_run", "执行 Shell 命令", ToolAction.EXECUTE),
         ),
     )
 
     assert snapshot.fingerprint == (
-        "sha256:8536870a547f5ed6b7b904e5c0c70ff515273116a895b0d9e32cad8c2772e167"
+        "sha256:9216d2c26efcf3cf62fea85c72a99eb9b445c04e7e1cb66e50bea00f5a18977c"
     )
 
 
@@ -170,14 +171,14 @@ def test_the_tool_table_only_lists_this_turn_catalog() -> None:
 
 def test_the_shell_boundary_is_dropped_when_shell_is_not_available() -> None:
     body = _body(
-        _build(available_tools=(ToolBrief("fs_read", "读取文件"),)),
+        _build(available_tools=(ToolBrief("fs_read", "读取文件", ToolAction.READ),)),
         PromptBlockId.TOOL_CONTRACT,
     )
 
     assert "只读操作变成需要人类确认" not in body
 
 
-@pytest.mark.parametrize("mode", list(SessionMode))
+@pytest.mark.parametrize("mode", MODE_PRESETS)
 def test_the_mode_summary_is_derived_from_the_real_capability_budget(
     mode: SessionMode,
 ) -> None:
@@ -193,7 +194,9 @@ def test_the_mode_summary_is_derived_from_the_real_capability_budget(
     )
     allowed = fence_allowed_capabilities(fence, confined=True)
 
-    assert mode.value in body
+    # 两个轴分别出现在自己那一行, 不再拼成一个词.
+    assert "隔离:" in body
+    assert "审批:" in body
     if Capability.EXECUTE_SHELL in allowed:
         assert "执行 Shell" in body
     else:
@@ -306,10 +309,15 @@ def test_the_catalog_snapshot_hash_never_reaches_the_prompt() -> None:
 
 
 def test_the_controlled_path_contents_never_reach_the_prompt() -> None:
-    """只说 PATH 受控这个事实, 不说它是什么."""
+    """只说 PATH 从哪来, 不说它是什么.
+
+    这一行的措辞值得钉住: 它曾经写着"只含系统目录; 不继承你熟悉的用户 PATH", 而受控
+    PATH 改成继承之后那句话变成了假话 —— 提示词说假话不会有任何一层报错, 只会让模型
+    据此做出错误的判断 (比如认定某个工具一定不存在, 从而不去试).
+    """
     text = _build().text
 
-    assert "受控且窄" in text
+    assert "继承自启动 forge 的 shell" in text
     for entry in PROFILE.trusted_path:
         assert entry not in text
 
@@ -319,8 +327,11 @@ def test_profile_internals_never_reach_the_prompt() -> None:
 
     assert PROFILE.protected_roots_hash not in text
     assert PROFILE.execution_profile_hash not in text
-    for name in PROFILE.environment_allowlist:
-        assert f"{name}=" not in text
+    # 继承档下环境里有什么由宿主决定, 一条都不该渲染进提示词.
+    for name, value in PROFILE.controlled_environment:
+        assert f"{name}={value}" not in text
+    for entry in PROFILE.trusted_path:
+        assert entry not in text
 
 
 def test_the_fingerprint_is_not_embedded_in_its_own_text() -> None:
@@ -674,8 +685,8 @@ def test_task_breakdown_needs_the_planning_tools() -> None:
     with_tools = _body(
         _build(
             available_tools=(
-                ToolBrief("todo_write", "重写待办"),
-                ToolBrief("plan_write", "提交计划"),
+                ToolBrief("todo_write", "重写待办", ToolAction.PROCESS),
+                ToolBrief("plan_write", "提交计划", ToolAction.PROCESS),
             )
         ),
         PromptBlockId.WORK_CONTRACT,
@@ -692,7 +703,9 @@ def test_the_memory_policy_does_not_wait_for_the_first_memory() -> None:
     所以它在稳定前缀的工作方式块里, 而不是挂在条件性的 memory_state 块上 —— 后者要有
     记忆才渲染, 那时候该记的已经记错了.
     """
-    snapshot = _build(available_tools=(ToolBrief("memory_write", "记住一条事实"),))
+    snapshot = _build(
+        available_tools=(ToolBrief("memory_write", "记住一条事实", ToolAction.MEMORY),)
+    )
 
     assert PromptBlockId.MEMORY_STATE not in _ids(snapshot)
     assert "只记会影响以后判断的事实" in _body(snapshot, PromptBlockId.WORK_CONTRACT)

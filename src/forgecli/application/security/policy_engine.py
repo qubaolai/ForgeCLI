@@ -112,8 +112,8 @@ def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
     )
     if outside_fence:
         # 理由取分析器给出的那一条 (更具体), 只在没有时才落到围栏边界. 反过来写会把
-        # PARSE_INCOMPLETE / CLASSIFIER_UNAVAILABLE 全部盖掉: 无围栏时 shell_run 必然
-        # 超出边界, 于是那些理由永远不会出现在审计与界面上, 而 _UNLEARNABLE_REASONS
+        # PARSE_INCOMPLETE / SCRIPT_EXECUTION 这类理由全部盖掉: 无围栏时 shell_run
+        # 必然超出边界, 于是那些理由永远不会出现在审计与界面上, 而 _UNLEARNABLE_REASONS
         # 也就永远匹配不到它们.
         return _Verdict(
             Decision.ASK,

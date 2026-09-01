@@ -1,6 +1,6 @@
 """RuntimeFacts: 可以安全渲染进提示词的运行事实 (ADR-0018 §4.3).
 
-它不是 ExecutionProfile. profile 里带着 trusted_path, environment_allowlist 与
+它不是 ExecutionProfile. profile 里带着 trusted_path, controlled_environment 与
 protected_roots_hash —— 这些绝不能进提示词. 让 builder 直接收 profile, 等于把"哪些
 字段不许渲染"这条规则散落进渲染代码, 而漏掉一条的后果是把受控 PATH 原样发给供应商.
 

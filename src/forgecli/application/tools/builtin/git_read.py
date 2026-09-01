@@ -54,7 +54,11 @@ from forgecli.domain.tool.result import (
     ToolResult,
     ToolResultStatus,
 )
-from forgecli.domain.tool.spec import TargetDeclarationAbility, ToolSpec
+from forgecli.domain.tool.spec import (
+    TargetDeclarationAbility,
+    ToolAction,
+    ToolSpec,
+)
 from forgecli.shared.cancellation import CancelToken
 
 __all__ = ["QUERIES", "GitReadTool"]
@@ -112,6 +116,7 @@ _SPEC = ToolSpec(
     declared_capabilities=frozenset({Capability.WORKSPACE_READ}),
     target_declaration_ability=TargetDeclarationAbility.STATIC,
     default_timeout_seconds=30.0,
+    action=ToolAction.READ,
 )
 
 

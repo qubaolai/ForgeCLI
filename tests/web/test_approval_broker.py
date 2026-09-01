@@ -18,6 +18,7 @@ from forgecli.domain.security.approval import (
     ApprovalRequest,
     ApprovalView,
 )
+from forgecli.domain.security.scripts import ScriptSnapshot
 from forgecli.domain.security.vocabulary import ApprovalScope
 from forgecli.interfaces.web.approval import WebApprovalBroker
 from support.fakes import tool_plan
@@ -92,3 +93,75 @@ def test_shutdown_never_turns_into_an_approval() -> None:
 
     worker.join(timeout=2.0)
     assert box["response"].outcome is ApprovalOutcome.PENDING  # type: ignore[union-attr]
+
+
+def test_the_payload_carries_every_key_the_card_renders() -> None:
+    """审批卡片渲染的每一个键都必须真的在 payload 里, 名字也要对得上.
+
+    回归来自一次静默失效: 前端把脚本正文的字段声明成 ``content``, 而后端送的是
+    ``source``. 取到的一直是 ``undefined``, 页面照常渲染, 没有任何东西报错 —— 用户看到
+    的是一张不显示脚本正文的审批卡片, 而那正是他要批准的东西.
+
+    这类缺陷靠肉眼验收发现不了: 少一个键的表现是"少一块内容", 而没有人记得本该有那块.
+    """
+    view = ApprovalView(
+        plan=tool_plan(raw_command="bash clean.sh"),
+        action_summary="执行 shell 命令",
+        allowed_scopes=(ApprovalScope.ONCE,),
+        learn_blocked_reason="拿不到可执行文件身份, 规则绑不住",
+    )
+    payload = view.to_payload()
+
+    # 卡片直接读的顶层键 (web/src/approvalModel.ts 的 ApprovalView).
+    assert set(payload) == {
+        "mode",
+        "tool_name",
+        "workspace_roots",
+        "raw_command",
+        "target_resolution",
+        "target_groups",
+        "script_snapshots",
+        "content_previews",
+        "counts",
+        "unresolved_reason",
+        "allowed_scopes",
+        "learn_blocked_reason",
+    }
+
+    # counts 含为零的类别: "网络 0" 与"没提网络"对读者不是一回事.
+    counts = payload["counts"]
+    assert isinstance(counts, list)
+    assert [item["label"] for item in counts] == [
+        "读取",
+        "写入",
+        "删除",
+        "移动",
+        "网络",
+        "外部副作用",
+    ]
+
+    assert payload["learn_blocked_reason"] == "拿不到可执行文件身份, 规则绑不住"
+
+
+def test_a_script_snapshot_reaches_the_card_under_the_name_it_renders() -> None:
+    """脚本正文的键叫 source. 改名就是让卡片静默少一块内容, 见上一条用例的注释."""
+    view = ApprovalView(
+        plan=tool_plan(raw_command="bash clean.sh"),
+        action_summary="执行 shell 命令",
+        script_snapshots=(
+            ScriptSnapshot(
+                language="bash",
+                origin="inline",
+                path="/tmp/clean.sh",
+                source="rm -rf dist\n",
+            ),
+        ),
+    )
+    snapshots = view.to_payload()["script_snapshots"]
+    assert isinstance(snapshots, list)
+    assert snapshots[0] == {
+        "language": "bash",
+        "origin": "inline",
+        "path": "/tmp/clean.sh",
+        "source": "rm -rf dist\n",
+    }

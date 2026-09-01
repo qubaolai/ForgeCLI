@@ -49,6 +49,7 @@ from forgecli.domain.planning import (
     TodoStatus,
 )
 from forgecli.domain.prompt.blocks import PromptBlockId, PromptSnapshot
+from forgecli.domain.tool.spec import ToolAction
 from support.fakes import FACTS
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "forgecli"
@@ -111,10 +112,10 @@ def _maximal_snapshot() -> PromptSnapshot:
             mode=SessionMode.AUTO,
             facts=FACTS,
             available_tools=(
-                ToolBrief("fs_read", "读取文件"),
-                ToolBrief("shell_run", "执行 Shell 命令"),
-                ToolBrief("plan_write", "提交计划"),
-                ToolBrief("todo_write", "重写待办"),
+                ToolBrief("fs_read", "读取文件", ToolAction.READ),
+                ToolBrief("shell_run", "执行 Shell 命令", ToolAction.EXECUTE),
+                ToolBrief("plan_write", "提交计划", ToolAction.PROCESS),
+                ToolBrief("todo_write", "重写待办", ToolAction.PROCESS),
             ),
             project_instructions=(
                 ProjectInstruction(
@@ -149,9 +150,9 @@ def test_the_text_is_pinned_by_fingerprint() -> None:
     指纹不含 `{# #}` 注释: 注释一个字都不会进模型上下文, 让改注释也要升版本, 唯一的后果
     是没人再写注释.
     """
-    assert PROMPT_TEXT_VERSION == 13
+    assert PROMPT_TEXT_VERSION == 16
     assert templates_fingerprint() == (
-        "sha256:2c3e558519d79439ea630e3a9187e15a4f9c51f93c3f06b9cdd95bf88577dc75"
+        "sha256:66a67f9b0b5097260a6d297c9837bdc5884934cfe3e2ca153ab9e2e0f508ac01"
     )
 
 

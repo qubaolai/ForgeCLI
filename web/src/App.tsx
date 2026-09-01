@@ -1,9 +1,10 @@
-import { CSSProperties, FormEvent, Fragment, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, FormEvent, Fragment, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckIcon, ChevronIcon, GearIcon, PlanIcon, ShieldIcon } from "./icons";
 import { CopyButton, Markdown } from "./Markdown";
+import { Approval, canLearn, defaultOpenSections, headlineOf, isConsequential, learnHintOf, severityOf, shownTargetGroups } from "./approvalModel";
 import { RunProcess } from "./RunProcess";
 import { buildInitialModelParams, modelPlaceholder, modelRef, providerAvailabilityCopy, splitModelRef } from "./modelSettings";
-import { appendRunEvent, failUnboundTurn, finishLocalTurn, formatTokens, isTerminalEvent, LocalTurn, metricsFor, newLocalTurn, restoreTurn, RunEvent, RunSnapshot, shouldAutoFollow, shouldSendOnEnter } from "./runModel";
+import { appendRunEvent, failUnboundTurn, finishLocalTurn, formatTokens, isTerminalEvent, LocalTurn, metricsFor, newLocalTurn, restoreTurn, RunEvent, RunSnapshot, shouldAutoFollow, shouldSendOnEnter, ToolDirectory } from "./runModel";
 
 type Project = {
   project_id: string;
@@ -16,7 +17,8 @@ type Session = {
   title: string;
   updated_at: string;
   status: string;
-  mode?: string;
+  /** 两个轴, 见 Stance。历史会话可能没有这一项。 */
+  mode?: { sandbox: string; approval: string };
 };
 
 type TranscriptEvent = {
@@ -38,19 +40,6 @@ type Setting = {
   choices: string[];
 };
 
-type Approval = {
-  approval_id: string;
-  mandatory: boolean;
-  view: {
-    mode: string;
-    workspace_roots: string[];
-    raw_command: string;
-    target_groups: Array<{ label: string; paths: string[] }>;
-    script_snapshots: Array<{ path?: string; content?: string }>;
-    allowed_scopes: string[];
-    unresolved_reason?: string;
-  };
-};
 
 type Planning = {
   markdown?: string;
@@ -126,6 +115,14 @@ type ToolSpec = {
   declared_capabilities: string[];
   default_timeout_seconds: number;
 };
+/** `/tools` 的 `all`: 与模式无关的全量展示名, 见后端那个路由的说明。 */
+type ToolDirectoryItem = { name: string; title: string; action: string };
+type ToolsResponse = { items: ToolSpec[]; all: ToolDirectoryItem[] };
+
+/** 后端给的是数组 (顺序稳定, 便于诊断), 展示要的是按名字查 —— 转一次即可。 */
+function indexTools(items: ToolDirectoryItem[]): ToolDirectory {
+  return Object.fromEntries(items.map((item) => [item.name, { title: item.title, action: item.action }]));
+}
 type StatusView = {
   session_id: string;
   mode: string;
@@ -200,12 +197,44 @@ const reconnectBaseMs = 1000;
 const reconnectFactor = 2;
 const reconnectCeilingMs = 60 * 60 * 1000;
 
-const modeOptions = [
-  { value: "plan", label: "Plan", hint: "只出方案，先评审再动手" },
-  { value: "accept_edits", label: "Accept Edits", hint: "自动接受文件编辑" },
-  { value: "auto", label: "Auto", hint: "自动执行，风险操作仍需审批" },
-  { value: "full_access", label: "Full Access", hint: "打断最少，权限最大" },
+/**
+ * 姿态是两个独立的轴: 围栏允许什么(隔离), 以及什么时候要人点头(审批)。
+ *
+ * 早先这里是四档预设排成一条线, 于是"强隔离 + 全自动"和"弱隔离 + 每步都问"这两种
+ * 组合根本选不出来 —— 它们在那条线上没有位置。
+ */
+const sandboxOptions = [
+  { value: "read_only", label: "只读", hint: "工作区不可写，只能看" },
+  { value: "workspace_write", label: "工作区可写", hint: "能改文件，不能联网" },
+  { value: "full_access", label: "完全访问", hint: "能改文件，也能联网" },
 ];
+
+const approvalOptions = [
+  { value: "always", label: "每次确认", hint: "Shell 命令都要你点头" },
+  { value: "auto", label: "围栏内自动", hint: "越界的才问你" },
+  { value: "never", label: "不再确认", hint: "围栏就是全部边界" },
+];
+
+/** 常用组合的名字。选中其中一个等于同时设两个轴。 */
+const modePresets = [
+  { sandbox: "read_only", approval: "always", label: "Plan", hint: "只出方案，先评审再动手" },
+  { sandbox: "workspace_write", approval: "always", label: "Accept Edits", hint: "自动接受文件编辑" },
+  { sandbox: "workspace_write", approval: "auto", label: "Auto", hint: "自动执行，风险操作仍需审批" },
+  { sandbox: "full_access", approval: "never", label: "Full Access", hint: "打断最少，权限最大" },
+];
+
+export type Stance = { sandbox: string; approval: string };
+
+/** 命中预设就用预设名, 否则把两个轴拼出来 —— 不编一个不存在的档位名。 */
+export function stanceLabel(stance: Stance) {
+  const preset = modePresets.find(
+    (item) => item.sandbox === stance.sandbox && item.approval === stance.approval,
+  );
+  if (preset) return preset.label;
+  const sandbox = sandboxOptions.find((item) => item.value === stance.sandbox);
+  const approval = approvalOptions.find((item) => item.value === stance.approval);
+  return `${sandbox?.label ?? stance.sandbox} · ${approval?.label ?? stance.approval}`;
+}
 
 function formatDelay(milliseconds: number) {
   const seconds = Math.round(milliseconds / 1000);
@@ -260,7 +289,7 @@ function App() {
   const [localTurns, setLocalTurns] = useState<LocalTurn[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState("accept_edits");
+  const [stance, setStance] = useState<Stance>({ sandbox: "workspace_write", approval: "always" });
   const [error, setError] = useState("");
   const [trustPath, setTrustPath] = useState("");
   const [approvals, setApprovals] = useState<Approval[]>([]);
@@ -281,6 +310,9 @@ function App() {
   const [origins, setOrigins] = useState<string[]>([]);
   const [thinking, setThinking] = useState<ThinkingView>({ model: "", configured: false });
   const [tools, setTools] = useState<ToolSpec[]>([]);
+  // 运行过程视图查它把工具名翻成中文. 与上面那份分开: 那份跟着模式走 (管理面板要的
+  // 就是这个语义), 而历史事件里的调用可能发生在换模式之前.
+  const [toolDirectory, setToolDirectory] = useState<ToolDirectory>({});
   const [statusView, setStatusView] = useState<StatusView | null>(null);
   const [recovery, setRecovery] = useState<RecoveryStatus | null>(null);
   const [planIndex, setPlanIndex] = useState<PlanIndexView | null>(null);
@@ -334,7 +366,7 @@ function App() {
     ]);
     setSessions(sessionResult.items);
     setCurrentSessionId(sessionResult.current_session_id);
-    setMode(sessionResult.current_session.mode ?? "accept_edits");
+    setStance(sessionResult.current_session.mode ?? { sandbox: "workspace_write", approval: "always" });
     setApprovals(approvalResult.items);
     setPlanning(planningResult);
     api<PlanIndexView>("/plans").then(setPlanIndex).catch(() => undefined);
@@ -378,7 +410,7 @@ function App() {
       api<{ items: WorkspaceRoot[] }>("/workspace-roots"),
       api<{ items: LearnedRule[] }>("/rules"),
       api<{ items: Checkpoint[] }>("/checkpoints"),
-      api<{ items: ToolSpec[] }>("/tools"),
+      api<ToolsResponse>("/tools"),
       api<StatusView>("/status"),
       api<RecoveryStatus>("/recovery"),
     ]);
@@ -386,6 +418,7 @@ function App() {
     setRules(ruleList.items);
     setCheckpoints(checkpointList.items);
     setTools(toolList.items);
+    setToolDirectory(indexTools(toolList.all));
     setStatusView(status);
     setRecovery(recoveryState);
     await loadModels();
@@ -402,6 +435,11 @@ function App() {
     if (!activeProjectId) return;
     loadWorkspace().catch((reason: Error) => setError(reason.message));
     loadModels().catch(() => undefined);
+    // 拉不回来不报错, 只是每一行显示工具名而不是中文 —— 那是 toolActionLabel 的既定
+    // 退路, 比为一份展示用的名字表弹一条错误提示合适。
+    api<ToolsResponse>("/tools")
+      .then((value) => setToolDirectory(indexTools(value.all)))
+      .catch(() => undefined);
   }, [activeProjectId, loadWorkspace, loadModels]);
 
   useEffect(() => {
@@ -694,10 +732,11 @@ function App() {
     } catch (reason) { setError((reason as Error).message); }
   }
 
-  async function changeMode(value: string) {
+  /** 只送要改的那一个轴; 另一个由后端保持不变。 */
+  async function changeStance(patch: Partial<Stance>) {
     try {
-      await api("/mode", { method: "POST", body: JSON.stringify({ mode: value }) });
-      setMode(value);
+      await api("/mode", { method: "POST", body: JSON.stringify(patch) });
+      setStance((current) => ({ ...current, ...patch }));
     } catch (reason) { setError((reason as Error).message); }
   }
 
@@ -935,9 +974,9 @@ function App() {
             {!transcript.length && !localTurns.length && <div className="welcome"><div className="forge-mark">F</div><h2>准备好了</h2><p>描述你想理解、规划或修改的工程任务。</p></div>}
             {transcript.map((item) => {
               const run = item.payload.role === "assistant" ? restoredByTurn.get(item.payload.turn_id ?? "") : undefined;
-              return <Fragment key={item.event_id}>{run && <RunProcess turn={run} />}<Message item={item} /></Fragment>;
+              return <Fragment key={item.event_id}>{run && <RunProcess turn={run} directory={toolDirectory} />}<Message item={item} /></Fragment>;
             })}
-            {localTurns.map((turn) => <LocalTurnView turn={turn} key={turn.clientId} />)}
+            {localTurns.map((turn) => <LocalTurnView turn={turn} directory={toolDirectory} key={turn.clientId} />)}
           </div>
           <div className="conversation-footer">
             {showJumpToBottom && <button className="jump-bottom" onClick={jumpToBottom}>回到底部 ↓</button>}
@@ -945,7 +984,7 @@ function App() {
             <form className={`composer ${connection === "stopped" ? "offline" : ""}`} onSubmit={send}>
               <textarea ref={composerRef} value={message} rows={1} disabled={connection === "stopped"} onChange={(event) => setMessage(event.target.value)} onCompositionStart={() => { composingRef.current = true; }} onCompositionEnd={() => { composingRef.current = false; }} onKeyDown={(event) => { if (shouldSendOnEnter(event.key, event.shiftKey, event.nativeEvent.isComposing, composingRef.current)) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={connection === "stopped" ? "连不上本地服务，请重新运行 forge 后刷新页面" : "描述你想理解、规划或修改的工程任务…"} />
               <div className="composer-bar">
-                <ModeMenu value={mode} disabled={busy} onChange={changeMode} />
+                <ModeMenu value={stance} disabled={busy} onChange={changeStance} />
                 <ModelMenu
                   current={currentModel}
                   models={configuredModels}
@@ -994,11 +1033,11 @@ function Message({ item }: { item: TranscriptEvent }) {
   return <article className={`message ${user ? "user" : "assistant"}`}><div className="avatar">{user ? "你" : "F"}</div><div><strong>{user ? "你" : "Forge"}</strong>{user ? <p>{text}</p> : <><Markdown content={text} /><div className="message-footer"><span /><CopyButton content={text} className="message-copy-outside" /></div></>}</div></article>;
 }
 
-function LocalTurnView({ turn }: { turn: LocalTurn }) {
+function LocalTurnView({ turn, directory }: { turn: LocalTurn; directory: ToolDirectory }) {
   const text = turn.assistantText || turn.error;
   const metrics = metricsFor(turn.events, Date.now(), turn.startedAt);
   // 占位轮次没有本地用户文本（刷新页面后接上的 turn），用户消息已经在 transcript 里。
-  return <section className="local-turn">{turn.userText && <article className="message user"><div className="avatar">你</div><div><strong>你</strong><p>{turn.userText}</p></div></article>}<RunProcess turn={turn} />{text && <article className="message assistant streaming"><div className="avatar">F</div><div><strong>Forge</strong><Markdown content={text} />{turn.status === "running" && <i className="stream-caret" />}<div className="message-footer">{turn.status !== "running" ? <FinalMetrics metrics={metrics} /> : <span />}<CopyButton content={text} className="message-copy-outside" /></div></div></article>}</section>;
+  return <section className="local-turn">{turn.userText && <article className="message user"><div className="avatar">你</div><div><strong>你</strong><p>{turn.userText}</p></div></article>}<RunProcess turn={turn} directory={directory} />{text && <article className="message assistant streaming"><div className="avatar">F</div><div><strong>Forge</strong><Markdown content={text} />{turn.status === "running" && <i className="stream-caret" />}<div className="message-footer">{turn.status !== "running" ? <FinalMetrics metrics={metrics} /> : <span />}<CopyButton content={text} className="message-copy-outside" /></div></div></article>}</section>;
 }
 
 function FinalMetrics({ metrics }: { metrics: ReturnType<typeof metricsFor> }) {
@@ -1077,7 +1116,7 @@ function ModelMenu({ current, models, thinking, disabled, onChoose, onThinking }
   </div>;
 }
 
-function ModeMenu({ value, disabled, onChange }: { value: string; disabled: boolean; onChange: (value: string) => void }) {
+function ModeMenu({ value, disabled, onChange }: { value: Stance; disabled: boolean; onChange: (patch: Partial<Stance>) => void }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   useEscape(open, useCallback(() => setOpen(false), []));
@@ -1089,25 +1128,35 @@ function ModeMenu({ value, disabled, onChange }: { value: string; disabled: bool
     document.addEventListener("mousedown", closeOutside);
     return () => document.removeEventListener("mousedown", closeOutside);
   }, [open]);
-  const current = modeOptions.find((item) => item.value === value) ?? modeOptions[1];
+  // 圆点跟着隔离档走: 那是"能造成多大后果"这一问的答案, 也是用户扫一眼最需要知道的。
   return <div className="mode-menu" ref={rootRef}>
     <button type="button" className="mode-trigger" disabled={disabled} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((state) => !state)}>
-      <i className={`mode-dot ${current.value}`} />
-      <span>{current.label}</span>
+      <i className={`mode-dot ${value.sandbox}`} />
+      <span>{stanceLabel(value)}</span>
       <ChevronIcon className="mode-caret" />
     </button>
-    {open && <ul className="mode-options" role="listbox" aria-label="运行模式">
-      {modeOptions.map((item) => (
+    {open && <div className="mode-options">
+      <StanceGroup label="隔离" hint="围栏允许什么" options={sandboxOptions} current={value.sandbox} dotted onPick={(next) => { setOpen(false); onChange({ sandbox: next }); }} />
+      <StanceGroup label="审批" hint="什么时候要你点头" options={approvalOptions} current={value.approval} onPick={(next) => { setOpen(false); onChange({ approval: next }); }} />
+    </div>}
+  </div>;
+}
+
+function StanceGroup({ label, hint, options, current, dotted, onPick }: { label: string; hint: string; options: Array<{ value: string; label: string; hint: string }>; current: string; dotted?: boolean; onPick: (value: string) => void }) {
+  return <section className="stance-group">
+    <header><strong>{label}</strong><small>{hint}</small></header>
+    <ul role="listbox" aria-label={label}>
+      {options.map((item) => (
         <li key={item.value}>
-          <button type="button" role="option" aria-selected={item.value === value} className={item.value === value ? "active" : ""} onClick={() => { setOpen(false); if (item.value !== value) onChange(item.value); }}>
-            <i className={`mode-dot ${item.value}`} />
+          <button type="button" role="option" aria-selected={item.value === current} className={item.value === current ? "active" : ""} onClick={() => { if (item.value !== current) onPick(item.value); }}>
+            {dotted && <i className={`mode-dot ${item.value}`} />}
             <span><strong>{item.label}</strong><small>{item.hint}</small></span>
-            {item.value === value && <CheckIcon className="mode-check" />}
+            {item.value === current && <CheckIcon className="mode-check" />}
           </button>
         </li>
       ))}
-    </ul>}
-  </div>;
+    </ul>
+  </section>;
 }
 
 function formatElapsed(milliseconds: number) {
@@ -1143,9 +1192,100 @@ function PlanningPanel({ planning, index, onResolve, onActivate }: { planning: P
 }
 
 function ApprovalCard({ approval, onResolve }: { approval: Approval; onResolve: (id: string, decision: string) => void }) {
-  const targets = approval.view.target_groups.filter((group) => group.paths.length);
-  const canWorkspace = approval.view.allowed_scopes.includes("workspace");
-  return <section className="approval-card"><header><span className="warning-icon"><ShieldIcon /></span><div><h2>Forge 想要执行一项操作</h2><p>{approval.mandatory ? "此操作需要逐次确认" : "请确认命令和影响范围是否符合预期"}</p></div></header><details><summary>查看命令与影响范围</summary><pre>{approval.view.raw_command}</pre>{targets.map((group) => <div className="target-group" key={group.label}><strong>{group.label} · {group.paths.length}</strong>{group.paths.map((path) => <code key={path}>{path}</code>)}</div>)}{approval.view.unresolved_reason && <p className="warning-copy">目标集合未封闭：{approval.view.unresolved_reason}</p>}</details><footer><button onClick={() => onResolve(approval.approval_id, "deny")}>拒绝</button>{canWorkspace && <button onClick={() => onResolve(approval.approval_id, "workspace")}>始终允许此工作区</button>}<button className="primary" onClick={() => onResolve(approval.approval_id, "once")}>允许一次</button></footer></section>;
+  const view = approval.view;
+  const severity = severityOf(approval);
+  const openBy = defaultOpenSections(approval);
+  const targets = shownTargetGroups(approval);
+  const root = view.workspace_roots[0] ?? "";
+  return <section className={`approval-card sev-${severity}`}>
+    <span className="ac-stripe" />
+    <header>
+      <span className="ac-badge"><ShieldIcon /></span>
+      <div className="ac-heading">
+        <h2>{headlineOf(approval)}</h2>
+        <p>{approval.mandatory ? "这一档不能记成规则, 每次都会问" : "确认下面的内容再决定"}</p>
+      </div>
+      <span className="ac-chips">
+        <span className="ac-chip tool">{view.tool_name}</span>
+        {view.mode && <span className="ac-chip">{view.mode}</span>}
+      </span>
+    </header>
+
+    {/* 命令永远可见: 一个安全决策的默认态不该是"什么都没说"。 */}
+    <pre className="ac-cmd">{view.raw_command}</pre>
+    {root && <p className="ac-root" title={root}>工作区 {root}</p>}
+
+    <div className="ac-counts">
+      {view.counts.map((item) => (
+        <span className="ac-count" data-on={item.count > 0 ? "1" : "0"} key={item.label}>
+          {item.label} <b>{item.count}</b>
+        </span>
+      ))}
+    </div>
+
+    <div className="ac-body">
+      {view.script_snapshots.length > 0 && (
+        <ApprovalSection title="脚本正文" meta={scriptMeta(view.script_snapshots)} defaultOpen={openBy.scripts}>
+          {view.script_snapshots.map((snapshot, index) => (
+            <div className="ac-file" key={`${snapshot.path}-${index}`}>
+              <div className="ac-file-head"><code>{snapshot.path || snapshot.origin || "内联脚本"}</code><span>{snapshot.language}</span></div>
+              <pre className="ac-pre">{snapshot.source}</pre>
+            </div>
+          ))}
+        </ApprovalSection>
+      )}
+
+      {view.content_previews.length > 0 && (
+        <ApprovalSection title="写入预览" meta={`${view.content_previews.length} 个文件`} defaultOpen={openBy.previews}>
+          {view.content_previews.map((preview, index) => (
+            <div className="ac-file" key={`${preview.path}-${index}`}>
+              <div className="ac-file-head"><code>{preview.path}</code></div>
+              <pre className="ac-pre">{preview.content}</pre>
+              {preview.truncated && <p className="ac-trunc">已截断</p>}
+            </div>
+          ))}
+        </ApprovalSection>
+      )}
+
+      {isConsequential(approval) && targets.length > 0 && (
+        <ApprovalSection title="目标清单" meta={`${targets.reduce((total, group) => total + group.paths.length, 0)} 个路径`} defaultOpen={openBy.targets}>
+          {targets.map((group) => (
+            <div className="ac-tgroup" key={group.label}>
+              <span className="ac-tlabel">{group.label}</span>
+              <div className="ac-tpaths">{group.paths.map((path) => <code key={path} title={path}>{path}</code>)}</div>
+            </div>
+          ))}
+        </ApprovalSection>
+      )}
+    </div>
+
+    <footer>
+      <p className="ac-learn">{learnHintOf(approval)}</p>
+      <span className="ac-btns">
+        <button className="ac-deny" onClick={() => onResolve(approval.approval_id, "deny")}>拒绝</button>
+        <button disabled={!canLearn(approval)} onClick={() => onResolve(approval.approval_id, "workspace")}>始终允许</button>
+        <button className="primary" onClick={() => onResolve(approval.approval_id, "once")}>允许一次</button>
+      </span>
+    </footer>
+  </section>;
+}
+
+function scriptMeta(scripts: Approval["view"]["script_snapshots"]) {
+  const lines = scripts.reduce((total, item) => total + item.source.split("\n").length, 0);
+  return scripts.length > 1 ? `${scripts.length} 段 · ${lines} 行` : `${lines} 行`;
+}
+
+/** 证据分块。收的是体量, 不是事实的存在 —— 所以标题与条目数在收起时也看得见。 */
+function ApprovalSection({ title, meta, defaultOpen, children }: { title: string; meta: string; defaultOpen: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return <details className="ac-sec" open={open}>
+    <summary onClick={(event) => { event.preventDefault(); setOpen((value) => !value); }}>
+      <ChevronIcon className="ac-sec-caret" />
+      <b>{title}</b>
+      <span className="ac-sec-meta">{meta}</span>
+    </summary>
+    <div className="ac-sec-body">{children}</div>
+  </details>;
 }
 
 function ProjectPicker({ projects, activeProjectId, busy, trustPath, onTrustPath, onTrust, onActivate, onCancel }: { projects: Project[]; activeProjectId: string | null; busy: boolean; trustPath: string; onTrustPath: (path: string) => void; onTrust: (event: FormEvent) => void; onActivate: (id: string) => void; onCancel: () => void }) {

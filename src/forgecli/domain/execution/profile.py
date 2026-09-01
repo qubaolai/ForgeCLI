@@ -16,6 +16,7 @@ from pathlib import Path
 
 from forgecli.domain.execution.environment import (
     ENVIRONMENT_SANITIZATION_VERSION,
+    EnvironmentInheritance,
     ShellLaunch,
 )
 from forgecli.domain.tool.hashing import digest
@@ -53,12 +54,10 @@ class ExecutionProfile:
     isolation_level: IsolationLevel
     trusted_path: tuple[str, ...]
     shell_launch: ShellLaunch
-    environment_allowlist: tuple[str, ...]
+    environment_inheritance: EnvironmentInheritance
     protected_roots_hash: str
     executable_resolution_version: str
     path_separator: str
-    # PATH 中用户显式配置、可能由 Agent 修改的工具链目录；不能按系统二进制信任。
-    writable_toolchain_path: tuple[str, ...] = ()
     controlled_environment: tuple[tuple[str, str], ...] = ()
     path_normalization_version: str = PATH_NORMALIZATION_VERSION
     environment_sanitization_version: str = ENVIRONMENT_SANITIZATION_VERSION

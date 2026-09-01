@@ -46,7 +46,11 @@ from forgecli.domain.tool.result import (
     ToolResult,
     ToolResultStatus,
 )
-from forgecli.domain.tool.spec import TargetDeclarationAbility, ToolSpec
+from forgecli.domain.tool.spec import (
+    TargetDeclarationAbility,
+    ToolAction,
+    ToolSpec,
+)
 from forgecli.shared.cancellation import CancelToken
 
 __all__ = ["MemoryForgetTool", "MemoryWriteTool"]
@@ -94,6 +98,7 @@ def _spec(
         declared_capabilities=frozenset({Capability.MEMORY_WRITE}),
         target_declaration_ability=TargetDeclarationAbility.STATIC,
         default_timeout_seconds=5.0,
+        action=ToolAction.MEMORY,
     )
 
 

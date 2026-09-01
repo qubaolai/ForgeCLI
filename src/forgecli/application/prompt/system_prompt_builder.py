@@ -33,6 +33,7 @@ from forgecli.domain.intents import SessionMode
 from forgecli.domain.memory.entry import MemoryEntry, MemoryScope
 from forgecli.domain.prompt.blocks import PromptBlock, PromptBlockId, PromptSnapshot
 from forgecli.domain.security.budget import fence_allowed_capabilities
+from forgecli.domain.tool.spec import ToolAction
 
 __all__ = ["PromptBuildInput", "SystemPromptBuilder", "ToolBrief"]
 
@@ -51,13 +52,26 @@ _INSTRUCTION_END = "--- END WORKSPACE INSTRUCTIONS ---"
 
 @dataclass(frozen=True)
 class ToolBrief:
-    """一个工具在提示词里的一行: 名字 + 它自己的 title.
+    """一个工具在提示词里的一行: 名字 + 它自己的 title + 它承担的动作.
 
-    title 取自 ToolSpec, 不在提示词层另写一份用途描述.
+    三项都取自 ToolSpec, 不在提示词层另写一份用途描述或分类.
     """
 
     name: str
     title: str
+    action: ToolAction
+
+
+@dataclass(frozen=True)
+class ToolGroup:
+    """工具表里的一组: 同一个动作下的那几个工具.
+
+    只带 action 的取值, 不带中文组名 —— 组名是模型可读正文, 归 `prompt/templates`
+    管辖 (ADR-0031), 由模板里的标签表翻译.
+    """
+
+    action: str
+    tools: tuple[ToolBrief, ...]
 
 
 @dataclass(frozen=True)
@@ -142,7 +156,7 @@ def _tool_contract(build_input: PromptBuildInput) -> PromptBlock:
         heading=render_heading(PromptBlockId.TOOL_CONTRACT),
         body=render_block(
             PromptBlockId.TOOL_CONTRACT,
-            tool_table=_tool_table(build_input.available_tools),
+            tool_groups=_tool_groups(build_input.available_tools),
             has_shell=_SHELL_TOOL in names,
         ),
         cacheable=True,
@@ -213,7 +227,8 @@ def _runtime_facts(build_input: PromptBuildInput) -> PromptBlock:
         heading=render_heading(PromptBlockId.RUNTIME_FACTS),
         body=render_block(
             PromptBlockId.RUNTIME_FACTS,
-            mode=build_input.mode.value,
+            sandbox=build_input.mode.sandbox.value,
+            approval=build_input.mode.approval.value,
             # 传取值而不是枚举: 模板按取值查名字表, 而顺序由那张表定, 与这里传的
             # 集合无关.
             auto_allowed=frozenset(capability.value for capability in allowed),
@@ -318,17 +333,24 @@ def _memory_group(scope: MemoryScope, memory: tuple[MemoryEntry, ...]) -> _Memor
 # ---- 渲染工具 ----
 
 
-def _tool_table(tools: tuple[ToolBrief, ...]) -> str:
-    """一行一个工具, 名字在前.
+def _tool_groups(tools: tuple[ToolBrief, ...]) -> tuple[ToolGroup, ...]:
+    """按动作分组, 组内一行一个工具.
 
-    名字在前是因为模型要用它发起调用; 而且左对齐的一列名字比左对齐的一列中文标题更好扫.
-    与"当前运行事实"那一块的 `name: value` 同一种形状, 不另立一种.
+    分组是为了让"检索顺序"那一节能只写动作, 不点工具名: 那一节说"按符号检索", 表里就有
+    一组叫按符号, 组里只有一个工具 —— 对应关系是算出来的, 不靠谁去手抄一份。手抄的那份
+    原先散在三个工具的 description 里, 加一个工具要回头改别人的文案 (ADR-0031 §背景).
 
-    分隔符曾经在一次重构里丢过, 于是渲染出来的是 `读取文件fs_read` 这样粘在一起的
-    一行. 它不会让任何测试失败 —— 提示词照常渲染, 指纹照常稳定, 只是模型读到的工具表
-    是一坨. 这正是提示词类缺陷的典型形态: 没有任何一层会说话.
+    组的顺序取 `ToolAction` 的声明顺序, 与那一节的条目顺序同源. 空组不渲染: 本轮目录里
+    没有的动作, 摆一个空标题只会让模型去想它是不是漏看了什么.
+
+    组内名字在前, 因为模型要用它发起调用; 而且左对齐的一列名字比左对齐的一列中文标题
+    更好扫. 与"当前运行事实"那一块的 `name: value` 同一种形状, 不另立一种.
     """
-    return "\n".join(f"  {tool.name}: {tool.title}" for tool in tools)
+    return tuple(
+        ToolGroup(action=action.value, tools=members)
+        for action in ToolAction
+        if (members := tuple(tool for tool in tools if tool.action is action))
+    )
 
 
 def _wrap_instruction(instruction: ProjectInstruction) -> str:

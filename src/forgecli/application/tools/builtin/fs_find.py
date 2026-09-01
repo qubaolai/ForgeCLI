@@ -57,6 +57,7 @@ from forgecli.domain.tool.result import ToolMetrics, ToolResult, ToolResultStatu
 from forgecli.domain.tool.spec import (
     ArtifactPolicy,
     TargetDeclarationAbility,
+    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -72,9 +73,7 @@ _SPEC = ToolSpec(
     title="定位文件与认识目录",
     description=(
         "按**文件名**定位文件, 或者认识一个目录的结构. "
-        "它只看路径与文件名, 不看文件内容 —— "
-        "要在文件内容里找一段文字, 用 search_text; "
-        "要找一个类或函数定义在哪, 用 code_definitions.\n"
+        "它只看路径与文件名, 不看文件内容.\n"
         "不传 name_glob 时按层级渲染目录树, 用来快速认识不熟悉的代码库; "
         "默认从工作区根开始展开 3 层, 深度到头的目录只报还有多少项.\n"
         "传了 name_glob 时按 glob 返回扁平文件清单, 相对给定目录展开: "
@@ -108,6 +107,7 @@ _SPEC = ToolSpec(
     ),
     target_declaration_ability=TargetDeclarationAbility.EXPANDABLE,
     default_timeout_seconds=20.0,
+    action=ToolAction.LOCATE_PATH,
     artifact_policy=ArtifactPolicy(max_inline_bytes=32 * 1024),
 )
 

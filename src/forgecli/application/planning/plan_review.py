@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from forgecli.application.planning.planning_service import PlanningService
-from forgecli.domain.intents import SessionMode
+from forgecli.domain.intents import SandboxLevel, SessionMode
 from forgecli.domain.planning import PlanDocument, PlanStatus
 
 __all__ = ["PlanReviewChoice", "PlanReviewOutcome", "PlanReviewService"]
@@ -140,4 +140,5 @@ def _upgraded_mode(mode: SessionMode) -> SessionMode | None:
     在 accept_edits, auto 或 full_access 档批准一份计划不改档: 既不升也不降. 降档看起来
     "更安全", 实际是替用户撤销了他自己做过的决定.
     """
-    return SessionMode.AUTO if mode is SessionMode.PLAN else None
+    # 判据是隔离档: 计划被批准之后要能动手, 而只读档下动不了.
+    return SessionMode.AUTO if mode.sandbox is SandboxLevel.READ_ONLY else None

@@ -41,6 +41,19 @@ def scopes_for(
     return (ApprovalScope.ONCE,)
 
 
+def learn_block_reason(
+    decision: AuthorizationDecision, learned: LearnedRuleService | None
+) -> str:
+    """界面上"始终允许"为什么不可选. 可选时返回空串.
+
+    与 scopes_for 成对: 那个决定按钮在不在, 这个决定旁边写什么. 少了这一句, 按钮就只是
+    静默消失, 用户看到的是"有时候有, 有时候没有"。
+    """
+    if learned is None:
+        return "本次运行没有启用学习规则"
+    return learned.block_reason(decision)
+
+
 def unresolved_reason_of(decision: AuthorizationDecision) -> str | None:
     """目标集合为什么没封闭. 已封闭时返回 None."""
     if decision.effective_plan.target_resolution.closed:
@@ -57,6 +70,7 @@ def build_view(
     context: ExecutionContext,
     *,
     allowed_scopes: tuple[ApprovalScope, ...],
+    learn_blocked_reason: str = "",
 ) -> ApprovalView:
     plan = decision.effective_plan
     summary = decision.message or decision.reason.value
@@ -73,6 +87,7 @@ def build_view(
         risk_facts=tuple(fact.detail for fact in decision.risk_facts),
         unresolved_reason=unresolved_reason_of(decision),
         allowed_scopes=allowed_scopes,
+        learn_blocked_reason=learn_blocked_reason,
     )
 
 

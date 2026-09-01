@@ -19,6 +19,9 @@ class EventType(Enum):
     # MODE_CHANGED = "mode_changed"
     USER_MESSAGE = "user_message"
     ASSISTANT_MESSAGE = "assistant_message"
+    # 没有产出方了: 斜杠命令随终端入口整体删除 (ADR-0025 决策 1 修订二). **不能删这一
+    # 行** —— from_dict 用 `EventType(...)` 还原, 删掉之后任何一份写于那次修订之前的
+    # events.jsonl 都会在 resume 与 transcript 上抛 ValueError. 落盘取值是只增不减的.
     SLASH_COMMAND = "slash_command"
     # 一次模型调用的 usage 计量摘要（ADR-0011 §11.1）：由 AgentTurnService 写入，
     # payload 为 UsageRecordDraft.to_payload() 的安全摘要，不含凭证 / 原文。
@@ -30,15 +33,20 @@ class EventType(Enum):
     # completed 的调用结果未知, non_idempotent 的标 outcome_unknown 且不自动重放.
     TOOL_REQUESTED = "tool_requested"
     TOOL_COMPLETED = "tool_completed"
+    # 审批本身也走这一条: 裁决落盘的是 POLICY_DECISION, 带 decision / reason /
+    # mandatory. 早先另有 APPROVAL_REQUESTED 与 APPROVAL_RESOLVED 两个取值, 但它们从
+    # 未被任何代码发出过 —— 只在 SessionToolAudit 的 _EVENT_NAMES 名字表里各占一行,
+    # 而那张表 2026-08-30 已删 (审计出口改收 EventType). 同时删掉的还有
+    # CLASSIFIER_INVOKED (ADR-0030 删掉 LLM 分类器, 同样从未发出过).
+    #
+    # 删这三个安全, 删 SLASH_COMMAND 不安全, 区别只在**有没有真的写进过 events.jsonl**:
+    # 全 git 历史里这三个只出现在那张名字表里, 没有任何调用点.
     POLICY_DECISION = "policy_decision"
-    APPROVAL_REQUESTED = "approval_requested"
-    APPROVAL_RESOLVED = "approval_resolved"
-    CLASSIFIER_INVOKED = "classifier_invoked"
 
     # -- 工作区恢复 (ADR-0015 §14) --
     CHECKPOINT_CREATED = "checkpoint_created"
     MUTATION_RECORDED = "mutation_recorded"
-    RECOVERY_PERFORMED = "recovery_performed"
+    # RECOVERY_PERFORMED 同上: 名字表里有, 发出方从来没有过, 已删.
 
     # -- 目录授权 (ADR-0014 §7) --
     DIR_GRANT_CHANGED = "dir_grant_changed"

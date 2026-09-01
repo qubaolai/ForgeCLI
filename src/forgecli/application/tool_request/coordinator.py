@@ -40,10 +40,12 @@ from forgecli.application.security.learned_rules import LearnedRuleService
 from forgecli.application.tool_request.approval_flow import (
     build_binding,
     build_view,
+    learn_block_reason,
     scopes_for,
 )
 from forgecli.application.tool_request.audit import NullToolAudit, ToolAuditSink
 from forgecli.application.tool_request.catalog_predicates import catalog_query_for_mode
+from forgecli.application.tool_request.fence_hint import fence_hint
 from forgecli.application.tool_request.observations import (
     ObservationKind,
     ToolObservation,
@@ -391,6 +393,7 @@ class ToolRequestCoordinator:
             policy,
             context,
             allowed_scopes=scopes_for(decision, self._learned),
+            learn_blocked_reason=learn_block_reason(decision, self._learned),
         )
         binding = build_binding(
             decision.effective_plan, catalog, policy, view.view_hash
@@ -510,6 +513,7 @@ class ToolRequestCoordinator:
             policy,
             context,
             allowed_scopes=scopes_for(decision, self._learned),
+            learn_blocked_reason=learn_block_reason(decision, self._learned),
         )
         current = build_binding(
             decision.effective_plan, catalog, policy, current_view.view_hash
@@ -627,7 +631,16 @@ class ToolRequestCoordinator:
             invocation_id=invocation_id,
             elapsed_ms=(self._clock() - started) * 1000.0,
         )
-        return self._completed(result, decision, invocation_id, transaction, envelope)
+        return self._completed(
+            result,
+            decision,
+            invocation_id,
+            transaction,
+            envelope,
+            # 只在有围栏时才算: 没围栏的话那句 Permission denied 只能是文件系统
+            # 本身的权限, 说成围栏就是在骗模型.
+            fence_hint(result.text, policy.fence, confined=policy.confined),
+        )
 
     def _authorization_refused(
         self,
@@ -665,6 +678,7 @@ class ToolRequestCoordinator:
         invocation_id: str,
         transaction: MutationTransaction | None,
         envelope: ExecutionAuthorization,
+        hint: str = "",
     ) -> ToolObservation:
         return ToolObservation(
             # 按**字段**置 kind, 不按工具名 (ADR-0023 决策 1). 协调器因此不需要认识
@@ -684,6 +698,7 @@ class ToolRequestCoordinator:
                 transaction.checkpoint_id if transaction is not None else None
             ),
             result=result,
+            fence_hint=hint,
         )
 
     def _denied(

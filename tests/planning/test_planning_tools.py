@@ -18,7 +18,6 @@ from forgecli.application.planning.planning_service import PlanningService
 from forgecli.application.tools.builtin.planning_tools import (
     PlanReadTool,
     PlanWriteTool,
-    TodoReadTool,
     TodoSetStatusTool,
     TodoWriteTool,
 )
@@ -82,7 +81,6 @@ def _tools(planning: PlanningService) -> tuple[Tool, ...]:
     return (
         PlanReadTool(planning),
         PlanWriteTool(planning),
-        TodoReadTool(planning),
         TodoWriteTool(planning),
         TodoSetStatusTool(planning),
     )
@@ -195,16 +193,19 @@ def test_reading_a_plan_matches_what_write_returned(
     assert _run(PlanReadTool(planning), context, {}).text == written.text
 
 
-def test_todo_write_then_read(
+def test_todo_write_returns_the_rendered_list(
     planning: PlanningService, context: ExecutionContext
 ) -> None:
-    _run(
+    """写入的返回值就是渲染后的清单.
+
+    这条钉的是"没有 todo_read 也不缺信息": 模型写完当场看到全表, 跨轮则由
+    `todo_state` 块给. 返回值退化成一句"已写入"的话, 那两条路就同时断了一条.
+    """
+    body = _run(
         TodoWriteTool(planning),
         context,
         {"name": "读写清单", "items": ["先读", "再写"]},
-    )
-
-    body = _run(TodoReadTool(planning), context, {}).text
+    ).text
 
     assert "0. [ ] 先读" in body
     assert "1. [ ] 再写" in body

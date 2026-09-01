@@ -58,6 +58,7 @@ from forgecli.domain.tool.result import (
 )
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
+    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -116,6 +117,7 @@ _SPEC = ToolSpec(
     # 工具层无法封闭目标集合: 这正是 opaque 的定义.
     target_declaration_ability=TargetDeclarationAbility.OPAQUE,
     default_timeout_seconds=120.0,
+    action=ToolAction.EXECUTE,
 )
 
 

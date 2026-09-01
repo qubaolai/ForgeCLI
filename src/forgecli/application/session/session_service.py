@@ -226,14 +226,6 @@ class SessionService:
         self._current = replace(self.current(), mode=mode)
         return self._current
 
-    def record_slash_command(
-        self, name: str, args: tuple[str, ...] = ()
-    ) -> SessionEvent:
-        """记录一次写类型斜杠命令的调用（只读命令不应调用本方法）。"""
-        return self._append(
-            EventType.SLASH_COMMAND, {"command": name, "args": list(args)}
-        )
-
     def _append(
         self,
         event_type: EventType,

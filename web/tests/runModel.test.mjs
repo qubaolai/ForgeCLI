@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  activityOf,
   appendRunEvent,
   buildTimeline,
   categoryOf,
@@ -10,6 +11,7 @@ import {
   groupToolEvents,
   metricsFor,
   newLocalTurn,
+  toolActionLabel,
   restoreTurn,
   shouldAutoFollow,
   shouldSendOnEnter,
@@ -250,6 +252,19 @@ function toolCall(base, name, invocation, capabilities = ["workspace_read"]) {
   ];
 }
 
+/**
+ * 后端 `/api/v1/tools` 的 `all` 索引之后的形状。写成固定值而不是去拉接口: 这些用例
+ * 钉的是"查得到就用 title, 查不到就退回工具名"这条规则, 不是后端此刻叫什么名字。
+ */
+const DIRECTORY = {
+  todo_set_status: { title: "更新待办状态", action: "process" },
+  todo_write: { title: "重写待办", action: "process" },
+  shell_run: { title: "执行 Shell 命令", action: "execute" },
+  fs_apply_patch: { title: "应用补丁", action: "write" },
+  search_text: { title: "搜索文本", action: "locate_text" },
+  memory_write: { title: "记住一件事", action: "memory" },
+};
+
 test("a tool is categorised by the capabilities it declared, not by its name", () => {
   // 回归: 分类靠一份写死的工具名清单, 里面的 fs.search_text 从来就不是真名 (search_text),
   // 于是每次搜索都被归进"其他工具" —— 而没有任何东西会因此报错。
@@ -259,12 +274,16 @@ test("a tool is categorised by the capabilities it declared, not by its name", (
   // 同时声明读和写的调用算写入: 它的后果是写。
   assert.equal(categoryOf("fs_move", ["workspace_read", "path_move"]).id, "write");
   assert.equal(categoryOf("shell_run", ["execute_shell", "workspace_write"]).id, "shell");
-  // 连 prepare 都没走到就没有能力可看, 退回按名字猜。清单只收**当前真实存在**的工具:
-  // 早先它躺着 fs.create_file / fs.list_files 这些 ADR-0029 就删掉的名字。
-  assert.equal(categoryOf("fs_apply_patch", []).id, "write");
-  assert.equal(categoryOf("something_odd", []).id, "other");
+  // 连 prepare 都没走到就没有能力可看, 这时查后端目录里的动作。目录是后端发的, 不再是
+  // 一份手抄清单 —— 早先那份躺着 fs.create_file / fs.list_files 这些 ADR-0029 就删掉的名字。
+  assert.equal(categoryOf("fs_apply_patch", [], DIRECTORY).id, "write");
+  assert.equal(categoryOf("search_text", [], DIRECTORY).id, "read");
+  assert.equal(categoryOf("memory_write", [], DIRECTORY).id, "memory");
+  assert.equal(categoryOf("something_odd", [], DIRECTORY).id, "other");
   // 模型编出来的名字也以 fs_ 开头; 猜成"读取文件"就是在替一次没发生的写入洗白。
-  assert.equal(categoryOf("fs_write_file", []).id, "other");
+  assert.equal(categoryOf("fs_write_file", [], DIRECTORY).id, "other");
+  // 目录还没拉回来时一律归"其他工具", 不猜。
+  assert.equal(categoryOf("fs_apply_patch", []).id, "other");
 });
 
 test("consecutive same-kind tool calls aggregate even with a decision between them", () => {
@@ -311,4 +330,77 @@ test("an unregistered tool still shows what the model passed in", () => {
   const [group] = timeline[0].groups;
   assert.deepEqual(group.events[0].payload.arguments, [["path", "a.py"], ["content", "x"]]);
   assert.equal(group.events.at(-1).payload.executed, false);
+});
+
+// ---- 折叠状态下的进度行 ----
+//
+// 处理过程默认收起, 所以这一行是运行期间用户唯一看得到的进度。它说错了没有任何东西
+// 会报错 —— 只会让人对着"正在处理"猜。
+
+function running(...events) {
+  let turns = [newLocalTurn("做点事", 1000)];
+  for (const item of events) turns = appendRunEvent(turns, item);
+  return turns[0];
+}
+
+test("the collapsed line separates thinking from generating", () => {
+  const thinking = running(
+    event("model_started", 1, {}, { request_id: "r1" }),
+    event("model_reasoning_status", 2, { status: "started" }, { request_id: "r1" }),
+  );
+  assert.equal(activityOf(thinking), "模型思考中…");
+
+  const generating = running(
+    event("model_started", 1, {}, { request_id: "r1" }),
+    event("model_reasoning_status", 2, { status: "started" }, { request_id: "r1" }),
+    event("model_reasoning_status", 3, { status: "finished" }, { request_id: "r1" }),
+  );
+  assert.equal(activityOf(generating), "模型生成中…");
+});
+
+test("a running tool names the actual operation, not the tool id", () => {
+  const turn = running(
+    event("tool_started", 1, { tool_name: "todo_set_status" }, { tool_call_id: "c1" }),
+  );
+  assert.equal(activityOf(turn, DIRECTORY), "正在更新待办状态");
+});
+
+test("a finished tool stops being the current activity", () => {
+  const turn = running(
+    event("tool_started", 1, { tool_name: "shell_run" }, { tool_call_id: "c1" }),
+    event("tool_completed", 2, { tool_name: "shell_run" }, { tool_call_id: "c1" }),
+    event("model_started", 3, {}, { request_id: "r2" }),
+  );
+  assert.equal(activityOf(turn), "模型生成中…");
+});
+
+test("waiting on a human outranks whatever else is open", () => {
+  const turn = running(
+    event("tool_started", 1, { tool_name: "shell_run" }, { tool_call_id: "c1" }),
+    event("approval_requested", 2, {}, { tool_call_id: "c1" }),
+  );
+  assert.equal(activityOf(turn), "等待你的审批");
+
+  const resolved = running(
+    event("tool_started", 1, { tool_name: "shell_run" }, { tool_call_id: "c1" }),
+    event("approval_requested", 2, {}, { tool_call_id: "c1" }),
+    event("approval_resolved", 3, {}, { tool_call_id: "c1" }),
+  );
+  assert.equal(resolved.status, "running");
+  assert.equal(activityOf(resolved, DIRECTORY), "正在执行 Shell 命令");
+});
+
+test("a terminal turn reports its outcome instead of a live activity", () => {
+  const turn = running(
+    event("model_started", 1, {}, { request_id: "r1" }),
+    event("turn_cancelled", 2, {}),
+  );
+  assert.equal(activityOf(turn), "处理已取消");
+});
+
+test("an unknown tool falls back to its own name rather than an invented action", () => {
+  assert.equal(toolActionLabel("todo_write", DIRECTORY), "重写待办");
+  assert.equal(toolActionLabel("mcp_acme_do_thing", DIRECTORY), "mcp_acme_do_thing");
+  // 目录还没拉回来的那几帧: 显示工具名, 不显示一个猜出来的中文。
+  assert.equal(toolActionLabel("todo_write"), "todo_write");
 });

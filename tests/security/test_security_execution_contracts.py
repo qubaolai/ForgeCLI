@@ -53,7 +53,11 @@ from forgecli.domain.tool.plan import (
     WorkspaceScope,
 )
 from forgecli.domain.tool.result import ContentPart, ToolResult, ToolResultStatus
-from forgecli.domain.tool.spec import TargetDeclarationAbility, ToolSpec
+from forgecli.domain.tool.spec import (
+    TargetDeclarationAbility,
+    ToolAction,
+    ToolSpec,
+)
 from forgecli.infrastructure.execution.environment_probe import (
     build_execution_environment,
     probe_execution_profile,
@@ -72,6 +76,7 @@ _SPEC = ToolSpec(
     declared_capabilities=frozenset({Capability.WORKSPACE_READ}),
     target_declaration_ability=TargetDeclarationAbility.STATIC,
     default_timeout_seconds=5.0,
+    action=ToolAction.READ,
 )
 
 
@@ -230,20 +235,24 @@ def test_analyzer_cannot_remove_an_existing_file_state_binding(
         validate_narrowing(original, replace(original, file_state_bindings=()))
 
 
-def test_controlled_environment_overrides_host_injection_values() -> None:
-    profile = probe_execution_profile(protected_roots_hash="protected")
+def test_controlled_environment_overrides_host_values() -> None:
+    """受控变量压过继承值: 它们关的是会改变命令语义的隐式用户级配置入口.
+
+    `PATH` 也一样 —— 无论哪个继承档, 它都由画像里筛过的那份决定, 不透传宿主原值.
+    """
+    profile = probe_execution_profile(
+        protected_roots_hash="protected", inherited_path="/usr/bin"
+    )
     environment = build_execution_environment(
         profile,
         raw={
             "PATH": "/tmp/attacker",
-            "PYTHONPATH": "/tmp/payload",
             "GIT_CONFIG_GLOBAL": "/tmp/evil.gitconfig",
             "HOME": "/home/user",
         },
     )
 
     assert "/tmp/attacker" not in environment["PATH"]
-    assert "PYTHONPATH" not in environment
     assert environment["GIT_CONFIG_GLOBAL"] != "/tmp/evil.gitconfig"
     assert environment["GIT_CONFIG_NOSYSTEM"] == "1"
     assert environment["PYTHONNOUSERSITE"] == "1"
@@ -260,15 +269,22 @@ def test_unknown_shell_kind_is_rejected_when_the_profile_is_built() -> None:
         )
 
 
-def test_explicit_toolchain_directory_is_not_treated_as_system(
+def test_a_project_toolchain_directory_is_not_treated_as_system(
     tmp_path: Path,
 ) -> None:
-    toolchain = tmp_path / "toolchain" / "bin"
+    """`.venv/bin` 一类的项目内工具链仍然不能继承同名系统工具的授权.
+
+    这是 TrustZone.TOOLCHAIN 现在**唯一**的来源. 早先还有一个 —— 用户配的
+    `execution.toolchain_dirs` —— 而那个判据名不副实: 一个装在 `~/Documents/` 下的
+    maven, Agent 根本写不进去, 却因为"是用户配的"被当成可写目录, 于是每次调用都要
+    人点头.
+    """
+    toolchain = tmp_path / "project" / ".venv" / "bin"
     toolchain.mkdir(parents=True)
     executable = toolchain / "runner"
     executable.write_bytes(b"#!/bin/sh\nexit 0\n")
     profile = probe_execution_profile(
-        protected_roots_hash="protected", toolchain_dirs=(str(toolchain),)
+        protected_roots_hash="protected", inherited_path=str(toolchain)
     )
     context = ExecutionContext(
         cwd=str(tmp_path),

@@ -313,7 +313,7 @@ class AgentTurnService:
                     ()
                     if catalog is None
                     else tuple(
-                        ToolBrief(name=spec.name, title=spec.title)
+                        ToolBrief(name=spec.name, title=spec.title, action=spec.action)
                         for spec in catalog.entries
                     )
                 ),

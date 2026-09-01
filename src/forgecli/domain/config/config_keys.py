@@ -31,7 +31,7 @@ LOGGING_CONSOLE = "logging.console"
 LOGGING_DIRECTORY = "logging.directory"
 LOGGING_MAX_VALUE_CHARS = "logging.max_value_chars"
 LOGGING_INCLUDE_HTTP = "logging.include_http"
-EXECUTION_TOOLCHAIN_DIRS = "execution.toolchain_dirs"
+EXECUTION_ENV_INHERIT = "execution.env_inherit"
 # 项目级（forge.json）
 DEFAULT_MODEL_PROVIDER_KEY = "model.provider"
 DEFAULT_MODEL_NAME_KEY = "model.name"
@@ -178,12 +178,16 @@ SCHEMA: tuple[ConfigKey, ...] = (
         "平时会淹掉自己的日志。",
     ),
     ConfigKey(
-        EXECUTION_TOOLCHAIN_DIRS,
+        EXECUTION_ENV_INHERIT,
         ConfigLevel.APP,
-        ValueKind.TEXT,
-        label="额外工具链目录",
-        help="装在非标准位置的 jdk / maven / node 所在目录，按系统路径分隔符分隔。"
-        "它们会进受控 PATH，但不算可信目录。",
+        ValueKind.CHOICE,
+        default="all",
+        choices=("all", "core", "none"),
+        label="继承启动环境",
+        help="命令的执行环境从启动 forge 的那个 shell 继承多少。all 是默认，"
+        "它让 Agent 跑出来的结果与你自己在终端里跑一致；core 只留少数几个基础变量，"
+        "none 一个都不继承。收紧会让工具链找不到自己的配置，只在需要跨机器复现时用。"
+        "PATH 无论哪一档都会去掉工作区内的目录。",
     ),
     # 项目级 → forge.json
     ConfigKey(

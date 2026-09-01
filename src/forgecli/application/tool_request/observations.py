@@ -119,6 +119,11 @@ class ToolObservation:
     checkpoint_id: str | None = None
     result: ToolResult | None = None
     risk_summary: tuple[str, ...] = field(default=())
+    # 疑似被围栏拦下时附在结果正文后面的一段说明 (见 `fence_hint`). 空串表示没有疑似.
+    #
+    # 附加而不是替换: 命令自己的输出仍然是模型判断这次算不算成功的依据, 而这一段只是
+    # 补上它读不出来的那一半 —— 那句 `Permission denied` 到底是谁说的.
+    fence_hint: str = ""
 
     @property
     def is_error(self) -> bool:
@@ -154,6 +159,10 @@ class ToolObservation:
             return self.kind.value
         head = _first_line(self.result.text)
         parts = [head] if head else []
+        if self.fence_hint:
+            # 跨回合也要留下这个事实: 下一轮模型只看得到这一行, 而"上次是被围栏拦的"
+            # 正是它决定下一步该做什么的依据.
+            parts.append("(被围栏拦下)")
         if self.result.status is not ToolResultStatus.OK:
             parts.insert(0, self.result.status.value)
         provenance = self.result.provenance
@@ -168,6 +177,8 @@ class ToolObservation:
             in (ObservationKind.TOOL_RESULT, ObservationKind.PLAN_REVIEW_REQUIRED)
             and self.result is not None
         ):
+            if self.fence_hint:
+                return f"{self.result.text}\n\n{self.fence_hint}"
             return self.result.text
         lines = [f"[{self.kind.value}] {self.message}"]
         if self.reason_code:

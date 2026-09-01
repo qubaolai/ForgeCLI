@@ -12,11 +12,11 @@ EffectiveConfig 是配置的*只读视图*：把“默认值 + 用户覆盖”�
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from forgecli.domain.config import config_keys
+from forgecli.domain.execution.environment import EnvironmentInheritance
 from forgecli.domain.model.model_ref import ModelRef
 
 _DEFAULTS: dict[str, str] = {key.name: key.default for key in config_keys.SCHEMA}
@@ -47,13 +47,9 @@ class EffectiveConfig:
     logging_max_value_chars: str
     logging_include_http: bool
     default_model: ModelRef | None  # 未配置时为 None
-    # 额外进受控 PATH 的工具链目录 (ADR-0014 §4.2). 探测出来的候选目录只有那几个系统
-    # 位置, 装在别处的 maven / jdk / node 因此在受控 PATH 上根本不存在 —— 模型跑不了
-    # 构建, 也就永远验证不了自己写的代码能不能起来.
-    #
-    # 它们进 PATH 但**不算可信**: ExecutableResolver 把它们判成 TOOLCHAIN, 里面的
-    # 可执行文件仍然按脚本执行分析.
-    toolchain_dirs: tuple[str, ...]
+    # 从启动 shell 继承多少环境. 默认全继承 —— 等价性是主要需求, 见
+    # `domain/execution/environment` 的模块说明. 收紧只在明确要求跨机器可复现时才有意义.
+    environment_inheritance: EnvironmentInheritance
 
     @classmethod
     def from_overrides(cls, overrides: Mapping[str, str]) -> EffectiveConfig:
@@ -72,8 +68,8 @@ class EffectiveConfig:
             logging_max_value_chars=value(config_keys.LOGGING_MAX_VALUE_CHARS),
             logging_include_http=_as_bool(value(config_keys.LOGGING_INCLUDE_HTTP)),
             default_model=_read_model(overrides),
-            toolchain_dirs=_read_toolchain_dirs(
-                value(config_keys.EXECUTION_TOOLCHAIN_DIRS)
+            environment_inheritance=_read_inheritance(
+                value(config_keys.EXECUTION_ENV_INHERIT)
             ),
         )
 
@@ -87,7 +83,7 @@ class EffectiveConfig:
             config_keys.LOGGING_DIRECTORY: self.logging_directory,
             config_keys.LOGGING_MAX_VALUE_CHARS: self.logging_max_value_chars,
             config_keys.LOGGING_INCLUDE_HTTP: _text(self.logging_include_http),
-            config_keys.EXECUTION_TOOLCHAIN_DIRS: os.pathsep.join(self.toolchain_dirs),
+            config_keys.EXECUTION_ENV_INHERIT: self.environment_inheritance.value,
         }
 
     def display(self, key: str) -> str:
@@ -95,13 +91,16 @@ class EffectiveConfig:
         return self.as_dict().get(key, "(未知)")
 
 
-def _read_toolchain_dirs(raw: str) -> tuple[str, ...]:
-    """按 os.pathsep 拆开, 与 PATH 本身同一种写法.
+def _read_inheritance(raw: str) -> EnvironmentInheritance:
+    """认不出的取值回落到默认档, 不抛异常.
 
-    分隔符取平台的而不是固定一个字符: Windows 路径里的 `C:` 会把冒号分法切坏, 而这份
-    值最终就是要拼进 PATH 的.
+    这是配置读取路径, 抛异常的后果是一个手滑的取值让整个会话起不来; 而回落到默认档
+    的后果只是"我配的没生效", 而 `as_dict` 会把真实取值显示出来.
     """
-    return tuple(entry for entry in raw.split(os.pathsep) if entry.strip())
+    try:
+        return EnvironmentInheritance(raw.strip().casefold())
+    except ValueError:
+        return EnvironmentInheritance.ALL
 
 
 def _read_model(overrides: Mapping[str, str]) -> ModelRef | None:

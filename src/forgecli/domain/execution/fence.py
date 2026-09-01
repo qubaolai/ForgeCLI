@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from forgecli.domain.intents import SessionMode
+from forgecli.domain.intents import ApprovalPolicy, SandboxLevel, SessionMode
 from forgecli.domain.tool.hashing import digest
 
 __all__ = ["FencePolicy", "fence_for"]
@@ -76,22 +76,24 @@ def fence_for(
 
     这个函数顶替了 `domain/security/modes.py` 的能力预算表. 差别在判据: 预算表问的是
     "这次调用请求了哪些 Capability", 而那要靠分析器从命令串里推导; 这里直接表达
-    "这个模式能否自动启动 Shell, 允许触达哪些路径", 与命令内容无关.
+    "这个姿态能否自动启动 Shell, 允许触达哪些路径", 与命令内容无关.
 
     `readonly_roots` 来自不带 `--write` 的 `/add-dir`: 它们读得到但写不进, 所以进
     工作区根却不进可写集合.
     """
+    # 两个轴各管各的: 可写与联网来自隔离档, 自主性来自审批档. 早先它们都从同一个四档
+    # 枚举里读, 于是改任一件事都要动另一件.
     writable: tuple[str, ...] = ()
-    if mode is not SessionMode.PLAN:
+    if mode.sandbox is not SandboxLevel.READ_ONLY:
         writable = tuple(
             root for root in workspace_roots if root not in set(readonly_roots)
         )
     return FencePolicy(
         writable_roots=writable,
         denied_read_paths=tuple(sorted(dict.fromkeys(protected_paths))),
-        network_allowed=mode is SessionMode.FULL_ACCESS,
-        automatic_shell=mode in (SessionMode.AUTO, SessionMode.FULL_ACCESS),
-        unrestricted=mode is SessionMode.FULL_ACCESS,
+        network_allowed=mode.sandbox is SandboxLevel.FULL_ACCESS,
+        automatic_shell=mode.approval is not ApprovalPolicy.ALWAYS,
+        unrestricted=mode.approval is ApprovalPolicy.NEVER,
         # 实例私有临时目录始终可写, 否则连 mktemp 都用不了, 而那会让绝大多数真实命令
         # 失败. 它不算"工作区可写", 所以不进 writable_roots.
         instance_temp_root=instance_temp_root,

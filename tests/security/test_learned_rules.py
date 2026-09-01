@@ -118,15 +118,13 @@ def test_a_denied_request_cannot_be_learned() -> None:
     "reason",
     [
         DecisionReason.SCRIPT_EXECUTION,
-        DecisionReason.CLASSIFIER_UNAVAILABLE,
-        DecisionReason.CLASSIFIER_LOW_CONFIDENCE,
         DecisionReason.PARSE_INCOMPLETE,
     ],
 )
 def test_an_unfinished_analysis_cannot_be_learned(reason: DecisionReason) -> None:
-    """ "分析没做完"与"分类器说别自动跑"都不能沉淀成规则.
+    """ "分析没做完"不能沉淀成规则.
 
-    否则一次退让会变成永久放行: 分类器判高风险的脚本被点一次 always 之后就永久允许,
+    否则一次退让会变成永久放行: 一个正文看不透的脚本被点一次 always 之后就永久允许,
     而规则绑的是命令行不是脚本内容, 脚本随后改成什么都照样命中.
     """
     assert LearnedRuleService().learnable(_decision(reason=reason)) is False
