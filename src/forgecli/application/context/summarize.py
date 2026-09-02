@@ -36,7 +36,6 @@ from forgecli.domain.conversation.turn import MessageRole
 from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.params import ModelParams
 from forgecli.domain.model.request import ModelRequest
-from forgecli.domain.model.selection import CurrentModelSelection
 from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.tool.tool_call import ToolCall
 
@@ -101,7 +100,6 @@ def summarize(
         # 用途标签, 不选模型 (ADR-0011 §3.3): 摘要走当前主模型, 除非用户显式
         # 给这个用途配了覆盖.
         origin=RequestOrigin.COMPACT,
-        model_selection=CurrentModelSelection(),
         messages=(
             ChatMessage(
                 role=MessageRole.USER,

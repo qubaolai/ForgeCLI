@@ -11,7 +11,10 @@ from dataclasses import replace
 from typing import NamedTuple
 
 from forgecli.application.tools.artifact_store import ArtifactStore
-from forgecli.application.tools.resource_governor import ResourceLimits
+from forgecli.application.tools.resource_governor import (
+    ResourceGovernor,
+    ResourceLimits,
+)
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.application.workspace.filesystem_view import PathFacts
 from forgecli.domain.tool.capability import Capability
@@ -23,8 +26,10 @@ from forgecli.domain.tool.spec import ToolSpec
 from forgecli.shared.json_schema import validate_json_schema
 
 __all__ = [
+    "MAX_GLOB_CANDIDATES",
     "EmittedText",
     "emit_text",
+    "int_or",
     "limit_depth",
     "read_capability",
     "resolve_target",
@@ -33,13 +38,24 @@ __all__ = [
 ]
 
 
+# glob 展开的候选上限. 三个工具 (fs_find, search_text, code_definitions) 走同一条
+# 展开路径, 上限必须是同一个 —— 各自留一份副本时, 为性能调低其中一个的人不会知道
+# 另外两个还停在旧值.
+MAX_GLOB_CANDIDATES = 10_000
+
+
+def int_or(raw: object, fallback: int) -> int:
+    """schema 已经限死了取值范围, 这里只是把 `object` 收窄回 int."""
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) else fallback
+
+
 def limit_depth(
     matches: Sequence[str], *, root: str, depth: int | None = None
 ) -> tuple[str, ...]:
     """把展开结果收窄到 root 下 depth 层以内.
 
     原先这个函数还兼管忽略规则 (`filter_globbed`), 而那份规则是在展开**之后**才用上的
-    —— 于是 `.venv` 与 `.git` 会先把 `_MAX_GLOB_CANDIDATES` 的额度吃光, 一次覆盖整个
+    —— 于是 `.venv` 与 `.git` 会先把 `MAX_GLOB_CANDIDATES` 的额度吃光, 一次覆盖整个
     仓库的展开报"结果不完整", 而漏掉的恰好是源码. 忽略规则已经下沉到
     `FileSystemView.expand_glob` 的 `exclude`, 在遍历时剪枝; 这里只剩深度这一件事,
     因为深度是**展开之后**才算得出来的相对层数.
@@ -184,7 +200,7 @@ def emit_text(
     # 全量落盘 (ADR-0032 决策 6): 没超阈值的也要存. 一级降级要把 transcript 里的正文
     # 换成引用, 而那要求内容确实在某处 —— 只存溢出部分的话, 占最多数的那批中小输出
     # 根本没得降. max_inline_bytes 从此只决定回填多少, 不决定存不存.
-    stored, artifact_truncated = _utf8_prefix(text, limits.max_artifact_bytes)
+    stored, artifact_truncated = ResourceGovernor.clamp(text, limits.max_artifact_bytes)
     ref = artifacts.write(invocation_id=invocation_id, name=artifact_name, data=stored)
     if artifact_truncated:
         ref = replace(ref, truncated=True)
@@ -207,13 +223,6 @@ def emit_text(
         total,
         ResultProvenance(artifact_id=ref.artifact_id, byte_size=total),
     )
-
-
-def _utf8_prefix(text: str, byte_limit: int) -> tuple[str, bool]:
-    encoded = text.encode("utf-8")
-    if len(encoded) <= byte_limit:
-        return text, False
-    return encoded[:byte_limit].decode("utf-8", errors="ignore"), True
 
 
 def joined(lines: Sequence[str]) -> str:

@@ -50,12 +50,10 @@ class ThinkingDialect(Enum):
     """provider 的 thinking 协议方言。
 
     EFFORT 将模型声明的 effort 名称原样发送；
-    BUDGET 通过 adapter 的已知映射转换为 token budget；
     NONE 表示该 provider 协议没有可发送的 thinking 字段。
     """
 
     EFFORT = "effort"
-    BUDGET = "budget"
     NONE = "none"
 
 

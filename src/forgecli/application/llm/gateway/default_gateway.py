@@ -878,12 +878,7 @@ class DefaultLlmGateway(LlmGateway):
         self, request: ModelRequest
     ) -> tuple[ModelRef, ModelCatalogEntry]:
         """把选择解析成 (ModelRef, 目录条目)；resolver 为必备协作件（ADR-0012 §10）。"""
-        resolved = self._resolver.resolve(
-            request.model_selection,
-            origin=request.origin,
-            required_capabilities=request.required_capabilities,
-            min_context_window=request.min_context_window,
-        )
+        resolved = self._resolver.resolve(origin=request.origin)
         return resolved.ref, resolved.entry
 
     def _resolve_thinking(
@@ -988,11 +983,7 @@ class DefaultLlmGateway(LlmGateway):
         strict_schema: bool = True,
     ) -> ProviderRequest:
         # 超时合并（§5）：请求级 > provider 默认。
-        timeout = (
-            request.timeout_seconds
-            if request.timeout_seconds is not None
-            else settings.timeout_seconds
-        )
+        timeout = settings.timeout_seconds
         return ProviderRequest(
             model=ref.model,
             messages=request.messages,

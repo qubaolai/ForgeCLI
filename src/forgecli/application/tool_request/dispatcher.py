@@ -38,7 +38,6 @@ class CoordinatorToolDispatcher:
         fence_factory: Callable[[SessionMode], FencePolicy],
         *,
         confined: bool = False,
-        interactive: bool = True,
     ) -> None:
         # 每次取一份新的 ExecutionContext: 文件系统视图是带版本的快照, 跨调用复用
         # 就会让第二次调用基于过时的目录内容展开目标.
@@ -49,7 +48,6 @@ class CoordinatorToolDispatcher:
         self._fence_factory = fence_factory
         # 围栏是不是真的立起来了. 来自启动期的行为自测, 不是"装了就算".
         self._confined = confined
-        self._interactive = interactive
 
     def dispatch(
         self,
@@ -70,7 +68,6 @@ class CoordinatorToolDispatcher:
             execution_profile_hash=context.execution_profile_hash,
             user_intent_summary=user_intent_summary,
             policy_version=POLICY_VERSION,
-            interactive=self._interactive,
             fence=fence,
             confined=self._confined,
         )

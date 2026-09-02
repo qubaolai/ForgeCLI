@@ -5,7 +5,6 @@ from __future__ import annotations
 import threading
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
@@ -22,7 +21,6 @@ from forgecli.application.planning.plan_review import (
     PlanReviewChoice,
     PlanReviewService,
 )
-from forgecli.application.project.project import ProjectContext
 from forgecli.application.project.project_service import ProjectService
 from forgecli.application.prompt.runtime_facts import RuntimeFacts
 from forgecli.application.prompt.system_prompt_builder import SystemPromptBuilder
@@ -42,7 +40,11 @@ from forgecli.domain.session.snapshot import SessionSnapshot
 from forgecli.domain.workspace.project import ProjectConfig
 from forgecli.infrastructure.config import JsonConfigStore, config_dir, config_file
 from forgecli.infrastructure.llm import JsonLlmConfigStore
-from forgecli.infrastructure.project import JsonProjectConfigStore, ProcessLock
+from forgecli.infrastructure.project import (
+    JsonProjectConfigStore,
+    JsonProjectIndexStore,
+    ProcessLock,
+)
 from forgecli.infrastructure.prompt import FsProjectInstructionReader
 from forgecli.infrastructure.session.fs_session_catalog import FsSessionCatalog
 from forgecli.infrastructure.session.json_state_store import JsonStateStore
@@ -55,6 +57,7 @@ from forgecli.interfaces.web.events import WebEventHub
 from forgecli.shared.errors import SessionStateError
 from forgecli.shared.observability.log import get_log
 from forgecli.shared.serialization import to_jsonable
+from forgecli.shared.utils import now_iso
 
 _log = get_log(__name__)
 
@@ -72,7 +75,6 @@ class ProjectRuntime:
 
     def __init__(self, project: ProjectConfig) -> None:
         self.project = project
-        self.context = ProjectContext(project)
         project_home = config_dir() / "projects" / project.project_id
         sessions_dir = project_home / "sessions"
         self.lock = ProcessLock(project_home / "forge.lock")
@@ -133,7 +135,7 @@ class ProjectRuntime:
             approval=self.approvals,
             environment_inheritance=self.config.effective().environment_inheritance,
         )
-        granted_at = datetime.now().astimezone().isoformat()
+        granted_at = now_iso()
         for root in self.project.workspace_roots[1:]:
             tools.grants.grant(root, GrantAccess.READ, granted_at=granted_at)
         return tools
@@ -337,9 +339,7 @@ class ProjectRuntime:
 
     def grant_workspace(self, path: Path, *, write: bool) -> object:
         access = GrantAccess.WRITE if write else GrantAccess.READ
-        grant = self.tools.grants.grant(
-            str(path), access, granted_at=datetime.now().astimezone().isoformat()
-        )
+        grant = self.tools.grants.grant(str(path), access, granted_at=now_iso())
         self.session.record_tool_event(
             EventType.DIR_GRANT_CHANGED,
             {"path": str(path), "access": access.value, "action": "grant"},
@@ -358,7 +358,7 @@ class ProjectRuntime:
     # ---- 模型选择 ----
 
     def current_model(self) -> ModelRef | None:
-        """当前默认模型 (CLI 的 /model)。未配置时为 None。"""
+        """当前默认模型 (PUT /api/v1/models/current)。未配置时为 None。"""
         return self.config.effective().default_model
 
     def set_current_model(self, provider: str, model: str) -> None:
@@ -370,7 +370,7 @@ class ProjectRuntime:
         self.reload_llm()
 
     def model_overrides(self) -> dict[str, str]:
-        """按用途覆盖 (CLI 的 /config 用途模型覆盖)。未设置的用途不出现在结果里。"""
+        """按用途覆盖 (按 origin 覆盖当前模型)。未设置的用途不出现在结果里。"""
         overrides = self.llm.overrides_service.overrides()
         return {origin.value: str(ref) for origin, ref in overrides.items()}
 
@@ -387,7 +387,7 @@ class ProjectRuntime:
     # ---- Thinking 运行时覆盖 ----
 
     def thinking_view(self) -> dict[str, object]:
-        """当前模型的有效 thinking 设置与可选强度 (CLI 的 /thinking)。"""
+        """当前模型的有效 thinking 设置与可选强度 (PUT /api/v1/models/thinking)。"""
         ref = self.current_model()
         if ref is None:
             return {"model": "", "configured": False}
@@ -442,13 +442,13 @@ class ProjectRuntime:
             "session_id": snapshot.session_id,
             "mode": snapshot.mode.value,
             "last_event_id": snapshot.last_event_id or "",
-            "workspace_roots": list(self.context.project.workspace_roots),
+            "workspace_roots": list(self.project.workspace_roots),
             "model": "" if model is None else str(model),
             "busy": self.busy,
         }
 
     def recovery_status(self) -> dict[str, object]:
-        """恢复层状态 (CLI 的 /recovery): 恢复点总数与未收尾事务。"""
+        """恢复层状态 (GET /api/v1/recovery): 恢复点总数与未收尾事务。"""
         recovery = self.tools.recovery
         pending = recovery.crash_recovery_candidates(self.tools.workspace_id)
         return {
@@ -534,8 +534,6 @@ class ProjectRuntimeRegistry:
 
 def build_project_service() -> ProjectService:
     projects = config_dir() / "projects"
-    from forgecli.infrastructure.project import JsonProjectIndexStore
-
     return ProjectService(
         JsonProjectIndexStore(projects / "index.json"),
         JsonProjectConfigStore(projects),

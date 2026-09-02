@@ -30,7 +30,6 @@ OPEN_EXTENSION_POINTS: frozenset[str] = frozenset(
     {
         "Tool",
         "CapabilityAnalyzer",
-        "ModelSelection",
     }
 )
 

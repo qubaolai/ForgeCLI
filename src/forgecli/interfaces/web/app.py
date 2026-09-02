@@ -376,7 +376,7 @@ def _runtime(request: Request) -> ProjectRuntime:
 
 
 def _workspace_access(runtime: ProjectRuntime, root: str) -> str:
-    if root == runtime.context.project.primary_workspace_root:
+    if root == runtime.project.primary_workspace_root:
         return "write"
     grant = runtime.tools.grants.access_for(root)
     return "read" if grant is None else grant.value
@@ -459,13 +459,22 @@ def create_app(
     async def diagnostics(request: Request) -> dict[str, object]:
         """开发者诊断读数 (ADR-0035).
 
+        **刻意没有前端调用方**: 这是给 curl 用的排查出口, 不是控制面的一块界面.
+        它是 `METRICS` 与网关观测聚合唯一的读取口 —— 删掉它, 那两套采集就再也没有
+        地方能看.
+
         网关那部分要激活项目才有 —— LLM 运行时是按项目装配的, 没激活项目时进程里
         根本没有网关.
         """
         runtime = request.app.state.registry.active
-        return diagnostics_report(
+        report = diagnostics_report(
             None if runtime is None else runtime.llm.gateway_metrics
         )
+        if runtime is not None:
+            # 执行画像原先挂在 GET /api/v1/runtime 上, 而那条路由没有任何调用方.
+            # 画像本身是排查"围栏到底立没立起来"的第一手材料, 所以并到这里.
+            report["execution_profile"] = to_jsonable(runtime.tools.profile)
+        return report
 
     @app.get("/api/v1/bootstrap")
     async def bootstrap(request: Request) -> dict[str, object]:
@@ -703,6 +712,7 @@ def create_app(
     @app.get("/api/v1/settings")
     async def settings(request: Request) -> dict[str, object]:
         runtime = _runtime(request)
+        values = runtime.config.display_all()
         return {
             "items": [
                 {
@@ -714,7 +724,7 @@ def create_app(
                     "help": item.help,
                     "level": item.level.name.lower(),
                     "kind": item.kind.name.lower(),
-                    "value": runtime.config.display(item.name),
+                    "value": values[item.name],
                     "choices": list(item.choices),
                 }
                 for item in config_keys.SCHEMA
@@ -740,14 +750,13 @@ def create_app(
     async def models(request: Request) -> dict[str, object]:
         runtime = _runtime(request)
         cache, circuit_breaker, retry = runtime.llm_config.runtime_settings_snapshot()
+        configured, effective = runtime.llm_config.provider_views()
         current = runtime.current_model()
         return {
-            "items": [to_jsonable(item) for item in runtime.llm_config.providers()],
+            "items": [to_jsonable(item) for item in configured],
             # 每家内置供应商各一条 (没配过的带注册表默认值): 设置页要能在添加第一个模型
             # 之前就把端点填好.
-            "provider_settings": [
-                to_jsonable(item) for item in runtime.llm_config.effective_providers()
-            ],
+            "provider_settings": [to_jsonable(item) for item in effective],
             # 供应商表单该有哪些行, 每行叫什么, 是什么类型 —— 全从 ProviderConfig
             # 的字段声明派生 (ADR-0040 决策 4.2). 页面照着渲染, 不自己列一份.
             "provider_fields": [_field_view(field) for field in PROVIDER_FIELDS],
@@ -795,7 +804,7 @@ def create_app(
     async def set_current_model(
         body: CurrentModelRequest, request: Request
     ) -> dict[str, str]:
-        """选择运行时默认模型 (CLI 的 /model)。两个配置键一起改。"""
+        """选择运行时默认模型 (PUT /api/v1/models/current)。两个配置键一起改。"""
         runtime = _runtime(request)
         if runtime.busy:
             raise HTTPException(status.HTTP_409_CONFLICT, "turn 运行期间不能切换模型")
@@ -812,7 +821,7 @@ def create_app(
     async def set_model_override(
         origin: str, body: ModelOverrideRequest, request: Request
     ) -> dict[str, object]:
-        """按用途覆盖当前模型 (CLI 的 /config 用途模型覆盖)。"""
+        """按用途覆盖当前模型 (按 origin 覆盖当前模型)。"""
         runtime = _runtime(request)
         if runtime.busy:
             raise HTTPException(
@@ -843,7 +852,7 @@ def create_app(
     async def update_thinking(
         body: ThinkingRequest, request: Request
     ) -> dict[str, object]:
-        """当前模型的 thinking 开关与强度 (CLI 的 /thinking)。只改本进程，不落盘。"""
+        """当前模型的 thinking 开关与强度。只改本进程，不落盘。"""
         runtime = _runtime(request)
         if runtime.busy:
             raise HTTPException(
@@ -1002,32 +1011,24 @@ def create_app(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
         return {"updated": True}
 
-    @app.get("/api/v1/runtime")
-    async def runtime_profile(request: Request) -> dict[str, object]:
-        runtime = _runtime(request)
-        return {
-            "profile": to_jsonable(runtime.tools.profile),
-            "gateway_metrics": to_jsonable(runtime.llm.gateway_metrics.snapshot()),
-        }
-
     @app.get("/api/v1/status")
     async def status_view(request: Request) -> dict[str, object]:
-        """会话, 模式, 当前模型与可操作目录 (CLI 的 /status)。"""
+        """会话, 模式, 当前模型与可操作目录 (GET /api/v1/status)。"""
         return _runtime(request).status()
 
     @app.get("/api/v1/recovery")
     async def recovery_status(request: Request) -> dict[str, object]:
-        """恢复层状态与未收尾事务 (CLI 的 /recovery)。"""
+        """恢复层状态与未收尾事务 (GET /api/v1/recovery)。"""
         return _runtime(request).recovery_status()
 
     @app.get("/api/v1/plans")
     async def plans(request: Request) -> object:
-        """计划目录与活动指针 (CLI 的 /plan-doc list)。"""
+        """计划目录与活动指针 (GET /api/v1/plans)。"""
         return to_jsonable(_runtime(request).plan_index())
 
     @app.post("/api/v1/plans/{plan_id}/activate")
     async def activate_plan(plan_id: str, request: Request) -> dict[str, bool]:
-        """切换活动计划 (CLI 的 /plan-doc use <id>)。"""
+        """切换活动计划 (POST /api/v1/plans/active)。"""
         if not _runtime(request).activate_plan(plan_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "计划不存在")
         return {"activated": True}
@@ -1058,13 +1059,13 @@ def create_app(
     async def workspace_roots(request: Request) -> dict[str, object]:
         runtime = _runtime(request)
         return {
-            "primary": runtime.context.project.primary_workspace_root,
+            "primary": runtime.project.primary_workspace_root,
             "items": [
                 {
                     "path": root,
                     "access": _workspace_access(runtime, root),
                 }
-                for root in runtime.context.project.workspace_roots
+                for root in runtime.project.workspace_roots
             ],
         }
 
@@ -1083,12 +1084,11 @@ def create_app(
             )
         projects_service = request.app.state.registry.projects
         path = projects_service.normalize_workspace_dir(
-            body.path, Path(runtime.context.project.primary_workspace_root)
+            body.path, Path(runtime.project.primary_workspace_root)
         )
-        if str(path) != runtime.context.project.primary_workspace_root:
+        if str(path) != runtime.project.primary_workspace_root:
             runtime.grant_workspace(path, write=body.access == "write")
-        updated = projects_service.add_workspace_dir(runtime.context.project, path)
-        runtime.context.project = updated
+        updated = projects_service.add_workspace_dir(runtime.project, path)
         runtime.project = updated
         return _project_payload(updated)
 
@@ -1101,13 +1101,10 @@ def create_app(
             )
         projects_service = request.app.state.registry.projects
         normalized = projects_service.normalize_workspace_dir(
-            path, Path(runtime.context.project.primary_workspace_root)
+            path, Path(runtime.project.primary_workspace_root)
         )
-        updated = projects_service.remove_workspace_dir(
-            runtime.context.project, normalized
-        )
+        updated = projects_service.remove_workspace_dir(runtime.project, normalized)
         runtime.revoke_workspace(normalized)
-        runtime.context.project = updated
         runtime.project = updated
         return _project_payload(updated)
 

@@ -259,14 +259,6 @@ class CommandPlan:
         return self._hash
 
     @property
-    def raw_hash(self) -> str:
-        return digest_text(self.raw_command)
-
-    @property
-    def executables(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(unit.executable for unit in self.units))
-
-    @property
     def scripts(self) -> tuple[ScriptPayload, ...]:
         return tuple(unit.script for unit in self.units if unit.script is not None)
 

@@ -41,15 +41,12 @@ __all__ = [
     "ReasoningStatus",
     "ReasoningStatusPayload",
     "RunEventPayload",
-    "RunPhase",
-    "StepStartedPayload",
     "TextDeltaPayload",
     "ToolCompletedPayload",
     "ToolPreparedPayload",
     "ToolQueuedPayload",
     "ToolStartedPayload",
     "TurnFinishedPayload",
-    "TurnStartedPayload",
 ]
 
 
@@ -57,8 +54,6 @@ class AgentRunEventKind(Enum):
     """运行事件类型 (§4). 值即序列化字符串, 进测试断言与可选 trace, 不可随意改."""
 
     # -- turn 与步骤 (§4.1) --
-    TURN_STARTED = "turn_started"
-    STEP_STARTED = "step_started"
     DECISION_SUMMARY = "decision_summary"
     TURN_COMPLETED = "turn_completed"
     TURN_CANCELLED = "turn_cancelled"
@@ -90,14 +85,6 @@ class AgentRunEventKind(Enum):
     TOOL_CANCELLED = "tool_cancelled"
 
 
-class RunPhase(Enum):
-    """当前这一步在做什么, 决定终端活动区显示哪种状态."""
-
-    THINKING = "thinking"
-    TOOL = "tool"
-    ANSWER = "answer"
-
-
 class ReasoningStatus(Enum):
     """思考状态.
 
@@ -112,21 +99,6 @@ class ReasoningStatus(Enum):
 @dataclass(frozen=True)
 class RunEventPayload:
     """事件载荷的密封基类. 子类都是冻结值对象, 不允许自由 dict."""
-
-
-# ---- turn 与步骤 ----
-
-
-@dataclass(frozen=True)
-class TurnStartedPayload(RunEventPayload):
-    mode: str
-    tool_count: int
-
-
-@dataclass(frozen=True)
-class StepStartedPayload(RunEventPayload):
-    step_index: int
-    phase: RunPhase
 
 
 @dataclass(frozen=True)
@@ -198,15 +170,6 @@ class ModelUsagePayload(RunEventPayload):
     total_tokens: int = 0
     # 供应商没回 usage 时用的是本地估算 (§9). 估算值当成事实展示会让用户按它去核账单.
     estimated: bool = False
-
-    @property
-    def total(self) -> int:
-        """本次调用的 token 总数.
-
-        供应商给了就用供应商的: 各家对"总数"的口径不一样 (reasoning token 有的并进
-        output, 有的单列), 自己把几项加起来会和账单对不上. 没给才退回 input + output.
-        """
-        return self.total_tokens or (self.input_tokens + self.output_tokens)
 
     @classmethod
     def from_draft(cls, draft: UsageRecordDraft) -> ModelUsagePayload:

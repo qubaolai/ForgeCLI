@@ -10,7 +10,6 @@
 - `ProtectedPathPolicy` 优先: 凭证, 系统目录和 Forge 自身数据目录不能通过授权打开.
 - 只能由用户发起. LLM 可以建议用户执行, 但不能自己调用来扩大访问范围.
 
-策略变化会递增 `policy_version`, 使旧授权与旧审批失效.
 """
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ from dataclasses import dataclass, replace
 from enum import Enum
 
 from forgecli.domain.security.protected_paths import ProtectedPathPolicy
-from forgecli.domain.tool.hashing import digest
 from forgecli.domain.workspace.boundary import is_within
 
 __all__ = ["DirectoryGrant", "GrantAccess", "GrantError", "WorkspaceGrants"]
@@ -53,29 +51,13 @@ class WorkspaceGrants:
         protected_paths: ProtectedPathPolicy,
         *,
         grants: tuple[DirectoryGrant, ...] = (),
-        version: int = 1,
     ) -> None:
         self._protected = protected_paths
         self._grants: list[DirectoryGrant] = list(grants)
-        self._version = version
-
-    @property
-    def policy_version(self) -> int:
-        """每次授权变更递增. 进执行画像, 变了就让旧授权失效."""
-        return self._version
 
     @property
     def grants(self) -> tuple[DirectoryGrant, ...]:
         return tuple(self._grants)
-
-    @property
-    def grants_hash(self) -> str:
-        return digest(
-            [
-                (grant.path, grant.access.value)
-                for grant in sorted(self._grants, key=lambda item: item.path)
-            ]
-        )
 
     def grant(
         self, realpath: str, access: GrantAccess, *, granted_at: str
@@ -95,7 +77,6 @@ class WorkspaceGrants:
             self._grants.remove(existing)
         grant = DirectoryGrant(path=realpath, access=access, granted_at=granted_at)
         self._grants.append(grant)
-        self._version += 1
         return grant
 
     def revoke(self, realpath: str) -> bool:
@@ -103,7 +84,6 @@ class WorkspaceGrants:
         if existing is None:
             return False
         self._grants.remove(existing)
-        self._version += 1
         return True
 
     def access_for(self, realpath: str) -> GrantAccess | None:
@@ -140,5 +120,4 @@ class WorkspaceGrants:
         return WorkspaceGrants(
             self._protected,
             grants=tuple(replace(grant) for grant in self._grants),
-            version=self._version,
         )

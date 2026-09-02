@@ -69,14 +69,11 @@ from forgecli.domain.agent.run_events import (
     ReasoningStatus,
     ReasoningStatusPayload,
     RunEventPayload,
-    RunPhase,
-    StepStartedPayload,
     TextDeltaPayload,
     ToolQueuedPayload,
     TurnFinishedPayload,
-    TurnStartedPayload,
 )
-from forgecli.domain.agent.state import LoopBudgets, LoopInput
+from forgecli.domain.agent.state import LoopInput
 from forgecli.domain.agent.stop import LoopStopReason, StopClassification
 from forgecli.domain.context.budget import ContextBudget
 from forgecli.domain.context.compaction import CompactionDraft
@@ -94,7 +91,6 @@ from forgecli.domain.model.response import (
     ModelResponse,
     ModelUsage,
 )
-from forgecli.domain.model.selection import CurrentModelSelection
 from forgecli.domain.model.streaming import ModelStreamChunk
 from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.prompt.blocks import PromptSnapshot
@@ -106,7 +102,7 @@ from forgecli.shared.observability.log import get_log
 
 _log = get_log(__name__)
 
-# 单轮内的兜底上限. LoopBudgets 没给预算时用它, 防止模型与工具互相喂招停不下来.
+# 单轮内的硬上限, 防止模型与工具互相喂招停不下来.
 _DEFAULT_MAX_MODEL_CALLS = 9999
 _DEFAULT_MAX_TOOL_CALLS = 9999
 
@@ -157,15 +153,6 @@ _MAX_MALFORMED_RESPONSES = 2
 # 只提醒, 不收工具: 空结果不是错误, 模型该做的是换个思路或者直接报告"没找到", 而这两件
 # 事都还需要工具. 收掉目录等于因为没找到就罚它闭嘴.
 _MAX_BARREN_OBSERVATIONS = 3
-
-# 停止原因分类 -> turn 终态事件. 可恢复暂停 (等审批 / 等输入) 也算"这一轮结束了",
-# 终端要收掉活动区; 它与失败的区别由 TurnFinishedPayload.status 表达.
-_TURN_END_KINDS: dict[StopClassification, AgentRunEventKind] = {
-    StopClassification.NORMAL: AgentRunEventKind.TURN_COMPLETED,
-    StopClassification.RESUMABLE_PAUSE: AgentRunEventKind.TURN_COMPLETED,
-    StopClassification.POLICY_DEPENDENT: AgentRunEventKind.TURN_COMPLETED,
-    StopClassification.BLOCKING: AgentRunEventKind.TURN_FAILED,
-}
 
 
 def _new_request_id() -> str:
@@ -309,7 +296,6 @@ class BuiltinAgentLoop:
         self._prompt: PromptSnapshot | None = None
         self._session_id = ""
         self._tools: tuple[ToolSchema, ...] = ()
-        self._budgets = LoopBudgets()
         # 缺省为 None: 没给预算就不压缩, 与接入之前的行为一致. 不猜一个窗口大小.
         self._context = context
         self._context_budget: ContextBudget | None = None
@@ -346,7 +332,6 @@ class BuiltinAgentLoop:
         # 换了之后"模型为什么突然改了行为"就再也对不上任何一条事件.
         self._prompt = loop_input.context_package.prompt
         self._context_budget = loop_input.context_package.budget
-        self._budgets = loop_input.budgets
         self._tools = _schemas_of(loop_input.tool_catalog)
         self._turn_started_at = self._timer()
         # 本轮的标识就位, 上一轮的清零. `update` 没有还原点, 所以由每一轮自己把
@@ -366,8 +351,8 @@ class BuiltinAgentLoop:
             prompt_fingerprint=(
                 "" if self._prompt is None else self._prompt.fingerprint
             ),
-            max_model_calls=self._budgets.max_model_calls_per_turn,
-            max_tool_calls=self._budgets.max_tool_calls_per_turn,
+            max_model_calls=_DEFAULT_MAX_MODEL_CALLS,
+            max_tool_calls=_DEFAULT_MAX_TOOL_CALLS,
             context_window=(
                 None
                 if self._context_budget is None
@@ -376,10 +361,6 @@ class BuiltinAgentLoop:
             context_allowance=(
                 None if self._context_budget is None else self._context_budget.allowance
             ),
-        )
-        self._publish(
-            AgentRunEventKind.TURN_STARTED,
-            TurnStartedPayload(mode=loop_input.mode.value, tool_count=len(self._tools)),
         )
         return self._advance()
 
@@ -394,7 +375,7 @@ class BuiltinAgentLoop:
             return self._stop(LoopStopReason.FINAL_ANSWER, None)
         return self._observe_tool(observation)
 
-    # ---- 驱动方读取 (不在冻结 ABC 上, 经 getattr 鸭子类型消费) ----
+    # ---- 驱动方读取 ----
 
     @property
     def usage_drafts(self) -> tuple[UsageRecordDraft, ...]:
@@ -427,10 +408,6 @@ class BuiltinAgentLoop:
         # 顺带把 tool 清掉: 这一步是在想, 不在跑工具. 不清的话上一次调用的工具名会
         # 一直挂在后面每一行上, 读日志的人会以为那几行也属于它.
         update_run_context(step=self._step_index, tool="")
-        self._publish(
-            AgentRunEventKind.STEP_STARTED,
-            StepStartedPayload(step_index=self._step_index, phase=RunPhase.THINKING),
-        )
         request = self._build_request()
         update_run_context(request_id=request.request_id)
         _log.info(
@@ -540,11 +517,6 @@ class BuiltinAgentLoop:
             return self._dispatch_next(reason="")
         self._dispatched = None
         self._step_index += 1
-        self._publish(
-            AgentRunEventKind.STEP_STARTED,
-            StepStartedPayload(step_index=self._step_index, phase=RunPhase.ANSWER),
-            request_id=request.request_id,
-        )
         return self._decision("模型已产出最终回答", AnswerAction(text=outcome.text))
 
     def _dispatch_next(self, *, reason: str) -> LoopStepResult:
@@ -570,10 +542,6 @@ class BuiltinAgentLoop:
             arguments=call.arguments,
             queued=len(self._pending_calls),
             tool_call_index=self._tool_calls,
-        )
-        self._publish(
-            AgentRunEventKind.STEP_STARTED,
-            StepStartedPayload(step_index=self._step_index, phase=RunPhase.TOOL),
         )
         # 只报"模型请求了这个工具". 裁决与执行的事实由 ToolRequestCoordinator 发布 ——
         # 循环还没看到它们, 在这里编就是猜.
@@ -889,7 +857,7 @@ class BuiltinAgentLoop:
     # ---- 预算 ----
 
     def _check_model_budget(self) -> LoopStop | None:
-        limit = self._budgets.max_model_calls_per_turn or _DEFAULT_MAX_MODEL_CALLS
+        limit = _DEFAULT_MAX_MODEL_CALLS
         if self._model_calls >= limit:
             _log.warning("loop.model_budget_exhausted", limit=limit)
             return self._stop(
@@ -899,7 +867,7 @@ class BuiltinAgentLoop:
         return None
 
     def _check_tool_budget(self) -> LoopStop | None:
-        limit = self._budgets.max_tool_calls_per_turn or _DEFAULT_MAX_TOOL_CALLS
+        limit = _DEFAULT_MAX_TOOL_CALLS
         if self._tool_calls >= limit:
             _log.warning("loop.tool_budget_exhausted", limit=limit)
             return self._stop(
@@ -1008,7 +976,6 @@ class BuiltinAgentLoop:
                 # 带工具目录的调用属于 act 阶段; 纯对话仍记 chat (ADR-0011 §3.3).
                 RequestOrigin.ACT if self._tools else RequestOrigin.CHAT
             ),
-            model_selection=CurrentModelSelection(),
             messages=self._messages,
             params=ModelParams(),
             system_prompt=self._prompt.text if self._prompt is not None else None,
@@ -1081,14 +1048,14 @@ class BuiltinAgentLoop:
                     render_notice("stop.cancelled"),
                     retryable=True,
                 )
-                return LoopStop.of(
+                return LoopStop(
                     LoopStopReason.USER_CANCELLED,
                     message=render_notice("stop.cancelled"),
                 )
             self._fail_model_call(
                 request, "stream_interrupted", render_notice("stop.stream_interrupted")
             )
-            return LoopStop.of(
+            return LoopStop(
                 LoopStopReason.MODEL_ERROR_BLOCKING,
                 message=render_notice("stop.stream_interrupted"),
             )
@@ -1150,7 +1117,7 @@ class BuiltinAgentLoop:
         )
         self._finished = True
         self._publish_turn_finished(reason, detail=message or "")
-        return LoopStop.of(reason, message=message)
+        return LoopStop(reason, message=message)
 
     # ---- 运行事件 ----
 
@@ -1169,7 +1136,7 @@ class BuiltinAgentLoop:
                 DecisionSummaryPayload(reason_summary=reason_summary),
                 step_index=self._step_index,
             )
-        return LoopDecision(reason_summary=reason_summary, next_action=action)  # type: ignore[arg-type]
+        return LoopDecision(next_action=action)  # type: ignore[arg-type]
 
     def _finish_model_call(
         self,
@@ -1248,7 +1215,13 @@ class BuiltinAgentLoop:
     def _publish_turn_finished(
         self, reason: LoopStopReason, *, detail: str = ""
     ) -> None:
-        kind = _TURN_END_KINDS.get(reason.classification, AgentRunEventKind.TURN_FAILED)
+        # 只有 BLOCKING 算失败. 可恢复暂停 (等审批 / 等输入) 也是"这一轮结束了",
+        # 页面要收掉活动区; 它与失败的区别由 TurnFinishedPayload.status 表达.
+        kind = (
+            AgentRunEventKind.TURN_FAILED
+            if reason.classification is StopClassification.BLOCKING
+            else AgentRunEventKind.TURN_COMPLETED
+        )
         if reason is LoopStopReason.USER_CANCELLED:
             # USER_CANCELLED 归类是 BLOCKING, 但对用户来说它是"我按了 Ctrl-C", 不是故障.
             kind = AgentRunEventKind.TURN_CANCELLED

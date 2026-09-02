@@ -35,13 +35,13 @@ import contextlib
 import json
 import os
 import socket
-from datetime import datetime
 from pathlib import Path
 from types import TracebackType
 
 from filelock import FileLock, Timeout
 
 from forgecli.shared.errors import ForgeError
+from forgecli.shared.utils import now_iso
 
 
 class ProjectLockedError(ForgeError):
@@ -106,7 +106,7 @@ class ProcessLock:
         payload = json.dumps(
             {
                 "pid": os.getpid(),
-                "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "started_at": now_iso(),
                 "host": socket.gethostname(),
             }
         )

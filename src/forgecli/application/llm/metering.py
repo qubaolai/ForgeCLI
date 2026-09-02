@@ -7,17 +7,13 @@ CostEstimator 持有目录算钱，UsageMeter 持有估算器与时钟产出草�
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
 
 from forgecli.application.llm.catalog import ModelCatalogService
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.request import ModelRequest
 from forgecli.domain.model.response import ModelResponse, ModelUsage
 from forgecli.domain.model.usage import UnitPrices, UsageRecordDraft
-
-
-def _now_iso() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+from forgecli.shared.utils import now_iso
 
 
 class CostEstimator:
@@ -75,7 +71,7 @@ class UsageMeter:
         self,
         cost_estimator: CostEstimator,
         *,
-        clock: Callable[[], str] = _now_iso,
+        clock: Callable[[], str] = now_iso,
     ) -> None:
         self._cost = cost_estimator
         self._clock = clock

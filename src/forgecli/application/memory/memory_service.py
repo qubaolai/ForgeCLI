@@ -13,7 +13,7 @@ ExecutionContext —— 两者都不带会话身份. 把它们塞进 `normalized
 那会进 `plan_hash`, 于是"两次内容完全相同的调用得到同一个 plan_hash"这条不变量就破了
 (见 `ToolPlan._hash_source` 的注释).
 
-所以由 AgentTurnService 在每轮开始时调 `begin_turn`. 形状与 ProjectContext 一样: 一个
+所以由 AgentTurnService 在每轮开始时调 `begin_turn`. 形状是一个
 进程内可变的持有者, 由唯一的驱动方推进.
 """
 
@@ -61,10 +61,6 @@ class MemoryWrite:
     rejection: MemoryRejection | None = None
     # 覆盖掉的旧值 (决策 6). 空表示这是一条新记忆.
     replaced: str = ""
-
-    @property
-    def accepted(self) -> bool:
-        return self.rejection is None
 
 
 class MemoryService:

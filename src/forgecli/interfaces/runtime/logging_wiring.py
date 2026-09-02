@@ -4,8 +4,8 @@
 Forge home, 而那是 infrastructure 的知识. `shared/observability` 只接受解析好的值,
 于是它对任何层都是安全的依赖.
 
-两条启动路径 (`forge` 起 Web, `forge cli` 进终端) 各调一次 `start_observability()`,
-位置都在最前面 —— 早于信任解析与进程锁, 这样"起不来"本身也留得下记录.
+唯一的启动路径 (裸 `forge` 起 Web, ADR-0025) 调一次 `start_observability()`,
+位置在最前面 —— 早于信任解析与进程锁, 这样"起不来"本身也留得下记录.
 
 ## 为什么直接读 config.json 而不经 ConfigService
 

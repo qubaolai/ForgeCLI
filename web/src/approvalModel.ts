@@ -112,7 +112,8 @@ export function headlineOf(approval: Approval): string {
   return "要跑一条只读命令";
 }
 
-/** 只读且目标封闭时不列目标清单 —— 与后端 consequential 属性同一条规则。 */
+/** 只读且目标封闭时不列目标清单: 命令与脚本用户已经逐字看过, 再列一遍读了哪些
+ *  文件只是噪音; 沾上写/删/移动/网络, 或目标集合没封闭, 清单才有信息量。 */
 export function isConsequential(approval: Approval) {
   const view = approval.view;
   if (view.unresolved_reason) return true;

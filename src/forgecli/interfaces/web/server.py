@@ -182,7 +182,7 @@ def run(*, port: int = DEFAULT_PORT, open_browser: bool = False) -> int:
         ):
             server.run(sockets=[sock])
         _log.info("forge.stop", entry="web", port=selected_port)
-        return 0
+        return ExitCode.OK
     finally:
         sock.close()
         registry.close()

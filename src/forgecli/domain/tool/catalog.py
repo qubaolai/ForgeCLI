@@ -53,10 +53,6 @@ class ToolCatalog:
             ),
         )
 
-    @property
-    def names(self) -> tuple[str, ...]:
-        return tuple(spec.name for spec in self.entries)
-
     def find(self, name: str) -> ToolSpec | None:
         return next((spec for spec in self.entries if spec.name == name), None)
 

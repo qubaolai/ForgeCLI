@@ -22,7 +22,6 @@ from dataclasses import dataclass, replace
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.decision import AuthorizationDecision
 from forgecli.domain.security.vocabulary import ApprovalScope, Decision, DecisionReason
-from forgecli.domain.tool.hashing import digest
 from forgecli.domain.tool.plan import ToolPlan
 
 __all__ = ["LearnedAllowRule", "RuleMatch", "RuleSet", "can_learn"]
@@ -72,11 +71,6 @@ class LearnedAllowRule:
             if not getattr(self.match, name):
                 raise ValueError(f"学习规则必须绑定 {name}, 不能泛化")
 
-    @property
-    def rule_hash(self) -> str:
-        """规则身份. 只由 scope 与匹配事实决定 —— label 变了不代表规则变了."""
-        return digest({"scope": self.scope, "match": self.match})
-
     def active_at(self, now_epoch: float) -> bool:
         if self.revoked:
             return False
@@ -89,21 +83,6 @@ class LearnedAllowRule:
         ):
             return False
         return candidate == self.match
-
-    def invalidated_by(
-        self, *, policy_version: str, execution_profile_hash: str
-    ) -> tuple[str, ...]:
-        """当前环境下这条规则已经不可能命中的原因. 空元组表示仍然有效.
-
-        规则在环境变化时集体失效是设计意图 (ADR-0013 §5.1), 但用户感受到的是"我明明
-        批准过". 把原因摆出来, 让"为什么又问我"这件事可解释.
-        """
-        reasons: list[str] = []
-        if self.match.policy_version != policy_version:
-            reasons.append("策略版本已变")
-        if self.match.execution_profile_hash != execution_profile_hash:
-            reasons.append("执行环境已变 (PATH / 环境净化 / 受保护路径)")
-        return tuple(reasons)
 
     def revoke(self) -> LearnedAllowRule:
         return replace(self, revoked=True)

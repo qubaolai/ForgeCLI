@@ -12,6 +12,7 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
+from forgecli.infrastructure.json_io import write_atomic
 from forgecli.shared.errors import SessionStateError
 
 
@@ -30,9 +31,4 @@ def read_json(path: Path) -> dict[str, object] | None:
 
 def write_json_atomic(path: Path, data: Mapping[str, object]) -> None:
     """原子写出 JSON 对象（先临时文件再替换）。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    tmp.replace(path)
+    write_atomic(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")

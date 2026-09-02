@@ -11,7 +11,7 @@ LoopInput 多出一条"mode 与 mode_policy.mode 必须一致"的自洽校验。
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from forgecli.domain.context.budget import ContextBudget
 from forgecli.domain.conversation.message import ChatMessage
@@ -46,29 +46,6 @@ class ContextPackage:
 
 
 @dataclass(frozen=True)
-class LoopBudgets:
-    """一轮内的硬停止预算. None 表示该维度不设限, 由循环里的兜底常量兜住.
-
-    **只留真正被执行的两项.** 早先还有 max_steps_per_turn / max_wall_clock_seconds /
-    max_input_tokens / max_output_tokens / max_cost 五项, 它们在 __post_init__ 里被
-    校验, 然后**没有任何地方读它们** —— 而 docstring 写着"硬停止预算", 读代码的人会
-    以为超时能停住一个失控的循环. 一个不生效的安全阀比没有安全阀更危险 (ADR-0028
-    规则 C).
-
-    需要按时间或成本停的时候, 按真实需要设计字段形状再接线, 比现在摆着强.
-    """
-
-    max_tool_calls_per_turn: int | None = None
-    max_model_calls_per_turn: int | None = None
-
-    def __post_init__(self) -> None:
-        for name in ("max_tool_calls_per_turn", "max_model_calls_per_turn"):
-            value = getattr(self, name)
-            if value is not None and value < 0:
-                raise ValueError(f"{name} 不能为负")
-
-
-@dataclass(frozen=True)
 class LoopInput:
     """AgentLoop 的入口输入（§4.1）。
 
@@ -81,7 +58,6 @@ class LoopInput:
     # 必填: 一轮没有上下文包等于没有提示词, 而那必须在类型层面就不可表达.
     context_package: ContextPackage
     tool_catalog: ToolCatalog | None = None
-    budgets: LoopBudgets = field(default_factory=LoopBudgets)
 
     def __post_init__(self) -> None:
         if not self.turn_id.strip():

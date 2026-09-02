@@ -77,10 +77,6 @@ class ExecutionProfile:
         _ = self.shell_launch.dialect
 
     @property
-    def trusted_path_hash(self) -> str:
-        return digest(self.trusted_path)
-
-    @property
     def execution_profile_hash(self) -> str:
         """授权信封绑定它. 任一字段变化 -> 旧授权失效, 请求重新裁决."""
         return digest(self)

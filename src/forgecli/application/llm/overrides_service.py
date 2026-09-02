@@ -53,9 +53,6 @@ class ModelOverridesService:
             overrides[origin] = ModelRef(provider=provider, model=model)
         return overrides
 
-    def override_for(self, origin: RequestOrigin) -> ModelRef | None:
-        return self.overrides().get(origin)
-
     def set_override(self, origin: RequestOrigin, ref: ModelRef) -> None:
         """设置覆盖；provider 必须在封闭注册表内，模型必须已在 llm 配置声明。"""
         provider_registry.require_known_provider(ref.provider)

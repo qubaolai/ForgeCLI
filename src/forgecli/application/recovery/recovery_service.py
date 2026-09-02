@@ -69,10 +69,6 @@ class RecoveryPreview:
             item for item in self.items if item.conflict is ConflictStatus.CONFLICTED
         )
 
-    @property
-    def clean(self) -> bool:
-        return not self.conflicted
-
 
 @dataclass(frozen=True)
 class RestoreOutcome:

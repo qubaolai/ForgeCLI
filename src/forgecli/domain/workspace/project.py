@@ -3,7 +3,6 @@
 对应 ADR-0008 的首启信任模型: 一个项目 = 一个受信任的主工作区根 + 若干经 /add-dir
 追加的目录。这些概念与配置存成 TOML 还是别的格式无关, 故属领域。
 
-ProjectContext 不在这里: 它是进程内可变的"当前项目"持有者, 属编排设施。
 """
 
 from __future__ import annotations

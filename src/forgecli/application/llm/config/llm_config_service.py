@@ -151,6 +151,54 @@ def _merge_provider_sections(
     return merged
 
 
+def _section_of(document: Mapping[str, object], name: str) -> Mapping[str, object]:
+    section = document.get(name, {})
+    if not isinstance(section, Mapping):
+        raise ConfigValidationError(f"[llm.{name}] 必须是一个配置段")
+    return section
+
+
+def _cache_settings(section: Mapping[str, object]) -> CacheSettings:
+    defaults = CacheSettings()
+    ttl_raw = section.get("ttl_seconds", defaults.ttl_seconds)
+    ttl = None if ttl_raw is None else _as_positive_number("ttl_seconds", ttl_raw)
+    return CacheSettings(
+        enabled=_as_bool("enabled", section.get("enabled", defaults.enabled)),
+        ttl_seconds=ttl,
+        max_entries=_as_positive_int_value(
+            "max_entries", section.get("max_entries", defaults.max_entries)
+        ),
+        origins=_as_origins(section.get("origins"), defaults.origins),
+    )
+
+
+def _circuit_breaker_settings(
+    section: Mapping[str, object],
+) -> CircuitBreakerSettings:
+    defaults = CircuitBreakerSettings()
+    return CircuitBreakerSettings(
+        enabled=_as_bool("enabled", section.get("enabled", defaults.enabled)),
+        failure_threshold=_as_positive_int_value(
+            "failure_threshold",
+            section.get("failure_threshold", defaults.failure_threshold),
+        ),
+        cooldown_seconds=_as_positive_number(
+            "cooldown_seconds",
+            section.get("cooldown_seconds", defaults.cooldown_seconds),
+        ),
+    )
+
+
+def _retry_settings(section: Mapping[str, object]) -> RetrySettings:
+    defaults = RetrySettings()
+    return RetrySettings(
+        wait_threshold_seconds=_as_nonneg_number(
+            "wait_threshold_seconds",
+            section.get("wait_threshold_seconds", defaults.wait_threshold_seconds),
+        ),
+    )
+
+
 class LlmConfigService:
     """读取 / 校验 / 更新 LLM 配置的用例；只有一个实现，故不设抽象基类。"""
 
@@ -183,7 +231,23 @@ class LlmConfigService:
         而那时候配置文件里还没有这家供应商的段落 —— 它在 `providers()` 里根本不存在,
         于是界面上也就没有一行可以编辑.
         """
-        configured = {provider.id: provider for provider in self.providers()}
+        return self._effective_from(self.providers())
+
+    def provider_views(
+        self,
+    ) -> tuple[tuple[ProviderConfig, ...], tuple[ProviderConfig, ...]]:
+        """(配置里真的有段落的, 每家内置各一条的) —— 一次读盘出两份视图.
+
+        设置页两份都要. 分别调时 `effective_providers()` 内部还会再调一次
+        `providers()`, 于是同一份配置被读了两遍.
+        """
+        configured = self.providers()
+        return configured, self._effective_from(configured)
+
+    def _effective_from(
+        self, providers: tuple[ProviderConfig, ...]
+    ) -> tuple[ProviderConfig, ...]:
+        configured = {provider.id: provider for provider in providers}
         # 内置的都要有一行 (哪怕还没配过); 用户自建的只有配过才存在, 所以直接取配置里
         # 那几条 —— 它们没有"注册表默认值"可以回落.
         listed = sorted({*provider_registry.REGISTRY, *configured})
@@ -371,54 +435,29 @@ class LlmConfigService:
 
     def cache_settings(self) -> CacheSettings:
         """[llm.cache]（ADR-0012 §3）；缺省返回默认（关闭）。"""
-        section = self._section("cache")
-        defaults = CacheSettings()
-        ttl_raw = section.get("ttl_seconds", defaults.ttl_seconds)
-        ttl = None if ttl_raw is None else _as_positive_number("ttl_seconds", ttl_raw)
-        return CacheSettings(
-            enabled=_as_bool("enabled", section.get("enabled", defaults.enabled)),
-            ttl_seconds=ttl,
-            max_entries=_as_positive_int_value(
-                "max_entries", section.get("max_entries", defaults.max_entries)
-            ),
-            origins=_as_origins(section.get("origins"), defaults.origins),
-        )
+        return _cache_settings(self._section("cache"))
 
     def circuit_breaker_settings(self) -> CircuitBreakerSettings:
         """[llm.circuit_breaker]（ADR-0012 §8）；缺省返回默认（关闭）。"""
-        section = self._section("circuit_breaker")
-        defaults = CircuitBreakerSettings()
-        return CircuitBreakerSettings(
-            enabled=_as_bool("enabled", section.get("enabled", defaults.enabled)),
-            failure_threshold=_as_positive_int_value(
-                "failure_threshold",
-                section.get("failure_threshold", defaults.failure_threshold),
-            ),
-            cooldown_seconds=_as_positive_number(
-                "cooldown_seconds",
-                section.get("cooldown_seconds", defaults.cooldown_seconds),
-            ),
-        )
+        return _circuit_breaker_settings(self._section("circuit_breaker"))
 
     def retry_settings(self) -> RetrySettings:
         """[llm.retry]（ADR-0012 §2）；缺省阈值 5.0 秒。"""
-        section = self._section("retry")
-        defaults = RetrySettings()
-        return RetrySettings(
-            wait_threshold_seconds=_as_nonneg_number(
-                "wait_threshold_seconds",
-                section.get("wait_threshold_seconds", defaults.wait_threshold_seconds),
-            ),
-        )
+        return _retry_settings(self._section("retry"))
 
     def runtime_settings_snapshot(
         self,
     ) -> tuple[CacheSettings, CircuitBreakerSettings, RetrySettings]:
-        """网关应用级运行时配置快照，用于 /config 变更检测。"""
+        """网关应用级运行时配置快照，用于配置变更检测。
+
+        一次读盘拿三段：逐个调 cache/circuit_breaker/retry 三个方法，同一份 llm.json
+        会被读出来解析三遍。
+        """
+        document = self._store.load()
         return (
-            self.cache_settings(),
-            self.circuit_breaker_settings(),
-            self.retry_settings(),
+            _cache_settings(_section_of(document, "cache")),
+            _circuit_breaker_settings(_section_of(document, "circuit_breaker")),
+            _retry_settings(_section_of(document, "retry")),
         )
 
     def set_runtime_field(self, section: str, field: str, raw: str) -> None:
@@ -468,10 +507,7 @@ class LlmConfigService:
         self._store.upsert_runtime_field(section, field, value)
 
     def _section(self, name: str) -> Mapping[str, object]:
-        section = self._store.load().get(name, {})
-        if not isinstance(section, Mapping):
-            raise ConfigValidationError(f"[llm.{name}] 必须是一个配置段")
-        return section
+        return _section_of(self._store.load(), name)
 
     # ---- 解析 ----
 

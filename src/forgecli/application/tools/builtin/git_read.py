@@ -24,7 +24,11 @@ from collections.abc import Sequence
 from types import MappingProxyType
 
 from forgecli.application.tools.artifact_store import ArtifactStore
-from forgecli.application.tools.builtin.base import emit_text, validate_arguments
+from forgecli.application.tools.builtin.base import (
+    emit_text,
+    int_or,
+    validate_arguments,
+)
 from forgecli.application.tools.git_queries import (
     GitBlameHunk,
     GitBranch,
@@ -226,7 +230,7 @@ class GitReadTool(Tool):
                     root,
                     staged=bool(arguments.get("staged", False)),
                     paths=_strings(arguments.get("paths")),
-                    context_lines=_int_or(arguments.get("context_lines"), 3),
+                    context_lines=int_or(arguments.get("context_lines"), 3),
                 )
             )
         if query == "log":
@@ -234,7 +238,7 @@ class GitReadTool(Tool):
                 self._queries.log(
                     root,
                     revision=_optional_text(arguments.get("revision")),
-                    max_count=_int_or(arguments.get("max_count"), 20),
+                    max_count=int_or(arguments.get("max_count"), 20),
                     paths=_strings(arguments.get("paths")),
                 )
             )
@@ -346,9 +350,3 @@ def _optional_text(raw: object) -> str | None:
 
 def _optional_int(raw: object) -> int | None:
     return raw if isinstance(raw, int) and not isinstance(raw, bool) else None
-
-
-def _int_or(raw: object, fallback: int) -> int:
-    """schema 已经限死了取值范围, 这里只是把 `object` 收窄回 int."""
-    resolved = _optional_int(raw)
-    return fallback if resolved is None else resolved

@@ -64,9 +64,6 @@ SIBLING_BANS: tuple[tuple[str, str, str], ...] = (
         "application.tools",
         "安全是策略层, 不认识任何具体工具实现 (ADR-0004 §2)",
     ),
-    # 人工 Shell 是独立信任通道. 两条路径互相能看见, 就一定会有人把它们接起来:
-    # "人工 Shell 顺便记一条 learned allow rule" 看着贴心, 实际是让用户手敲的命令
-    # 替 Agent 拿到授权 (ADR-0017 §2).
     # 上游只认识 LlmGateway 端口, 不认识网关实现 (ADR-0011 §3.1, ADR-0028 规则 A1).
     # DefaultLlmGateway 拖着 provider 注册表, 凭证池, 重试环与治理件; 让 agent_loop
     # 直接 import 它, 一个循环用例就要装配整个 LLM 子系统.

@@ -1,8 +1,8 @@
-"""Turn 级取消信号源：REPL Ctrl-C 与循环取消 token 的接线点。
+"""Turn 级取消信号源：控制面的"停止"与循环取消 token 的接线点。
 
-装配方（bootstrap）持有单例：REPL 在每轮开始 issue() 新 token、结束时 clear()；
-loop 工厂经 current 读取当前 token 挂到 ModelRequest 上。application 层只依赖
-CancelToken，不感知信号/终端细节。
+ProjectRuntime 持有单例：每轮开始 issue() 新 token，结束时 clear()；loop 工厂经
+current 读取当前 token 挂到 ModelRequest 上。application 层只依赖 CancelToken，
+不感知 HTTP 与信号细节。
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from forgecli.shared.cancellation import CancelToken
 
 
 class TurnCancelSource:
-    """当前 turn 的取消 token 持有者（单线程 REPL 语义：同一时刻至多一轮在跑）。"""
+    """当前 turn 的取消 token 持有者（同一时刻至多一轮在跑）。"""
 
     def __init__(self) -> None:
         self._current: CancelToken | None = None

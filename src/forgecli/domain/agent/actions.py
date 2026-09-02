@@ -6,7 +6,7 @@ AgentLoop 每步只能产出这三类结果之一，且都**只表达意图**，
 - LoopDecision：描述「为什么下一步这样做」，只写可审计摘要，不落 raw chain-of-thought。
 - LoopAction：描述「想做什么」，采用密封子类型（对齐 domain.intents / gateway
   ContentBlock 的层次风格），每种动作一个类型，构造即有效。
-- LoopStop：退出 / 暂停 / 错误隔离的唯一出口，reason 取自 LoopStopReason，resumable 由
+- LoopStop：退出 / 暂停 / 错误隔离的唯一出口，reason 取自 LoopStopReason，可恢复与否由
   分类派生。
 
 今日（2026-07-23）只冻契约与字段位，不接循环体与执行。
@@ -46,7 +46,6 @@ class ObservationSource(Enum):
     """观察来源. 用枚举而不是自由文本: 审计与测试要能稳定断言它."""
 
     TOOL = "tool"
-    USER = "user"
     ERROR = "error"
     SECURITY = "security"
     CONTEXT = "context"
@@ -112,11 +111,10 @@ class ToolRequestAction(LoopAction):
 class LoopDecision:
     """一次迭代的决策：为什么下一步这样做（§4.3）。
 
-    reason_summary 只写可审计摘要（不落 raw CoT）；next_action 为本步要执行的动作
-    （None 表示纯反思 / 继续观察）；continue_reason 说明为何继续而非停止。
+    next_action 为本步要执行的动作。可审计的决策摘要不在这里 —— 它经
+    DecisionSummaryPayload 直接进运行事件流。
     """
 
-    reason_summary: str | None = None
     next_action: LoopAction | None = None
 
 
@@ -124,25 +122,12 @@ class LoopDecision:
 class LoopStop:
     """退出 / 暂停 / 错误隔离的唯一出口（§4.3 / §6）。
 
-    resumable 默认由 reason 的分类派生（可恢复暂停 → True）；用 of() 构造时自动填充，
-    也允许显式覆盖（如预算策略对 BUDGET_EXHAUSTED 的裁定）。
+    可恢复与否不存成字段: 它就是 reason.classification, 存一份副本只会多一处能对不上的
+    地方。
     """
 
     reason: LoopStopReason
     message: str | None = None
-    resumable: bool = False
-
-    @classmethod
-    def of(
-        cls,
-        reason: LoopStopReason,
-        message: str | None = None,
-        *,
-        resumable: bool | None = None,
-    ) -> LoopStop:
-        """按分类派生 resumable 构造 LoopStop；resumable 显式传入时以传入为准。"""
-        derived = reason.is_resumable_pause if resumable is None else resumable
-        return cls(reason=reason, message=message, resumable=derived)
 
 
 # 循环每步的产出：决策（含待执行动作）或终止。驱动方（AgentTurnService）据此

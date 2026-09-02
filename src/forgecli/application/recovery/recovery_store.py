@@ -51,7 +51,3 @@ class RecoveryStore(ABC):
     @abstractmethod
     def delete_checkpoint(self, workspace_id: str, checkpoint_id: str) -> bool:
         """只能由受控的恢复服务调用, Agent Shell 不得直接删除恢复数据."""
-
-    @abstractmethod
-    def total_bytes(self, workspace_id: str) -> int:
-        """当前占用, 用于配额判定."""

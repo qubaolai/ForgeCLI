@@ -29,7 +29,6 @@ __all__ = [
     "ProtectedCategory",
     "ProtectedPathPolicy",
     "ProtectedRoot",
-    "PathVerdict",
     "is_harmless_device",
 ]
 
@@ -70,14 +69,6 @@ class ProtectedCategory(Enum):
 _EXEMPTIBLE_CATEGORIES: frozenset[ProtectedCategory] = frozenset(
     {ProtectedCategory.FORGE_RUNTIME}
 )
-
-
-class PathVerdict(Enum):
-    """对某个路径的访问结论. 只有 ALLOWED 表示"这条规则不拦它"."""
-
-    ALLOWED = "allowed"
-    DENY_WRITE = "deny_write"
-    DENY_READ = "deny_read"
 
 
 @dataclass(frozen=True)
@@ -135,20 +126,6 @@ class ProtectedPathPolicy:
         if not matches:
             return None
         return max(matches, key=lambda root: len(PurePath(root.path).parts))
-
-    def verdict_for_read(self, realpath: str) -> PathVerdict:
-        root = self.classify(realpath)
-        if root is None:
-            return PathVerdict.ALLOWED
-        return PathVerdict.DENY_READ if root.deny_read else PathVerdict.ALLOWED
-
-    def verdict_for_write(self, realpath: str) -> PathVerdict:
-        """受保护路径的写入一律拒绝, 不分类别, 不看模式."""
-        return (
-            PathVerdict.ALLOWED
-            if self.classify(realpath) is None
-            else PathVerdict.DENY_WRITE
-        )
 
     def _exempt(self, realpath: str) -> bool:
         return any(

@@ -12,7 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from forgecli.domain.tool.hashing import digest
 from forgecli.domain.tool.plan import TargetResolution, ToolPlan
 from forgecli.shared.errors import ForgeError
 
@@ -74,20 +73,6 @@ class ExecutionAuthorization:
         if self.expires_at_epoch <= self.issued_at_epoch:
             raise ValueError("ExecutionAuthorization 的有效期必须为正")
         object.__setattr__(self, "plan_hash", self.effective_plan.plan_hash)
-
-    @property
-    def envelope_hash(self) -> str:
-        """信封本身的哈希, 进审计事件."""
-        return digest(
-            {
-                "authorization_id": self.authorization_id,
-                "plan_hash": self.plan_hash,
-                "execution_profile_hash": self.execution_profile_hash,
-                "recovery_binding": self.recovery_binding,
-                "approval_view_hash": self.approval_view_hash,
-                "expires_at_epoch": self.expires_at_epoch,
-            }
-        )
 
     def ensure_usable(self, *, now_epoch: float, execution_profile_hash: str) -> None:
         """执行前统一校验. 失败抛 AuthorizationError, 由 ToolRuntime 转成结构化结果."""

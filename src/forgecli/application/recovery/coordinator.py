@@ -282,10 +282,6 @@ class WorkspaceMutationCoordinator:
         self._clock = clock
         self._new_id = id_factory
 
-    @property
-    def policy(self) -> RecoveryPolicy:
-        return self._policy
-
     def prune_expired(self, workspace_id: str, *, now_epoch: float) -> int:
         """清掉过了保留期的恢复点, 返回清理条数.
 

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
 from forgecli.application.agent_run.events import AgentRunEventBus
-from forgecli.application.context.manager import ContextFitResult, ContextManager
+from forgecli.application.context.manager import ContextManager
 from forgecli.application.memory.memory_service import MemoryService
 from forgecli.application.planning.planning_service import (
     ActivePlanning,
@@ -54,8 +54,6 @@ from forgecli.domain.agent.actions import (
 )
 from forgecli.domain.agent.run_events import (
     AgentRunEventKind,
-    ContextCompactedPayload,
-    ModelUsagePayload,
     PlanProposedPayload,
     RunEventPayload,
     TodoUpdatedPayload,
@@ -83,7 +81,7 @@ from forgecli.shared.observability.log import get_log
 _log = get_log(__name__)
 
 # 单轮驱动的安全步数上限. 工具调用开放后一轮会跑很多步 (每次工具调用都是一次
-# observe), 因此按 LoopBudgets 给的预算走, 这个常量只是兜底.
+# observe), 因此按循环自己的硬上限走, 这个常量只是兜底.
 _DEFAULT_MAX_LOOP_STEPS = 99999
 
 
@@ -231,69 +229,6 @@ class AgentTurnService:
             status=outcome.status,
             pause=outcome.pause,
         )
-
-    def compact(self) -> int:
-        """手动压缩当前历史 (ADR-0032 决策 9). 返回省下的 token 数, 0 表示没压动.
-
-        落盘走的是与自动压缩同一个 record_compaction —— /resume 重建 transcript 时
-        分不出这一次是谁触发的, 也不需要分.
-
-        turn_id 复用**上一轮**的编号: 手动压缩发生在两轮之间, 没有属于自己的 turn.
-        与 record_compaction 一直以来的口径一致, 用量记录跟着走同一个编号.
-        """
-        if self._context is None or not self._history:
-            return 0
-        turn_id = f"turn_{self._turns:04d}"
-        result = self._context.summarize_now(
-            tuple(self._history),
-            session_id=self._session.current().session_id,
-            turn_id=turn_id,
-        )
-        # 记账在判断压没压动**之前** (ADR-0037): 请求已经发出去了, 摘要空不空与这笔
-        # 钱花没花无关. 早先这里的提前返回把这种情况下的用量整个吞掉了.
-        self._record_compaction_usage(result, turn_id)
-        if not result.drafts:
-            _log.info("context.compact.manual", tokens_saved=0, reason="nothing_to_do")
-            return 0
-        self._history = list(result.messages)
-        for draft in result.drafts:
-            self._session.record_compaction(draft.to_payload(), turn_id=turn_id)
-            self._publish_run(
-                AgentRunEventKind.CONTEXT_COMPACTED,
-                ContextCompactedPayload(
-                    level=draft.level.value,
-                    tokens_before=draft.tokens_before,
-                    tokens_after=draft.tokens_after,
-                    tokens_saved=draft.tokens_saved,
-                    blocks_rewritten=draft.blocks_rewritten,
-                    messages_replaced=draft.messages_replaced,
-                    provider=draft.provider,
-                    model=draft.model,
-                ),
-                turn_id,
-            )
-        saved = sum(draft.tokens_saved for draft in result.drafts)
-        _log.info(
-            "context.compact.manual",
-            tokens_saved=saved,
-            drafts=len(result.drafts),
-            messages_after=len(result.messages),
-        )
-        return saved
-
-    def _record_compaction_usage(self, result: ContextFitResult, turn_id: str) -> None:
-        """把手动压缩那次调用的账落盘并报出去.
-
-        自动压缩由循环攒进 usage_drafts 交回本类统一落盘; 手动压缩不经循环, 所以这条
-        路要自己走一遍同样的两步 —— 少了它, `/compact` 的花费就永远不在任何账上.
-        """
-        for draft in result.usage_drafts:
-            self._session.record_usage(draft.to_payload(), turn_id=turn_id)
-            self._publish_run(
-                AgentRunEventKind.MODEL_USAGE,
-                ModelUsagePayload.from_draft(draft),
-                turn_id,
-            )
 
     # ---- 提示词 ----
 
@@ -443,14 +378,14 @@ class AgentTurnService:
                 return _TurnOutcome(
                     text=render_notice("stop.unsupported_action"),
                     status=TurnStatus.FAILED,
-                    usage_drafts=_drafts_of(loop),
-                    compaction_drafts=_compactions_of(loop),
+                    usage_drafts=loop.usage_drafts,
+                    compaction_drafts=loop.compaction_drafts,
                 )
         return _TurnOutcome(
             text=render_notice("stop.loop_steps_exceeded"),
             status=TurnStatus.FAILED,
-            usage_drafts=_drafts_of(loop),
-            compaction_drafts=_compactions_of(loop),
+            usage_drafts=loop.usage_drafts,
+            compaction_drafts=loop.compaction_drafts,
         )
 
     def _run_tool_and_watch_planning(
@@ -606,8 +541,8 @@ class AgentTurnService:
     def _outcome_from_stop(
         self, stop: LoopStop, answer: str | None, loop: BuiltinAgentLoop
     ) -> _TurnOutcome:
-        drafts = _drafts_of(loop)
-        compactions = _compactions_of(loop)
+        drafts = loop.usage_drafts
+        compactions = loop.compaction_drafts
         if stop.reason is LoopStopReason.FINAL_ANSWER:
             if answer is None:
                 return _TurnOutcome(
@@ -638,7 +573,7 @@ class AgentTurnService:
                 pause=TurnPause.PLAN_REVIEW,
             )
         if stop.reason is LoopStopReason.USER_CANCELLED:
-            partial = _partial_answer_of(loop)
+            partial = loop.partial_answer or None
             notice = render_notice("stop.cancel_notice")
             text = f"{partial}\n{notice}" if partial else notice
             return _TurnOutcome(
@@ -682,18 +617,6 @@ class AgentTurnService:
                     role=MessageRole.ASSISTANT, content=(TextBlock(outcome.text),)
                 )
             )
-
-
-def _drafts_of(loop: BuiltinAgentLoop) -> tuple[UsageRecordDraft, ...]:
-    """读取 loop 交回的 usage 草稿（不在冻结 ABC 上，鸭子类型消费）。"""
-    drafts = getattr(loop, "usage_drafts", ())
-    return tuple(drafts)
-
-
-def _partial_answer_of(loop: BuiltinAgentLoop) -> str | None:
-    """读取取消时已累积的部分回答（不在冻结 ABC 上，鸭子类型消费）。"""
-    partial = getattr(loop, "partial_answer", None)
-    return partial if isinstance(partial, str) and partial else None
 
 
 def _rebuild_transcript(events: list[SessionEvent]) -> list[ChatMessage]:
@@ -744,9 +667,3 @@ def _summary_of(event: SessionEvent) -> str:
     if str(event.payload.get("level", "")) != CompactionLevel.SUMMARY.value:
         return ""
     return str(event.payload.get("summary", ""))
-
-
-def _compactions_of(loop: BuiltinAgentLoop) -> tuple[CompactionDraft, ...]:
-    """读取 loop 交回的压缩记录（不在冻结 ABC 上，鸭子类型消费，同 usage_drafts）。"""
-    drafts = getattr(loop, "compaction_drafts", ())
-    return tuple(drafts)

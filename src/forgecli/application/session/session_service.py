@@ -25,11 +25,7 @@ from forgecli.domain.session.events import EventType, SessionEvent
 from forgecli.domain.session.snapshot import SessionSnapshot
 from forgecli.shared.errors import SessionStateError
 from forgecli.shared.observability.log import get_log
-
-
-def _now_iso() -> str:
-    """本地时区、秒级 ISO 时间戳，如 ``2026-06-27T10:30:00+08:00``。"""
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+from forgecli.shared.utils import now_iso
 
 
 def _new_session_id() -> str:
@@ -74,7 +70,7 @@ class SessionService:
         state_store: StateStore,
         workspace_root: str,
         *,
-        clock: Callable[[], str] = _now_iso,
+        clock: Callable[[], str] = now_iso,
         id_factory: Callable[[], str] = _new_session_id,
     ) -> None:
         self._events = event_store

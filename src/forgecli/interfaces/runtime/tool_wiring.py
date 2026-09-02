@@ -18,7 +18,6 @@ import stat
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
 
 from forgecli.application.agent_run.events import AgentRunEventBus
@@ -104,6 +103,7 @@ from forgecli.infrastructure.security.protected_paths_builder import (
 from forgecli.infrastructure.tools.fs_artifact_store import FsArtifactStore
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
 from forgecli.infrastructure.workspace.pygit2_git_queries import Pygit2GitQueries
+from forgecli.shared.utils import now_iso
 
 __all__ = ["ToolStack", "build_tool_stack"]
 
@@ -113,7 +113,6 @@ class ToolStack:
     """装配好的一整套工具链，界面适配器只从这里取公开协作件。"""
 
     registry: ToolRegistry
-    coordinator: ToolRequestCoordinator
     dispatcher: CoordinatorToolDispatcher
     recovery: RecoveryService
     grants: WorkspaceGrants
@@ -121,11 +120,6 @@ class ToolStack:
     profile: ExecutionProfile
     workspace_id: str
     context_factory: Callable[[], ExecutionContext]
-    # 按模式编译围栏 (ADR-0030 决策 4). 与 context_factory 分开: 不起子进程的调用方
-    # 不需要它, 而需要它的调用方一定知道 mode.
-    fence_factory: Callable[[SessionMode], FencePolicy]
-    # 围栏是不是真的立起来了 —— 来自启动期行为自测, 不是"装了就算".
-    confined: bool
     planning: PlanningService
     # 记忆 (ADR-0033 决策 10). 工具经它写, AgentTurnService 经它读 —— 必须是同一个
     # 实例, 否则模型这一轮记下的东西下一轮读不到.
@@ -197,7 +191,7 @@ def build_tool_stack(
     def fence_factory(mode: SessionMode) -> FencePolicy:
         """按模式编译围栏 (ADR-0030 决策 4).
 
-        与 context_factory 分开是因为它们的调用方不同: `/undo` 与 Web 的展示路径也要
+        与 context_factory 分开是因为它们的调用方不同: 撤销与展示路径也要
         ExecutionContext, 但它们不起子进程, 拿一个围栏策略没有意义. 围栏挂在真正知道
         mode 的那一层 —— 也就是调度器.
         """
@@ -221,7 +215,7 @@ def build_tool_stack(
     executor: CommandExecutor = SandboxedCommandExecutor(
         LocalCommandExecutor(), provider
     )
-    # 计划目录按会话分区, 而这里跑在组合根里 —— 那时 REPL 还没 session.start(),
+    # 计划目录按会话分区, 而这里跑在组合根里 —— 那时还没 session.start(),
     # 组合期读 current() 会直接抛 SessionStateError. 与下面分类器的 session id 同一个
     # 坑, 同样用延迟取.
     planning = PlanningService(
@@ -285,7 +279,7 @@ def build_tool_stack(
     recovery_store = FsRecoveryStore(recovery_dir())
     snapshots = probe_snapshot_backend(recovery_dir() / "snapshots", workspace_roots[0])
     mutations = WorkspaceMutationCoordinator(
-        recovery_store, snapshots=snapshots, clock=_now
+        recovery_store, snapshots=snapshots, clock=now_iso
     )
     recovery = RecoveryService(
         recovery_store,
@@ -294,7 +288,7 @@ def build_tool_stack(
         directory_creator=_create_directory,
         mode_setter=_set_mode,
         snapshots=snapshots,
-        clock=_now,
+        clock=now_iso,
     )
 
     coordinator = ToolRequestCoordinator(
@@ -306,13 +300,12 @@ def build_tool_stack(
         audit=SessionToolAudit(session),
         learned=learned,
         # 展示与审计走两条独立出口 (ADR-0016 §4.3): 观察者只发运行事件, 审计另有
-        # SessionToolAudit. 订阅者抛异常被总线隔离, 因此终端出问题不会影响裁决与执行.
+        # SessionToolAudit. 订阅者抛异常被总线隔离, 因此展示侧出问题不会影响裁决与执行.
         observer=EventBusToolRunObserver(run_bus),
         workspace_id=workspace_id,
     )
     return ToolStack(
         registry=registry,
-        coordinator=coordinator,
         dispatcher=CoordinatorToolDispatcher(
             coordinator, context_factory, fence_factory, confined=fence_report.confined
         ),
@@ -322,8 +315,6 @@ def build_tool_stack(
         profile=profile,
         workspace_id=workspace_id,
         context_factory=context_factory,
-        fence_factory=fence_factory,
-        confined=fence_report.confined,
         planning=planning,
         memory=memory,
         artifacts=store,
@@ -495,7 +486,3 @@ def _delete_file(path: str) -> None:
         shutil.rmtree(target, ignore_errors=False)
         return
     target.unlink(missing_ok=True)
-
-
-def _now() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")

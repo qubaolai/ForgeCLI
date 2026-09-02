@@ -45,7 +45,6 @@ from forgecli.domain.context.budget import ContextBudget
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.origin import RequestOrigin
-from forgecli.domain.model.selection import CurrentModelSelection
 from forgecli.infrastructure.llm.adapters import OpenAICompatibleProvider
 from forgecli.infrastructure.llm.credentials import (
     EnvCredentialResolver,
@@ -62,9 +61,8 @@ class LlmRuntime:
     gateway: LlmGateway
     usage_meter: UsageMeter
     overrides_service: ModelOverridesService
-    # 进程内观测聚合（ADR-0012 §9）：/status 经 snapshot() 消费（展示接入后续切片）。
+    # 进程内观测聚合（ADR-0012 §9）：GET /api/v1/diagnostics 经 snapshot() 消费。
     gateway_metrics: InProcessGatewayMetrics
-    thinking_state: ThinkingRuntimeState
     # 当前模型的上下文预算 (ADR-0032 决策 1). 每轮现取: 用户可能刚 /model 换过模型.
     context_budget: Callable[[], ContextBudget | None]
 
@@ -73,11 +71,9 @@ def build_llm_runtime(
     config_service: ConfigService,
     llm_config_service: LlmConfigService,
     forge_json: Path,
-    thinking_state: ThinkingRuntimeState | None = None,
+    thinking_state: ThinkingRuntimeState,
 ) -> LlmRuntime:
     """装配统一 LLM 网关及其协作件"""
-    if thinking_state is None:
-        thinking_state = ThinkingRuntimeState()
     overrides_service = ModelOverridesService(
         JsonModelOverridesStore(forge_json), llm_config_service
     )
@@ -108,7 +104,6 @@ def build_llm_runtime(
         usage_meter=usage_meter,
         overrides_service=overrides_service,
         gateway_metrics=metrics,
-        thinking_state=thinking_state,
         context_budget=_budget_reader(resolver),
     )
 
@@ -128,9 +123,7 @@ def _budget_reader(
 
     def _current() -> ContextBudget | None:
         try:
-            resolved = resolver.resolve(
-                CurrentModelSelection(), origin=RequestOrigin.ACT
-            )
+            resolved = resolver.resolve(origin=RequestOrigin.ACT)
         except (ModelGatewayError, ConfigError):
             # 模型没配, 目录里没有它, 或者配置读不了. 都不是这一轮该失败的理由.
             return None

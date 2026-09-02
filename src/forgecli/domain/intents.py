@@ -16,7 +16,6 @@ from enum import Enum
 from typing import ClassVar
 
 __all__ = [
-    "MODE_PRESETS",
     "PRESET_NAMES",
     "ApprovalPolicy",
     "InputOrigin",
@@ -115,16 +114,6 @@ class SessionMode:
         sandbox, _, approval = raw.partition("/")
         return cls(sandbox=SandboxLevel(sandbox), approval=ApprovalPolicy(approval))
 
-    def step(self, delta: int) -> SessionMode:
-        """沿预设梯度移动 delta 档, 两端截断不回绕.
-
-        只在预设之间移动: Tab 是个便利入口, 不是表达任意组合的地方. 要任意组合就分别
-        设两个轴.
-        """
-        current = MODE_PRESETS.index(self) if self in MODE_PRESETS else 0
-        idx = current + delta
-        return MODE_PRESETS[max(0, min(idx, len(MODE_PRESETS) - 1))]
-
 
 SessionMode.PLAN = SessionMode(SandboxLevel.READ_ONLY, ApprovalPolicy.ALWAYS)
 SessionMode.ACCEPT_EDITS = SessionMode(
@@ -133,16 +122,8 @@ SessionMode.ACCEPT_EDITS = SessionMode(
 SessionMode.AUTO = SessionMode(SandboxLevel.WORKSPACE_WRITE, ApprovalPolicy.AUTO)
 SessionMode.FULL_ACCESS = SessionMode(SandboxLevel.FULL_ACCESS, ApprovalPolicy.NEVER)
 
-# 权限从紧到松, tab / shift+tab 按此序循环. 不用声明顺序: 安全相关的次序应显式写出.
-# ADR-0009 决策 13: 模式定义是代码级常量, 配置只能收紧, 不能放宽.
-MODE_PRESETS: tuple[SessionMode, ...] = (
-    SessionMode.PLAN,
-    SessionMode.ACCEPT_EDITS,
-    SessionMode.AUTO,
-    SessionMode.FULL_ACCESS,
-)
-
-# 预设的名字. 接口上按名字换整档走它, Tab 循环走 MODE_PRESETS —— 同一批取值的两种用法.
+# 预设的名字, 权限从紧到松. 次序是显式写出的而不是靠声明顺序: 安全相关的排序不该
+# 靠别处的巧合. ADR-0009 决策 13: 模式定义是代码级常量, 配置只能收紧, 不能放宽.
 PRESET_NAMES: dict[str, SessionMode] = {
     "plan": SessionMode.PLAN,
     "accept_edits": SessionMode.ACCEPT_EDITS,

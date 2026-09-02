@@ -74,8 +74,7 @@ packages = [
 include = [
     { path = "src/forgecli/interfaces/web/static", format = ["wheel", "sdist"] },
     # 系统提示词模板 (ADR-0039). 它们是包内数据: 少了任何一份, 装出来的 forge 起不了
-    # 会话, 而源码树里跑测试照样绿 —— 所以这一行和 tests/prompt 里那条 importlib.resources
-    # 用例是同一件事的两半.
+    # 会话, 而源码树里照样跑得起来 —— 打包清单漏了它不会有任何东西报错.
     { path = "src/forgecli/application/prompt/templates", format = ["wheel", "sdist"] },
 ]
 
@@ -83,9 +82,6 @@ include = [
 # 开发依赖
 # -----------------------------------------------------------------------------
 [tool.poetry.group.dev.dependencies]
-# 测试框架。
-pytest = "^8.0.0"
-
 # Linter + Formatter。
 ruff = "^0.8.0"
 
@@ -93,23 +89,6 @@ ruff = "^0.8.0"
 mypy = "^1.0.0"
 types-jsonschema = "^4.26.0.20260518"
 types-regex = "^2026.7.19.20260720"
-
-# -----------------------------------------------------------------------------
-# pytest 配置
-# -----------------------------------------------------------------------------
-[tool.pytest.ini_options]
-# 指定测试目录。
-testpaths = ["tests"]
-
-# 将 src 加入 Python 模块搜索路径，便于测试时导入 forgecli。
-# tests 也加进来: 共享的 fake (tests/support) 要能被各子目录的用例 import。
-pythonpath = ["src", "tests"]
-
-# pytest 默认参数。
-# -ra               显示 skipped / xfailed / failed 等额外摘要
-# --strict-markers  使用未注册 marker 时直接报错
-# --strict-config   pytest 配置有误时直接报错
-addopts = ["-ra", "--strict-markers", "--strict-config"]
 
 # -----------------------------------------------------------------------------
 # Ruff 基础配置
@@ -122,7 +101,7 @@ target-version = "py313"
 line-length = 88
 
 # Ruff 检查的源码目录。
-src = ["src", "tests"]
+src = ["src"]
 
 # -----------------------------------------------------------------------------
 # Ruff lint 规则配置

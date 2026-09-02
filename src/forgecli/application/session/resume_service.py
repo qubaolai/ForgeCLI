@@ -1,9 +1,9 @@
-"""ResumeService：/resume 复用的 application service（列表 / 搜索 / 读取历史会话）。
+"""ResumeService：历史会话的只读服务（列表 / 搜索 / 读取）。
 
 职责边界：
     - 只读模型，不持有活动会话状态——真正的「重指向 + 续写」由 SessionService.resume
-      与 AgentTurnService.resume 完成（ResumeCommand 编排）。
-    - list_sessions 供无参 /resume 列表与 /resume <关键字> 搜索；
+      与 AgentTurnService.resume 完成（由 sessions/{id}/resume 路由编排）。
+    - list_sessions 供 GET /api/v1/sessions 的列表与关键字搜索；
       load_full 供恢复时一次读出快照 + 全部事件（用于 hydrate 计算，本切片不回放对话）。
 
 依赖三个会话存储抽象：SessionCatalog 枚举 id、StateStore 读快照、EventStore 读事件。
@@ -48,10 +48,6 @@ class ResumeService:
                 snapshots.append(snapshot)
         snapshots.sort(key=lambda s: s.updated_at, reverse=True)
         return snapshots[:limit]
-
-    def has_session(self, session_id: str) -> bool:
-        """该 session_id 是否为本项目下可读取的历史会话。"""
-        return self._states.read(session_id) is not None
 
     def load_full(
         self, session_id: str

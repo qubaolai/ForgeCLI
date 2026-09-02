@@ -42,6 +42,7 @@ from tree_sitter_language_pack import (
 
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.builtin.base import (
+    MAX_GLOB_CANDIDATES,
     emit_text,
     joined,
     path_state_token,
@@ -74,7 +75,6 @@ __all__ = ["CodeDefinitionsTool"]
 _MAX_FILES = 2000
 _MAX_HITS = 200
 _MAX_FILE_BYTES = 2 * 1024 * 1024
-_MAX_GLOB_CANDIDATES = 10_000
 # 单文件解析的墙钟上限. 与 search_text 的正则超时同一个道理: 拦的是"跑不完", 不是
 # "长什么样".
 _PARSE_TIMEOUT_MS = 500
@@ -212,12 +212,12 @@ class CodeDefinitionsTool(Tool):
         raw = context.filesystem.expand_glob(
             "**/*",
             root=root,
-            max_results=_MAX_GLOB_CANDIDATES + 1,
+            max_results=MAX_GLOB_CANDIDATES + 1,
             skip_ignored=True,
         )
         supported: list[str] = []
         skipped = 0
-        for path in raw[:_MAX_GLOB_CANDIDATES]:
+        for path in raw[:MAX_GLOB_CANDIDATES]:
             candidate = context.filesystem.facts(path)
             if candidate.kind is not PathKind.FILE or candidate.is_symlink:
                 continue

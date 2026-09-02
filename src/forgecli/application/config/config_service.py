@@ -55,6 +55,21 @@ class ConfigService:
         raw = self._store(config_key).load().get(key)
         return raw if raw is not None else config_key.default
 
+    def display_all(self) -> dict[str, str]:
+        """SCHEMA 每个键的当前有效取值；每级存储只读一次盘。
+
+        逐键调 `display()` 是同一件事的 N 倍读盘: 设置页一次刷新要列全部键, 而每个键
+        都会把它那一级的 JSON 重新读出来再解析一遍。
+        """
+        loaded: dict[ConfigLevel, dict[str, str]] = {}
+        values: dict[str, str] = {}
+        for config_key in config_keys.SCHEMA:
+            if config_key.level not in loaded:
+                loaded[config_key.level] = self._store(config_key).load()
+            raw = loaded[config_key.level].get(config_key.name)
+            values[config_key.name] = config_key.default if raw is None else raw
+        return values
+
     def set(self, key: str, value: str) -> None:
         """校验并持久化一个配置项；按 level 路由到对应文件。
 

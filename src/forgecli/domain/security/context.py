@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from forgecli.domain.execution.fence import FencePolicy
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.vocabulary import POLICY_VERSION
-from forgecli.domain.tool.hashing import digest
 
 __all__ = ["PolicyContext"]
 
@@ -30,21 +29,8 @@ class PolicyContext:
     workspace_id: str = ""
     user_intent_summary: str = ""
     policy_version: str = POLICY_VERSION
-    # 非交互环境下 ASK 不能转 Allow, 只能保持 pending 或取消 (ADR-0013 §4).
-    interactive: bool = True
     # 本次执行的围栏边界, 由 mode 编译 (ADR-0030 决策 4). None = 没有边界信息.
     fence: FencePolicy | None = None
     # 围栏是不是真的立起来了 —— 来自 Provider 的行为自测, 不是"装了就算".
     # 边界存在但没被强制时, 需要围栏才能自动放行的能力落回 ASK (ADR-0030 决策 5).
     confined: bool = False
-
-    @property
-    def intent_scope_hash(self) -> str:
-        """意图范围哈希, 进风险缓存键: 换了任务就不该复用上一个任务的分析结论."""
-        return digest(
-            {
-                "turn_id": self.turn_id,
-                "user_intent_summary": self.user_intent_summary,
-                "mode": self.mode,
-            }
-        )

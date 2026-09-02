@@ -96,10 +96,6 @@ class ShellLaunch:
     kind: str
 
     @property
-    def descriptor(self) -> str:
-        return " ".join((self.program, *self.args))
-
-    @property
     def dialect(self) -> str:
         """安全解析使用的三种方言；启动程序别名只在这里归一。"""
         normalized = self.kind.casefold()

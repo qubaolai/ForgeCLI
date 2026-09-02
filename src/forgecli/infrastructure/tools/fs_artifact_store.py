@@ -13,6 +13,7 @@ from forgecli.application.tools.artifact_store import (
 )
 from forgecli.domain.tool.hashing import digest_text
 from forgecli.domain.tool.result import ArtifactRef
+from forgecli.infrastructure.json_io import write_atomic
 
 __all__ = ["FsArtifactStore"]
 
@@ -32,15 +33,11 @@ class FsArtifactStore(ArtifactStore):
         content_hash = digest_text(data)
         artifact_id = content_hash.split(":", 1)[1][:16]
         target = self._path_of(artifact_id)
-        target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             # 同一段内容再次产生: 不重写文件, 但要续期 —— 它刚刚被用到了.
             self._refresh(target)
         else:
-            # 先写临时文件再改名: 半截内容不该被别的调用读到.
-            temp = target.with_suffix(".partial")
-            temp.write_text(data, encoding="utf-8")
-            temp.replace(target)
+            write_atomic(target, data)
         return ArtifactRef(
             artifact_id=artifact_id,
             path=str(target),

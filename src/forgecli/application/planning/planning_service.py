@@ -23,7 +23,6 @@ import secrets
 import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime
 
 from forgecli.application.planning.plan_store import PlanStore
 from forgecli.application.planning.plan_template import (
@@ -40,6 +39,7 @@ from forgecli.domain.planning import (
     TodoList,
     TodoStatus,
 )
+from forgecli.shared.utils import now_iso
 
 __all__ = [
     "ActivePlanning",
@@ -54,10 +54,6 @@ _MAX_NAME_LENGTH = 40
 _UNSAFE = re.compile(r"[^\w-]+", re.UNICODE)
 _REPEATED_DASH = re.compile(r"-{2,}")
 _SAFE_PLAN_ID = re.compile(r"^[\w-]{1,60}$", re.UNICODE)
-
-
-def _now_iso() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def slugify_name(name: str, *, fallback_prefix: str) -> str:
@@ -149,7 +145,7 @@ class PlanningService:
         self,
         store: PlanStore,
         *,
-        clock: Callable[[], str] = _now_iso,
+        clock: Callable[[], str] = now_iso,
     ) -> None:
         self._store = store
         self._clock = clock
@@ -267,9 +263,6 @@ class PlanningService:
         return updated
 
     # ---- 待办 ----
-
-    def read_todo(self) -> TodoList | None:
-        return self._store.load_todo()
 
     def write_todo(
         self, titles: Sequence[str], *, name: str = "", plan_id: str = ""

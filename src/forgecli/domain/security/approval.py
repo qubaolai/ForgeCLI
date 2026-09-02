@@ -86,10 +86,6 @@ class ApprovalBinding:
             view_hash=view_hash,
         )
 
-    @property
-    def binding_hash(self) -> str:
-        return digest(self)
-
     def differences(self, other: ApprovalBinding) -> tuple[str, ...]:
         """列出变化的绑定项, 用于告诉用户"为什么要重新批准"."""
         return tuple(
@@ -210,18 +206,6 @@ class ApprovalView:
     def counts(self) -> tuple[tuple[str, int], ...]:
         """各类别条目数, 含为零的类别 —— "网络 0" 与"没提网络"对读者不是一回事."""
         return tuple((group.label, group.count) for group in self.target_groups)
-
-    @property
-    def consequential(self) -> bool:
-        """这次动作除了读之外还会造成什么后果.
-
-        纯读取时不展示目标清单: 用户已经逐字看到了命令与脚本, 再列一遍它会读哪些文件
-        只是噪音. 但只要沾上写, 删, 移动, 网络, 外部副作用, 或者目标集合根本没封闭,
-        清单就必须出现 —— 那些正是命令字符串看不出来的后果.
-        """
-        if not self.closed:
-            return True
-        return any(group.paths for group in self.target_groups if group.label != "读取")
 
     @property
     def view_hash(self) -> str:

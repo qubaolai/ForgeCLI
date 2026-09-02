@@ -69,10 +69,6 @@ class AuthorizationDecision:
         """
         return self.findings.script_snapshots
 
-    @property
-    def allowed(self) -> bool:
-        return self.decision is Decision.ALLOW
-
     def to_audit_payload(self) -> dict[str, object]:
         return {
             "decision": self.decision.value,

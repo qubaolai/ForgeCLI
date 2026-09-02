@@ -34,6 +34,7 @@ from forgecli.domain.recovery.mutation import (
     Recoverability,
 )
 from forgecli.domain.tool.hashing import digest_text
+from forgecli.infrastructure.json_io import write_atomic
 
 __all__ = ["FsRecoveryStore"]
 
@@ -50,10 +51,7 @@ class FsRecoveryStore(RecoveryStore):
         target = self._blob_path(workspace_id, content_hash)
         if not target.exists():
             self._ensure_dir(target.parent)
-            temp = target.with_suffix(".partial")
-            temp.write_bytes(data)
-            os.chmod(temp, _FILE_MODE)
-            temp.replace(target)
+            write_atomic(target, data, mode=_FILE_MODE)
         return StoredBlob(content_hash=content_hash, size=len(data))
 
     def get_blob(self, workspace_id: str, content_hash: str) -> bytes:
@@ -66,13 +64,11 @@ class FsRecoveryStore(RecoveryStore):
     def save_manifest(self, checkpoint: RecoveryCheckpoint) -> None:
         target = self._manifest_path(checkpoint.workspace_id, checkpoint.checkpoint_id)
         self._ensure_dir(target.parent)
-        temp = target.with_suffix(".partial")
-        temp.write_text(
+        write_atomic(
+            target,
             json.dumps(_to_json(checkpoint), ensure_ascii=False, indent=2),
-            encoding="utf-8",
+            mode=_FILE_MODE,
         )
-        os.chmod(temp, _FILE_MODE)
-        temp.replace(target)
 
     def load_manifest(
         self, workspace_id: str, checkpoint_id: str
@@ -98,12 +94,6 @@ class FsRecoveryStore(RecoveryStore):
             return False
         target.unlink()
         return True
-
-    def total_bytes(self, workspace_id: str) -> int:
-        blobs = self._workspace_dir(workspace_id) / "blobs"
-        if not blobs.is_dir():
-            return 0
-        return sum(path.stat().st_size for path in blobs.rglob("*") if path.is_file())
 
     # ---- 路径 ----
 

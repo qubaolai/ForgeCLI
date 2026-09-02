@@ -103,10 +103,6 @@ class MutationEntry:
     conflict_status: ConflictStatus = ConflictStatus.CLEAN
     regenerable: bool = False
 
-    @property
-    def needs_preimage(self) -> bool:
-        return is_destructive(self.operation, existed_before=self.existed_before)
-
 
 @dataclass(frozen=True)
 class MutationSet:
@@ -153,24 +149,6 @@ class MutationSet:
         return next(
             (item for item in self.entries if item.relative_path == relative_path),
             None,
-        )
-
-    @property
-    def created(self) -> tuple[MutationEntry, ...]:
-        return tuple(item for item in self.entries if not item.existed_before)
-
-    @property
-    def modified(self) -> tuple[MutationEntry, ...]:
-        return tuple(
-            item
-            for item in self.entries
-            if item.existed_before and item.operation is not Operation.DELETE
-        )
-
-    @property
-    def deleted(self) -> tuple[MutationEntry, ...]:
-        return tuple(
-            item for item in self.entries if item.operation is Operation.DELETE
         )
 
     def __len__(self) -> int:

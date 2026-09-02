@@ -38,7 +38,7 @@ from forgecli.domain.planning import (
     TodoList,
     TodoStatus,
 )
-from forgecli.infrastructure.json_io import read_document, write_document
+from forgecli.infrastructure.json_io import read_document, write_atomic, write_document
 from forgecli.shared.errors import ConfigReadError
 
 __all__ = ["FsPlanStore"]
@@ -198,10 +198,7 @@ class FsPlanStore(PlanStore):
 
     def _write_text(self, path: Path, body: str) -> None:
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temp = path.with_name(path.name + ".tmp")
-            temp.write_text(body, encoding="utf-8")
-            temp.replace(path)
+            write_atomic(path, body)
         except OSError as exc:
             raise PlanStoreError(f"写入失败: {path}\n  原因: {exc}") from exc
 

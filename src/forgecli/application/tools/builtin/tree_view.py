@@ -21,7 +21,6 @@ __all__ = [
     "MAX_BUDGET",
     "Scan",
     "empty_tree_message",
-    "int_or",
     "walk",
 ]
 
@@ -50,10 +49,6 @@ def empty_tree_message(root: str) -> str:
         f"{root} 是空目录, 或者其中只有被默认忽略的生成目录 "
         "(.git, node_modules, target 一类); 需要它们请传 include_ignored=true."
     )
-
-
-def int_or(raw: object, fallback: int) -> int:
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) else fallback
 
 
 def walk(

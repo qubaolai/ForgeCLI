@@ -50,13 +50,10 @@ REGISTRY: dict[str, ProviderSpec] = {
 def normalize_provider_id(raw: str) -> str:
     """外部写来的 provider id 归一成注册表的 key.
 
-    为什么需要这一步: 这张表的 key 曾经是 `"GLM"` 而它的 `spec.id` 是 `"glm"`, 两者
-    不一致了一段时间. 期间菜单是按 key 列的, 所以用户配置文件里可能真的存着 `"GLM"`,
-    而代码里按 `spec.id` 查的地方一律查不到 —— `is_known_provider("glm")` 返回 False.
-    key 已经改回 `"glm"`, 但已经写出去的配置不会自己改, 所以入口这里认大小写.
+    provider id 有两个来源, 都是人打出来的: 手写的配置文件, 和设置页的新增供应商表单.
+    `OpenAI` 与 `openai ` 都该查得到同一家, 所以归一放在入口这一处.
 
-    只归一大小写和首尾空白, 不做别名映射: 别名是一张会长大的表, 而这里要修的只是
-    一次拼写事故.
+    只归一大小写和首尾空白, 不做别名映射: 别名是一张会长大的表, 而这里只是输入卫生.
     """
     return raw.strip().lower()
 

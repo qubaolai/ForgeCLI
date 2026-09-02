@@ -103,8 +103,3 @@ class AgentRunEventBus:
                 subscriber.on_event(event)
             except Exception as exc:  # noqa: BLE001 - 有意隔离, 见模块 docstring
                 self._isolated.append((subscriber, event, exc))
-
-    @property
-    def isolated_failures(self) -> tuple[_IsolatedFailure, ...]:
-        """被隔离的 subscriber 失败记录 (诊断与测试用)."""
-        return tuple(self._isolated)

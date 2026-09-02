@@ -4,7 +4,8 @@
 让「为什么停」可审计、可分类、可测试。分类规则决定一次停止是正常完成、可恢复暂停、
 本轮阻塞停止，还是由预算策略决定（BUDGET_EXHAUSTED）。
 
-今日（2026-07-23）只冻枚举与分类，不接循环体。
+枚举只收循环真的会产出的原因（ADR-0028 规则 C）：一个没人产出的停止原因读起来
+像是一条已经接好的退出路径。
 """
 
 from __future__ import annotations
@@ -16,8 +17,6 @@ class LoopStopReason(Enum):
     """循环停止原因，值即落盘字符串（ADR-0010 §6 第一版全集）。"""
 
     FINAL_ANSWER = "final_answer"
-    WAIT_USER_INPUT = "wait_user_input"
-    WAIT_APPROVAL = "wait_approval"
     # 工具声明本次输出需要人裁决 (ADR-0023). 与 WAIT_APPROVAL 分开: 那是"这次调用
     # 许不许可", 这是"这个方向对不对" —— 前者产生 ExecutionAuthorization, 后者不产生.
     WAIT_PLAN_REVIEW = "wait_plan_review"
@@ -25,30 +24,19 @@ class LoopStopReason(Enum):
     BUDGET_EXHAUSTED = "budget_exhausted"
     POLICY_DENIED = "policy_denied"
     CONTEXT_COMPACTION_REQUIRED = "context_compaction_required"
-    TOOL_FAILED_BLOCKING = "tool_failed_blocking"
     MODEL_ERROR_BLOCKING = "model_error_blocking"
-    SESSION_INTERRUPTED = "session_interrupted"
-    MAX_RETRY_EXCEEDED = "max_retry_exceeded"
 
     @property
     def classification(self) -> StopClassification:
         """按 ADR-0010 §6 的分类规则归类。"""
         return _CLASSIFICATION[self]
 
-    @property
-    def is_normal_completion(self) -> bool:
-        return self.classification is StopClassification.NORMAL
-
-    @property
-    def is_resumable_pause(self) -> bool:
-        return self.classification is StopClassification.RESUMABLE_PAUSE
-
 
 class StopClassification(Enum):
     """停止原因的语义分类
 
     NORMAL              正常完成（FINAL_ANSWER）。
-    RESUMABLE_PAUSE     可恢复暂停：等用户输入 / 审批 / compact / 会话中断。
+    RESUMABLE_PAUSE     可恢复暂停：等计划评审 / 等上下文压缩。
     BLOCKING            本轮阻塞停止，但 session 仍可继续。
     POLICY_DEPENDENT    是否可恢复由预算策略决定（BUDGET_EXHAUSTED）。
     """
@@ -61,16 +49,11 @@ class StopClassification(Enum):
 
 _CLASSIFICATION: dict[LoopStopReason, StopClassification] = {
     LoopStopReason.FINAL_ANSWER: StopClassification.NORMAL,
-    LoopStopReason.WAIT_USER_INPUT: StopClassification.RESUMABLE_PAUSE,
-    LoopStopReason.WAIT_APPROVAL: StopClassification.RESUMABLE_PAUSE,
     LoopStopReason.WAIT_PLAN_REVIEW: StopClassification.RESUMABLE_PAUSE,
     LoopStopReason.CONTEXT_COMPACTION_REQUIRED: StopClassification.RESUMABLE_PAUSE,
-    LoopStopReason.SESSION_INTERRUPTED: StopClassification.RESUMABLE_PAUSE,
     LoopStopReason.USER_CANCELLED: StopClassification.BLOCKING,
     LoopStopReason.POLICY_DENIED: StopClassification.BLOCKING,
-    LoopStopReason.TOOL_FAILED_BLOCKING: StopClassification.BLOCKING,
     LoopStopReason.MODEL_ERROR_BLOCKING: StopClassification.BLOCKING,
-    LoopStopReason.MAX_RETRY_EXCEEDED: StopClassification.BLOCKING,
     LoopStopReason.BUDGET_EXHAUSTED: StopClassification.POLICY_DEPENDENT,
 }
 

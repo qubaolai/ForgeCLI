@@ -29,7 +29,7 @@ from forgecli.domain.security.vocabulary import ApprovalScope
 from forgecli.domain.tool.hashing import digest, digest_text
 from forgecli.domain.tool.plan import ShellSubject, ToolPlan
 
-__all__ = ["LearnedRuleService", "LearnedRuleStore", "NullLearnedRuleStore"]
+__all__ = ["LearnedRuleService", "LearnedRuleStore"]
 
 
 class LearnedRuleStore(ABC):
@@ -42,16 +42,6 @@ class LearnedRuleStore(ABC):
     def save(self, rules: tuple[LearnedAllowRule, ...]) -> None: ...
 
 
-class NullLearnedRuleStore(LearnedRuleStore):
-    """不落盘. 规则只在本进程内有效, 重启即失效 —— 单元测试与临时会话用它."""
-
-    def load(self) -> tuple[LearnedAllowRule, ...]:
-        return ()
-
-    def save(self, rules: tuple[LearnedAllowRule, ...]) -> None:
-        return None
-
-
 def _new_rule_id() -> str:
     return f"rule_{uuid.uuid4().hex[:12]}"
 
@@ -61,13 +51,13 @@ class LearnedRuleService:
 
     def __init__(
         self,
-        store: LearnedRuleStore | None = None,
+        store: LearnedRuleStore,
         *,
         workspace_id: str = "workspace",
         clock: Callable[[], float] = time.time,
         rule_id_factory: Callable[[], str] = _new_rule_id,
     ) -> None:
-        self._store = store or NullLearnedRuleStore()
+        self._store = store
         self._workspace_id = workspace_id
         self._clock = clock
         self._new_rule_id = rule_id_factory

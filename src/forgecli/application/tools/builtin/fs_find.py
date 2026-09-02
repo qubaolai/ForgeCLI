@@ -25,7 +25,9 @@ from types import MappingProxyType
 
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.builtin.base import (
+    MAX_GLOB_CANDIDATES,
     emit_text,
+    int_or,
     joined,
     limit_depth,
     read_capability,
@@ -38,7 +40,6 @@ from forgecli.application.tools.builtin.tree_view import (
     MAX_BUDGET,
     Scan,
     empty_tree_message,
-    int_or,
     walk,
 )
 from forgecli.application.tools.resource_governor import ResourceGovernor
@@ -65,7 +66,6 @@ from forgecli.shared.cancellation import CancelToken
 __all__ = ["FindTool"]
 
 _MAX_ENTRIES = 2000
-_MAX_GLOB_CANDIDATES = 10_000
 
 _SPEC = ToolSpec(
     name="fs_find",
@@ -165,12 +165,12 @@ class FindTool(Tool):
         raw_matches = context.filesystem.expand_glob(
             name_glob,
             root=root,
-            max_results=_MAX_GLOB_CANDIDATES + 1,
+            max_results=MAX_GLOB_CANDIDATES + 1,
             skip_ignored=not include_ignored,
         )
-        expansion_truncated = len(raw_matches) > _MAX_GLOB_CANDIDATES
+        expansion_truncated = len(raw_matches) > MAX_GLOB_CANDIDATES
         expanded = limit_depth(
-            raw_matches[:_MAX_GLOB_CANDIDATES], root=root, depth=depth
+            raw_matches[:MAX_GLOB_CANDIDATES], root=root, depth=depth
         )
         limit = int_or(request.arguments.get("max_entries"), _MAX_ENTRIES)
         truncated = len(expanded) > limit
@@ -282,7 +282,7 @@ class FindTool(Tool):
             notices = []
             if data.get("expansion_truncated"):
                 notices.append(
-                    f"glob 枚举超过 {_MAX_GLOB_CANDIDATES} 个候选, 未继续展开"
+                    f"glob 枚举超过 {MAX_GLOB_CANDIDATES} 个候选, 未继续展开"
                 )
             if data.get("truncated"):
                 notices.append(

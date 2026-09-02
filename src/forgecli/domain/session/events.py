@@ -19,10 +19,6 @@ class EventType(Enum):
     # MODE_CHANGED = "mode_changed"
     USER_MESSAGE = "user_message"
     ASSISTANT_MESSAGE = "assistant_message"
-    # 没有产出方了: 斜杠命令随终端入口整体删除 (ADR-0025 决策 1 修订二). **不能删这一
-    # 行** —— from_dict 用 `EventType(...)` 还原, 删掉之后任何一份写于那次修订之前的
-    # events.jsonl 都会在 resume 与 transcript 上抛 ValueError. 落盘取值是只增不减的.
-    SLASH_COMMAND = "slash_command"
     # 一次模型调用的 usage 计量摘要（ADR-0011 §11.1）：由 AgentTurnService 写入，
     # payload 为 UsageRecordDraft.to_payload() 的安全摘要，不含凭证 / 原文。
     USAGE_RECORDED = "usage_recorded"

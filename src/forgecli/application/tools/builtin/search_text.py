@@ -14,6 +14,7 @@ import regex
 
 from forgecli.application.tools.artifact_store import ArtifactStore
 from forgecli.application.tools.builtin.base import (
+    MAX_GLOB_CANDIDATES,
     emit_text,
     joined,
     path_state_token,
@@ -55,7 +56,6 @@ _MAX_REGEX_LINE_CHARS = 16 * 1024
 # 单行正则匹配的墙钟上限. 取代原先按语法拒绝正则的那套判据 —— 要防的是跑不完,
 # 不是括号.
 _REGEX_LINE_TIMEOUT = 0.25
-_MAX_GLOB_CANDIDATES = 10_000
 
 _SPEC = ToolSpec(
     name="search_text",
@@ -327,11 +327,11 @@ class SearchTextTool(Tool):
         raw_candidates = context.filesystem.expand_glob(
             in_files,
             root=facts.realpath,
-            max_results=_MAX_GLOB_CANDIDATES + 1,
+            max_results=MAX_GLOB_CANDIDATES + 1,
             skip_ignored=not include_ignored,
         )
-        expansion_truncated = len(raw_candidates) > _MAX_GLOB_CANDIDATES
-        candidates = raw_candidates[:_MAX_GLOB_CANDIDATES]
+        expansion_truncated = len(raw_candidates) > MAX_GLOB_CANDIDATES
+        candidates = raw_candidates[:MAX_GLOB_CANDIDATES]
         regular: list[str] = []
         skipped_symlinks = 0
         for candidate in candidates:
@@ -472,7 +472,7 @@ class SearchTextTool(Tool):
         incomplete_notes: list[str] = []
         if plan.normalized_input.get("expansion_truncated"):
             incomplete_notes.append(
-                f"glob 枚举超过 {_MAX_GLOB_CANDIDATES} 个候选，未继续展开"
+                f"glob 枚举超过 {MAX_GLOB_CANDIDATES} 个候选，未继续展开"
             )
         if plan.normalized_input.get("files_truncated"):
             incomplete_notes.append(
