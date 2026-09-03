@@ -1,7 +1,7 @@
 """Agent 主循环切片（ADR-0010）：受控 ReAct 内核 `AgentLoop` 的契约与扩展机制。
 
 本切片是 application 下与 agent_turn 并列的编排内核层。AgentLoop 只产出结构化意图
-（LoopDecision / LoopAction / LoopStop），副作用一律由 AgentTurnService 执行。MVP
+（LoopAction / LoopStop），副作用一律由 AgentTurnService 执行。MVP
 唯一实现是 BuiltinAgentLoop（2026-07-24 起落地）；不预先抽象 LoopAdapter 之类的编排
 适配层（ADR-0010 §3）。
 

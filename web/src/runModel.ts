@@ -270,7 +270,11 @@ export function groupToolEvents(events: RunEvent[]) {
     let group = groups.find((item) => item.id === key);
     if (!group && event.invocation_id) {
       const name = stringValue(event.payload.tool_name);
-      group = groups.find((item) => item.events.every((candidate) => !candidate.invocation_id) && stringValue(item.events[0]?.payload.tool_name) === name);
+      group = groups.find((item) => (
+        item.events.every((candidate) => !candidate.invocation_id)
+        && !item.events.some((candidate) => candidate.kind === "tool_completed" || candidate.kind === "tool_cancelled")
+        && stringValue(item.events[0]?.payload.tool_name) === name
+      ));
       if (group) group.id = event.invocation_id;
     }
     if (!group) {
@@ -338,8 +342,8 @@ export type ToolSummary = { text: string; mono: boolean; count: number };
 /**
  * 把一组工具活动收成一行。
  *
- * 写的是**已经发生的事**, 不是"准备干嘛": 工具名与参数只有在派发之后才拿得到, 而模型
- * 说"我要读文件"是叙述, 不是工具事件。
+ * 写的是模型已经发出的**结构化调用请求**，不是自然语言里一句“准备干嘛”。请求可能仍在
+ * 排队或随后被安全策略拒绝；真实状态由同一组里的后续事件决定。
  *
  * 名字一律取后端目录里的 title (`toolActionLabel`), 不在前端另写一套动词表。
  *
@@ -358,29 +362,14 @@ export function summariseTools(groups: ToolGroup[], directory: ToolDirectory = {
   if (names.length > 1) return { text: labels.join(" / "), mono: false, count };
 
   const label = labels[0];
-  // 一条 shell 命令: 命令本身就是最好的说明, 而它不是路径, 留着有用。
-  if (count === 1 && names[0].startsWith("shell_")) {
-    const command = commandOf(groups[0].events);
-    if (command) return { text: command, mono: true, count };
-  }
+  // shell_run 的命令详情放在展开后的调用行里；组级摘要只说明动作，避免把整条命令
+  // （或一条很长的管道）塞进折叠标题。这里使用稳定的界面文案，不暴露后端 title 的
+  // 实现细节（当前 title 是“执行 Shell 命令”）。
+  if (names[0] === "shell_run") return { text: "执行命令", mono: false, count };
   // 其余一律只给动作名: 具体读了哪个文件展开才看得到。收起时摆一个路径, 等于让一个
   // 随机挑出来的文件占满整行, 而它并不比另外几个更值得看。
   return { text: label, mono: false, count };
 }
-
-/** 这次调用跑的是哪条命令。只有 shell 摘要用得到 —— 别的工具在摘要行只给动作名。 */
-function commandOf(events: RunEvent[]): string {
-  const source = events.find((event) => event.kind === "tool_prepared")
-    ?? events.find((event) => event.kind === "tool_queued");
-  const raw = source?.payload.arguments;
-  if (!Array.isArray(raw)) return "";
-  for (const pair of raw) {
-    const values = Array.isArray(pair) ? pair : [];
-    if (stringValue(values[0]) === "command") return stringValue(values[1]);
-  }
-  return "";
-}
-
 
 export type TimelineItem =
   | { id: string; kind: "model"; key: string; sequence: number; events: RunEvent[]; reason: string }
@@ -476,25 +465,13 @@ export function activityOf(turn: LocalTurn, directory: ToolDirectory = {}): stri
   if (turn.status === "cancelled") return "处理已取消";
   if (turn.status === "failed") return "处理失败";
 
-  const open = new Map<string, string>();
   let modelRunning = false;
   let thinking = false;
   let awaiting = false;
   let lastNote = "";
 
   for (const event of turn.events) {
-    const callId = event.tool_call_id ?? event.invocation_id ?? "";
     switch (event.kind) {
-      case "tool_queued":
-      case "tool_prepared":
-      case "policy_resolved":
-      case "tool_started":
-        if (callId) open.set(callId, toolNameOf([event]) || open.get(callId) || "");
-        break;
-      case "tool_completed":
-      case "tool_cancelled":
-        if (callId) open.delete(callId);
-        break;
       case "approval_requested":
         awaiting = true;
         break;
@@ -529,11 +506,22 @@ export function activityOf(turn: LocalTurn, directory: ToolDirectory = {}): stri
 
   // 等审批排在最前: 这时候什么都没在跑, 而用户正是那个卡住流程的人。
   if (awaiting) return "等待你的审批";
-  if (open.size > 0) {
-    const names = [...new Set([...open.values()].filter(Boolean))];
-    if (names.length === 1) return `正在${toolActionLabel(names[0], directory)}`;
-    if (names.length > 1) return `正在并行处理 ${names.length} 个工具`;
-    return "正在调用工具";
+  // 通过分组后的生命周期判断，避免 queued 用 tool_call_id、started/completed 用
+  // invocation_id 时同一次调用在 Map 里留下两个身份。队列是串行的，不能称作“并行处理”。
+  const activeTools = groupToolEvents(turn.events).filter((group) => !group.events.some(
+    (event) => event.kind === "tool_completed" || event.kind === "tool_cancelled",
+  ));
+  const runningTools = activeTools.filter((group) => group.events.some((event) => event.kind === "tool_started"));
+  if (runningTools.length > 0) {
+    const names = [...new Set(runningTools.map((group) => toolNameOf(group.events)).filter(Boolean))];
+    const label = names.length === 1 ? toolActionLabel(names[0], directory) : `${runningTools.length} 个工具`;
+    const waiting = activeTools.length - runningTools.length;
+    return `正在${label}${waiting > 0 ? `，另有 ${waiting} 个待处理` : ""}`;
+  }
+  if (activeTools.length > 0) {
+    const names = [...new Set(activeTools.map((group) => toolNameOf(group.events)).filter(Boolean))];
+    if (activeTools.length === 1 && names.length === 1) return `准备调用${toolActionLabel(names[0], directory)}`;
+    return `准备调用 ${activeTools.length} 个工具`;
   }
   if (modelRunning) return thinking ? "模型思考中…" : "模型生成中…";
   if (lastNote) return lastNote;

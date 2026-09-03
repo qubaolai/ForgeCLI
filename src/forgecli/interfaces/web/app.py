@@ -39,7 +39,6 @@ from forgecli.domain.model.thinking import ThinkingEffortName, ThinkingMode
 from forgecli.domain.workspace.project import WorkspaceError
 from forgecli.infrastructure.project import ProjectLockedError
 from forgecli.infrastructure.session.jsonl_run_store import MAX_STORED_OUTPUT
-from forgecli.interfaces.runtime.diagnostics import diagnostics_report
 from forgecli.interfaces.web.events import WebEventHub
 from forgecli.interfaces.web.runtime import (
     ProjectRuntime,
@@ -454,27 +453,6 @@ def create_app(
     @app.get("/api/v1/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
-
-    @app.get("/api/v1/diagnostics")
-    async def diagnostics(request: Request) -> dict[str, object]:
-        """开发者诊断读数 (ADR-0035).
-
-        **刻意没有前端调用方**: 这是给 curl 用的排查出口, 不是控制面的一块界面.
-        它是 `METRICS` 与网关观测聚合唯一的读取口 —— 删掉它, 那两套采集就再也没有
-        地方能看.
-
-        网关那部分要激活项目才有 —— LLM 运行时是按项目装配的, 没激活项目时进程里
-        根本没有网关.
-        """
-        runtime = request.app.state.registry.active
-        report = diagnostics_report(
-            None if runtime is None else runtime.llm.gateway_metrics
-        )
-        if runtime is not None:
-            # 执行画像原先挂在 GET /api/v1/runtime 上, 而那条路由没有任何调用方.
-            # 画像本身是排查"围栏到底立没立起来"的第一手材料, 所以并到这里.
-            report["execution_profile"] = to_jsonable(runtime.tools.profile)
-        return report
 
     @app.get("/api/v1/bootstrap")
     async def bootstrap(request: Request) -> dict[str, object]:

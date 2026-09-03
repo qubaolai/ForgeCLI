@@ -2,7 +2,7 @@
 
 2026-07-24 起本类驱动 AgentLoop（MVP 实现 BuiltinAgentLoop）：service 是唯一执行
 副作用的 application service——事件成对落盘、usage 草稿写入、观察回填都在这里；
-loop 只产出结构化意图（LoopDecision / LoopAction / LoopStop）。
+loop 只产出结构化意图（LoopAction / LoopStop）。
 
 约束（ADR-0003 / 概要设计 §6.5）：service 不依赖任何界面库；
 **所有事件落盘只经 SessionService 单一门面**，本类不持有 EventStore/StateStore。
@@ -344,7 +344,7 @@ class AgentTurnService:
         for _ in range(self._max_steps):
             if isinstance(step, LoopStop):
                 return self._outcome_from_stop(step, answer, loop)
-            action = step.next_action
+            action = step
             if isinstance(action, AnswerAction):
                 answer = action.text
                 step = loop.observe(

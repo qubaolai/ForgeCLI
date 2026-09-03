@@ -24,7 +24,6 @@ from forgecli.domain.config.errors import (
 
 # ---- 键名常量（dotted key 与配置文件表结构对应）----
 # 应用级（config.json）
-TELEMETRY_ENABLED = "telemetry.enabled"
 OUTPUT_THEME = "output.theme"
 LOGGING_LEVEL = "logging.level"
 LOGGING_CONSOLE = "logging.console"
@@ -119,15 +118,6 @@ class ConfigKey:
 
 SCHEMA: tuple[ConfigKey, ...] = (
     # 应用级 → config.json
-    ConfigKey(
-        TELEMETRY_ENABLED,
-        ConfigLevel.APP,
-        ValueKind.BOOL,
-        default="false",
-        label="运行指标采集",
-        help="统计各阶段的调用次数与耗时，只留在本机内存里，进程退出即丢弃；"
-        "关掉之后 /diagnostics 的阶段耗时为空。",
-    ),
     ConfigKey(
         OUTPUT_THEME,
         ConfigLevel.APP,

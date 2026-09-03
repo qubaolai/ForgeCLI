@@ -102,17 +102,12 @@ SIBLING_BANS: tuple[tuple[str, str, str], ...] = (
         "AgentLoop 不读写长期记忆 (ADR-0010 §影响)",
     ),
     # 工具链路只认识自己的输出端口, 不认识端口另一头的实现 (ADR-0028 规则 A1).
-    # 删掉这两条, ToolRunObserver 与 ToolAuditSink 这两个抽象就白留了 —— 协调器会
-    # 顺着同层的 import 直接认识事件总线与会话写入口.
+    # 删掉它, ToolRunObserver 这个抽象就白留了 —— 协调器会顺着同层的 import 直接
+    # 认识事件总线.
     (
         "application.tool_request",
         "application.agent_run",
         "工具链路不认识终端事件总线, 只发 ToolRunObserver (ADR-0016 §4.3)",
-    ),
-    (
-        "application.tool_request",
-        "application.session",
-        "工具链路不认识会话写入口, 只发 ToolAuditSink (ADR-0028 规则 A1)",
     ),
 )
 

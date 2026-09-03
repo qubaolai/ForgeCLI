@@ -226,7 +226,7 @@ class ToolObservation:
         if self.checkpoint_id:
             payload["checkpoint_id"] = self.checkpoint_id
         if self.result is not None:
-            payload["result"] = self.result.to_audit_payload()
+            payload["result"] = self.result.to_payload()
         return payload
 
 

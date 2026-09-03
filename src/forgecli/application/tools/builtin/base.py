@@ -206,7 +206,7 @@ def emit_text(
         ref = replace(ref, truncated=True)
     # **artifacts 与 provenance 说的不是同一件事**, 所以只有截断时才进 artifacts:
     #
-    # - ``artifacts`` 的意思是"你看到的输出被切了, 剩下的在这里". 它进审计 payload,
+    # - ``artifacts`` 的意思是"你看到的输出被切了, 剩下的在这里". 它进观察 payload,
     #   也进终端那行"N 个产物". 全量落盘之后要是把每次调用都算进去, 读一个 20 行的
     #   文件也会显示"1 个产物" —— 而用户看这个数字, 正是想知道有没有东西被切掉.
     # - ``provenance.artifact_id`` 的意思是"完整内容留了一份, 压缩时可以拿它顶替正文".

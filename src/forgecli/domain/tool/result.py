@@ -275,8 +275,8 @@ class ToolResult:
         )
         return "\n".join(line for line in lines if line)
 
-    def to_audit_payload(self) -> dict[str, object]:
-        """工具侧审计只记机制事实: 状态, 耗时, 退出码, 产物引用与截断情况."""
+    def to_payload(self) -> dict[str, object]:
+        """只记机制事实: 状态, 耗时, 退出码, 产物引用与截断情况."""
         return {
             "invocation_id": self.invocation_id,
             "tool_name": self.tool_name,

@@ -19,7 +19,7 @@
 EXTERNAL_READ / EXTERNAL_WRITE 从而逐次 ASK; 更要紧的是它把 `~/.forge` 下的**任意位置**
 暴露给一个由模型填写的路径参数. 专用工具是更窄的通道, 不是更宽的.
 
-边界: 不经审批 != 不记审计. 四个工具照常经 ToolRequestCoordinator, 照常写 tool_requested
+边界: 不经审批 != 不走管线. 四个工具照常经 ToolRequestCoordinator, 照常发运行事件
 与 tool_completed, 照常受 ToolRuntime 的 spec 上界与授权信封校验. 少的只有 ASK 那一步.
 """
 

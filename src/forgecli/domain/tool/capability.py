@@ -33,7 +33,7 @@ CAPABILITY_VOCABULARY_VERSION = "1"
 
 
 class Capability(Enum):
-    """本次调用请求的能力. 取值会进哈希与审计, 不可改."""
+    """本次调用请求的能力. 取值会进哈希, 不可改."""
 
     PLAN_ONLY = "plan_only"
     # 读回自己落盘的工具输出 (ADR-0032 决策 6.2). 与 PLAN_ONLY 同侧: 读的是 Forge

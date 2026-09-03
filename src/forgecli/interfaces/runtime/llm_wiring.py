@@ -34,7 +34,6 @@ from forgecli.application.llm.gateway.default_gateway import DefaultLlmGateway
 from forgecli.application.llm.gateway.errors import ModelGatewayError
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.llm.gateway.governance import SlidingWindowHealthRegistry
-from forgecli.application.llm.gateway.observability import InProcessGatewayMetrics
 from forgecli.application.llm.gateway.provider_registry import ProviderRegistry
 from forgecli.application.llm.metering import CostEstimator, UsageMeter
 from forgecli.application.llm.overrides_service import ModelOverridesService
@@ -56,13 +55,11 @@ from forgecli.infrastructure.llm.settings import LlmConfigProviderSettingsSource
 
 @dataclass(frozen=True)
 class LlmRuntime:
-    """装配完成的 LLM 运行时：网关 + usage 计量件 + 覆盖配置服务 + 观测聚合。"""
+    """装配完成的 LLM 运行时：网关 + usage 计量件 + 覆盖配置服务。"""
 
     gateway: LlmGateway
     usage_meter: UsageMeter
     overrides_service: ModelOverridesService
-    # 进程内观测聚合（ADR-0012 §9）：GET /api/v1/diagnostics 经 snapshot() 消费。
-    gateway_metrics: InProcessGatewayMetrics
     # 当前模型的上下文预算 (ADR-0032 决策 1). 每轮现取: 用户可能刚 /model 换过模型.
     context_budget: Callable[[], ContextBudget | None]
 
@@ -85,7 +82,6 @@ def build_llm_runtime(
     )
     registry = _build_provider_registry(llm_config_service)
 
-    metrics = InProcessGatewayMetrics()
     gateway = DefaultLlmGateway(
         registry,
         resolver=resolver,
@@ -94,7 +90,6 @@ def build_llm_runtime(
         credential_pool=InMemoryCredentialPool(EnvCredentialResolver()),
         health_registry=_build_health_registry(llm_config_service),
         cache=_build_response_cache(llm_config_service),
-        observer=metrics,
     )
 
     # CostEstimator 现读目录视图：包一层动态 catalog，价格随 /config 修改生效。
@@ -103,7 +98,6 @@ def build_llm_runtime(
         gateway=gateway,
         usage_meter=usage_meter,
         overrides_service=overrides_service,
-        gateway_metrics=metrics,
         context_budget=_budget_reader(resolver),
     )
 

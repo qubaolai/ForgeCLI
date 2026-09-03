@@ -144,17 +144,3 @@ class RecoveryCheckpoint:
     @property
     def armed(self) -> bool:
         return self.status.allows_destructive_write
-
-    def to_payload(self) -> dict[str, object]:
-        """审计事件用的摘要. 只有路径级信息, 不含文件明文."""
-        return {
-            "checkpoint_id": self.checkpoint_id,
-            "workspace_id": self.workspace_id,
-            "tool_invocation_id": self.tool_invocation_id,
-            "status": self.status.value,
-            "snapshot_strategy": self.snapshot_strategy.value,
-            "recoverable": self.recoverable,
-            "incomplete_reason": self.incomplete_reason,
-            "manifest_hash": self.manifest_hash,
-            "paths": [entry.relative_path for entry in self.mutations.entries],
-        }

@@ -98,7 +98,7 @@ _attached: list[tuple[logging.Logger, logging.Handler]] = []
 
 @dataclass(frozen=True)
 class LoggingStatus:
-    """当前生效的日志装配. 供 `/diagnostics` 直接展示 —— 排查的第一个问题永远是
+    """当前生效的日志装配. 启动行会把它打出来 —— 排查的第一个问题永远是
     "日志到底写在哪, 开到多细"."""
 
     level: str = "off"

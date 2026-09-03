@@ -34,7 +34,6 @@ from forgecli.application.security.policy_engine import PolicyEngine
 from forgecli.application.security.wiring import build_analyzer_registry
 from forgecli.application.security.workspace_grants import WorkspaceGrants
 from forgecli.application.session.session_service import SessionService
-from forgecli.application.session.tool_audit import SessionToolAudit
 from forgecli.application.tool_request.coordinator import ToolRequestCoordinator
 from forgecli.application.tool_request.dispatcher import CoordinatorToolDispatcher
 from forgecli.application.tools.artifact_store import (
@@ -303,10 +302,8 @@ def build_tool_stack(
         authorization,
         approval=approval,
         mutations=mutations,
-        audit=SessionToolAudit(session),
         learned=learned,
-        # 展示与审计走两条独立出口 (ADR-0016 §4.3): 观察者只发运行事件, 审计另有
-        # SessionToolAudit. 订阅者抛异常被总线隔离, 因此展示侧出问题不会影响裁决与执行.
+        # 订阅者抛异常被总线隔离, 因此展示侧出问题不会影响裁决与执行.
         observer=EventBusToolRunObserver(run_bus),
         workspace_id=workspace_id,
     )

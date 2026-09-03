@@ -14,12 +14,20 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from forgecli.domain.model.thinking import ThinkingEffortName
+
 
 def to_jsonable(value: object) -> Any:
     """只展开值对象、枚举和基础容器，不调用任意对象的 ``__dict__``。"""
     if value is None or isinstance(value, str | int | float | bool):
         return value
     if isinstance(value, Enum):
+        return value.value
+    # ThinkingEffortName 是一个带校验的标量值对象。它在配置文件和 Web DTO 中
+    # 的公开形状都是强度名字符串，而不是内部 dataclass 的 ``{"value": ...}``。
+    # 这个分支必须放在通用 dataclass 展开之前，否则前端输入框会收到对象并显示
+    # 为 ``[object Object]``。
+    if isinstance(value, ThinkingEffortName):
         return value.value
     if is_dataclass(value) and not isinstance(value, type):
         return {

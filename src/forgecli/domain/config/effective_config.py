@@ -34,9 +34,6 @@ def _text(value: bool) -> str:
 class EffectiveConfig:
     """合并默认值与用户覆盖后的有效配置快照。"""
 
-    # 是否采集进程内的阶段耗时与计数 (shared/observability/metrics). 关掉之后
-    # /diagnostics 的 stages 是空的, 记录点本身变成空操作.
-    telemetry_enabled: bool
     output_theme: str
     # 日志装配 (ADR-0035). 这几个键**在进程启动之前就要读到**: 日志装配发生在任何
     # service 之前, 所以那条路径直接读 config.json, 不经这份视图.
@@ -60,7 +57,6 @@ class EffectiveConfig:
             return raw if raw is not None else _DEFAULTS[name]
 
         return cls(
-            telemetry_enabled=_as_bool(value(config_keys.TELEMETRY_ENABLED)),
             output_theme=value(config_keys.OUTPUT_THEME),
             logging_level=value(config_keys.LOGGING_LEVEL),
             logging_console=_as_bool(value(config_keys.LOGGING_CONSOLE)),
@@ -76,7 +72,6 @@ class EffectiveConfig:
     def as_dict(self) -> dict[str, str]:
         """键 -> 规范字符串，供菜单展示与序列化对比。"""
         return {
-            config_keys.TELEMETRY_ENABLED: _text(self.telemetry_enabled),
             config_keys.OUTPUT_THEME: self.output_theme,
             config_keys.LOGGING_LEVEL: self.logging_level,
             config_keys.LOGGING_CONSOLE: _text(self.logging_console),

@@ -47,7 +47,7 @@ class SandboxProvider(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """进 ExecutionProfile 与审计的标识."""
+        """进 ExecutionProfile 的标识."""
 
     @abstractmethod
     def available(self) -> bool:

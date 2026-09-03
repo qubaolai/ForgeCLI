@@ -68,7 +68,7 @@ class ToolRegistry:
         按当前模式过滤出来的目录里根本没有它们.
 
         刻意不返回 `ToolCatalog`: 那个类型的每一次出现都进模型请求记录, 事件与授权信封
-        (见它的模块说明). 让一次纯展示查询也产出一份快照哈希, 等于在审计里多出一份没有
+        (见它的模块说明). 让一次纯展示查询也产出一份快照哈希, 等于多出一份没有
         任何调用与之对应的目录.
         """
         return tuple(sorted((tool.spec for tool in self._tools.values()), key=_by_name))

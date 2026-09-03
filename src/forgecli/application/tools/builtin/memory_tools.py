@@ -1,6 +1,6 @@
 """memory_write / memory_forget: 跨会话记忆的写入 (ADR-0033 决策 9).
 
-走工具管线的收益是**全套机制免费继承**: TOOL_REQUESTED / TOOL_COMPLETED 审计, 运行
+走工具管线的收益是**全套机制免费继承**: 目录可见性, 参数校验, 运行
 事件, 目录谓词, mode 门 —— 不用为记忆再造一套.
 
 形状照 planning_tools 抄, 连同它那条理由: `additionalProperties: False` 加上没有路径

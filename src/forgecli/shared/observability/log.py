@@ -29,7 +29,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from forgecli.shared.observability.context import current
-from forgecli.shared.observability.metrics import METRICS
 
 __all__ = [
     "Log",
@@ -188,7 +187,7 @@ class Log:
 
     @contextmanager
     def span(self, event: str, **fields: object) -> Iterator[Span]:
-        """给一段执行计时, 并把耗时同时记进 `METRICS`.
+        """给一段执行计时.
 
         产出三种行: `event.start` (DEBUG), `event.ok` / `event.error` (INFO / ERROR),
         收尾行带 `elapsed_ms`. 异常照常上抛 —— 这里只观察, 不改变控制流.
@@ -200,8 +199,6 @@ class Log:
             yield span
         except BaseException as exc:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
-            METRICS.observe(event, elapsed_ms, outcome="error")
-            METRICS.count(f"{event}.error", error=type(exc).__name__)
             if self._logger.isEnabledFor(logging.ERROR):
                 self._logger.error(
                     _compose(
@@ -218,8 +215,6 @@ class Log:
             raise
         else:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
-            METRICS.observe(event, elapsed_ms, outcome="ok")
-            METRICS.count(f"{event}.ok")
             self._write(
                 logging.INFO,
                 f"{event}.ok",

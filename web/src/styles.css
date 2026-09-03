@@ -254,11 +254,12 @@ button { color: inherit; }
 
 /* 审批卡片. 三档危险程度由 approvalModel.severityOf 决定, 这里只把它翻成颜色:
    --sev 是唯一的开关, 描边条, 徽标, 命令左边框与计数高亮全都跟着它走。 */
-.approval-card { position: relative; margin: 0 clamp(18px, 5vw, 68px) 12px; overflow: hidden; background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 12px 36px #0004; font-size: 13px; }
+.approval-card { position: relative; display: flex; flex-direction: column; max-height: min(72vh, calc(100vh - 190px)); margin: 0 clamp(18px, 5vw, 68px) 12px; overflow: hidden; background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 12px 36px #0004; font-size: 13px; }
 .approval-card.sev-calm { --sev: var(--accent); }
 .approval-card.sev-caution { --sev: var(--warning); }
 .approval-card.sev-critical { --sev: var(--danger); }
 .approval-card .ac-stripe { display: block; height: 3px; background: var(--sev); }
+.approval-card > header, .approval-card .ac-root, .approval-card .ac-counts, .approval-card > footer { flex: 0 0 auto; }
 .approval-card > header { display: flex; gap: 11px; align-items: flex-start; padding: 14px 16px 12px; }
 .approval-card .ac-badge { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 9px; background: color-mix(in srgb, var(--sev) 16%, transparent); color: var(--sev); }
 .approval-card .ac-badge svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
@@ -268,13 +269,13 @@ button { color: inherit; }
 .approval-card .ac-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
 .approval-card .ac-chip { padding: 3px 7px; border-radius: 5px; background: var(--surface-3); color: var(--text-soft); font-size: 10px; white-space: nowrap; }
 .approval-card .ac-chip.tool { background: color-mix(in srgb, var(--sev) 13%, transparent); color: var(--sev); font-weight: 700; }
-.approval-card .ac-cmd { margin: 0 16px; padding: 12px 13px; background: var(--surface); border: 1px solid var(--border); border-left: 2px solid var(--sev); border-radius: 8px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.approval-card .ac-cmd { flex: 0 1 auto; max-height: 24vh; margin: 0 16px; padding: 12px 13px; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-left: 2px solid var(--sev); border-radius: 8px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
 .approval-card .ac-root { margin: 7px 16px 0; color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .approval-card .ac-counts { display: flex; flex-wrap: wrap; gap: 7px; padding: 13px 16px 0; }
 .approval-card .ac-count { padding: 4px 9px; border-radius: 6px; background: var(--surface-3); color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .approval-card .ac-count b { font-size: 12px; }
 .approval-card .ac-count[data-on="1"] { background: color-mix(in srgb, var(--sev) 14%, transparent); color: var(--sev); }
-.approval-card .ac-body { display: flex; flex-direction: column; gap: 10px; padding: 13px 16px 0; }
+.approval-card .ac-body { min-height: 0; display: flex; flex: 1 1 auto; flex-direction: column; gap: 10px; overflow-y: auto; overscroll-behavior: contain; padding: 13px 16px 0; }
 .approval-card .ac-body:empty { display: none; }
 .approval-card .ac-sec { border: 1px solid var(--border); border-radius: 9px; background: var(--surface); overflow: hidden; }
 .approval-card .ac-sec > summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; color: var(--muted); font-size: 10.5px; list-style: none; }
@@ -610,8 +611,8 @@ button { color: inherit; }
 /* 工具活动收成一行浅色文字 (方案 A).
    原先每组是一张带标题的卡, 占三到五行, 而标题重复了下面每一条已经写着的东西 ——
    一轮跑十几次工具时, 叙述被卡片推得很散. 现在它退到背景里, 点开才展开详情. */
-.tool-line { margin: 0; }
-.tool-line > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 8px; padding: 2px 0; color: var(--muted); font-size: 13px; }
+.tool-line { width: 100%; min-width: 0; max-width: 100%; margin: 0; }
+.tool-line > summary { width: 100%; min-width: 0; max-width: 100%; overflow: hidden; list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 8px; padding: 2px 0; color: var(--muted); font-size: 13px; }
 .tool-line > summary::-webkit-details-marker { display: none; }
 .tool-line > summary:hover { color: var(--text-soft); }
 .tool-line > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
@@ -624,14 +625,23 @@ button { color: inherit; }
 .tool-flag { flex: 0 0 auto; font-size: 10px; padding: 0 6px; border-radius: 999px; background: var(--surface-3); }
 .tool-line.failed > summary, .tool-line.failed .tool-flag { color: var(--danger); }
 .tool-line.cancelled > summary { color: var(--muted); }
-/* 运行中不给三角: 还没有详情可展开, 一个点不动的三角只会让人去点. */
-.tool-line.running { display: flex; align-items: center; gap: 8px; padding: 2px 0; color: var(--text-soft); font-size: 13px; }
-.tool-line-body { margin: 6px 0 2px 18px; padding: 8px 10px; border-left: 2px solid var(--border); display: grid; gap: 6px; }
+/* 待处理与运行中都能展开；组默认收起，由用户决定是否查看逐项状态。 */
+.tool-line.pending > summary, .tool-line.running > summary { color: var(--text-soft); }
+.tool-line.running > summary .tool-running-verb,
+.tool-line.running > summary .tool-what,
+.call-row.running .call-tool { animation: running-text 1.4s ease-in-out infinite; }
+@keyframes running-text { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) {
+  .tool-line.running > summary .tool-running-verb,
+  .tool-line.running > summary .tool-what,
+  .call-row.running .call-tool { animation: none; }
+}
+.tool-line-body { min-width: 0; max-width: calc(100% - 18px); margin: 6px 0 2px 18px; padding: 8px 10px; border-left: 2px solid var(--border); display: grid; gap: 6px; }
 .tool-running-verb { flex: 0 0 auto; }
 .tool-line-kind { margin: 0; color: var(--muted); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
 
 /* 展开层: 一次调用一行. 原先是三层嵌套把摘要行说过的话说三遍, 一次读文件占半屏. */
-.call-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 12px; }
+.call-row { min-width: 0; max-width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 12px; }
 .call-tool { color: var(--text-soft); white-space: nowrap; }
 .call-subject { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .call-state { flex: 0 0 auto; font-size: 10px; color: var(--muted); }

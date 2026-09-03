@@ -23,27 +23,6 @@ class EventType(Enum):
     # payload 为 UsageRecordDraft.to_payload() 的安全摘要，不含凭证 / 原文。
     USAGE_RECORDED = "usage_recorded"
 
-    # -- 工具执行与安全裁决 (ADR-0004 §9 / §15, ADR-0013 §15) --
-    #
-    # TOOL_REQUESTED 是**写前事件**: 执行之前就要落盘. resume 时有 requested 无
-    # completed 的调用结果未知, non_idempotent 的标 outcome_unknown 且不自动重放.
-    TOOL_REQUESTED = "tool_requested"
-    TOOL_COMPLETED = "tool_completed"
-    # 审批本身也走这一条: 裁决落盘的是 POLICY_DECISION, 带 decision / reason /
-    # mandatory. 早先另有 APPROVAL_REQUESTED 与 APPROVAL_RESOLVED 两个取值, 但它们从
-    # 未被任何代码发出过 —— 只在 SessionToolAudit 的 _EVENT_NAMES 名字表里各占一行,
-    # 而那张表 2026-08-30 已删 (审计出口改收 EventType). 同时删掉的还有
-    # CLASSIFIER_INVOKED (ADR-0030 删掉 LLM 分类器, 同样从未发出过).
-    #
-    # 删这三个安全, 删 SLASH_COMMAND 不安全, 区别只在**有没有真的写进过 events.jsonl**:
-    # 全 git 历史里这三个只出现在那张名字表里, 没有任何调用点.
-    POLICY_DECISION = "policy_decision"
-
-    # -- 工作区恢复 (ADR-0015 §14) --
-    CHECKPOINT_CREATED = "checkpoint_created"
-    MUTATION_RECORDED = "mutation_recorded"
-    # RECOVERY_PERFORMED 同上: 名字表里有, 发出方从来没有过, 已删.
-
     # -- 目录授权 (ADR-0014 §7) --
     DIR_GRANT_CHANGED = "dir_grant_changed"
 

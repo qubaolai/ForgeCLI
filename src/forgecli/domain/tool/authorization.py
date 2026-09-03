@@ -63,7 +63,7 @@ class ExecutionAuthorization:
     recovery_binding: str | None = None
     # ADR-0013 §14: 人类批准时看到的完整视图哈希 (走过 ASK 时才有).
     approval_view_hash: str | None = None
-    # 派生字段: 与 effective_plan.plan_hash 恒等, 显式留字段是为了让审计与事件里
+    # 派生字段: 与 effective_plan.plan_hash 恒等, 显式留字段是为了让事件里
     # 有一个不必展开整个 plan 就能比对的锚点.
     plan_hash: str = field(default="", compare=False)
 

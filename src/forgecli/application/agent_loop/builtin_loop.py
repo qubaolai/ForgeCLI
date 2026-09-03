@@ -50,7 +50,7 @@ from forgecli.application.llm.metering import UsageMeter
 from forgecli.application.prompt.template_renderer import render_notice
 from forgecli.domain.agent.actions import (
     AnswerAction,
-    LoopDecision,
+    LoopAction,
     LoopObservation,
     LoopStepResult,
     LoopStop,
@@ -70,6 +70,7 @@ from forgecli.domain.agent.run_events import (
     ReasoningStatusPayload,
     RunEventPayload,
     TextDeltaPayload,
+    ToolCompletedPayload,
     ToolQueuedPayload,
     TurnFinishedPayload,
 )
@@ -538,6 +539,10 @@ class BuiltinAgentLoop:
         self._remember_assistant(outcome)
         if outcome.tool_calls:
             self._pending_calls = list(outcome.tool_calls)
+            # 模型这一轮请求的调用已经全部确定。先把整批意图发给观察端，再派发第一个，
+            # 页面才能在任何工具真正启动之前画出完整队列。裁决与执行事实仍由协调器发布，
+            # 这里不会把“模型请求了”说成“必然会执行”。
+            self._publish_tool_batch(outcome.tool_calls)
             # 不发决策摘要: "模型请求 N 个工具调用"只是把界面上已经画着的东西再说一遍,
             # 而它会占掉展开层里最显眼的那一行, 把真正的摘要 (连续无新信息, 格式损坏
             # 重试) 挤成同一种东西。派发本身不是一次需要解释的决策。
@@ -548,9 +553,13 @@ class BuiltinAgentLoop:
 
     def _dispatch_next(self, *, reason: str) -> LoopStepResult:
         """派发队列里的下一个工具调用. 一次一个, 不并行."""
-        over_budget = self._check_tool_budget()
-        if over_budget is not None:
-            return over_budget
+        budget_notice = self._tool_budget_notice()
+        if budget_notice is not None:
+            # 整批调用已经对外可见，预算耗尽时必须给尚未派发的调用补终态，否则页面会
+            # 永远把它们留在“待处理”。终态要先于 turn_failed 发布，保持时间线因果顺序。
+            self._abandon_pending(budget_notice)
+            self._pending_calls = []
+            return self._stop(LoopStopReason.BUDGET_EXHAUSTED, budget_notice)
         call = self._pending_calls.pop(0)
         signature = _signature_of(call)
         self._call_counts[signature] = self._call_counts.get(signature, 0) + 1
@@ -570,19 +579,6 @@ class BuiltinAgentLoop:
             queued=len(self._pending_calls),
             tool_call_index=self._tool_calls,
         )
-        # 只报"模型请求了这个工具". 裁决与执行的事实由 ToolRequestCoordinator 发布 ——
-        # 循环还没看到它们, 在这里编就是猜.
-        self._publish(
-            AgentRunEventKind.TOOL_QUEUED,
-            ToolQueuedPayload(
-                tool_name=call.name,
-                queue_position=len(self._pending_calls),
-                # 连 prepare 都走不到的调用 (工具名不存在, schema 不合法) 只有排队与
-                # 终态两条事件. 入参不在这里发出去, 它在整条时间线上一次都不会出现.
-                arguments=scrub_arguments(call.arguments),
-            ),
-            tool_call_id=call.tool_call_id,
-        )
         return self._decision(
             reason,
             ToolRequestAction(
@@ -593,6 +589,24 @@ class BuiltinAgentLoop:
                 )
             ),
         )
+
+    def _publish_tool_batch(self, calls: tuple[ToolCall, ...]) -> None:
+        """在首个调用派发前发布模型请求的完整批次。"""
+        total = len(calls)
+        for index, call in enumerate(calls):
+            self._publish(
+                AgentRunEventKind.TOOL_QUEUED,
+                ToolQueuedPayload(
+                    tool_name=call.name,
+                    # 这是该调用之后还有几个同批调用；最后一条恒为 0，前端据此把整批
+                    # 事件一次刷新出来，而不是为 N 个调用渲染 N 次。
+                    queue_position=total - index - 1,
+                    # 连 prepare 都走不到的调用 (工具名不存在, schema 不合法) 只有排队与
+                    # 终态两条事件. 入参不在这里发出去, 它在整条时间线上一次都不会出现.
+                    arguments=scrub_arguments(call.arguments),
+                ),
+                tool_call_id=call.tool_call_id,
+            )
 
     def _reject_repeat(self, call: ToolCall) -> LoopStepResult:
         """同样的调用已经做过了: 不再执行, 直接把这个事实回填给模型.
@@ -607,21 +621,32 @@ class BuiltinAgentLoop:
             limit=_MAX_IDENTICAL_CALLS,
             seen=self._call_counts[_signature_of(call)],
         )
+        notice = render_notice(
+            "loop.repeat_call", call=_render_call(call), limit=_MAX_IDENTICAL_CALLS
+        )
         self._append(
             ChatMessage(
                 role=MessageRole.TOOL,
                 content=(
                     ToolResultBlock(
                         tool_call_id=call.tool_call_id,
-                        content=render_notice(
-                            "loop.repeat_call",
-                            call=_render_call(call),
-                            limit=_MAX_IDENTICAL_CALLS,
-                        ),
+                        content=notice,
                         is_error=True,
                     ),
                 ),
             ),
+        )
+        # 整批请求已经提前可见，重复调用即使没进入协调器，也必须拥有明确的未执行终态。
+        self._publish(
+            AgentRunEventKind.TOOL_COMPLETED,
+            ToolCompletedPayload(
+                tool_name=call.name,
+                status="rejected",
+                error_summary=notice,
+                error_code="repeated_call",
+                executed=False,
+            ),
+            tool_call_id=call.tool_call_id,
         )
         self._dispatched = None
         if self._pending_calls:
@@ -870,17 +895,29 @@ class BuiltinAgentLoop:
         下一次请求就是残缺的, 供应商会拒。所以是"标记为未执行", 不是"当作没发生过".
         """
         for call in self._pending_calls:
+            detail = render_notice("loop.abandoned_call", notice=notice)
             self._append(
                 ChatMessage(
                     role=MessageRole.TOOL,
                     content=(
                         ToolResultBlock(
                             tool_call_id=call.tool_call_id,
-                            content=render_notice("loop.abandoned_call", notice=notice),
+                            content=detail,
                             is_error=True,
                         ),
                     ),
                 ),
+            )
+            self._publish(
+                AgentRunEventKind.TOOL_CANCELLED,
+                ToolCompletedPayload(
+                    tool_name=call.name,
+                    status="not_run",
+                    error_summary=detail,
+                    error_code="abandoned",
+                    executed=False,
+                ),
+                tool_call_id=call.tool_call_id,
             )
 
     # ---- 预算 ----
@@ -895,14 +932,11 @@ class BuiltinAgentLoop:
             )
         return None
 
-    def _check_tool_budget(self) -> LoopStop | None:
+    def _tool_budget_notice(self) -> str | None:
         limit = _DEFAULT_MAX_TOOL_CALLS
         if self._tool_calls >= limit:
             _log.warning("loop.tool_budget_exhausted", limit=limit)
-            return self._stop(
-                LoopStopReason.BUDGET_EXHAUSTED,
-                render_notice("stop.tool_budget", limit=limit),
-            )
+            return render_notice("stop.tool_budget", limit=limit)
         return None
 
     def _fit_window(self) -> LoopStop | None:
@@ -1157,7 +1191,7 @@ class BuiltinAgentLoop:
 
     # ---- 运行事件 ----
 
-    def _decision(self, reason_summary: str, action: object) -> LoopDecision:
+    def _decision(self, reason_summary: str, action: LoopAction) -> LoopAction:
         """产出决策的同时把它的理由摘要发出去.
 
         DECISION_SUMMARY 是 ForgeCLI 自己能解释的行动摘要, 与供应商 reasoning 分开命名:
@@ -1172,7 +1206,7 @@ class BuiltinAgentLoop:
                 DecisionSummaryPayload(reason_summary=reason_summary),
                 step_index=self._step_index,
             )
-        return LoopDecision(next_action=action)  # type: ignore[arg-type]
+        return action
 
     def _finish_model_call(
         self,

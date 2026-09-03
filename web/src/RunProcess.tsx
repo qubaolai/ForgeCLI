@@ -19,11 +19,7 @@ import {
   wasExecuted,
 } from "./runModel";
 
-type StepState = "running" | "done" | "failed" | "cancelled";
-
-// 耗时低于这个数就不显示。只读工具普遍是个位数毫秒, 逐行标出来只会让真正慢的那一次
-// 淹没在里面。
-const SLOW_ENOUGH_MS = 200;
+type StepState = "pending" | "running" | "done" | "failed" | "cancelled";
 
 /** `<details>` 的 toggle 是异步事件；受控用法必须自己同步翻转，否则会被重渲染覆盖。 */
 function toggle(setOpen: (update: (value: boolean) => boolean) => void) {
@@ -126,38 +122,28 @@ function ToolRun({ groups, turnStatus, reason, directory }: { groups: ToolGroup[
   const states = groups.map((group) => stateOfTool(group.events, turnStatus));
   const state: StepState = states.includes("running")
     ? "running"
+    : states.includes("pending") ? "pending"
     : states.includes("failed") ? "failed" : states.includes("cancelled") ? "cancelled" : "done";
-  const elapsed = groups.reduce((total, group) => total + elapsedOfTool(group.events), 0);
   const failures = states.filter((item) => item === "failed").length;
   const summary = summariseTools(groups, directory);
+  // 工具组一律默认收起；用户主动展开之后，状态变化不强行改 open。
   const [open, setOpen] = useState(false);
-
-  // 运行中不给折叠三角: 还没有"详情"可展开, 摆一个点不动的三角只会让人去点。
-  // 那一行自己说清楚在干嘛, 加一个呼吸点表示它还在跑。
-  if (state === "running") {
-    return <p className="tool-line running">
-      <span className="pulse" />
-      {/* 命令要一个动词才读得通:「正在mvn -q compile」不是话。 */}
-      {summary.mono
-        ? <><span className="tool-running-verb">正在跑</span><span className="tool-what mono">{summary.text}</span></>
-        : <span className="tool-what">正在{summary.text}</span>}
-      {summary.count > 1 && <span className="tool-count">{summary.count} 次</span>}
-    </p>;
-  }
+  const active = state === "pending" || state === "running";
 
   return <details className={`tool-line ${state}`} open={open}>
     <summary onClick={toggle(setOpen)}>
       <ChevronIcon className="tool-caret" />
-      <span className={`tool-what ${summary.mono ? "mono" : ""}`}>{summary.text}</span>
+      {/* 命令要一个动词才读得通:「正在mvn -q compile」不是话。 */}
+      {active && summary.mono && <span className="tool-running-verb">{state === "running" ? "正在跑" : "准备运行"}</span>}
+      <span className={`tool-what ${summary.mono ? "mono" : ""}`}>
+        {active && !summary.mono ? (state === "running" ? "正在" : "准备调用") : ""}{summary.text}
+      </span>
       {/* 次数单独一列, 不拼进文字: 拼进去要做"读取文件"→"读取 6 个文件"的动宾拆分,
           而那对"执行 Shell 命令"这类标题拆不开。 */}
       {summary.count > 1 && <span className="tool-count">{summary.count} 次</span>}
       {/* 失败计数上到摘要行: 一屏十几行里唯一发生了事的就是它, 收起时也得看得见。 */}
       {failures > 0 && <span className="tool-flag">{failures} 个失败</span>}
       {state === "cancelled" && <span className="tool-flag">已取消</span>}
-      {/* 耗时只在够久时才占一列: 一屏 17 行 1–4ms 是噪音, 而它们挤掉的正是 31 秒那一行
-          该有的显眼程度。 */}
-      {elapsed >= SLOW_ENOUGH_MS && <span className="tool-took">{formatDuration(elapsed)}</span>}
     </summary>
     <div className="tool-line-body">
       {/* 类别与裁决理由只在展开后给: 收起时那一行要回答"它做了什么", 不是"它属于哪一类"。 */}
@@ -171,15 +157,13 @@ function ToolRun({ groups, turnStatus, reason, directory }: { groups: ToolGroup[
 
 function stateOfTool(events: RunEvent[], turnStatus: LocalTurn["status"]): StepState {
   const completed = [...events].reverse().find((event) => event.kind === "tool_completed" || event.kind === "tool_cancelled");
+  const started = events.some((event) => event.kind === "tool_started");
   return settle(
-    completed ? (completed.kind === "tool_cancelled" ? "cancelled" : completed.payload.error_summary ? "failed" : "done") : "running",
+    completed
+      ? (completed.kind === "tool_cancelled" ? "cancelled" : completed.payload.error_summary ? "failed" : "done")
+      : started ? "running" : "pending",
     turnStatus,
   );
-}
-
-function elapsedOfTool(events: RunEvent[]) {
-  const completed = [...events].reverse().find((event) => event.kind === "tool_completed" || event.kind === "tool_cancelled");
-  return completed ? numberValue(completed.payload.elapsed_ms) : 0;
 }
 
 function argumentsOf(event: RunEvent | undefined): Array<[string, string]> {
@@ -214,6 +198,7 @@ function ToolCall({ events, turnStatus, directory }: { events: RunEvent[]; turnS
   const targets = Array.isArray(prepared?.payload.targets) ? prepared.payload.targets.map(stringValue) : [];
   const targetCount = numberValue(prepared?.payload.target_count);
   const state = stateOfTool(events, turnStatus);
+  const stateText = toolState(latest, completed, awaiting, state);
   const summary = completed
     ? stringValue(completed.payload.error_summary) || stringValue(completed.payload.result_summary)
     : "";
@@ -225,9 +210,9 @@ function ToolCall({ events, turnStatus, directory }: { events: RunEvent[]; turnS
   return <div className={`call-row ${state}`}>
     <span className="call-tool">{toolActionLabel(name, directory)}</span>
     <span className="call-subject" title={subject}>{subject}</span>
-    <span className="call-state">{toolState(latest, completed, awaiting, state)}</span>
+    {stateText && <span className="call-state">{stateText}</span>}
     {/* 没执行过的终态与"执行了然后失败了"是两回事。 */}
-    {completed && !wasExecuted(completed) && <span className="call-state">未执行</span>}
+    {completed && !wasExecuted(completed) && stringValue(completed.payload.status) !== "not_run" && <span className="call-state">未执行</span>}
     <span className="call-took">{completed ? formatDuration(numberValue(completed.payload.elapsed_ms)) : ""}</span>
     {summary && <p className={`call-note ${state === "failed" ? "danger" : ""}`}>{summary}</p>}
     {awaiting && <p className="call-note warn">等待人类审批</p>}
@@ -321,7 +306,7 @@ function Step({ state, title, subject, meta, badge, reason, children }: {
 
 /** turn 已经结束时，没有终态事件的步骤不能继续显示成"进行中"。 */
 function settle(state: StepState, turnStatus: LocalTurn["status"]): StepState {
-  if (state !== "running" || turnStatus === "running") return state;
+  if ((state !== "running" && state !== "pending") || turnStatus === "running") return state;
   if (turnStatus === "cancelled") return "cancelled";
   return turnStatus === "failed" ? "failed" : "done";
 }
@@ -334,10 +319,16 @@ function statusText(status: LocalTurn["status"]) {
 }
 
 function toolState(latest: RunEvent | undefined, completed: RunEvent | undefined, awaiting: boolean, state: StepState) {
-  if (completed) return stringValue(completed.payload.status) || "完成";
-  if (state !== "running") return "未完成";
+  if (completed) {
+    const status = stringValue(completed.payload.status);
+    const labels: Record<string, string> = { ok: "完成", not_run: "未执行", rejected: "已拒绝", cancelled: "已取消" };
+    return (labels[status] ?? status) || "完成";
+  }
+  if (state === "pending" && latest?.kind === "tool_queued") return "待处理";
+  if (state !== "running" && state !== "pending") return "未完成";
   if (awaiting) return "等待审批";
-  const labels: Record<string, string> = { tool_queued: "排队", tool_prepared: "已准备", policy_resolved: "安全检查", approval_resolved: "审批完成", tool_started: "执行中" };
+  // 执行中的工具名称本身会闪烁，不再额外摆“执行中”状态标记。
+  const labels: Record<string, string> = { tool_queued: "排队", tool_prepared: "已准备", policy_resolved: "安全检查", approval_resolved: "审批完成", tool_started: "" };
   return latest ? labels[latest.kind] ?? "处理中" : "处理中";
 }
 

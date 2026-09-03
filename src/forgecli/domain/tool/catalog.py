@@ -4,7 +4,7 @@
 这样"哪些工具在 plan 档可见"这条策略不会渗进工具系统, 也不会散落到各个工具实现里.
 
 catalog_snapshot_hash 进模型请求记录, 事件和授权信封: 目录一变就能追溯, 避免"模型看到
-的工具集"与"审计记录的工具集"对不上.
+的工具集"与"授权信封记录的工具集"对不上.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ __all__ = ["CatalogQuery", "ToolCatalog"]
 
 @dataclass(frozen=True)
 class CatalogQuery:
-    """一次目录查询. reason_tag 说明这次过滤为什么这么做, 进快照哈希与审计."""
+    """一次目录查询. reason_tag 说明这次过滤为什么这么做, 进快照哈希."""
 
     predicate: Callable[[ToolSpec], bool]
     reason_tag: str

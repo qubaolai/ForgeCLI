@@ -24,15 +24,13 @@ from forgecli.domain.config.effective_config import EffectiveConfig
 from forgecli.infrastructure.config import JsonConfigStore, config_dir, config_file
 from forgecli.shared.errors import ConfigError
 from forgecli.shared.observability.configure import LoggingStatus, configure_logging
-from forgecli.shared.observability.metrics import METRICS
 
 __all__ = ["start_observability"]
 
 
 def start_observability() -> LoggingStatus:
-    """按 `logging.*` 与 `telemetry.enabled` 装上日志 handler 与指标开关."""
+    """按 `logging.*` 装上日志 handler."""
     config = _startup_config()
-    METRICS.set_enabled(config.telemetry_enabled)
     directory = (
         Path(config.logging_directory).expanduser()
         if config.logging_directory.strip()

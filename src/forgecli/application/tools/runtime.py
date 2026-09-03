@@ -138,7 +138,7 @@ class ToolRuntime:
                 ),
             )
         if result.metrics.duration_seconds == 0.0:
-            # 工具没自报耗时时由运行时补上, 保证审计里总有这一项.
+            # 工具没自报耗时时由运行时补上, 保证结果里总有这一项.
             return _with_duration(result, self._timer() - started)
         return result
 

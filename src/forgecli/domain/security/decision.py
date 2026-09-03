@@ -68,14 +68,3 @@ class AuthorizationDecision:
         照样命中.
         """
         return self.findings.script_snapshots
-
-    def to_audit_payload(self) -> dict[str, object]:
-        return {
-            "decision": self.decision.value,
-            "reason": self.reason.value,
-            "plan_hash": self.effective_plan.plan_hash,
-            "tool_name": self.effective_plan.tool_name,
-            "matched_rule_id": self.matched_rule_id,
-            "mandatory": self.mandatory,
-            "risk_facts": [fact.code for fact in self.risk_facts],
-        }

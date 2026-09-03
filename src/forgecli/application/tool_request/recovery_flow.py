@@ -12,11 +12,9 @@ from forgecli.application.recovery.coordinator import (
     RecoveryUnavailableError,
     WorkspaceMutationCoordinator,
 )
-from forgecli.application.tool_request.audit import ToolAuditSink
 from forgecli.application.workspace.execution_context import ExecutionContext
 from forgecli.domain.recovery.mutation import Operation
 from forgecli.domain.security.context import PolicyContext
-from forgecli.domain.session.events import EventType
 from forgecli.domain.tool.plan import ToolPlan
 from forgecli.domain.tool.result import ToolResult, ToolResultStatus
 
@@ -29,13 +27,11 @@ class RecoveryFlow:
     def __init__(
         self,
         mutations: WorkspaceMutationCoordinator | None,
-        audit: ToolAuditSink,
         workspace_id: str,
     ) -> None:
         # 恢复层缺省为 None = 不建立恢复事务. 这不是"跳过安全检查": 需要恢复保障的写入
         # 会因为拿不到恢复层而在 begin 里直接抛 RecoveryUnavailableError.
         self._mutations = mutations
-        self._audit = audit
         self._workspace_id = workspace_id
 
     def begin(
@@ -66,9 +62,6 @@ class RecoveryFlow:
         for pair in plan.effects.move_pairs:
             transaction.record_write(pair.source, Operation.MOVE)
             transaction.record_write(pair.target, Operation.REPLACE)
-        self._audit.recovery_event(
-            EventType.CHECKPOINT_CREATED, transaction.checkpoint.to_payload()
-        )
         return transaction
 
     def finish(
@@ -80,10 +73,7 @@ class RecoveryFlow:
         if transaction is None:
             return
         if result.workspace_mutated is False:
-            checkpoint = transaction.complete(failed=True)
-            self._audit.recovery_event(
-                EventType.MUTATION_RECORDED, checkpoint.to_payload()
-            )
+            transaction.complete(failed=True)
             return
         effects = plan.effects
         for target in effects.write_paths:
@@ -93,10 +83,7 @@ class RecoveryFlow:
         for pair in effects.move_pairs:
             transaction.record_result(pair.source, deleted=True)
             transaction.record_result(pair.target)
-        checkpoint = transaction.complete(
-            failed=result.status is not ToolResultStatus.OK
-        )
-        self._audit.recovery_event(EventType.MUTATION_RECORDED, checkpoint.to_payload())
+        transaction.complete(failed=result.status is not ToolResultStatus.OK)
 
     def abort(self, transaction: MutationTransaction | None) -> None:
         """执行入口驳回, 进程没起来: 事务按失败收尾, 不留一个悬挂的 ARMED 检查点."""

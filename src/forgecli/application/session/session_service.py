@@ -198,7 +198,7 @@ class SessionService:
         *,
         turn_id: str = "",
     ) -> SessionEvent:
-        """记录一条工具 / 安全 / 恢复审计事件.
+        """记录一条工具侧会话事件 (目录授权, 计划与待办).
 
         与 record_usage 同样的边界: 写入只经这一个门面, 协调器不持有 EventStore.
         payload 由调用方保证只含安全摘要.

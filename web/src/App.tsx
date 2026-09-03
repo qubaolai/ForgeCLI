@@ -108,6 +108,23 @@ type ThinkingView = {
   effort?: string;
   supported_efforts?: string[];
 };
+
+/**
+ * Thinking 强度在新接口中是字符串；兼容旧服务端曾经返回的 `{value: string}`
+ * 值对象，避免设置页把对象直接交给 input 后显示成 `[object Object]`。
+ */
+function thinkingEffortText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && "value" in value) {
+    return thinkingEffortText((value as { value?: unknown }).value);
+  }
+  return "";
+}
+
+function thinkingEffortList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(thinkingEffortText).filter(Boolean);
+}
 type ToolSpec = {
   name: string;
   title: string;
@@ -512,6 +529,11 @@ function App() {
       if (raw.lastEventId) lastEventIdRef.current = raw.lastEventId;
       const event = JSON.parse(raw.data) as RunEvent;
       queueEvent(event);
+      // 后端会在首个工具启动前连续发布整批 tool_queued，最后一条 queue_position=0。
+      // 立刻提交完整批次，避免普通流式事件的 33ms 合并窗口把它吞到完成事件后面。
+      if (event.kind === "tool_queued" && Number(event.payload.queue_position ?? 0) === 0) {
+        flushNow();
+      }
       if (isTerminalEvent(event)) {
         flushNow();
         setBusy(false);
@@ -1761,9 +1783,9 @@ function ModelEditor({ provider, model, fields, isCurrent, onSave, onRemove }: {
       fields={[
         { key: "thinking_mode", label: "Thinking", value: model.params.thinking_mode ?? "off", choices: ["off", "on"] },
         ...fields.map((field) => ({ key: field.name, label: field.label, value: String(model.params[field.name] ?? "") })),
-        { key: "thinking_effort", label: "当前 Thinking 强度", value: String(model.params.thinking_effort ?? "") },
-        { key: "thinking_efforts", label: "Thinking 强度（逗号分隔）", value: (model.params.thinking_efforts ?? []).join(",") },
-        { key: "thinking_default_effort", label: "默认 Thinking 强度", value: String(model.params.thinking_default_effort ?? "") },
+        { key: "thinking_effort", label: "当前 Thinking 强度", value: thinkingEffortText(model.params.thinking_effort) },
+        { key: "thinking_efforts", label: "Thinking 强度（逗号分隔）", value: thinkingEffortList(model.params.thinking_efforts).join(",") },
+        { key: "thinking_default_effort", label: "默认 Thinking 强度", value: thinkingEffortText(model.params.thinking_default_effort) },
         { key: "extra", label: "厂商扩展 JSON", value: JSON.stringify(model.params.extra ?? {}) },
       ]}
       onSave={(changed) => onSave(provider.id, model.id, changed)}

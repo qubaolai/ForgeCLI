@@ -38,7 +38,6 @@ OPEN_EXTENSION_POINTS: frozenset[str] = frozenset(
 INVERTED_PACKAGE_BOUNDARIES: frozenset[str] = frozenset(
     {
         "ToolRunObserver",
-        "ToolAuditSink",
         "LlmGateway",
     }
 )

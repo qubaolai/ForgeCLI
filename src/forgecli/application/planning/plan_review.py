@@ -79,7 +79,7 @@ class PlanReviewService:
             # 刻意不起新一轮: 花一次模型调用去说"不行"是浪费, 而用户拒绝之后下一句话本来
             # 就该由他自己说 —— 与 _weigh 对人类拒绝的既有处理逻辑一致.
             rejected = self._planning.set_plan_status(plan.plan_id, PlanStatus.REJECTED)
-            # plan 一定要带上: 拒绝恰恰是最该进审计的一次裁决, 而 outcome 是调用方唯一
+            # plan 一定要带上: 拒绝恰恰是最该留痕的一次裁决, 而 outcome 是调用方唯一
             # 拿得到"人裁了哪一份"的地方.
             return PlanReviewOutcome(
                 choice=choice,

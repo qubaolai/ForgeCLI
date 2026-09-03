@@ -43,7 +43,6 @@ from forgecli.application.tool_request.approval_flow import (
     learn_block_reason,
     scopes_for,
 )
-from forgecli.application.tool_request.audit import NullToolAudit, ToolAuditSink
 from forgecli.application.tool_request.catalog_predicates import catalog_query_for_mode
 from forgecli.application.tool_request.fence_hint import fence_hint
 from forgecli.application.tool_request.observations import (
@@ -74,7 +73,6 @@ from forgecli.domain.tool.result import ToolResult, TurnDisposition
 from forgecli.shared.cancellation import CancelToken
 from forgecli.shared.observability.context import bind
 from forgecli.shared.observability.log import get_log
-from forgecli.shared.observability.metrics import METRICS
 
 __all__ = ["ToolRequestCoordinator"]
 
@@ -118,7 +116,6 @@ class ToolRequestCoordinator:
         *,
         approval: ApprovalService | None = None,
         mutations: WorkspaceMutationCoordinator | None = None,
-        audit: ToolAuditSink | None = None,
         observer: ToolRunObserver,
         learned: LearnedRuleService | None = None,
         workspace_id: str = "workspace",
@@ -131,10 +128,7 @@ class ToolRequestCoordinator:
         self._authorization = authorization
         # 默认 PendingApprovalService: 没接交互界面时 ASK 停在 pending, 不自动放行.
         self._approval = approval or PendingApprovalService()
-        self._audit = audit or NullToolAudit()
-        self._recovery = RecoveryFlow(mutations, self._audit, workspace_id)
-        # 运行观察与审计分开: 前者给人看, 后者是恢复与追溯依据. 终端显示"开始执行"
-        # 不等于写前审计已落盘 (ADR-0016 §4.3).
+        self._recovery = RecoveryFlow(mutations, workspace_id)
         self._observer = observer
         # 与 ToolAuthorizationService 共用同一个实例: 一边写规则一边查规则.
         self._learned = learned
@@ -144,7 +138,7 @@ class ToolRequestCoordinator:
         self._clock = clock
 
     def catalog_for(self, policy: PolicyContext) -> ToolCatalog:
-        """当前模式下模型可见的工具目录 (快照哈希进请求记录与审计)."""
+        """当前模式下模型可见的工具目录 (快照哈希进授权信封)."""
         return self._registry.list(catalog_query_for_mode(policy.mode))
 
     def handle(
@@ -155,9 +149,6 @@ class ToolRequestCoordinator:
         policy: PolicyContext,
         cancel: CancelToken | None = None,
     ) -> ToolObservation:
-        # 审计 sink 跨轮复用, 每次进来先认领当前轮次: 漏了这一步, 落盘的工具审计事件
-        # turn_id 就一直是构造时的空串, 事后无法把某次执行归到某一轮对话上.
-        self._audit.bind_turn(policy.turn_id)
         self._observer.bind_turn(policy.turn_id)
         # 工作区身份由协调器持有, 补进 policy 供学习规则绑定 —— workspace 范围的规则
         # 不能跨项目命中.
@@ -196,15 +187,9 @@ class ToolRequestCoordinator:
                 reason_code=observation.reason_code,
                 message=observation.message,
             )
-            # 没有执行的调用也必须留下终态与审计. 少了这一步, 展示层会永远停在"未完成",
+            # 没有执行的调用也必须留下终态. 少了这一步, 展示层会永远停在"未完成",
             # events.jsonl 里也查不到这次请求发生过 —— 而模型其实早就拿到了结论.
             self._observer.tool_rejected(
-                observation.tool_name,
-                invocation_id=invocation_id,
-                reason_code=observation.reason_code,
-                message=observation.message,
-            )
-            self._audit.tool_rejected(
                 observation.tool_name,
                 invocation_id=invocation_id,
                 reason_code=observation.reason_code,
@@ -232,7 +217,6 @@ class ToolRequestCoordinator:
         started = time.perf_counter()
         prepared = self._prepare(request, invocation_id, context)
         prepare_ms = (time.perf_counter() - started) * 1000.0
-        METRICS.observe("pipeline.prepare", prepare_ms)
         if isinstance(prepared, ToolObservation):
             _log.warning(
                 "pipeline.prepare_failed",
@@ -260,7 +244,6 @@ class ToolRequestCoordinator:
         started = time.perf_counter()
         decision = self._authorization.evaluate(prepared, policy, context)
         evaluate_ms = (time.perf_counter() - started) * 1000.0
-        METRICS.observe("pipeline.evaluate", evaluate_ms)
         _log.info(
             "pipeline.decision",
             decision=decision.decision.value,
@@ -272,7 +255,6 @@ class ToolRequestCoordinator:
             executables=list(decision.executable_names),
             elapsed_ms=evaluate_ms,
         )
-        self._audit.policy_decision(decision, invocation_id=invocation_id)
         self._observer.policy_resolved(decision, invocation_id=invocation_id)
         if decision.decision is Decision.DENY:
             return self._denied(decision, invocation_id)
@@ -577,14 +559,6 @@ class ToolRequestCoordinator:
             # 让"批准的对象"与"执行的对象"之间留下一条可核对的链.
             approval_view_hash=decision.approval_view_hash,
         )
-        # 写前事件: 落盘之后才允许执行. 崩在执行中间时, 有 requested 无 completed 就是
-        # "结果未知"的证据 —— 只作记录, resume 不据此重放.
-        self._audit.tool_requested(
-            plan,
-            invocation_id=invocation_id,
-            authorization_id=envelope.authorization_id,
-        )
-        # 顺序: 写前审计落盘之后才报"开始执行". 反过来的话终端会先于审计声称已开跑.
         self._observer.tool_started(plan.tool_name, invocation_id=invocation_id)
         started = self._clock()
         try:
@@ -625,7 +599,6 @@ class ToolRequestCoordinator:
         if _log.enabled_for_debug():
             _log.debug("tool.output", text=result.raw_output())
         self._recovery.finish(transaction, plan, result)
-        self._audit.tool_completed(result, plan_hash=plan.plan_hash)
         self._observer.tool_completed(
             result,
             invocation_id=invocation_id,
@@ -708,7 +681,7 @@ class ToolRequestCoordinator:
         """这个工具的正文进不进窗口 (ADR-0041 决策 6).
 
         先问 `contains` 再取: `describe` 对未注册的名字抛 UnknownToolError, 而这一步跑在
-        工具**已经执行完**之后 —— 事务已 finish, 审计已落盘. 让它在这里抛, 等于把一次
+        工具**已经执行完**之后 —— 事务已 finish. 让它在这里抛, 等于把一次
         已经产生真实写入的调用变成一个异常, 而恢复点已经过去了.
 
         认不出名字时按 False: 少给正文只是多一次取回, 而把不该进窗口的正文放进去是

@@ -5,23 +5,40 @@
 
 ## 0. 这份文档怎么用
 
-代码规模 (2026-08-31):
+代码规模 (2026-09-03):
 
 | 层 | 文件 | 行数 | 说明 |
 |---|---|---|---|
-| `shared` | 10 | 1016 | 取消令牌, JSON Schema 校验, 结构化日志与进程内读数 (ADR-0035) |
-| `domain` | 87 | 9927 | 纯值对象, 不读文件不起进程 |
-| `application` | 133 | 20374 | 用例编排与 ABC 端口 |
-| `infrastructure` | 49 | 5013 | 适配器 |
-| `interfaces` | 15 | 3093 | 启动入口, 本机 Web, 共享组合根 |
-| `tests` | 94 | 18101 | 1169 个用例 |
-| `web/src` | 9 | 3142 | React 控制面前端 (ADR-0025) |
+| `shared` | 11 | 1058 | 取消令牌, JSON Schema 校验, 值对象序列化, 结构化日志与进程内读数 (ADR-0035) |
+| `domain` | 89 | 10205 | 纯值对象, 不读文件不起进程 |
+| `application` | 134 | 20564 | 用例编排与 ABC 端口 |
+| `infrastructure` | 50 | 5169 | 适配器 |
+| `interfaces` | 14 | 3107 | 启动入口, 本机 Web, 共享组合根 |
+| `tests` | 11 | 1931 | 127 个用例. **这个数字不是笔误**, 见下 |
+| `web/src` | 10 | 3901 | React 控制面前端 (ADR-0025) |
+
+> **2026-09-02 的 ADR-0041 / ADR-0042 重排了整条请求.** 请求现在按**变更源**分六层
+> (`domain/agent/state.py::AssembledContext`), 会话窗口只追加不改写, 系统提示词收敛成
+> 一个进程编译一次的静态策略层. 落地删掉了 `application/context/` 下的 `manager.py`,
+> `dedup.py`, `downgrade.py`, `placeholders.py` 与 `transcript.rewrite`, 也删掉了
+> `PromptBlock.cacheable`, `RuntimeFacts` 在提示词里的位置与 `ToolAction` 整个枚举.
+> 任何提到"回合内去重", "占位符降级", "工具表按动作分组"或"提示词里有计划待办块"的旧
+> 材料, 都是这次之前写的. 详见 §2.2.
+
+> **测试套件正处在重写中间态.** 1169 个用例现在只剩 127 个 —— 不是回归, 是这个项目
+> 明写的纪律: 新设计不为兼容旧用例妥协, 被推翻的设计连同它的用例一起删, 而不是留着
+> 一批测着已经不存在的形状的断言. 现存的 127 个全部是 ADR-0041 / ADR-0042 落地时新写
+> 的 (`tests/context/`, `tests/prompt/`, `tests/tools/test_result_shape.py`,
+> `tests/tool_request/test_fence_sees_raw_output.py`). **这意味着 §6 那条"测试是第二份
+> 文档"目前只在这四处成立**, 安全, 工具, 网关, Web 四大块暂时没有用例可读 —— 读它们
+> 只能靠源码与 docstring. 补齐之前, 改这几块要格外小心.
 
 > **2026-08-29 的 ADR-0025 决策 1 修订二删掉了整棵终端入口.** `interfaces/` 从 60 个
 > 文件 8753 行降到 15 个文件 3093 行 —— 没了 `interfaces/cli/` 全树, 人工 Shell 三层,
-> 斜杠命令注册表与 `IntentRouter`, 一共 48 个模块 6627 行. **`forge cli` 不再存在**,
-> `tests/test_entrypoint.py` 专门钉了一条用例守着它不复活. 任何提到 REPL, `/config`
-> 这类斜杠命令或 `#` 人工 Shell 的旧材料, 都是那次修订之前写的.
+> 斜杠命令注册表与 `IntentRouter`, 一共 48 个模块 6627 行. **`forge cli` 不再存在**.
+> 原先有 `tests/test_entrypoint.py` 钉着一条用例守它不复活, 那个文件随这一轮测试重写
+> 一并删了 —— 结论没变, 眼下没有机器守着. 任何提到 REPL, `/config` 这类斜杠命令或
+> `#` 人工 Shell 的旧材料, 都是那次修订之前写的.
 
 **不要按目录顺序读.** 四万行按字母序读完也建立不起图景. 正确的方式是**跟着一次真实请求
 走完整条链路**, 中途遇到不懂的值对象再回头翻.
@@ -55,12 +72,19 @@ tail -f ~/.forge/logs/forge-latest.log
 ```
 
 一次带工具调用的对话会按发生顺序留下 `web.request` -> `web.turn.started` ->
-`turn.received` -> `prompt.compiled` -> `context.fit` -> `model.request` ->
+`turn.received` -> `context.assembled` -> `window.within_budget` -> `model.request` ->
 `model.response` -> `tool.requested` -> `pipeline.start` -> `pipeline.prepared` ->
 `pipeline.decision` -> `tool.execute.ok` -> `tool.observed` -> `loop.stop` ->
 `web.turn.finished`. 每一行的模块路径就是文件路径 (去掉 `forgecli.` 前缀), 照着 open
 即可. 带 `.start` / `.ok` / `.error` 三态与 `elapsed_ms` 的行是 `_log.span(...)` 打的,
 见 `shared/observability/log.py`.
+
+> 旧材料里的 `prompt.compiled` 与 `context.fit` 已经不存在: 提示词现在一个进程只编译
+> 一次 (ADR-0042), 没有每轮一次的事件可打; 上下文装配改打 `context.assembled` (带
+> 指纹, 块数与三层各自的字符数), 窗口那一侧改打 `window.within_budget` /
+> `window.evicted` / `window.eviction_impossible`. debug 级下另有
+> `context.system_prompt` 与 `context.state_frame` 两行, 逐字写出模型这一轮看到的
+> 是什么 —— 排"模型为什么这么干"时先看这两行.
 
 比通读快的地方在于**顺序是真的**: 文档里的链路图是作者整理过的, 日志里的是这台机器上
 刚刚实际发生的, 包括那些文档没写的分支 (重试, 降级, 被闸拦下的调用).
@@ -80,7 +104,7 @@ curl -s --cookie "forge_web_session=$(python3 -c 'import json,pathlib;print(json
 
 按顺序读这四份, 不要跳:
 
-### 1.1 `scripts/check_arch.py` (282 行) 与它的三个同伴
+### 1.1 `scripts/check_arch.py` (286 行) 与它的三个同伴
 
 **第一个读它, 而不是任何架构文档.** 它是这个项目唯一一份**可执行的**架构说明: 四组规则
 写成断言, 违反就在 `make ci` 停下.
@@ -92,9 +116,12 @@ curl -s --cookie "forge_web_session=$(python3 -c 'import json,pathlib;print(json
 - `BANNED_THIRD_PARTY`: domain 与 application 不许碰 rich, prompt_toolkit, httpx,
   requests, openai, anthropic —— 这条决定了"业务逻辑长什么样". (`prompt_toolkit` 已随
   终端入口从运行时依赖里删掉, 这条禁令留着挡它回来.)
-- `SIBLING_BANS`: **8 条**同层互斥. 工具层与安全层互相不可见; `agent_loop` 与 `context`
+- `SIBLING_BANS`: **9 条**同层互斥. 工具层与安全层互相不可见; `agent_loop` 与 `context`
   只认识 `LlmGateway` 这个 ABC, 不认识 `DefaultLlmGateway`; `memory` 不认识 `security`;
-  `agent_loop` 不认识 `memory`; `tool_request` 不认识事件总线与会话写入口.
+  `agent_loop` 不认识 `memory`; `tool_request` 不认识事件总线与会话写入口. 第 9 条是
+  ADR-0041 补的: `application.context` 不得 import `application.security` —— 上下文里
+  装的东西一半是模型自己写的 (记忆, 计划, 待办), 另一半是工具输出的转述, 两者都不该有
+  机会影响裁决. 它与给记忆定的那条同一个理由, 只是范围更大.
 - **无 import 环**: 模块级 import 图必须是有向无环的. 这条是 2026-08-24 补的 ——
   `application/llm/config` 与 `application/llm/gateway` 的包门面各自藏过一个环, 都是
   靠 import 顺序活着的.
@@ -106,12 +133,15 @@ curl -s --cookie "forge_web_session=$(python3 -c 'import json,pathlib;print(json
 
 `make arch` 还跑另外三个脚本, 一起读:
 
-- `scripts/check_abstractions.py` (119 行, ADR-0028): 一个 ABC / Protocol 只在满足
-  A1 依赖倒置, A2 多实现, A3 开放扩展点三条之一时才保留. 当前 32 个抽象过关. `AgentLoop`
-  与 `ToolDispatcher` 就是按这条判据删掉的 —— 只有一个实现, 且实现与抽象同层. A3 只剩
-  三个: `Tool`, `CapabilityAnalyzer`, `ModelSelection`.
-- `scripts/check_prompt_text.py` (117 行, ADR-0031 / ADR-0039): 送进模型上下文的参数里
-  不得出现含中文的字符串字面量. 正文一律从 `application/prompt/templates/` 渲染.
+- `scripts/check_abstractions.py` (118 行, ADR-0028): 一个 ABC / Protocol 只在满足
+  A1 依赖倒置, A2 多实现, A3 开放扩展点三条之一时才保留. 当前 31 个抽象过关. `AgentLoop`
+  与 `ToolDispatcher` 就是按这条判据删掉的 —— 只有一个实现, 且实现与抽象同层. A3 现在
+  只剩两个: `Tool` 与 `CapabilityAnalyzer` (`ModelSelection` 随
+  `domain/model/selection.py` 一起删了).
+- `scripts/check_prompt_text.py` (119 行, ADR-0031 / ADR-0039): 送进模型上下文的参数里
+  不得出现含中文的字符串字面量. 正文一律从 `application/prompt/templates/` 渲染 ——
+  那个目录现在服务两个模块: `blocks/` 归提示词, `runtime/` 与 `state/` 归上下文
+  (ADR-0042 决策 8).
 - `scripts/check_deps.py` (151 行, ADR-0040): 依赖声明与真实 import 必须对得上, 两个
   方向都守, 当前 17 个直接依赖全部有 src 消费者. **声明少了**会跑得好好的 —— 传递依赖
   把包装进了环境, 直到上游哪天换掉它; `interfaces/web/app.py` 直接 import 的 `starlette`
@@ -129,7 +159,7 @@ curl -s --cookie "forge_web_session=$(python3 -c 'import json,pathlib;print(json
 
 ### 1.3 `docs/adr/README.md`
 
-41 份 ADR (0000-0040) 的索引与状态. **不要现在全读**, 只记住有这么一批东西, 以及哪几份
+45 份 ADR (0000-0044) 的索引与状态. **不要现在全读**, 只记住有这么一批东西, 以及哪几份
 已经不作数:
 
 | ADR | 状态 |
@@ -142,6 +172,15 @@ curl -s --cookie "forge_web_session=$(python3 -c 'import json,pathlib;print(json
 | 0020 | Partially Superseded by ADR-0030 (LLM 安全分类器整体删除) |
 | 0024 | Superseded by ADR-0030 |
 | 0014 | 保留沙箱生命周期与自测条款, Provider 选型先后由 0019, 0030 取代 |
+| 0032 | 决策 2/3/4 (去重, 降级, 占位符) 被 ADR-0041 取代; 二级摘要保留, 触发点改成"撞水位" |
+| 0034 | 仍是 Proposed, 未实现. 决策 1 的分层被 ADR-0041 兑现了一部分, 检索层推迟 |
+| 0041 | Proposed, **但已落地**: 请求六层与只追加窗口 |
+| 0042 | Proposed, **但已落地**: 提示词收敛成静态策略层 |
+| 0043 | Proposed, 未实现 (`ask_user` 阻塞式内置工具) |
+| 0044 | Proposed, 未实现 (工具样板动作上收到管线) |
+
+> "Proposed 但已落地"不是笔误, 是这个库的习惯: 状态字段记的是**评审状态**, 不是实现
+> 进度. 判断一份 ADR 有没有兑现, 看代码, 不看那一行.
 
 **ADR-0030 是一次大改**: 它删掉了 LLM 安全分类器, 风险缓存与静态命令证明, 改由运行期
 围栏 (Seatbelt / bubblewrap / WSL2) 与工作区快照兜底. 读到任何提"分类器"的旧材料时,
@@ -190,22 +229,40 @@ sha, 构建产物名, 驼峰标识符全部误报**. 记忆是静默写入 (ADR-
 `domain/memory/secrets.py` 的注释里). 但 ADR 里说的配套用例文件
 `tests/memory/test_secret_shapes.py` **不存在, 也从未存在过**, 见 §8.
 
+**ADR-0041 与 ADR-0042 是这条分支上最大的一次改动, 而且两份要一起读**: 前者定"一次
+请求怎么排", 后者定"提示词模块还剩什么". 一句话各自的结论 ——
+
+- **0041**: 请求按变更源分成六层, 顺序即层号, 每层的变更频率不高于它前面那层. 会话窗口
+  **只追加**, 撞高水位时**整体淘汰一次**, 绝不逐条滑动. 判据是前缀缓存: 改中段一处的
+  成本等于它自己加上它后面的全部内容, 而 `dedup.py` 留下的实测数是"省 4k 正文, 亏
+  79k 未命中". 详见 §2.2.
+- **0042**: `application/prompt` 只渲染内置静态策略与 `FORGE.md`, 零运行期输入. 九个块
+  收成六个, `RUNTIME_FACTS` / `PLAN_STATE` / `TODO_STATE` / `MEMORY_STATE` 四个搬去
+  `application/context`; `cacheable` 与分区校验删除 (它们从来没买到过一个字节的缓存);
+  提示词正文里**不出现任何工具名与工具分类**, `ToolAction` 枚举随之删除.
+
+**ADR-0043 与 ADR-0044 目前只有文档, 没有代码.** 读它们的价值在于它们把两处现状写得比
+任何代码注释都清楚: 0043 §背景 说明了"模型缺信息时向人提问"这条路今天**根本不存在**
+(唯一能问人的是安全审批, 而它问的是"这一次已经确定的调用许不许可"); 0044 §背景 那张
+"`ToolPlan` 的六个消费方"表, 是理解"为什么工具必须写成 `prepare` / `perform` 两段"最
+直接的一份材料 —— 比 ADR-0004 正文更直白.
+
 ### 1.4 `src/forgecli` 的目录树
 
 ```text
-shared/          不属于任何一层的基础件: 取消令牌, JSON Schema, 日志与读数
+shared/          不属于任何一层的基础件: 取消令牌, JSON Schema, 值对象序列化, 日志与读数
 domain/          纯值对象. 认识这里的名字就认识了整个系统的词汇
-  agent/         循环动作, 循环输入, 停止原因, 23 种运行事件
-  tool/          ToolSpec / ToolPlan / Capability / ExecutionAuthorization
+  agent/         循环动作, 循环输入 (AssembledContext 六层), 停止原因, 21 种运行事件
+  tool/          ToolSpec / ToolPlan / Capability / ExecutionAuthorization / ToolResult
   security/      安全词汇, Hard Deny, 受保护路径, 能力预算 + Shell 解析 (shell/ 子包)
-  execution/     执行画像, 环境净化, FencePolicy (围栏边界)
-  context/       上下文预算与压缩结果 (ADR-0032)
+  execution/     执行画像, 环境净化, FencePolicy (围栏边界), denial (认出"这是围栏拦的")
+  context/       上下文预算 (ADR-0032) + Window / WindowPolicy 只追加窗口 (ADR-0041)
   memory/        记忆条目与疑似凭证识别 (ADR-0033)
   planning/      Plan 与 TodoList (ADR-0022)
-  prompt/        PromptBlock / PromptSnapshot
+  prompt/        PromptBlock / PromptSnapshot —— 六个块, 全静态 (ADR-0042)
   recovery/      恢复检查点与变更集
   conversation/  ChatMessage 与 turn
-  session/       会话事件 (15 种 EventType) 与快照
+  session/       会话事件 (14 种 EventType) 与快照
   workspace/     工作区边界与路径归一
   model/         LLM 请求 / 响应 / 流式
   config/        配置键与合并结果
@@ -214,14 +271,14 @@ application/     用例编排. ABC 端口也在这里
   agent_loop/    ReAct 循环 (BuiltinAgentLoop)
   agent_turn/    唯一写文件, 起子进程的驱动方 + TurnCancelSource
   agent_run/     运行事件总线与观察者 (ADR-0016)
-  tool_request/  工具请求协调器 (安全管线的编排者) + 审批流 + 恢复流 + 调度器
-  tools/         工具机制层 + builtin/ 十五个内置工具
+  tool_request/  工具请求协调器 (安全管线的编排者) + 审批流 + 恢复流 + 调度器 + 围栏提示
+  tools/         工具机制层 + builtin/ 14 个内置工具与它们的辅助模块
   security/      安全策略层 (分析器, 策略引擎, 审批, 学习规则)
-  context/       上下文压缩与回合内去重 (ADR-0032)
+  context/       请求组装 (六层), 只追加窗口的维护与二级摘要 (ADR-0041, ADR-0032)
   memory/        跨会话记忆 (ADR-0033)
   planning/      计划 / 待办服务与计划评审 (ADR-0022, ADR-0023, ADR-0038)
   recovery/      恢复事务
-  prompt/        系统提示词编译 + templates/ 模型可读正文
+  prompt/        静态策略层: 编译一次的系统提示词 + templates/ 模型可读正文 (ADR-0042)
   llm/           LLM 网关与模型目录
   workspace/     ExecutionContext 与文件系统视图
   project/       项目身份与工作区信任
@@ -254,32 +311,34 @@ interfaces/
 |---|---|---|---|
 | 1 | `interfaces/app.py` (83 行) | Typer 根回调. `invoke_without_command=True`, 无子命令 | 为什么 `--version` 要写成 eager callback, 而不是回调体里的一个 `if`? |
 | 2 | `interfaces/web/server.py` (188 行) | 项目锁, 一次性启动令牌, 信号接管, SSE 优雅收尾 | `capture_signals` 为什么是个空的 contextmanager? 服务停止时为什么要先置 `stopping` 再走 uvicorn 的等待流程? |
-| 3 | `interfaces/exit_codes.py` (45 行) | 进程退出码的封闭定义 | 为什么它不住在 web 包里? |
-| 4 | `interfaces/web/app.py::LocalControlPlaneGuard` (1059 行, **先只读中间件与路由表**) | Host / 会话 cookie / CSRF 三道校验, 50 条路由的形状 | 为什么它必须是纯 ASGI 中间件, 不能用 `BaseHTTPMiddleware`? |
-| 5 | `interfaces/web/runtime.py::ProjectRuntime` (531 行) | **按项目装配一次**的组合根; `start_turn` 起后台线程, `_execute_turn` 是那个线程的最外层 | 一个项目同时只能跑一轮, 这条由谁保证? 后台线程里的异常为什么必须先 `_log.exception` 再压成状态串? |
-| 6 | `interfaces/runtime/tool_wiring.py::build_tool_stack` (499 行) | 从受保护路径到协调器的完整装配顺序 | 装配顺序里哪几步是安全约束, 换顺序会怎样? |
+| 3 | `interfaces/exit_codes.py` (35 行) | 进程退出码的封闭定义 | 为什么它不住在 web 包里? |
+| 4 | `interfaces/web/app.py::LocalControlPlaneGuard` (1198 行, **先只读中间件与路由表**) | Host / 会话 cookie / CSRF 三道校验, 50 条路由的形状 | 为什么它必须是纯 ASGI 中间件, 不能用 `BaseHTTPMiddleware`? |
+| 5 | `interfaces/web/runtime.py::ProjectRuntime` (542 行) | **按项目装配一次**的组合根; `start_turn` 起后台线程, `_execute_turn` 是那个线程的最外层 | 一个项目同时只能跑一轮, 这条由谁保证? 后台线程里的异常为什么必须先 `_log.exception` 再压成状态串? |
+| 6 | `interfaces/runtime/tool_wiring.py::build_tool_stack` (495 行) | 从受保护路径到协调器的完整装配顺序 | 装配顺序里哪几步是安全约束, 换顺序会怎样? |
 | 7 | `domain/intents.py` | `SandboxLevel` x `ApprovalPolicy`, `SessionMode` 是两者的组合, `InputOrigin` 两档 | 为什么隔离与审批要拆成两个轴, 而四档预设只是常用组合? `MODE_PRESETS` 为什么显式写出而不是复用声明顺序? `InputOrigin` 的默认值为什么是 `PROGRAM` 而不是 `WEB_USER`? |
-| 8 | `application/agent_turn/agent_turn_service.py` (737 行) | `handle_user_message` -> `_run_loop` -> `_outcome_from_stop` | 为什么说写文件与起子进程只经它一处发生? |
-| 9 | `application/agent_loop/builtin_loop.py` (1267 行) | ReAct 主体, 分两次读 | 模型一次要三个工具时会发生什么? |
-| 10 | `application/tool_request/dispatcher.py` (92 行) | 循环与安全管线之间的唯一通道 | `PolicyContext` 为什么每次调用重新构造, 而不是一轮开始时算一次? |
-| 11 | `domain/agent/actions.py` (150 行) | `LoopAction` / `LoopObservation` / `ObservationDisposition` | `is_error` 与 `disposition` 为什么是两个字段? |
-| 12 | `domain/agent/stop.py` (78 行) | `LoopStopReason` 与 `StopClassification` | 文件末尾那个 `assert` 挡住了什么? |
-| 13 | `domain/agent/run_events.py` (421 行) | **23 种**运行事件与它们的 payload | 为什么每种事件一个 frozen 类而不是自由 dict? |
-| 14 | `application/agent_run/events.py` (110 行) | 进程内事件总线 | 订阅者抛异常时为什么不能让它冒泡? |
-| 15 | `interfaces/web/events.py` (143 行) | `WebEventHub`: 把进程内事件变成可重连的有限缓冲 (2048 条) | 事件由 Agent 线程产生, 唤醒为什么必须回到 SSE 自己的事件循环? |
-| 16 | `interfaces/web/app.py` 的 `GET /api/v1/events` (502-560 行) | 断线重连补发, `resync_required`, `server_stopping` | 首次连接为什么**不**补发历史? 缓冲被挤掉之后页面怎么恢复? |
-| 17 | `web/src/runModel.ts` (459 行) + `RunProcess.tsx` (321 行) | 前端把事件流重建成一轮的时间线 | 刷新页面为什么不会丢掉正在跑的那一轮? |
+| 8 | `application/agent_turn/agent_turn_service.py` (674 行) | `handle_user_message` -> `_run_loop` -> `_outcome_from_stop` | 为什么说写文件与起子进程只经它一处发生? |
+| 9 | `application/context/assembler.py` (58 行) + `domain/agent/state.py::AssembledContext` | **本轮上下文的六层怎么取材**, 以及顺序为什么就是层号 | 运行事实每轮都可能变, 为什么反而放进缓存前缀, 而计划待办只能待在最末尾? |
+| 10 | `application/agent_loop/builtin_loop.py` (1298 行) | ReAct 主体, 分两次读 | 模型一次要三个工具时会发生什么? |
+| 11 | `application/tool_request/dispatcher.py` (98 行) | 循环与安全管线之间的唯一通道 | `PolicyContext` 为什么每次调用重新构造, 而不是一轮开始时算一次? |
+| 12 | `domain/agent/actions.py` (127 行) | `LoopAction` / `LoopObservation` / `ObservationDisposition` | `is_error` 与 `disposition` 为什么是两个字段? |
+| 13 | `domain/agent/stop.py` (61 行) | `LoopStopReason` 与 `StopClassification` | 文件末尾那个 `assert` 挡住了什么? |
+| 14 | `domain/agent/run_events.py` (382 行) | **21 种**运行事件与它们的 payload | 为什么每种事件一个 frozen 类而不是自由 dict? |
+| 15 | `application/agent_run/events.py` (105 行) | 进程内事件总线 | 订阅者抛异常时为什么不能让它冒泡? |
+| 16 | `interfaces/web/events.py` (143 行) | `WebEventHub`: 把进程内事件变成可重连的有限缓冲 (2048 条) | 事件由 Agent 线程产生, 唤醒为什么必须回到 SSE 自己的事件循环? |
+| 17 | `interfaces/web/app.py` 的 `GET /api/v1/events` | 断线重连补发, `resync_required`, `server_stopping` | 首次连接为什么**不**补发历史? 缓冲被挤掉之后页面怎么恢复? |
+| 18 | `web/src/runModel.ts` (653 行) + `RunProcess.tsx` (351 行) | 前端把事件流重建成一轮的时间线 | 刷新页面为什么不会丢掉正在跑的那一轮? |
 
-`interfaces/web/serialization.py` (37 行) 值得顺手看一眼: 它只展开值对象, 枚举和基础
-容器, 认不出的类型直接抛 —— 而不是调 `__dict__` 或 `model_dump()`. 那份 docstring 解释
-了为什么"图省事"的那条路会让嵌在里面的 dataclass 绕过白名单.
+`shared/serialization.py` (42 行) 值得顺手看一眼: 它只展开值对象, 枚举和基础容器,
+认不出的类型直接抛 —— 而不是调 `__dict__` 或 `model_dump()`. 那份 docstring 解释了
+为什么"图省事"的那条路会让嵌在里面的 dataclass 绕过白名单. (它原先住在
+`interfaces/web/`, 后来第二个消费方出现在落盘那一侧, 于是搬进 `shared/`.)
 
 **配套 ADR**: 0010 (循环架构), 0016 (运行事件流), **0025 (本机 Web 控制面, 含两次修订)**,
-0028 (结构收敛).
+0028 (结构收敛), **0041 (请求六层)**.
 
 **这一段的核心不变量**: `BuiltinAgentLoop` 只产出 `LoopAction` / `LoopStop` 这些值对象.
 它不写文件, 不删文件, 不起子进程 —— 拿不到 `ToolRegistry`, 也拿不到 `ToolRuntime`,
-唯一的对外通道是 `CoordinatorToolDispatcher`. 读第 9 站时刻意验证这一点.
+唯一的对外通道是 `CoordinatorToolDispatcher`. 读第 10 站时刻意验证这一点.
 
 > ADR-0028 之后 `AgentLoop` 与 `ToolDispatcher` 两个 ABC 已删除: 各自只有一个实现,
 > 且实现与抽象同层同文件, 不承担依赖倒置. "唯一通道"这条约束改由 `check_arch.py` 的
@@ -301,6 +360,69 @@ application 侧的形状**一个字没改** —— 这正是删掉终端入口�
   既看不到审批卡片, 也没有补救入口. 正确的终止条件只有三个: 用户决定, 用户停止这一轮,
   服务退出.
 
+### 2.2 一次请求长什么样: 六层与只追加窗口 (ADR-0041 / ADR-0042)
+
+这一段是 2026-09-02 之后新增的, 也是"为什么这一轮变贵了"唯一说得清的地方. 先读
+`domain/agent/state.py::AssembledContext` 的 docstring, 那里有这张表:
+
+```text
+[1] 工具目录        模式级      ModelRequest.tools
+[2] 内置静态策略    包版本级  ┐
+[3] 工作区指令      会话级快照├ ModelRequest.system_prompt
+[4] 运行上下文      模式级    ┘
+[5] 会话窗口        只追加    ┐ ModelRequest.messages
+[6] 当前状态帧      每轮重建  ┘
+```
+
+**分层的判据只有一个: 变更频率.** 每一层的变更频率不高于它前面那一层, 于是 [1]-[4] 同属
+缓存前缀, 一起命中或一起失效; [5] 只在尾部长; [6] 每轮重建, 但它是整条请求的最后一个
+内容块, 后面没有东西会被它作废.
+
+两处反直觉, 而它们正是这套设计的要害:
+
+- **[4] 运行上下文每轮都可能变, 却放进前缀.** 理由在 `application/context/runtime_view.py`:
+  它的变化源只有换档与加工作区根 (`POST /api/v1/workspace-roots`; 那两份 docstring 沿用
+  终端时代的叫法写成 `/add-dir`), 而两者都会同时改掉工具目录 —— [1] 一变, 后面本来就
+  全部作废. 它的变化是 [1] 变化的**子集**, 进前缀的额外成本恰好为零. 一个例外要守住:
+  每轮都变的时间戳绝不能进这一层.
+- **[6] 计划 / 待办 / 记忆每轮重建, 却不进窗口.** 它们原先是系统提示词尾部的三个块, 而
+  整个 system prompt 排在 messages 之前 —— 一次 `todo_write` 就让前面几十轮全部退出缓存.
+  搬到请求末尾之后, 变的只有它自己那几百 token. 而它**不进窗口**: 进了窗口, 下一轮的
+  历史里就躺着一份过时的状态.
+
+**用户输入不是独立一层** —— 它是 [5] 里的一条普通消息. 多步回合里最后一条往往是 tool
+result 而不是用户那句话.
+
+| 文件 | 行数 | 看什么 |
+|---|---|---|
+| `domain/agent/state.py` | 109 | `AssembledContext` 六层与 `to_request_messages` |
+| `application/context/assembler.py` | 58 | 取材: 哪一层从哪儿读, 什么时候读 |
+| `application/context/runtime_facts.py` | 74 | `from_profile` 的投影规则. **`ExecutionProfile` 的 trusted_path 与 protected_roots_hash 绝不能进这一层** |
+| `application/context/runtime_view.py` | 53 | [4] 的渲染, 以及"为什么进前缀"那段 docstring |
+| `application/context/state_view.py` | 120 | [6] 的渲染. 注意帧内正文要转义 —— 记忆是模型写的且静默写入 |
+| `application/prompt/sentinels.py` | 45 | 两处分隔行与它们的转义器. 与 FORGE.md 共用同一道防线 |
+| `domain/context/window.py` | 166 | `Window` / `WindowPolicy` / `EvictionPlan`: 只追加, 批量淘汰 |
+| `application/context/window_manager.py` | 231 | 估一下, 超了就淘汰. 替代了原先的 `ContextManager` |
+| `application/context/transcript.py` | 39 | 只剩 `safe_split_points` 一个函数 |
+| `application/context/summarize.py` | 255 | 二级摘要. 触发点从"快溢出"改成"撞水位" |
+| `application/prompt/system_prompt_builder.py` | 131 | [2][3] 的编译. `lru_cache(maxsize=1)`, 一个进程一次 |
+| `domain/prompt/blocks.py` | 92 | 六个块的定义, 以及 `cacheable` 为什么被删 |
+
+**这一段的核心不变量**: 窗口只追加. `transcript.rewrite` 被删掉不是顺手清理 ——
+`window.py` 的 docstring 把理由写死了: 留着机制入口就等于留着退回去的路, 而"回头整理
+一下历史"永远是看起来合理的. 在前缀缓存下, 改中段一处的成本等于它自己加上它后面的全部
+内容; `dedup.py` 留下的实测是"省一份 4k 正文, 亏 79k 未命中".
+
+推广成通则, 也是这份 ADR 最值得带走的一句: **不得不作废前缀时, 要罕见且大块, 绝不能
+连续小步.** "保留最近 N 条"每轮从头部丢一条, 而头部就是前缀的开头 —— 每一轮都在付整段
+重算的钱.
+
+**读完能回答**:
+- 一个回合内连续两次模型调用, 哪几层必须逐字节相同? 为什么这条能写成用例?
+- 淘汰点为什么必须落在 `safe_split_points` 上? 落错了会怎样?
+- 水位为什么是从 `ContextBudget` **导出**的, 而不是配置里的一个常量?
+- `WindowPolicy.assert_fits` 为什么只记不抛, 而且不能做成构建期检查?
+
 ## 3. 主线二: 一次工具调用是怎么被裁决的
 
 **这是整个项目最核心的部分**, 也是最难的. 预留最多时间.
@@ -312,23 +434,33 @@ application 侧的形状**一个字没改** —— 这正是删掉终端入口�
 按这个顺序:
 
 1. `capability.py` (83 行) —— 17 个能力的闭集. 整套解耦的基础.
-2. `spec.py` (137 行) —— `ToolSpec`: 能力**上界**, 不是放行证明. 注意它**没有**
-   `requires_authorization` 也**没有** `risk_level`, docstring 解释了为什么. 顺带看
-   `TargetDeclarationAbility` 三档 (STATIC / EXPANDABLE / OPAQUE) 与它的 `permits`.
+2. `spec.py` (150 行) —— `ToolSpec`: 能力**上界**, 不是放行证明. 注意它**没有**
+   `requires_authorization`, **没有** `risk_level`, 也**没有** `action` —— 三条口径的
+   理由都写在 docstring 里. (第四条是新的: `ToolAction` 枚举的唯一消费方是提示词里那张
+   按动作分组的工具表, ADR-0042 删掉那张表之后它的消费方归零, 于是整个枚举一起删.)
+   顺带看 `TargetDeclarationAbility` 三档 (STATIC / EXPANDABLE / OPAQUE) 与它的
+   `permits`, 以及新增的 `body_in_window` —— 这个工具的正文进不进窗口, 逐工具声明
+   (ADR-0041 决策 6).
 3. `plan.py` (243 行) —— `ToolPlan`: 工具与安全之间**唯一**的事实载体. 这是全项目最
    重要的一个值对象, 值得读两遍. 注意 `TargetResolution` 与 `DeclarationConfidence`
    的区别, 以及 `FileStateBinding` (ADR-0027 的执行前复核锚点).
-4. `authorization.py` (150 行) —— `ExecutionAuthorization`: 不透明, 单次使用. 看
+4. `authorization.py` (135 行) —— `ExecutionAuthorization`: 不透明, 单次使用. 看
    `validate_narrowing` —— 安全模块只能**收缩**计划, 不能放宽.
 5. `hashing.py` (75 行) —— 为什么不能用 `dataclasses.asdict`, 以及 `compare=False`
    的字段为什么一律不进哈希. 这份 docstring 是理解 §9 那条"缓存"误解的钥匙.
-6. `errors.py` / `result.py` / `catalog.py` / `tool_call.py` —— 快速过一遍.
+6. `result.py` (292 行) —— `ToolResult` 现在分三段: `summary` 无条件进窗口,
+   `data` 是结构化结论, `body` 按 `ToolSpec.body_in_window` 与两条阈值决定进窗口还是
+   换成 `artifact_read` 句柄 (ADR-0041 决策 6 / 决策 9). 两个常量的取值理由写在文件
+   开头, 都是从真实日志里算出来的 —— `MAX_SUMMARY_CHARS = 200` 防的是模型自己写的
+   命令串把摘要撑爆, `_INLINE_ALWAYS_BELOW_CHARS = 6000` 是"换成句柄划不划算"的盈亏
+   平衡点. 顺带看 `render_for_model(include_body=...)`: 声明只是**倾向**, 不是命令.
+7. `errors.py` / `catalog.py` / `tool_call.py` —— 快速过一遍.
 
 **读完能回答**: 为什么"新增工具不需要修改安全模块"? 这句话靠什么机制成立?
 
 ### 3.2 管线 (`application/tool_request/` + `application/security/`)
 
-`application/tool_request/coordinator.py` 是整条管线的主干 (706 行). **先只读
+`application/tool_request/coordinator.py` 是整条管线的主干 (739 行). **先只读
 `handle` 与 `_resolve` 两个方法**, 把它们调用的每个私有方法当黑盒, 建立顺序感:
 
 ```text
@@ -345,19 +477,20 @@ _resolve:
 
 | 文件 | 行数 | 职责 |
 |---|---|---|
-| `tool_request/catalog_predicates.py` | 42 | mode 能力门. 只有 plan 档收窄目录, 其余三档差别在裁决 |
-| `tool_request/approval_flow.py` | 92 | 审批视图与 `ApprovalBinding` 怎么拼 (从协调器分出去的"拼什么") |
+| `tool_request/catalog_predicates.py` | 44 | mode 能力门. 只有 plan 档收窄目录, 其余三档差别在裁决 |
+| `tool_request/approval_flow.py` | 107 | 审批视图与 `ApprovalBinding` 怎么拼 (从协调器分出去的"拼什么") |
 | `tool_request/recovery_flow.py` | 104 | 恢复事务的登记与收尾 (分出去的"记什么") |
-| `tool_request/observations.py` | 247 | 回给模型的 `ToolObservation` 与它的 `reason_code` |
+| `tool_request/observations.py` | 278 | 回给模型的 `ToolObservation` 与它的 `reason_code` |
 | `tool_request/audit.py` / `run_observer.py` | 103 / 81 | 审计与展示两条独立出口, 都是 ABC |
 | `security/authorization_service.py` | 160 | 按能力分派分析器, 校验收缩, 交给策略引擎 |
 | `security/analyzers/registry.py` | 111 | 分析器注册表. 按 `Capability` 分派, **不认识工具名** |
 | `security/policy_engine.py` | 211 | 最终裁决. `Hard Deny > Mandatory Ask > 围栏边界 > 分析器 Ask > Allow`, 兜底 DENY |
 | `domain/security/budget.py` | 138 | 哪些能力可以不问人. **顶替了原先的 `modes.py` 能力预算表** |
 | `domain/security/hard_deny.py` | 289 | 结构化判定 + 原始串预扫描两层, 分工而不叠加 |
-| `domain/security/protected_paths.py` | 156 | Hard Deny 的路径判据. 只看 realpath |
-| `security/learned_rules.py` | 194 | `always` 规则. 注意它落盘, 且按项目分区 |
-| `tools/runtime.py::ToolRuntime.execute` | 199 | 唯一执行入口. 授权为空即拒, 且执行前复核 `FileStateBinding` |
+| `domain/security/protected_paths.py` | 133 | Hard Deny 的路径判据. 只看 realpath |
+| `security/learned_rules.py` | 193 | `always` 规则. 注意它落盘, 且按项目分区 |
+| `tool_request/fence_hint.py` | 54 | 把"疑似被围栏拦下"翻成模型看得懂的下一步. 配套 `domain/execution/denial.py` |
+| `tools/runtime.py::ToolRuntime.execute` | 202 | 唯一执行入口. 授权为空即拒, 且执行前复核 `FileStateBinding` |
 
 `domain/security/budget.py` 值得单独看一眼 —— 它是 ADR-0030 改动的落点:
 
@@ -380,9 +513,18 @@ _resolve:
 > 任何东西报错, 而审计的全部价值就是事后能回答"这件事发生没发生". 现在 `recovery_event`
 > 直接收 `EventType`, 类型检查接管了原来靠字符串对齐的部分.
 
+`fence_hint.py` 与 `domain/execution/denial.py` 是新加的一对, 值得一起读, 因为它们是
+这个库里少见的**把一条启发式的方向讲清楚**的例子. 围栏在子进程那一侧没有干净的信号:
+Seatbelt 把拒绝写进系统日志, 子进程只拿到 EPERM; bubblewrap 干脆让路径不存在. 命令报出
+来的就是一句 `Permission denied`, 与"这个文件本来就只读"长得一模一样. 认错的代价是
+"多一句没用的提示", 认漏的代价是"回到今天的样子" —— 两个方向都不通往越界, 这才是这条
+启发式可以接受的前提. 它只丰富一条提议, 不放行任何东西.
+
 **配套 ADR**: 0004 (工具系统), 0013 (分层 Shell 安全), **0021 (失败向安全的默认值)**,
 0027 (单一安全事实链与执行前复核), **0030 (运行期围栏)**, 0028 (结构收敛).
 0021 记录了一轮审计发现的系统性缺陷, 读它能理解这套设计在防什么.
+**ADR-0044 未实现, 但它的 §背景 那张"`ToolPlan` 的六个消费方"表是这一节最好的索引** ——
+它逐条写出 prepare 产出的计划到底被谁读, 读去做什么.
 
 **读完能回答**:
 - 人类批准之后为什么还要重新 prepare 一遍?
@@ -393,7 +535,7 @@ _resolve:
 
 ### 3.3 工具实现 (`application/tools/`)
 
-先读 `tool.py` (72 行, `Tool` ABC) 和 `builtin/base.py` (220 行, 共享助手), 然后按
+先读 `tool.py` (72 行, `Tool` ABC) 和 `builtin/base.py` (229 行, 共享助手), 然后按
 **从简到繁**:
 
 ```text
@@ -409,7 +551,7 @@ find_definition.py 看它与 search_text 的分工: 语法树只出定义, 不�
 git_read.py        看它为什么一个进程都不起. 查询走 libgit2 (application/tools/
                    git_queries.py 是端口, infrastructure/workspace/
                    pygit2_git_queries.py 是实现), 于是 SPAWN_PROCESS 也不用声明
-fs_apply_patch.py  最长的写入口 (591 行). 一段补丁 = 一次审批 = 一个恢复点.
+fs_apply_patch.py  最长的写入口 (600 行). 一段补丁 = 一次审批 = 一个恢复点.
                    配套 patch_envelope.py (补丁语法), patch_apply.py (施加),
                    text_edit.py (FIND 段的容差对齐)
 shell_run.py       能力上界最宽的一个. OPAQUE + 12 个能力
@@ -424,8 +566,18 @@ shell_run.py       能力上界最宽的一个. OPAQUE + 12 个能力
 `plan_read`, `plan_write`, `todo_write`, `todo_set_status`,
 `artifact_read`, `memory_write`, `memory_forget`, `fs_find`, `fs_read`, `search_text`,
 `find_definition`, `git_read`, `fs_apply_patch`, `shell_run`.
-每个工具在 spec 里声明自己承担哪个动作 (`ToolAction`), 提示词的工具表据此分组; 没有
-`todo_read`, 因为待办全文每轮由 `todo_state` 块进提示词.
+没有 `todo_read`: 待办全文每轮由状态帧 (请求的第 [6] 层, `application/context/state_view.py`)
+带进去.
+
+**提示词里一个工具名都不出现** (ADR-0042 决策 5). 模型选工具的全部依据是 tool schema 的
+name / description / parameters, 而"这个工具怎么用"住在它自己的 `ToolSpec.description`
+里 —— 只在该工具进了本轮目录时才付费, 且模型正好是在考虑调用它的时候读到. 所以**改一个
+工具的用法说明, 改的是它的 spec, 不是提示词模板**. `tests/prompt/` 里有用例断言渲染结果
+中不出现任何 `ToolSpec.name`.
+
+每个工具还要声明 `body_in_window` (ADR-0041 决策 6): 这次结果的正文进不进会话窗口.
+声明只是倾向 —— 小于 6000 字符的正文一律直接进, 因为换成句柄要多一次 `artifact_read`
+往返, 而那一次往返要把当前整个上下文重发一遍.
 
 **读完能回答**: 同样是读文件, 为什么 `fs_read` 在 plan 档可见而 `shell_run` 不可见?
 `git_read` 曾经要靠一张 git CLI 参数白名单才敢进 plan 档目录 (挡 `--ext-diff` /
@@ -446,7 +598,7 @@ ADR-0030 之后这条线分成两半, 而且**承重的是后一半**: 解析与
 | 1 | `tokens.py` | 426 | 分词 |
 | 2 | `parser.py` | 223 | 按方言分派 |
 | 3 | `posix.py` / `cmd.py` / `powershell.py` | 231 / 213 / 218 | 三种方言的语法模型 |
-| 4 | `command_plan.py` | 289 | 解析结果: `CommandPlan` |
+| 4 | `command_plan.py` | 281 | 解析结果: `CommandPlan` |
 | 5 | `commands.py` | 600 | **一条命令一条记录**: 影响形态 + 参数结构 + 能否证明只读. ADR-0028 把原先散在三处的命令知识合到这里 |
 | 6 | `effects.py` | 72 | 查 `commands.py` 的表, 再处理两类查不出来的情形. **表外默认值是"可能写"** |
 | 7 | `arguments.py` | 128 | 一个单元的 argv 里哪几个是路径候选. 错了会**凭空造出目标** |
@@ -460,7 +612,7 @@ ADR-0030 之后这条线分成两半, 而且**承重的是后一半**: 解析与
 |---|---|---|
 | `shell_analyzer.py` | 315 | 把解析结果变成能力集合 |
 | `shell_effects.py` | 275 | 把解析结果变成 `PlanEffects` (碰哪些路径, 怎么碰) |
-| `executable_binding.py` | 185 | 这条命令实际跑哪个文件 + 它裁决后有没有被换掉 |
+| `executable_binding.py` | 186 | 这条命令实际跑哪个文件 + 它裁决后有没有被换掉 |
 | `script_binding.py` | 154 | 读脚本正文. **它不分析脚本做了什么** —— 只记住读到的是哪一份 |
 | `workspace_analyzer.py` | 109 | 不经 Shell 的工具 (如 `fs_apply_patch`) 的路径检查 |
 | `network_analyzer.py` | 44 | 网络能力 |
@@ -475,9 +627,10 @@ ADR-0030 之后这条线分成两半, 而且**承重的是后一半**: 解析与
 
 | 文件 | 行数 | 看什么 |
 |---|---|---|
-| `domain/execution/fence.py` | 98 | `FencePolicy`: 写 allowlist, 读 denylist, 网络开关. **这里没有任何命令知识** |
-| `domain/execution/profile.py` | 87 | `IsolationLevel` 只有两档, 由启动时的**行为自测**填, 不由平台名填 |
-| `domain/execution/environment.py` | 161 | 交给子进程的环境变量净化 |
+| `domain/execution/fence.py` | 100 | `FencePolicy`: 写 allowlist, 读 denylist, 网络开关. **这里没有任何命令知识** |
+| `domain/execution/profile.py` | 82 | `IsolationLevel` 只有两档, 由启动时的**行为自测**填, 不由平台名填 |
+| `domain/execution/environment.py` | 137 | 交给子进程的环境变量净化 |
+| `domain/execution/denial.py` | 78 | 从命令输出里认出"这次失败是围栏拦的". 启发式, 只丰富提议, 不放行任何东西 |
 | `infrastructure/execution/sandbox/selection.py` | 55 | 按平台唯一确定候选, 自测不过就如实降级为 UNCONFINED, **不换一个能跑起来的接着试** |
 | `infrastructure/execution/sandbox/` | 152 / 158 / 234 / 36 | `bubblewrap.py` (Linux), `seatbelt.py` (macOS), `wsl2.py` (Windows), `none.py` |
 
@@ -502,20 +655,27 @@ allowlist, 读**只能**用 denylist —— Seatbelt 下 `(deny default)` 会让
 
 | 支线 | 入口 | 配套 ADR | 什么时候读 |
 |---|---|---|---|
-| 上下文压缩 | `application/context/manager.py` (285 行) | 0032, 0037 | 想理解"历史怎么塞进窗口" |
-| 跨会话记忆 | `application/memory/memory_service.py` (182 行) | 0033 | 想理解模型为什么记得上一轮的事 |
-| 计划与待办 | `application/planning/planning_service.py` (370 行) | 0022 | 想理解 `plan_write` 与计划面板 |
-| 计划评审 | `application/planning/plan_review.py` (143 行) | 0023, 0038 | 想理解 plan 档"同意并执行"为什么能升到 auto |
-| 工作区恢复 | `application/recovery/coordinator.py` (519 行) | 0015 | 想理解撤销与"首次破坏性写入屏障" |
-| 系统提示词 | `application/prompt/system_prompt_builder.py` (360 行) + `templates/` | 0018, 0031, 0039 | 想改模型行为 |
-| Web 后端 | `interfaces/web/app.py` (1059 行), `runtime.py` (531 行), `server.py` (188 行) | 0025 | 要加接口或改启动行为 |
-| Web 前端 | `web/src/App.tsx` (1545 行), `runModel.ts` (459 行), `RunProcess.tsx` (321 行) | 0025 | 要改界面 |
+| 窗口维护与压缩 | `application/context/window_manager.py` (231 行) + `summarize.py` (255 行) | 0041, 0032, 0037 | 想理解"历史怎么塞进窗口", 以及什么时候淘汰 |
+| 跨会话记忆 | `application/memory/memory_service.py` (178 行) | 0033 | 想理解模型为什么记得上一轮的事 |
+| 计划与待办 | `application/planning/planning_service.py` (363 行) | 0022 | 想理解 `plan_write` 与计划面板 |
+| 计划评审 | `application/planning/plan_review.py` (144 行) | 0023, 0038 | 想理解 plan 档"同意并执行"为什么能升到 auto |
+| 工作区恢复 | `application/recovery/coordinator.py` (515 行) | 0015 | 想理解撤销与"首次破坏性写入屏障" |
+| 系统提示词 | `application/prompt/system_prompt_builder.py` (131 行) + `template_renderer.py` (203 行) + `templates/` | 0018, 0031, 0039, **0042** | 想改模型行为 |
+| 处理过程落盘 | `infrastructure/session/jsonl_run_store.py` (142 行) | 0016 | 想理解历史轮次的处理过程为什么展得开 |
+| Web 后端 | `interfaces/web/app.py` (1198 行), `runtime.py` (542 行), `server.py` (188 行) | 0025 | 要加接口或改启动行为 |
+| Web 前端 | `web/src/App.tsx` (1833 行), `runModel.ts` (653 行), `RunProcess.tsx` (351 行) | 0025 | 要改界面 |
 | 可观测性 | `shared/observability/` + `interfaces/runtime/logging_wiring.py` + `diagnostics.py` | 0035 | 要排查线上行为 |
 | LLM 网关 | `application/llm/gateway/default_gateway.py` (1161 行) | 0011, 0012 | 要接新供应商 |
-| 会话存储 | `application/session/session_service.py` (310 行) | 0001, 0008, 0026 | 想理解 resume |
+| 会话存储 | `application/session/session_service.py` (298 行) | 0001, 0008, 0026 | 想理解 resume |
 | 项目身份与锁 | `application/project/project_service.py` (153 行) | 0008, 0025 | 想理解为什么同一项目只能起一个 forge |
-| 配置系统 | `domain/config/config_keys.py` (218 行) + `application/config/config_service.py` (67 行) | 0005, 0008 | 要加配置项 |
+| 配置系统 | `domain/config/config_keys.py` (222 行) + `application/config/config_service.py` (82 行) | 0005, 0008 | 要加配置项 |
 | 依赖与穷举治理 | `scripts/check_deps.py` + `application/tools/git_queries.py` | 0040 | 想知道什么该交给依赖, 什么表不能承重 |
+
+`runs.jsonl` 那一行值得单独说清分工, 因为它很容易被当成第二份会话记录: 它**不是恢复
+真相源**. 会话正文由 `events.jsonl` 提供, 那一份才是审计与重放的事实; `runs.jsonl` 存的
+是给人看的过程 —— 模型每一步说了什么, 调了哪些工具, 各花了多久. 这条分工决定了失败时
+怎么办: 它损坏, 丢失或根本没写成, 后果只是历史轮次的处理过程展不开, 会话本身完好. 所以
+写入路径上的任何异常都吞掉, 只留一行 `run_store.write_failed`.
 
 **配置项是一份封闭登记, 不是散落各处的字符串**: `domain/config/config_keys.py` 的
 `SCHEMA` 是唯一权威 —— 键名, 类型, 默认值, 允许取值, 属于应用级还是项目级, 以及**给人
@@ -554,53 +714,53 @@ allowlist, 读**只能**用 denylist —— Seatbelt 下 `(deny default)` 会让
 
 **`__all__` 是模块的对外边界.** 没进 `__all__` 的名字是内部实现.
 
-**测试是第二份文档.** 测试函数名是完整的英文句子, 读测试名就知道系统承诺了什么.
-共 1169 例, 按主题分组:
+**测试是第二份文档 —— 但目前只剩四处.** 测试函数名是完整的英文句子, 读测试名就知道
+系统承诺了什么. 现存 127 例:
 
 ```text
-tests/security/      安全裁决与回归 (354 例). 文件名带 regressions 的都是真实事故
-tests/tools/         工具行为 (209 例)
-tests/llm/           网关流式解析, 模型/供应商配置校验 (112 例)
-tests/prompt/        提示词编译与指纹 (103 例)
-tests/planning/      计划, 待办与计划评审 (76 例)
-tests/agent_run/     循环与事件时间线 (76 例)
-tests/observability/ 日志装配, 读数与链路追踪 (47 例)
-tests/web/           Web API 与事件流 (42 例)
-tests/memory/        记忆边界 (36 例)
-tests/context/       上下文压缩与去重 (34 例)
-tests/execution/     围栏 (32 例)
-tests/tool_request/  管线接缝 (31 例)
-tests/project/       项目排他锁 (11 例)
-tests/test_entrypoint.py  进程入口 (6 例). 其中一条钉住 `forge cli` 不再存在
+tests/prompt/        60 例. test_static_prompt (32) 编译与指纹快照;
+                     test_prompt_text (19) 模板正文纪律; test_rule_provenance (8)
+                     每条规则都要能指认一个具体的错误动作
+tests/context/       40 例. test_layering (13) 六层的位置; test_window (14) 只追加
+                     与批量淘汰; test_window_manager (13) 水位导出与摘要触发
+tests/tools/         23 例. test_result_shape: summary / data / body 三段的形状
+tests/tool_request/   5 例. test_fence_sees_raw_output: 围栏提示读的是原始输出
 tests/support/       共享替身与循环夹具
 ```
 
-> 数字会漂, 别照抄; 值得记的是**比例**: 安全与工具两块占了接近一半, 而它们正是这个项目
-> "改错了会出事"的地方. `tests/cli/`, `tests/commands/`, `tests/manual_shell/` 三组随
-> 终端入口一起删除; 本机上可能还剩几个空目录, 那是 `__pycache__` 的残留, 不在库里.
+**其余的用例暂时不存在.** 安全裁决, 工具行为, LLM 网关, Web API, 记忆, 围栏, 计划待办
+这七块原先合计一千余例, 随 ADR-0041 / ADR-0042 推翻的形状一起删了 —— 这个项目明写的
+纪律是新设计不为兼容旧用例妥协, 被推翻的设计连同它的用例一起走, 而不是留着一批测着
+已经不存在的形状的断言. 代价要说清楚: **这七块现在只有源码与 docstring 可读, 改它们
+没有回归网兜着.** `tests/test_entrypoint.py` 那条钉住 `forge cli` 不复活的用例也在这
+批里 —— 它守的那件事本身没变, 只是暂时没有机器守着了.
 
-`tests/test_entrypoint.py` 单独值得看一眼: 被删掉的入口最容易以"顺手加回来"的形式复活,
-而复活的那一刻不会有任何东西报错 —— 所以那条 `test_there_is_no_terminal_subcommand`
-是专门为此写的.
+> 现存这四组反过来提示了**下一批用例该长什么样**: 每一组的文件级 docstring 都先写清
+> "这一组查的是什么, 以及查漏了会怎样". `test_layering.py` 开头那句尤其值得抄 ——
+> "这一组查的是位置, 不是内容. 位置错了不会报错, 也不会让任何输出变难看, 它只是让每
+> 一轮都变贵" —— 说得出这句话的用例才值得写.
 
 ## 7. 用改动验证理解
 
 读懂的标准不是"看完了", 是"能预测改动的后果". 建议按顺序做这几个练习:
 
 1. **跑起来**: `make ci`, 然后 `poetry run forge`, 在浏览器里走一次真实对话. 注意
-   `make ci` 里除了 lint / format / mypy / 四个架构守卫与 1191 个 Python 用例, 还有
-   `web-type` / `web-test` / `web-build` 三步前端检查.
+   `make ci` 里除了 lint / format / mypy / 四个架构守卫与 127 个 Python 用例, 还有
+   `web-type` / `web-test` / `web-build` 三步前端检查 (前端侧另有三份 `.test.mjs`).
 2. **加一个最小工具**: 照 `planning_tools.py` 里 `PlanReadTool` 的形状写一个
    `echo_text`, 注册进 `interfaces/runtime/tool_wiring.py`. 验证: 它自动出现在
    `GET /api/v1/tools` 里, 且在各隔离档下的可见性符合你的预期.
 3. **故意违反分层**: 在 `domain/tool/plan.py` 里 `import rich`, 跑 `make arch`. 看它
    怎么拦你. 再试着在 `application/tools/` 里 import 一次 `application/security/`.
-4. **故意破坏不变量**: 把 `fs_apply_patch` 的 `target_declaration_ability` 从
-   `EXPANDABLE` 改成 `STATIC`, 跑 `tests/tools/test_fs_apply_patch.py` 与
-   `tests/tool_request/test_declaration_bound.py`. 这类缺陷真实发生过.
+4. **故意破坏分层的位置**: 把 `AssembledContext.to_request_messages` 里状态帧的位置
+   从末尾挪到窗口之前, 跑 `tests/context/test_layering.py`. 这类缺陷不会让任何输出变
+   难看 —— 它只是让每一轮都变贵, 所以只有用例挡得住. 再试着让 `window_manager` 逐条
+   丢弃而不是批量淘汰, 跑 `tests/context/test_window.py`.
 5. **改内置提示词**: 改 `application/prompt/templates/blocks/` 下任一份模板的一个字,
-   跑 `tests/prompt/`. 看指纹用例怎么逼你升 `PROMPT_TEXT_VERSION`. 再试着在某个 Python
-   文件里直接写一句中文进 `PromptBlock(body=...)`, 跑 `make arch`.
+   跑 `tests/prompt/`. 看指纹用例怎么逼你升 `PROMPT_TEXT_VERSION`. 再往模板里加一行
+   规则但**不写 `{# why: … #}`**, 看 `test_rule_provenance.py` 怎么问你"删掉这一句,
+   哪个具体的错误动作会变得可能". 最后试着在某个 Python 文件里直接写一句中文进
+   `PromptBlock(body=...)`, 跑 `make arch`.
 6. **读一条完整审计**: 跑一次带工具的对话, 然后看
    `~/.forge/projects/<project_id>/sessions/<session_id>/events.jsonl`. 把事件序列和你
    读的代码对上. 同时对着 `~/.forge/logs/forge-latest.log` 看同一次调用的日志侧.
@@ -612,9 +772,13 @@ tests/support/       共享替身与循环夹具
 
    `confined` 为 False 时 `failures` 里就是原因. 这一步能让 §4.3 从概念变成这台机器上
    的事实.
-8. **试着把终端入口加回来**: 在 `interfaces/app.py` 上挂一个 `@app.command("cli")`,
-   跑 `poetry run pytest tests/test_entrypoint.py`. 这条练习最快说明"删掉的东西怎么
-   守住不回来".
+8. **数一次未命中**: 连着跑三轮带工具的对话, 从日志里把每轮的 `model.request` 与
+   `llm.cache_hit` 挑出来对比. ADR-0041 的全部收益都落在这一个数上 —— 每轮未命中的
+   input 应该只有本轮新增的内容, 而不是整段历史. 这一步能让 §2.2 从概念变成这台机器上
+   的事实.
+
+> 原先这里还有一条"试着把终端入口加回来, 跑 `tests/test_entrypoint.py`". 那个文件已随
+> 这一轮测试重写删除, 练习暂时做不了 —— 它守的那件事本身没变, 只是眼下没有机器守着.
 
 ## 8. 当前已知的缺口
 
@@ -624,16 +788,19 @@ tests/support/       共享替身与循环夹具
 |---|---|
 | 代码里搜不到 `LoopHook` / `LoopState`, 只在 docstring 里被提到 | ADR-0010 预留的扩展点, 从未落地. 事件总线明写"需要改变循环方向的能力必须实现 LoopHook", 而那个类目前不存在 |
 | 没有 mid-turn resume | 同上. `LoopStopReason` 里的 `RESUMABLE_PAUSE` 一档目前靠重新起一轮实现 |
-| ADR-0034 (分层上下文组装与混合语义检索) 无对应代码 | 状态仍是 Proposed, 未实现. 当前压缩走的是 ADR-0032 的预算驱动路径 |
+| ADR-0034 (分层上下文组装与混合语义检索) 只兑现了一半 | 状态仍是 Proposed. 决策 1 的"必须保留层"被 ADR-0041 的六层吸收了, **检索层仍然没有** —— 没有向量库, 没有 BM25, 没有任何按相关性取材的代码 |
+| ADR-0043 (`ask_user`) 与 ADR-0044 (工具样板上收) 只有文档 | 两份都是 2026-09-03 写的, 一行代码没有. 尤其注意 0043: **模型缺信息时今天没有任何向人提问的入口**, 它只能把问题写成最终回答, 于是这一轮结束, 用户的回答变成一条与任何 `tool_call` 都不相干的新消息 |
+| 测试套件处在重写中间态 | 1169 例现存 127 例, 只覆盖上下文分层, 提示词与工具结果形状三块. 安全, 工具行为, 网关, Web, 记忆, 围栏, 计划待办七块暂时没有用例 (§6) |
 | 没有 MCP 接入 | 设计文档里有, 代码里没有. `Capability` 与 `ToolSpec` 的 docstring 里为它留了位置 |
 | 没有 Sub-Agent | 同上 |
 | `SessionMode` 不落盘 | 刻意的: `state.json` 必须能从 `events.jsonl` 重建, 而 mode 没有对应事件. 见 `session_service.py::set_mode` 的 docstring |
-| `ExitCode.NO_TTY` (4) 与 `UNTRUSTED` (5) 没有任何生产方 | 它们只可能来自 `forge cli`, 随终端入口失去产出路径. 保留在表里是为了不让码位漂移, 不是为了将来还有人用 (ADR-0025 修订二原话) |
+| `ExitCode` 只剩三个码位, 中间是空的 | `OK` (0), `PROJECT_LOCKED` (6), `PORT_BUSY` (7). 1-3 各有约定 (1 未预期错误, 2 Click/Typer 用法错误, 3 未分配), 4 与 5 空着 —— 那是删掉的 `NO_TTY` 与 `UNTRUSTED` 留下的洞, 刻意不回收, 免得码位漂移 |
 | `GET /api/v1/diagnostics` 没有前端页面 | 只能 curl (§0.1). ADR-0035 的读数本身完整 |
-| 围栏自测结论 (`IsolationLevel`) 不出现在任何接口或日志里 | `select_provider()` 的报告只回填进 `ExecutionProfile` 与 `ToolStack.confined`, 装配时一行都没记. 要看只能自己调那个函数 (练习 7) |
-| `EventType.SLASH_COMMAND` 没有产出方却删不掉 | `from_dict` 用 `EventType(...)` 还原, 而终端入口时代的 `events.jsonl` 里真有 `"slash_command"` 行. 落盘取值只增不减 —— 同批的 `APPROVAL_REQUESTED` / `APPROVAL_RESOLVED` / `CLASSIFIER_INVOKED` / `RECOVERY_PERFORMED` 就删得掉, 因为全 git 历史里它们只在一张名字表里出现过, 从未被写进过文件 |
-| `domain/memory/secrets.py` 没有直接单元测试 | ADR-0040 §4.9 说"配套用例见 `tests/memory/test_secret_shapes.py`, 两个方向各钉一半", 那个文件不存在且全 git 历史里从未存在. 现有覆盖只有 `tests/memory/test_memory_prompt_and_tools.py:227` 一条端到端断言. 2026-08-28 修的两个误报 (`_TOKEN` 去掉 `/`, `_is_random_token` 的连排规则) 因此没有回归用例守着 |
-| 一批 docstring 还在说 REPL / 终端 / 斜杠命令 | 文档漂移. `agent_turn/cancellation.py`, `interfaces/runtime/diagnostics.py`, `application/project/project.py`, `application/agent_run/` 几处都有. 代码行为以实现为准 |
+| 围栏自测结论 (`IsolationLevel`) 不出现在任何**接口**里 | 它现在进得了两处: 请求的第 [4] 层 (`runtime_view.py` 把 `isolation_level` 与一句人话摘要渲染给模型), 以及 debug 级下的 `context.system_prompt` 日志行. 但 `GET /api/v1/status` 与 `/diagnostics` 都不带它, 装配时也一行没记 —— 想拿准确结论仍然只能自己调 `select_provider()` (练习 7) |
+| `EventType.SLASH_COMMAND` 已删, 但它自己的注释说不该删 | **这一条是真的不一致, 不是文档漂移.** `domain/session/events.py` 里那段注释仍写着"删这三个安全, 删 SLASH_COMMAND 不安全, 区别只在有没有真的写进过 events.jsonl", 而枚举里已经没有它了. `from_dict` 用 `EventType(str(...))` 还原, 遇到终端入口时代留下的 `"slash_command"` 行会直接抛 `ValueError`. 同批删掉的 `APPROVAL_REQUESTED` / `APPROVAL_RESOLVED` / `CLASSIFIER_INVOKED` / `RECOVERY_PERFORMED` 确实安全 —— 它们只在一张名字表里出现过, 从未被写进过文件 |
+| `domain/memory/secrets.py` 一条单元测试都没有 | ADR-0040 §4.9 说"配套用例见 `tests/memory/test_secret_shapes.py`, 两个方向各钉一半", 那个文件不存在且全 git 历史里从未存在. 原先仅有的一条端到端断言在 `tests/memory/test_memory_prompt_and_tools.py`, 随这一轮测试重写一并删除 —— 现在是**零覆盖**. 2026-08-28 修的两个误报 (`_TOKEN` 去掉 `/`, `_is_random_token` 的连排规则) 因此完全没有回归用例守着 |
+| 一批 docstring 还在说 REPL / 终端 / 斜杠命令 | 文档漂移. `agent_turn/agent_turn_service.py`, `agent_turn/cancellation.py`, `application/agent_run/` 几处都有 (`application/project/project.py` 那处已随文件删除). 代码行为以实现为准 |
+| `docs/02-detailed-design.md:148` 的 `LoopAction` 取值表列了五项 | 实现只有两种: `AnswerAction` 与 `ToolRequestAction`. `ask_user` / `request_approval` / `request_compaction` 三项从来没有被构造过 —— 后两者早已分别由 `ApprovalService` 与 `WindowManager` 在循环之外承担, 前者是 ADR-0043 打算落成工具的那一件. 三条读起来像是已经接好的路 |
 | `docs/02-detailed-design.md` §3.5 列了六种模式与一个 `ModePolicy` 类 | 文档漂移. 以四档 (`PLAN`/`ACCEPT_EDITS`/`AUTO`/`FULL_ACCESS`) 为准, `ModePolicy` 已随 ADR-0009 废弃删除 |
 | `docs/01-overview-design.md` §5.1 提到 MCP SDK 与 `ModePolicy` | 同上 |
 | `docs/使用相关.md` 的日志表还写着 `/config` 与 `/diagnostics` | 文档漂移, 配置项本身没变, 入口改成了设置页 |
@@ -657,6 +824,15 @@ tests/support/       共享替身与循环夹具
 | 日志开关是 `FORGE_LOG_*` 环境变量 (ADR-0035 决策 3 原文) | 已改成 `logging.*` 配置项, 见 ADR-0035 的 2026-08-28 修订段 |
 | `telemetry.enabled` 没有任何消费者 | 已接上: 它现在控制 `shared/observability/metrics.py` 的采集, 默认关 |
 | `ToolAuditSink.approval_event` | 已删 (2026-08-30). 零个生产调用点; 审批的审计走 `policy_decision` |
+| 系统提示词里有工具表, 运行事实块, 计划 / 待办 / 记忆三个状态块 | 全部搬走 (ADR-0042). 提示词只剩六个静态块, 一个进程编译一次; 运行事实成了请求的第 [4] 层, 三个状态块合成第 [6] 层的状态帧 |
+| `PromptBlock.cacheable` 与分区校验 | 已删. 请求是 `[tools][system][messages]`, 整个 system prompt 都排在 messages 之前, 块内部怎么分区都换不来一个字节的缓存 |
+| `ToolAction` 枚举 | 已删. 唯一消费方是提示词里按动作分组的工具表, 那张表没了它就没了消费方 |
+| 上下文有"回合内去重"与"占位符降级"两条通路 | 已删 (ADR-0041 决策 4). 两条都是中段改写, 在前缀缓存下净亏五到十倍. `transcript.rewrite` 一并删除, 连机制入口都不留 |
+| `application/context/manager.py` (`ContextManager`) | 已拆: 组装归 `assembler.py`, 窗口维护归 `window_manager.py`, 二级摘要归 `summarize.py` |
+| `RuntimeFacts` 住在 `application/prompt` | 已搬到 `application/context`. 它每轮都可能变, 而提示词只依赖包版本与 `FORGE.md` |
+| `interfaces/web/serialization.py` | 已搬到 `shared/serialization.py`: 落盘那一侧出现了第二个消费方 |
+| 会话事件有 15 种 | 现在 14 种. `SLASH_COMMAND` 删了 (见上表那一行) |
+| 运行事件有 23 种 | 现在 21 种 |
 
 **冲突时的裁定顺序**: 已接受的 ADR > 最新日期的 roadmap > `02-detailed-design.md`.
 见 `docs/05-acceptance-standards.md` §9. 同一主题有多份 ADR 时以编号大的为准; 同一份 ADR
@@ -704,29 +880,52 @@ SIBLING_BAN —— 记忆之所以敢做静默写入, 全部承重就在这一�
 代价写进了决策正文: 远程会话需要 `ssh -L 8765:127.0.0.1:8765`. 而 `#` 人工 Shell 确实
 没有替代品 —— 要在工作区里亲手敲命令, 自己开一个终端.
 
+**"历史太长了, 回头整理一下"** —— 这条听起来永远合理, 而它永远是负收益. 在前缀缓存下,
+改中段一处的成本等于它自己**加上它后面的全部内容**: 一次 `fs_apply_patch` 之后改写中段,
+17,154 输入里 7,298 未命中; 改文件密集的那一轮三次改写合计 79,321, 占 57% —— 换来的不过
+是把一份 4k 正文压成 40 token 的占位. 所以 ADR-0041 不只是删掉了去重与降级两条通路,
+还删掉了 `transcript.rewrite` 这个机制入口: 留着入口就等于留着退回去的路. 要省窗口, 省
+在**写入那一刻** (收 body 上限, `fs_read` 默认读行段), 不是回头改.
+
+**"提示词里得有张工具表, 不然模型不知道有哪些工具"** —— tool schema 已经把 name,
+description 与 parameters 发过去了, 那就是模型选工具的全部依据. 再在提示词里叠一层 Forge
+自造的分类, 等于要求模型先学会我们的词汇表才能用我们的工具, 而且那段文字每一轮都要付钱.
+单个工具怎么用住在它自己的 `ToolSpec.description` 里 —— 只在它进了本轮目录时才付费, 且
+模型正好是在考虑调用它的时候读到. 读 ADR-0042 决策 5.
+
+**"模型缺信息的时候会问我"** —— **不会, 今天没有这条路.** 它唯一能做的是把问题写成最终
+回答, 那等于结束本轮; 你的回答是新一轮里一条与任何 `tool_call` 都不相干的新消息. 能问人
+的只有安全审批, 而它问的是"这一次已经确定下来的调用许不许可", 发起者是 `PolicyEngine`
+不是模型. ADR-0043 打算把它做成一个阻塞式内置工具, 但那份 ADR 目前一行代码都没有.
+
 ## 10. 一份两周的日程建议
 
 | 天 | 内容 |
 |---|---|
 | 1 | 第 1 节建立骨架 + 跑起来 (练习 1) |
-| 2-3 | 主线一 (对话链路, 含 §2.1 取消与审批) |
+| 2 | 主线一 (对话链路, 含 §2.1 取消与审批) |
+| 3 | §2.2 请求六层与只追加窗口 + 练习 8. **这是这条分支上最新的一块** |
 | 4-6 | 主线二 3.1 值对象 + 3.2 管线. **慢一点, 这是核心** |
 | 7 | 主线二 3.3 工具实现 + 练习 2 |
 | 8-9 | 主线三 4.1 解析 + 4.2 分析器 |
 | 10 | 主线三 4.3 围栏 + 练习 7 |
-| 11 | 练习 3-6, 8, 把不变量摸一遍 |
+| 11 | 练习 3-6, 把不变量摸一遍 |
 | 12-14 | 按当前任务挑支线深入 |
 
 ## 关联文档
 
 - `docs/01-overview-design.md` —— 概要设计与分层职责 (注意 §5.1 提到的 MCP 与
   `ModePolicy` 尚未 / 不再存在)
-- `docs/02-detailed-design.md` —— 领域模型与事件 schema (注意 §3.5 已漂移)
+- `docs/02-detailed-design.md` —— 领域模型与事件 schema (注意 §3.5 与 §148 的
+  `LoopAction` 取值表都已漂移)
 - `docs/04-engineering-standards.md` —— 命名, 提交, 测试规范
 - `docs/05-acceptance-standards.md` —— 验收标准与文档一致性要求
-- `docs/adr/README.md` —— 41 份架构决策记录
+- `docs/adr/README.md` —— 45 份架构决策记录
 - `docs/adr/2026-08-19-0025-采用本地Web控制面替代终端交互.md` —— **两次修订都要读**,
   尤其是修订二的"为什么推翻上一次修订"
+- `docs/adr/2026-09-02-0041-采用按变更源分层的请求组装与只追加窗口.md` 与
+  `docs/adr/2026-09-02-0042-提示词模块收敛为静态策略层.md` —— **这两份要一起读**,
+  它们定了今天一次请求的形状 (§2.2)
 - `docs/SYNC-TO-MAIN.md` —— 副本到主仓的回流记录
 - `AGENTS.md` —— 命名约定与禁用名
 - `README.md` —— 从源码跑起来的四步 (`make web-build` 不能省)

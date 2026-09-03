@@ -42,3 +42,4 @@ def _read_only_visible(spec: ToolSpec) -> bool:
 
 def _always_visible(spec: ToolSpec) -> bool:
     return True
+    # return spec.name == "shell_run"

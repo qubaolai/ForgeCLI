@@ -23,9 +23,6 @@ raw_metadata（credential_retries / transport_retries / wait_retries）。
 占用，多个并发调用可拿到同一凭证的值；网关不对凭证做并发限制。凭证可用性只在
 mark_failed（401/429 冷却）或引用本身消失（配置/解析层面）时变化。
 
-可观测性（ADR-0012 §9）：complete 返回、stream 收尾 chunk、错误抛出三个位置
-统一经 InProcessGatewayMetrics 上报安全摘要样本；进程内聚合，无 IO。
-
 边界：网关不直接写 events / state / usage 文件；usage 随 ModelResponse 返回，
 由 AgentTurnService 经 UsageMeter 转草稿后落盘（§11.1）。resolver 为必备协作件
 （ADR-0012 §10：06-30 的无 resolver 兼容路径与 validate_model 参数已清理）。
@@ -58,10 +55,6 @@ from forgecli.application.llm.gateway.errors import (
 )
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.llm.gateway.governance import SlidingWindowHealthRegistry
-from forgecli.application.llm.gateway.observability import (
-    GatewayCallSample,
-    InProcessGatewayMetrics,
-)
 from forgecli.application.llm.gateway.provider import (
     ModelProvider,
     ProviderRequest,
@@ -152,7 +145,6 @@ class DefaultLlmGateway(LlmGateway):
         credential_pool: CredentialPool | None = None,
         health_registry: SlidingWindowHealthRegistry | None = None,
         cache: InMemoryResponseCache | None = None,
-        observer: InProcessGatewayMetrics | None = None,
         structured_retry_limit: int = 1,
     ) -> None:
         self._registry = registry
@@ -169,8 +161,6 @@ class DefaultLlmGateway(LlmGateway):
         self._credential_pool = credential_pool
         self._health = health_registry or SlidingWindowHealthRegistry(enabled=False)
         self._cache = cache or InMemoryResponseCache()
-        # 默认装配进程内聚合（ADR-0012 §9）：纯内存无副作用，不设开关。
-        self._observer = observer or InProcessGatewayMetrics()
         self._structured_retry_limit = structured_retry_limit
 
     # ---- LlmGateway 端口 ----
@@ -289,7 +279,6 @@ class DefaultLlmGateway(LlmGateway):
             )
             if cached is not None:
                 _log.info("llm.cache_hit", provider=ref.provider, model=ref.model)
-                self._observe_response(request, ref, cached, None, cache_hit=True)
                 return cached
         counts = _RetryCounts()
         start = self._timer()
@@ -311,7 +300,6 @@ class DefaultLlmGateway(LlmGateway):
                 strict_schema=strict_schema,
             )
         except ModelGatewayError as exc:
-            self._observe_error(request, ref, exc, counts, start)
             _log.error(
                 "llm.failed",
                 provider=ref.provider,
@@ -362,7 +350,6 @@ class DefaultLlmGateway(LlmGateway):
                 thinking=thinking,
                 schema_digest=cache_digest,
             )
-        self._observe_response(request, ref, response, counts)
         return response
 
     def _invoke_with_retries(
@@ -504,17 +491,8 @@ class DefaultLlmGateway(LlmGateway):
         except ModelCancelledError:
             # 首包前取消：按 §9 产出中断收尾块，不抛给渲染层。
             yield self._interrupt_chunk(request, ref, 0, estimated_input, [])
-            self._observe_stream(
-                request,
-                ref,
-                FinishReason.USER_CANCELLED,
-                counts,
-                start,
-                estimated=True,
-            )
             return
-        except ModelGatewayError as exc:
-            self._observe_error(request, ref, exc, counts, start)
+        except ModelGatewayError:
             raise
         yield from self._stream_body(
             request,
@@ -652,14 +630,6 @@ class DefaultLlmGateway(LlmGateway):
                 yield self._interrupt_chunk(
                     request, ref, sequence, estimated_input, received_text
                 )
-                self._observe_stream(
-                    request,
-                    ref,
-                    FinishReason.USER_CANCELLED,
-                    counts,
-                    start,
-                    estimated=True,
-                )
                 return
             try:
                 provider_chunk = next(provider_iter)
@@ -669,14 +639,6 @@ class DefaultLlmGateway(LlmGateway):
                 yield self._interrupt_chunk(
                     request, ref, sequence, estimated_input, received_text
                 )
-                self._observe_stream(
-                    request,
-                    ref,
-                    FinishReason.USER_CANCELLED,
-                    counts,
-                    start,
-                    estimated=True,
-                )
                 return
             except ModelGatewayError as exc:
                 # 首包之后（ADR-0012 §2）：不重试、不重放，按中断收尾。
@@ -685,29 +647,11 @@ class DefaultLlmGateway(LlmGateway):
                 yield self._error_chunk(
                     request, ref, sequence, estimated_input, received_text
                 )
-                self._observe_stream(
-                    request,
-                    ref,
-                    FinishReason.ERROR,
-                    counts,
-                    start,
-                    estimated=True,
-                    error_type=type(exc).__name__,
-                )
                 return
             except Exception:
                 self._health.record_failure(ref)
                 yield self._error_chunk(
                     request, ref, sequence, estimated_input, received_text
-                )
-                self._observe_stream(
-                    request,
-                    ref,
-                    FinishReason.ERROR,
-                    counts,
-                    start,
-                    estimated=True,
-                    error_type=ModelProviderInternalError.__name__,
                 )
                 return
             yield normalize(provider_chunk)
@@ -726,14 +670,6 @@ class DefaultLlmGateway(LlmGateway):
         )
         self._mark_succeeded(credential)
         self._health.record_success(ref)
-        self._observe_stream(
-            request,
-            ref,
-            last_finish or FinishReason.STOP,
-            counts,
-            start,
-            estimated=usage.estimated,
-        )
 
     def _interrupt_chunk(
         self,
@@ -792,7 +728,6 @@ class DefaultLlmGateway(LlmGateway):
         if cached is not None:
             data, errors = self._parse_structured(cached.content, request)
             if not errors:
-                self._observe_response(base, ref, cached, None, cache_hit=True)
                 return cached, data, errors
         response = self._complete_resolved(
             base,
@@ -831,7 +766,6 @@ class DefaultLlmGateway(LlmGateway):
         if cached is not None:
             cached_data, cached_errors = self._parse_structured(cached.content, request)
             if not cached_errors:
-                self._observe_response(prompted, ref, cached, None, cache_hit=True)
                 return cached, cached_data, cached_errors
         response: ModelResponse | None = None
         data: object | None = None
@@ -997,80 +931,6 @@ class DefaultLlmGateway(LlmGateway):
             response_schema=response_schema,
             schema_name=schema_name,
             strict_schema=strict_schema,
-        )
-
-    # ---- 可观测性（ADR-0012 §9）----
-
-    def _observe_response(
-        self,
-        request: ModelRequest,
-        ref: ModelRef,
-        response: ModelResponse,
-        counts: _RetryCounts | None,
-        *,
-        cache_hit: bool = False,
-    ) -> None:
-        self._observer.on_call(
-            GatewayCallSample(
-                provider=ref.provider,
-                model=ref.model,
-                origin=request.origin,
-                finish_reason=response.finish_reason,
-                latency_ms=response.latency_ms,
-                credential_retries=counts.credential if counts else 0,
-                transport_retries=counts.transport if counts else 0,
-                wait_retries=counts.wait if counts else 0,
-                cache_hit=cache_hit,
-                estimated=response.usage.estimated,
-            )
-        )
-
-    def _observe_stream(
-        self,
-        request: ModelRequest,
-        ref: ModelRef,
-        finish_reason: FinishReason,
-        counts: _RetryCounts,
-        start: float,
-        *,
-        estimated: bool,
-        error_type: str | None = None,
-    ) -> None:
-        self._observer.on_call(
-            GatewayCallSample(
-                provider=ref.provider,
-                model=ref.model,
-                origin=request.origin,
-                finish_reason=finish_reason,
-                latency_ms=(self._timer() - start) * 1000.0,
-                credential_retries=counts.credential,
-                transport_retries=counts.transport,
-                wait_retries=counts.wait,
-                estimated=estimated,
-                error_type=error_type,
-            )
-        )
-
-    def _observe_error(
-        self,
-        request: ModelRequest,
-        ref: ModelRef,
-        exc: ModelGatewayError,
-        counts: _RetryCounts,
-        start: float,
-    ) -> None:
-        self._observer.on_call(
-            GatewayCallSample(
-                provider=ref.provider,
-                model=ref.model,
-                origin=request.origin,
-                finish_reason=None,
-                latency_ms=(self._timer() - start) * 1000.0,
-                credential_retries=counts.credential,
-                transport_retries=counts.transport,
-                wait_retries=counts.wait,
-                error_type=type(exc).__name__,
-            )
         )
 
     # ---- 小工具 ----

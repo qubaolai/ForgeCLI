@@ -8,7 +8,7 @@
 三条硬约束, 违反哪条都会把展示层变成安全旁路:
 
 1. **不改变控制流.** 事件是观察, 不是 hook. 需要影响循环方向的能力必须实现 LoopHook.
-2. **不替代持久化真相源.** `events.jsonl` + `state.json` 才是 resume 与审计的依据;
+2. **不替代持久化真相源.** `events.jsonl` + `state.json` 才是 resume 的依据;
    这里的东西活在进程内, 崩了就没了, 也**不应该**有 (ADR-0016 §9).
 3. **payload 是封闭值对象, 不是 dict.** 自由 dict 会让 renderer 反过来猜 application
    的内部结构, 也拦不住"顺手把整个响应塞进去"这种事.
@@ -266,6 +266,8 @@ class ToolQueuedPayload(RunEventPayload):
     """
 
     tool_name: str
+    # 同一批次里排在本调用之后的调用数。循环在第一个调用真正派发前按顺序发布整批；
+    # 最后一条恒为 0，可作为批次已经发布完整的标志。
     queue_position: int = 0
     arguments: tuple[tuple[str, str], ...] = ()
 
@@ -293,7 +295,7 @@ class ToolPreparedPayload(RunEventPayload):
 class PolicyResolvedPayload(RunEventPayload):
     """展示用的裁决摘要.
 
-    它**不替代**持久化的 policy_decision 审计: 终端显示了"已允许"不等于审计已落盘
+    它是给人看的那一份: 页面显示了"已允许"说的是裁决结论, 不是执行已经发生
     (§4.3).
     """
 

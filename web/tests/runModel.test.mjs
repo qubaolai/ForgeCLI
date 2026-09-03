@@ -74,6 +74,42 @@ test("tool events are grouped by invocation and metrics retain CLI usage fields"
   });
 });
 
+test("a complete queued batch is visible before its first invocation starts", () => {
+  const events = [
+    event("tool_queued", 1, { tool_name: "fs_read", queue_position: 2 }, { tool_call_id: "call-1" }),
+    event("tool_queued", 2, { tool_name: "search_text", queue_position: 1 }, { tool_call_id: "call-2" }),
+    event("tool_queued", 3, { tool_name: "shell_run", queue_position: 0 }, { tool_call_id: "call-3" }),
+  ];
+
+  assert.deepEqual(
+    groupToolEvents(events).map((group) => group.id),
+    ["call-1", "call-2", "call-3"],
+  );
+
+  events.push(event("tool_prepared", 4, { tool_name: "fs_read" }, { invocation_id: "inv-1" }));
+  const groups = groupToolEvents(events);
+  assert.equal(groups.length, 3);
+  assert.equal(groups[0].id, "inv-1");
+  assert.deepEqual(groups.slice(1).map((group) => group.id), ["call-2", "call-3"]);
+});
+
+test("queued tools are reported as pending, never as parallel execution", () => {
+  const directory = { ...DIRECTORY, fs_read: { title: "读取文件", capabilities: ["workspace_read"] } };
+  const turn = newLocalTurn("检查", 1000);
+  turn.events = [
+    event("tool_queued", 1, { tool_name: "fs_read", queue_position: 2 }, { tool_call_id: "call-1" }),
+    event("tool_queued", 2, { tool_name: "search_text", queue_position: 1 }, { tool_call_id: "call-2" }),
+    event("tool_queued", 3, { tool_name: "shell_run", queue_position: 0 }, { tool_call_id: "call-3" }),
+  ];
+  assert.equal(activityOf(turn, directory), "准备调用 3 个工具");
+
+  turn.events.push(event("tool_started", 4, { tool_name: "fs_read" }, { invocation_id: "inv-1" }));
+  assert.equal(activityOf(turn, directory), "正在读取文件，另有 2 个待处理");
+
+  turn.events.push(event("tool_completed", 5, { tool_name: "fs_read", status: "ok" }, { invocation_id: "inv-1" }));
+  assert.equal(activityOf(turn, directory), "准备调用 2 个工具");
+});
+
 test("context compaction is counted in the turn total and broken out separately", () => {
   // 回归: 压缩那次模型调用的 usage 被原地丢掉, 于是本轮合计少了一大块 —— 而它的
   // input 大致等于被压掉的那段历史, 不是零头 (ADR-0037)。
@@ -513,13 +549,13 @@ test("no separator dot and no path ever reach the collapsed line", () => {
   assert.ok(!summary.text.includes("/"), "路径一个字符都不该上这一行");
 });
 
-test("a single shell command stays on the line, because it is not a path", () => {
+test("a shell group uses the action title; the command stays in its expanded call", () => {
   const directory = { shell_run: { title: "执行 Shell 命令", capabilities: ["execute_shell"] } };
   const summary = summariseTools([{ id: "a", events: [
     event("tool_prepared", 1, { tool_name: "shell_run", arguments: [["command", "mvn -q compile"]] }, { invocation_id: "i1" }),
   ] }], directory);
 
-  assert.deepEqual(summary, { text: "mvn -q compile", mono: true, count: 1 });
+  assert.deepEqual(summary, { text: "执行命令", mono: false, count: 1 });
 });
 
 test("the count is a separate field, never spliced into the label", () => {

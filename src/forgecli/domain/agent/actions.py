@@ -1,9 +1,8 @@
-"""循环每次迭代的产出：LoopDecision / LoopAction / LoopStop（ADR-0010 §4.3）。
+"""循环每次迭代的产出：LoopAction / LoopStop（ADR-0010 §4.3）。
 
 AgentLoop 每步只能产出这三类结果之一，且都**只表达意图**，不执行任何副作用——真实执行
 由 AgentTurnService 按 mode policy、approval、ToolRuntime 完成（§2 / §4.3 约束）。
 
-- LoopDecision：描述「为什么下一步这样做」，只写可审计摘要，不落 raw chain-of-thought。
 - LoopAction：描述「想做什么」，采用密封子类型（对齐 domain.intents / gateway
   ContentBlock 的层次风格），每种动作一个类型，构造即有效。
 - LoopStop：退出 / 暂停 / 错误隔离的唯一出口，reason 取自 LoopStopReason，可恢复与否由
@@ -111,17 +110,6 @@ class ToolRequestAction(LoopAction):
 
 
 @dataclass(frozen=True)
-class LoopDecision:
-    """一次迭代的决策：为什么下一步这样做（§4.3）。
-
-    next_action 为本步要执行的动作。可审计的决策摘要不在这里 —— 它经
-    DecisionSummaryPayload 直接进运行事件流。
-    """
-
-    next_action: LoopAction | None = None
-
-
-@dataclass(frozen=True)
 class LoopStop:
     """退出 / 暂停 / 错误隔离的唯一出口（§4.3 / §6）。
 
@@ -135,4 +123,4 @@ class LoopStop:
 
 # 循环每步的产出：决策（含待执行动作）或终止。驱动方（AgentTurnService）据此
 # 执行动作、回填 observation，或结束本轮。
-LoopStepResult = LoopDecision | LoopStop
+LoopStepResult = LoopAction | LoopStop | None
