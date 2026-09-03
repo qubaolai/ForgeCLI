@@ -19,6 +19,22 @@ poetry run forge
 poetry run forge --open --port 8899
 ```
 
+## 终端会话
+
+开不了浏览器 (SSH, tmux) 或者只想顺手问一句时，用终端入口：
+
+```text
+poetry run forge --cli
+```
+
+它和 Web 是同一个 Forge：同一份装配、同一把项目锁、同一套裁决与审批语义，只是交互在终端里。
+直接输入文字就是和模型说话，`/help` 列出全部斜杠命令（`/mode`、`/model`、`/config`、
+`/dirs`、`/plan`、`/checkpoints` 等，与 Web 上的面板一一对应）。Tab 补全命令，
+Ctrl-C 停止当前一轮，Ctrl-D 退出。
+
+同一个项目同时只能有一个 Forge 进程，所以 Web 和 `--cli` 不能同时开着同一个项目
+(后启动的一方会告诉你占用者的 pid)。详见 [ADR-0045](docs/adr/2026-09-03-0045-恢复终端交互式入口并与Web控制面共存.md)。
+
 ## 排查问题
 
 运行日志写在 `~/.forge/logs/`, 一次运行一个文件, `forge-latest.log` 指向本次运行:

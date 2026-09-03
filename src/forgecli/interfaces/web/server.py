@@ -23,11 +23,11 @@ from forgecli.infrastructure.config import config_dir
 from forgecli.infrastructure.project import ProjectLockedError
 from forgecli.interfaces.exit_codes import ExitCode
 from forgecli.interfaces.runtime.logging_wiring import start_observability
-from forgecli.interfaces.web.app import create_app
-from forgecli.interfaces.web.runtime import (
+from forgecli.interfaces.runtime.project_runtime import (
     ProjectRuntimeRegistry,
     build_project_service,
 )
+from forgecli.interfaces.web.app import create_app
 from forgecli.shared import __version__
 from forgecli.shared.observability.log import get_log
 

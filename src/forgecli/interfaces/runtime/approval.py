@@ -1,4 +1,4 @@
-"""阻塞工具线程、由本地 Web 用户解决的人类审批 broker。"""
+"""阻塞工具线程、等人来解决的审批 broker: Web 与终端共用一个 (ADR-0045)。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class _PendingApproval:
     release_note: str = ""
 
 
-class WebApprovalBroker(ApprovalService):
+class BlockingApprovalBroker(ApprovalService):
     """一个 approval_id 只接受一次决议；未获决议一律 PENDING，绝不自动批准。
 
     **不设等待超时。** 审批的正确终止条件只有三个：用户做出决定、用户停止这一轮、服务
@@ -74,7 +74,7 @@ class WebApprovalBroker(ApprovalService):
                 response = ApprovalResponse(
                     outcome=ApprovalOutcome.DENIED,
                     approval_id=approval_id,
-                    note="用户在 Web 界面拒绝",
+                    note="用户拒绝",
                 )
             else:
                 scopes = {
@@ -88,14 +88,14 @@ class WebApprovalBroker(ApprovalService):
                     outcome=ApprovalOutcome.APPROVED,
                     approval_id=approval_id,
                     scope=scope,
-                    note="用户在 Web 界面批准",
+                    note="用户批准",
                 )
             pending.response = response
             pending.ready.set()
             return True
 
     def release_pending(self, note: str) -> None:
-        """放开所有等待中的审批，按未获批准处理（取消这一轮 / 服务退出）。"""
+        """放开所有等待中的审批，按未获批准处理（取消这一轮 / 进程退出）。"""
         with self._lock:
             pending = tuple(self._pending.values())
         for item in pending:
@@ -103,4 +103,4 @@ class WebApprovalBroker(ApprovalService):
             item.ready.set()
 
     def close(self) -> None:
-        self.release_pending("本地服务正在关闭，审批未完成")
+        self.release_pending("Forge 正在退出，审批未完成")

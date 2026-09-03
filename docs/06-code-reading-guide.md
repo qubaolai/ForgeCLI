@@ -305,17 +305,19 @@ interfaces/
 从浏览器里敲下一行字, 到页面上出现回复. 这条线最短, 先走它建立"请求在系统里怎么流动"
 的感觉.
 
-只有这一条路径了 —— 裸 `forge` 起本机 Web 服务, 业务交互全在浏览器 (ADR-0025 决策 1).
+两条路径共用同一个组合根 —— 裸 `forge` 起本机 Web 服务, 业务交互进浏览器 (ADR-0025
+决策 1); `forge --cli` 进终端交互式会话 (ADR-0045). 下面这条线走的是 Web, 终端那一条
+从第 5 行往下完全一样.
 
 | # | 文件 | 看什么 | 读完能回答 |
 |---|---|---|---|
-| 1 | `interfaces/app.py` (83 行) | Typer 根回调. `invoke_without_command=True`, 无子命令 | 为什么 `--version` 要写成 eager callback, 而不是回调体里的一个 `if`? |
+| 1 | `interfaces/app.py` (99 行) | Typer 根回调. `invoke_without_command=True`, 无子命令, 入口分叉是 `--cli` 这个参数 | 为什么 `--version` 要写成 eager callback, 而不是回调体里的一个 `if`? 为什么 `--cli` 是参数而不是子命令? |
 | 2 | `interfaces/web/server.py` (188 行) | 项目锁, 一次性启动令牌, 信号接管, SSE 优雅收尾 | `capture_signals` 为什么是个空的 contextmanager? 服务停止时为什么要先置 `stopping` 再走 uvicorn 的等待流程? |
 | 3 | `interfaces/exit_codes.py` (35 行) | 进程退出码的封闭定义 | 为什么它不住在 web 包里? |
 | 4 | `interfaces/web/app.py::LocalControlPlaneGuard` (1198 行, **先只读中间件与路由表**) | Host / 会话 cookie / CSRF 三道校验, 50 条路由的形状 | 为什么它必须是纯 ASGI 中间件, 不能用 `BaseHTTPMiddleware`? |
-| 5 | `interfaces/web/runtime.py::ProjectRuntime` (542 行) | **按项目装配一次**的组合根; `start_turn` 起后台线程, `_execute_turn` 是那个线程的最外层 | 一个项目同时只能跑一轮, 这条由谁保证? 后台线程里的异常为什么必须先 `_log.exception` 再压成状态串? |
+| 5 | `interfaces/runtime/project_runtime.py::ProjectRuntime` (546 行) | **按项目装配一次**的组合根; `start_turn` 起后台线程, `_execute_turn` 是那个线程的最外层 | 一个项目同时只能跑一轮, 这条由谁保证? 后台线程里的异常为什么必须先 `_log.exception` 再压成状态串? |
 | 6 | `interfaces/runtime/tool_wiring.py::build_tool_stack` (495 行) | 从受保护路径到协调器的完整装配顺序 | 装配顺序里哪几步是安全约束, 换顺序会怎样? |
-| 7 | `domain/intents.py` | `SandboxLevel` x `ApprovalPolicy`, `SessionMode` 是两者的组合, `InputOrigin` 两档 | 为什么隔离与审批要拆成两个轴, 而四档预设只是常用组合? `MODE_PRESETS` 为什么显式写出而不是复用声明顺序? `InputOrigin` 的默认值为什么是 `PROGRAM` 而不是 `WEB_USER`? |
+| 7 | `domain/intents.py` | `SandboxLevel` x `ApprovalPolicy`, `SessionMode` 是两者的组合, `InputOrigin` 三档 | 为什么隔离与审批要拆成两个轴, 而四档预设只是常用组合? `MODE_PRESETS` 为什么显式写出而不是复用声明顺序? `InputOrigin` 的默认值为什么是 `PROGRAM` 而不是 `WEB_USER`? `CLI_USER` 为什么不带任何权限? |
 | 8 | `application/agent_turn/agent_turn_service.py` (674 行) | `handle_user_message` -> `_run_loop` -> `_outcome_from_stop` | 为什么说写文件与起子进程只经它一处发生? |
 | 9 | `application/context/assembler.py` (58 行) + `domain/agent/state.py::AssembledContext` | **本轮上下文的六层怎么取材**, 以及顺序为什么就是层号 | 运行事实每轮都可能变, 为什么反而放进缓存前缀, 而计划待办只能待在最末尾? |
 | 10 | `application/agent_loop/builtin_loop.py` (1298 行) | ReAct 主体, 分两次读 | 模型一次要三个工具时会发生什么? |
@@ -324,7 +326,7 @@ interfaces/
 | 13 | `domain/agent/stop.py` (61 行) | `LoopStopReason` 与 `StopClassification` | 文件末尾那个 `assert` 挡住了什么? |
 | 14 | `domain/agent/run_events.py` (382 行) | **21 种**运行事件与它们的 payload | 为什么每种事件一个 frozen 类而不是自由 dict? |
 | 15 | `application/agent_run/events.py` (105 行) | 进程内事件总线 | 订阅者抛异常时为什么不能让它冒泡? |
-| 16 | `interfaces/web/events.py` (143 行) | `WebEventHub`: 把进程内事件变成可重连的有限缓冲 (2048 条) | 事件由 Agent 线程产生, 唤醒为什么必须回到 SSE 自己的事件循环? |
+| 16 | `interfaces/runtime/event_hub.py` (146 行) | `RunEventHub`: 把进程内事件变成可重连的有限缓冲 (2048 条) | 事件由 Agent 线程产生, 唤醒为什么必须回到 SSE 自己的事件循环? |
 | 17 | `interfaces/web/app.py` 的 `GET /api/v1/events` | 断线重连补发, `resync_required`, `server_stopping` | 首次连接为什么**不**补发历史? 缓冲被挤掉之后页面怎么恢复? |
 | 18 | `web/src/runModel.ts` (653 行) + `RunProcess.tsx` (351 行) | 前端把事件流重建成一轮的时间线 | 刷新页面为什么不会丢掉正在跑的那一轮? |
 
@@ -353,9 +355,9 @@ application 侧的形状**一个字没改** —— 这正是删掉终端入口�
 - **取消**: `POST /api/v1/turns/current/cancel` -> `ProjectRuntime.cancel()` ->
   `TurnCancelSource`. application 只依赖 `shared/cancellation.py` 的 `CancelToken`,
   不感知信号也不感知 HTTP. 循环工厂经 `current()` 把当前 token 挂到 `ModelRequest` 上.
-- **审批**: `interfaces/web/approval.py` 的 `WebApprovalBroker` (106 行) 实现
+- **审批**: `interfaces/runtime/approval.py` 的 `BlockingApprovalBroker` (106 行) 实现
   `ApprovalService`, 阻塞的是**工具线程**, 由页面上的 `POST /api/v1/approvals/{id}/resolve`
-  解开. 它的 docstring 值得读: **不设等待超时**. 挂钟到点就判成"没批准", 等于让用户去泡
+  或终端里的一次按键解开. 它的 docstring 值得读: **不设等待超时**. 挂钟到点就判成"没批准", 等于让用户去泡
   杯咖啡的功夫决定这次调用的命运, 而模型收到的是"未获授权"随后整轮停摆 —— 用户回来时
   既看不到审批卡片, 也没有补救入口. 正确的终止条件只有三个: 用户决定, 用户停止这一轮,
   服务退出.
@@ -662,7 +664,9 @@ allowlist, 读**只能**用 denylist —— Seatbelt 下 `(deny default)` 会让
 | 工作区恢复 | `application/recovery/coordinator.py` (515 行) | 0015 | 想理解撤销与"首次破坏性写入屏障" |
 | 系统提示词 | `application/prompt/system_prompt_builder.py` (131 行) + `template_renderer.py` (203 行) + `templates/` | 0018, 0031, 0039, **0042** | 想改模型行为 |
 | 处理过程落盘 | `infrastructure/session/jsonl_run_store.py` (142 行) | 0016 | 想理解历史轮次的处理过程为什么展得开 |
-| Web 后端 | `interfaces/web/app.py` (1198 行), `runtime.py` (542 行), `server.py` (188 行) | 0025 | 要加接口或改启动行为 |
+| 共用组合根 | `interfaces/runtime/project_runtime.py` (546 行), `approval.py`, `event_hub.py` | 0025, 0045 | 要改一轮怎么起, 怎么停, 怎么等审批 |
+| Web 后端 | `interfaces/web/app.py` (1198 行), `server.py` (188 行) | 0025 | 要加接口或改启动行为 |
+| 终端入口 | `interfaces/tui/session_app.py` + `run_view.py` + `commands/` | 0045, 0016 | 要改终端交互或加一条斜杠命令 |
 | Web 前端 | `web/src/App.tsx` (1833 行), `runModel.ts` (653 行), `RunProcess.tsx` (351 行) | 0025 | 要改界面 |
 | 可观测性 | `shared/observability/` + `interfaces/runtime/logging_wiring.py` + `diagnostics.py` | 0035 | 要排查线上行为 |
 | LLM 网关 | `application/llm/gateway/default_gateway.py` (1161 行) | 0011, 0012 | 要接新供应商 |
@@ -680,8 +684,9 @@ allowlist, 读**只能**用 denylist —— Seatbelt 下 `(deny default)` 会让
 **配置项是一份封闭登记, 不是散落各处的字符串**: `domain/config/config_keys.py` 的
 `SCHEMA` 是唯一权威 —— 键名, 类型, 默认值, 允许取值, 属于应用级还是项目级, 以及**给人
 看的中文名与一句说明**, 全在那一条 `ConfigKey` 上. 加配置项 = 加一条, `GET /api/v1/settings`
-直接从它派生, 页面不自己写一份文案. 这条纪律现在还多守住了一件事: 终端入口没了之后,
-设置页是唯一的配置入口, 而它一行文案都不是手写的.
+直接从它派生, 页面不自己写一份文案. 终端入口回来之后 (ADR-0045) 这条纪律更值钱了:
+`/config` 与设置页读的是同一条 `ConfigKey`, 两边一行文案都不是手写的 —— 否则同一个开关
+在终端里和网页上会叫不同的名字, 而两边都不会报错.
 
 这条纪律是有代价换来的: 日志的五个开关原先是 `FORGE_LOG_*` 环境变量, 在设置面板里看不见
 也改不了, 而 `FORGE_LOG_LEVEL` 还压在 `logging.level` 配置项上 —— "面板显示 info, 实际
@@ -809,10 +814,10 @@ tests/support/       共享替身与循环夹具
 
 | 曾经的说法 | 现状 |
 |---|---|
-| `forge cli` 进终端 REPL, `#` 开人工 Shell | **两者都不存在了.** ADR-0025 决策 1 修订二 (2026-08-29), 48 个模块 6627 行删除 |
-| 斜杠命令 (`/config`, `/models`, `/status`, `/resume`, `/tools`, `/undo`, `/diagnostics`...) | 全部改成 Web 路由与设置页. `application/slash_commands/` 与 `IntentRouter` 已删 |
+| `forge cli` 进终端 REPL, `#` 开人工 Shell | 子命令与人工 Shell 都不存在. 终端会话本身回来了, 但入口是 `forge --cli` (ADR-0045), 且不带 `#` 那条信任通道 |
+| 斜杠命令住在 `application/slash_commands/`, 由 `IntentRouter` 解析文本意图 | 那两处已删且不回来. ADR-0045 的斜杠命令住在 `interfaces/tui/commands/`, 只是一张名字到处理函数的表: 不解析意图, 也不进 application |
 | `ManualMutationBarrier` (ADR-0017 §10) | 已删. 唯一 trip 方是人工 Shell 服务; 人工 Shell 没了, 它就是一个永远为假的标志位 —— 不会响的安全阀比没有安全阀更糟 |
-| `InputOrigin.TTY_USER` | 已删. 没有代码路径能再产出它. 老 `events.jsonl` 里的 `"tty_user"` 字符串不受影响 —— 没有地方把 origin 解析回枚举 |
+| `InputOrigin.TTY_USER` | 已删且不回来: 它承载的是人工 Shell 的特权. ADR-0045 新增的 `CLI_USER` 只标这句话是在终端说的, 不带任何权限 |
 | `interfaces/web/static/` 在库里 | 已出库. `make package` 依赖 `make web-build`, 打包前现生成 (2026-08-30). 装 wheel 的用户不受影响, 产物仍在包里 |
 | plan 档没有计划评审 | 已实现. `application/planning/plan_review.py`, ADR-0023 + ADR-0038 |
 | 没有 `plan_read` / `todo_write` 等工具 | 已实现. `application/tools/builtin/planning_tools.py`, 五个 |
@@ -871,14 +876,14 @@ PolicyEngine, ApprovalService, ToolRuntime 与围栏. 读 ADR-0018 §9.1.
 `check_arch.py` 有一条 `application.memory` 不得 import `application.security` 的
 SIBLING_BAN —— 记忆之所以敢做静默写入, 全部承重就在这一条上. 读 ADR-0033 决策 3.
 
-**"Web 只是给终端套了个壳"** —— 反过来了. 终端入口已经整棵删除 (ADR-0025 决策 1 修订二),
-浏览器是唯一的业务交互面. `interfaces/` 现在只负责起进程与装配; 一次 turn 跑在
-`ProjectRuntime` 起的后台线程里, 页面靠 SSE 看进度, 靠 `POST /api/v1/approvals/{id}/resolve`
-解开阻塞在工具线程上的审批.
+**"Web 只是给终端套了个壳", 或者反过来** —— 都不是. 两条入口是**同一个组合根的两张脸**:
+`interfaces/runtime/project_runtime.py` 装配一次, 一次 turn 跑在它起的后台线程里, 页面靠
+SSE 看进度, 终端靠主线程轮询同一条事件流; 审批阻塞在同一个 `BlockingApprovalBroker` 上,
+由页面上的一次 POST 或终端里的一次按键解开. 两边都不放业务判断.
 
-**"没有终端入口, SSH 上就用不了"** —— 用得了, 但要自己转发端口. ADR-0025 修订二把这条
-代价写进了决策正文: 远程会话需要 `ssh -L 8765:127.0.0.1:8765`. 而 `#` 人工 Shell 确实
-没有替代品 —— 要在工作区里亲手敲命令, 自己开一个终端.
+**"SSH 上要转发端口才能用"** —— 现在不用了. `forge --cli` 就是为这个场景回来的
+(ADR-0045). 转发端口 (`ssh -L 8765:127.0.0.1:8765`) 仍然可行, 想要图形界面时用它.
+而 `#` 人工 Shell 确实没有替代品 —— 要在工作区里亲手敲命令, 自己开一个终端.
 
 **"历史太长了, 回头整理一下"** —— 这条听起来永远合理, 而它永远是负收益. 在前缀缓存下,
 改中段一处的成本等于它自己**加上它后面的全部内容**: 一次 `fs_apply_patch` 之后改写中段,

@@ -1,4 +1,8 @@
-"""把进程内 AgentRunEvent 转成可重连的 Web 事件缓冲。"""
+"""把进程内 AgentRunEvent 存成可重连的有限缓冲。
+
+SSE 靠它补发断线期间的事件, 终端入口靠它在刷新处理过程时重建时间线 —— 两边看的是
+同一个缓冲, 所以它不该叫 Web 什么 (ADR-0045)。
+"""
 
 from __future__ import annotations
 
@@ -34,7 +38,7 @@ class _StreamWaiter:
             self.loop.call_soon_threadsafe(self.flag.set)
 
 
-class WebEventHub(AgentRunEventSubscriber):
+class RunEventHub(AgentRunEventSubscriber):
     """线程安全的有限事件缓冲；慢客户端过期后必须重新同步会话状态。"""
 
     def __init__(self, *, max_events: int = 2048) -> None:

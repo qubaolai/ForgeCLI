@@ -1,4 +1,9 @@
-"""项目级本地 Web Runtime：复用现有 Agent、工具、安全与存储语义。"""
+"""一个激活项目的组合根: Web 控制面与终端入口共用同一份装配 (ADR-0045)。
+
+住在 ``interfaces/runtime`` 而不是任何一个入口包下, 是因为两条入口都要它: 让
+``interfaces/tui`` 去 import ``interfaces/web`` 的话, 终端会话就跟着 FastAPI、
+sse-starlette 与静态资源一起装配, 而它一个都用不上。
+"""
 
 from __future__ import annotations
 
@@ -20,6 +25,7 @@ from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.application.planning.plan_review import (
     PlanReviewChoice,
+    PlanReviewOutcome,
     PlanReviewService,
 )
 from forgecli.application.project.project_service import ProjectService
@@ -50,10 +56,10 @@ from forgecli.infrastructure.session.fs_session_catalog import FsSessionCatalog
 from forgecli.infrastructure.session.json_state_store import JsonStateStore
 from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
 from forgecli.infrastructure.session.jsonl_run_store import JsonlRunStore
+from forgecli.interfaces.runtime.approval import BlockingApprovalBroker
+from forgecli.interfaces.runtime.event_hub import RunEventHub
 from forgecli.interfaces.runtime.llm_wiring import LlmRuntime, build_llm_runtime
 from forgecli.interfaces.runtime.tool_wiring import ToolStack, build_tool_stack
-from forgecli.interfaces.web.approval import WebApprovalBroker
-from forgecli.interfaces.web.events import WebEventHub
 from forgecli.shared.errors import SessionStateError
 from forgecli.shared.observability.log import get_log
 from forgecli.shared.serialization import to_jsonable
@@ -105,7 +111,7 @@ class ProjectRuntime:
             )
             self.cancel_source = TurnCancelSource()
             self.event_bus = AgentRunEventBus()
-            self.events = WebEventHub()
+            self.events = RunEventHub()
             self.event_bus.subscribe(self.events)
             # 处理过程落盘 (展示用, 不是恢复真相源). 内存缓冲只有 2048 条且随进程消失,
             # 而"回看上周那一轮到底做了什么"要的正是跨进程的那一份.
@@ -113,7 +119,7 @@ class ProjectRuntime:
                 sessions_dir, lambda: self.session.current().session_id
             )
             self.event_bus.subscribe(self.runs)
-            self.approvals = WebApprovalBroker()
+            self.approvals = BlockingApprovalBroker()
             self.tools = self._build_tool_stack()
             self._run_lock = threading.Lock()
             self._run: TurnRun | None = None
@@ -207,9 +213,8 @@ class ProjectRuntime:
         with self._run_lock:
             return self._run
 
-    def start_turn(
-        self, text: str, *, origin: InputOrigin = InputOrigin.WEB_USER
-    ) -> TurnRun:
+    def start_turn(self, text: str, *, origin: InputOrigin) -> TurnRun:
+        """起一轮。``origin`` 没有默认值: 两条入口各自说明这句话是谁给的。"""
         message = text.strip()
         if not message:
             raise ValueError("消息不能为空")
@@ -230,7 +235,7 @@ class ProjectRuntime:
     def _execute_turn(self, run_id: str, text: str, origin: InputOrigin) -> None:
         self.cancel_source.issue()
         _log.info(
-            "web.turn.started",
+            "turn.started",
             run_id=run_id,
             project_id=self.project.project_id,
             origin=origin.value,
@@ -248,12 +253,12 @@ class ProjectRuntime:
             else:
                 status = "completed"
             completed = TurnRun(run_id=run_id, status=status, response=response)
-            _log.info("web.turn.finished", run_id=run_id, status=status)
+            _log.info("turn.finished", run_id=run_id, status=status)
         except Exception as exc:  # noqa: BLE001 - 后台边界必须转成可查询状态
             # 这里是后台线程的最外层: 异常被压成一个字符串状态之后, traceback 就再也
             # 拿不回来了 —— 而页面上只会显示一行错误文案.
             _log.exception(
-                "web.turn.failed",
+                "turn.failed",
                 run_id=run_id,
                 error=type(exc).__name__,
                 message=str(exc),
@@ -272,7 +277,7 @@ class ProjectRuntime:
         with self._run_lock:
             running = self._run is not None and self._run.status == "running"
         if running:
-            _log.info("web.turn.cancel_requested", project_id=self.project.project_id)
+            _log.info("turn.cancel_requested", project_id=self.project.project_id)
             token = self.cancel_source.current()
             if token is not None:
                 token.cancel()
@@ -300,14 +305,21 @@ class ProjectRuntime:
             self._run = None
         return resumed
 
-    def resolve_plan_review(self, choice: PlanReviewChoice, note: str = "") -> bool:
+    def resolve_plan_review(
+        self, choice: PlanReviewChoice, note: str = ""
+    ) -> PlanReviewOutcome | None:
+        """裁决当前待评审的计划. 返回 None 表示当前没有待评审的计划.
+
+        返回 outcome 而不是一个 bool: 终端要把 ``message`` 原样打给用户, 而 Web 只判
+        真假. 让终端自己再拼一句"计划已批准", 同一件事就有了两种说法.
+        """
         with self._run_lock:
             run = self._run
         if run is None or run.status != "waiting_plan_review":
-            return False
+            return None
         active = self.tools.planning.load()
         if active.plan is None:
-            return False
+            return None
         outcome = PlanReviewService(self.tools.planning).decide(
             choice, active.plan, mode=self.session.current().mode, note=note
         )
@@ -332,7 +344,7 @@ class ProjectRuntime:
             )
         if outcome.follow_up:
             self.start_turn(outcome.follow_up, origin=InputOrigin.PROGRAM)
-        return True
+        return outcome
 
     def set_mode(self, mode: SessionMode) -> SessionSnapshot:
         if self.busy:

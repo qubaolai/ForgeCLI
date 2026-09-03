@@ -33,9 +33,7 @@ def test_complete_tool_batch_is_announced_before_first_dispatch() -> None:
     assert [event.tool_call_id for event in queued] == ["call-1", "call-2", "call-3"]
     assert [event.payload.queue_position for event in queued] == [2, 1, 0]
 
-    second = loop.observe(
-        LoopObservation(content="ok", source=ObservationSource.TOOL)
-    )
+    second = loop.observe(LoopObservation(content="ok", source=ObservationSource.TOOL))
 
     assert isinstance(second, ToolRequestAction)
     assert second.request.tool_call_id == "call-2"

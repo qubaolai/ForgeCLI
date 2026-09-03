@@ -32,15 +32,20 @@ from forgecli.application.planning.plan_review import PlanReviewChoice
 from forgecli.application.security.workspace_grants import GrantError
 from forgecli.domain.agent.run_events import AgentRunEventKind
 from forgecli.domain.config import config_keys
-from forgecli.domain.intents import ApprovalPolicy, SandboxLevel, SessionMode
+from forgecli.domain.intents import (
+    ApprovalPolicy,
+    InputOrigin,
+    SandboxLevel,
+    SessionMode,
+)
 from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.provider_spec import ProviderProtocol, ProviderSpec
 from forgecli.domain.model.thinking import ThinkingEffortName, ThinkingMode
 from forgecli.domain.workspace.project import WorkspaceError
 from forgecli.infrastructure.project import ProjectLockedError
 from forgecli.infrastructure.session.jsonl_run_store import MAX_STORED_OUTPUT
-from forgecli.interfaces.web.events import WebEventHub
-from forgecli.interfaces.web.runtime import (
+from forgecli.interfaces.runtime.event_hub import RunEventHub
+from forgecli.interfaces.runtime.project_runtime import (
     ProjectRuntime,
     ProjectRuntimeRegistry,
     build_project_service,
@@ -312,7 +317,7 @@ def _frame(cursor: int, name: str, data: str) -> ServerSentEvent:
     return ServerSentEvent(id=str(cursor), event=name, data=data)
 
 
-def _turn_snapshots(hub: WebEventHub) -> list[dict[str, object]]:
+def _turn_snapshots(hub: RunEventHub) -> list[dict[str, object]]:
     """把缓冲事件按 turn 归档，并把流式增量折叠成每次模型调用的一段正文。
 
     逐条返回 ``model_output_delta`` 会让一次刷新拖回几百 KB，页面还要再拼一遍；
@@ -536,7 +541,9 @@ def create_app(
     @app.post("/api/v1/turns", status_code=status.HTTP_202_ACCEPTED)
     async def start_turn(body: MessageRequest, request: Request) -> object:
         try:
-            return to_jsonable(_runtime(request).start_turn(body.text))
+            return to_jsonable(
+                _runtime(request).start_turn(body.text, origin=InputOrigin.WEB_USER)
+            )
         except (RuntimeError, ValueError) as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
