@@ -75,6 +75,15 @@ class CoordinatorToolDispatcher:
             request, context=context, policy=policy, cancel=cancel
         )
 
+    def fence_for(self, mode: SessionMode) -> FencePolicy:
+        """这一档下的围栏边界.
+
+        暴露出来是给运行上下文渲染用的 (ADR-0041 第 [4] 层): 那一层要告诉模型"哪些能力
+        会自动放行", 而不给围栏的话它只能报一个保守的基线 —— 在 auto / full_access 档下
+        那个基线比真实边界窄, 于是模型以为每一步都要先问人.
+        """
+        return self._fence_factory(mode)
+
     def catalog_for(self, mode: SessionMode) -> ToolCatalog:
         context = self._context_factory()
         return self._coordinator.catalog_for(

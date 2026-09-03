@@ -124,6 +124,13 @@ class ToolObservation:
     # 附加而不是替换: 命令自己的输出仍然是模型判断这次算不算成功的依据, 而这一段只是
     # 补上它读不出来的那一半 —— 那句 `Permission denied` 到底是谁说的.
     fence_hint: str = ""
+    # 这个工具的结果正文进不进会话窗口 (ADR-0041 决策 6).
+    # 取自 `ToolSpec.body_in_window`, 由协调器从注册表读一次填进来.
+    #
+    # 放在这里而不是让 ToolResult 自己带: 它是**工具的**策略, 不是这一次调用的事实.
+    # 每个结果构造点都填一遍, 二十处里迟早有一处填反, 而填反不会报错 —— 只是窗口里
+    # 突然多了或少了一份正文.
+    body_in_window: bool = False
 
     @property
     def is_error(self) -> bool:
@@ -143,6 +150,13 @@ class ToolObservation:
             # 只有真的跑出结果的调用才有来源身份. 被策略拒绝的那些没有内容可去重,
             # 也没有内容可降级.
             provenance=None if self.result is None else self.result.provenance,
+            # 打转判定拿它比对 (见 BuiltinAgentLoop._track_progress): 正文移出窗口之后
+            # content 变短, 更容易撞; 而句柄是内容寻址的, 正文不同则句柄不同.
+            handle=(
+                ""
+                if self.result is None or self.result.provenance is None
+                else self.result.provenance.artifact_id
+            ),
         )
 
     def digest_line(self) -> str:
@@ -157,7 +171,7 @@ class ToolObservation:
         """
         if self.result is None:
             return self.kind.value
-        head = _first_line(self.result.text)
+        head = _first_line(self.result.summary)
         parts = [head] if head else []
         if self.fence_hint:
             # 跨回合也要留下这个事实: 下一轮模型只看得到这一行, 而"上次是被围栏拦的"
@@ -171,15 +185,21 @@ class ToolObservation:
         return " ".join(parts) if parts else self.kind.value
 
     def render(self) -> str:
-        """给模型看的文本. 工具结果直接给内容, 其余给结构化拒绝说明."""
+        """给模型看的文本. 工具结果给三段形态, 其余给结构化拒绝说明.
+
+        **这是正文进不进会话窗口的唯一闸门** (ADR-0041 决策 6). 下游全是字符串管道:
+        LoopObservation.content -> ToolResultBlock -> provider 的 role=tool 消息.
+        改窗口里装什么, 只需要改这一个函数.
+        """
         if (
             self.kind
             in (ObservationKind.TOOL_RESULT, ObservationKind.PLAN_REVIEW_REQUIRED)
             and self.result is not None
         ):
+            body = self.result.render_for_model(include_body=self.body_in_window)
             if self.fence_hint:
-                return f"{self.result.text}\n\n{self.fence_hint}"
-            return self.result.text
+                return f"{body}\n\n{self.fence_hint}"
+            return body
         lines = [f"[{self.kind.value}] {self.message}"]
         if self.reason_code:
             lines.append(f"reason: {self.reason_code}")

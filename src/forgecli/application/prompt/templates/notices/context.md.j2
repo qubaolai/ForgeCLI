@@ -1,46 +1,11 @@
 {#
-上下文压缩, 去重与归档占位 (ADR-0032).
+上下文淘汰与归档取回 (ADR-0041).
 
-这些占位文本会**顶替掉** transcript 里原本的工具结果正文. 措辞因此比别处更要紧:
-模型读到的不再是内容本身, 而是这一行 —— 它得凭这一行判断"要不要去取回来".
+原先这里还有四条占位, 供去重与降级**顶替** transcript 里的工具结果正文. 那两条通路已随
+ADR-0041 决策 4 删除 —— 窗口只追加, 而正文本来就不进窗口了, 没有可顶替的东西.
 
-三种状态必须分得开. 混成一句"内容见 xxx"的后果是模型去取一个已经被回收的 id,
-拿回一条找不到的错误, 而它读不出这是清理机制还是自己 id 写错了 —— 后一种理解会让
-它反复重试, 直到撞满 _MAX_BLOCKED_CALLS.
+剩下的分两类: artifact_read 取不回来时的回执, 以及窗口淘汰时的那几句.
 #}
-{#
-一级降级: 内容还在, 取得回来.
-#}
-{% macro archived_available(index, artifact_id, size) %}
-[第 {{ index }} 次工具调用的输出已归档 {{ artifact_id }} ({{ size }} 字节), 需要细节时用 artifact_read 取回]
-{% endmacro %}
-{#
-一级降级: 内容已被过期回收 (ADR-0032 决策 6.1). 明说取不回来, 别让它白试一次.
-#}
-{% macro archived_expired(index) %}
-[第 {{ index }} 次工具调用的输出已过期回收, 取不回来了; 还需要这份内容的话重新执行一次]
-{% endmacro %}
-{#
-变更通知. 主动告诉它, 不等它来问 —— 它不会想起来问.
-
-追加在写入那条结果的末尾, 不去改写前面那条读 (2026-09-01 修订): 改写 transcript 中段
-会让它之后的全部内容重新计费, 实测一次改文件因此多付 7,298 个未缓存 token, 而省下的
-只有把一份 4k 正文换成 40 token 占位那点. 尾部追加的缓存代价是零.
-
-不给 artifact 引用: 旧正文还原样躺在上面, 往回翻就有, 让它去取一次是白花一次调用.
-#}
-{% macro changed_after_write(entries) %}
-[以下内容已因这次改动过时, 需要最新状态请重新读取]
-{% for index, path in entries %}
-- 第 {{ index }} 次工具调用读到的 {{ path }}
-{% endfor %}
-{% endmacro %}
-{#
-去重命中: 同一个路径, 同一个状态, 本轮已经读过一次.
-#}
-{% macro dedup_unchanged(index, artifact_id) %}
-[与第 {{ index }} 次工具调用读到的内容相同, 该文件此后未变更; 需要正文时用 artifact_read 取 {{ artifact_id }}]
-{% endmacro %}
 {#
 artifact_read 取不到时回给模型的结论.
 #}
@@ -52,15 +17,6 @@ artifact_id 只能是 16 位十六进制字符, 不能包含路径.
 {% endmacro %}
 {% macro artifact_window_truncated() %}
 [这一段仍然超出单次回填上限, 已截断; 用 offset 与 limit 取更小的一段]
-{% endmacro %}
-{% macro turn_tool_header() %}
-上一轮执行过的工具调用:
-{% endmacro %}
-{#
-回合间保留的工具调用结论行 (决策 7). 跨轮只留这一行, 不留正文.
-#}
-{% macro turn_tool_line(index, tool, outcome) %}
-[第 {{ index }} 次工具调用] {{ tool }} -> {{ outcome }}
 {% endmacro %}
 {#
 二级摘要 (决策 2). 给摘要模型的指令, 以及摘要在 transcript 里的包装.
@@ -75,8 +31,29 @@ artifact_id 只能是 16 位十六进制字符, 不能包含路径.
 
 只输出这份说明本身, 不要有前言后语.
 {% endmacro %}
+{#
+送进摘要请求的历史被截断时的抬头. 明说截掉的是**前面**那一段, 否则摘要模型会以为这就是
+对话的开头, 从而把"任务是从这里开始的"写进交接说明.
+#}
+{% macro compaction_input_clipped() %}
+[以下只是这段历史的后半部分, 更早的内容已因长度略去]
+{% endmacro %}
 {% macro compaction_header() %}
-以下是本次对话早前部分的交接说明, 原文已因上下文长度被压缩:
+以下是本次对话早前部分的交接说明, 原文已因窗口长度被淘汰:
+{% endmacro %}
+{#
+用户原话逐字保留 (ADR-0041 决策 5). 与摘要分开标注: 摘要是转述, 这一段是原文, 而目标与
+约束读错一个字就会做错方向.
+#}
+{% macro compaction_user_verbatim() %}
+这一段里用户说过的话, 逐字保留:
+{% endmacro %}
+{#
+淘汰发生了, 但那一段里既没摘出交接说明, 也没有用户原话 (通常是一整段工具往返).
+仍然留一条痕迹: 让模型知道前面有内容被丢掉了, 而不是以为对话本来就从这儿开始.
+#}
+{% macro compaction_nothing_kept() %}
+(这一段没有可保留的内容)
 {% endmacro %}
 {% macro compaction_failed() %}
 上下文超长, 且自动压缩未能完成.

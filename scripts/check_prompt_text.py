@@ -41,6 +41,8 @@ SINKS: dict[str, tuple[str, ...]] = {
     "render_block": (),
     "render_notice": (),
     "render_heading": (),
+    "render_runtime": (),
+    "render_state": (),
 }
 
 # 关键字实参: 出现在任何调用上都要查.

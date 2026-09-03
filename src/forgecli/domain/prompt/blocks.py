@@ -1,12 +1,18 @@
-"""系统提示词的纯值对象 (ADR-0018 §3.1).
+"""系统提示词的纯值对象 (ADR-0042 §3.1).
 
-提示词是**块序列**而不是一段文本. 扁平字符串在块数上去之后堵死两件事: 按块的缓存划分,
-以及为无 system role 的 Provider 重排. 把 text 降级成派生属性的成本几乎为零 —— 指纹仍然
-算在渲染后的完整文本上.
+提示词是**块序列**而不是一段文本. 块的作用不是缓存划分 —— 那条理由已经不成立 ——
+而是让条件性块能整块缺席: 没有 FORGE.md 时 `WORKSPACE_INSTRUCTIONS` 根本不渲染,
+而不是渲染一个写着"(无)"的空标题. 扁平字符串做不到这件事, 只能在拼接里写 if.
 
-缓存断点由 cacheable 表达: cacheable=True 的块构成稳定前缀, 第一个 False 之后全是每轮
-重算的易变尾部. 构造时校验这个划分不被打破 —— 一个混在尾部里的可缓存块不会报错, 只会
-让供应商的自动前缀缓存从命中整段退化成命中开头几十字符, 而这件事没有任何一层会说话.
+## 为什么删掉了 cacheable
+
+原先每个块带一个 `cacheable` 标记, 并有一条校验保证可缓存块全排在易变块之前.
+它买不到任何东西: 请求是 `[tools][system][messages]`, 整个 system prompt 都排在
+messages 之前, 块内部怎么分区都换不来一个字节的缓存. 接 Anthropic 那种显式断点也不行 ——
+断点只划得出 system 内部的前缀, 易变尾部仍在 messages 之前, 历史永远进不了缓存.
+
+ADR-0042 把全部会话内可变的内容迁出提示词之后, 这里剩下的块**全都是静态的**, 那条
+分区校验因此永远平凡成立. 删它是自然结果, 不是妥协 (ADR-0028 规则 C).
 
 这里不引入 Path, importlib.resources 或任何 Provider 类型: 编译顺序属 application,
 文件读取属 infrastructure.
@@ -23,27 +29,21 @@ __all__ = ["PromptBlock", "PromptBlockId", "PromptSnapshot"]
 
 
 class PromptBlockId(Enum):
-    """块标识. 值进诊断输出, 不可随意改."""
+    """块标识. 值即模板文件名, 也进诊断输出, 不可随意改."""
 
     CORE_IDENTITY = "core_identity"
-    TOOL_CONTRACT = "tool_contract"
-    # 怎么把活干完 (交付纪律, 任务拆解, 写代码, 记忆). 与工具契约分块是因为适用时机不同:
-    # 那一块管每一次工具调用, 这一块管整件事从接到手到交出去.
-    WORK_CONTRACT = "work_contract"
-    ANSWER_CONTRACT = "answer_contract"
+    # 不可让渡的边界. 与工具协议分块是因为**改动门槛不同**: 删一条工作方式是取舍,
+    # 删一条安全边界要走安全评审. 混在一块里, 两者的手续就一样了.
+    SAFETY_RULES = "safety_rules"
+    # 调用时序与并发. 只管每一次工具往返, 不管单个工具怎么用 —— 后者住在
+    # ToolSpec.description, 提示词里一个工具名都不出现 (ADR-0042 决策 5).
+    TOOL_PROTOCOL = "tool_protocol"
+    # 怎么把活干完 (交付纪律, 任务拆解, 写代码, 记忆). 与工具协议分块是因为适用时机
+    # 不同: 那一块管每一次工具调用, 这一块管整件事从接到手到交出去.
+    WORK_RULES = "work_rules"
+    ANSWER_RULES = "answer_rules"
+    # FORGE.md. 唯一随会话变的块 —— 其余五块只依赖包版本.
     WORKSPACE_INSTRUCTIONS = "workspace_instructions"
-    RUNTIME_FACTS = "runtime_facts"
-    # 计划与待办 (ADR-0022 §5.4). 两块都是条件性的, 都在缓存断点之后 —— 它们每轮都可能
-    # 变, 进稳定前缀就等于前缀不再稳定.
-    #
-    # 分成两块而不是一块, 是因为**通道不同**: 待办清单小且每轮都要对齐, 所以正文进块;
-    # 计划正文大且按需查阅, 所以这里只放一行引用, 正文由模型用 plan_read 取
-    # (ADR-0018 §4.4 的两条判据).
-    PLAN_STATE = "plan_state"
-    TODO_STATE = "todo_state"
-    # 跨会话记忆 (ADR-0033 决策 8). 同样在缓存断点之后: 模型可能在会话中途用
-    # memory_write 改写它, 进稳定前缀就等于前缀不再稳定.
-    MEMORY_STATE = "memory_state"
 
 
 @dataclass(frozen=True)
@@ -53,7 +53,6 @@ class PromptBlock:
     block_id: PromptBlockId
     heading: str
     body: str
-    cacheable: bool = True
 
     def __post_init__(self) -> None:
         if not self.heading.strip():
@@ -68,12 +67,12 @@ class PromptBlock:
 
 @dataclass(frozen=True)
 class PromptSnapshot:
-    """一个 turn 内冻结的提示词 (ADR-0018 §6.2).
+    """一份编译好的提示词 (ADR-0042 决策 1).
 
     text 与 fingerprint 是**派生**属性: 调用方无法传入与块序列不匹配的值.
 
-    version 不是装饰: 它是排查"模型行为什么时候变的"唯一的锚点, 且 ADR-0018 §15.3 要求
-    改内置文本必须同时升版本并更新快照测试.
+    version 不是装饰: 它是排查"模型行为什么时候变的"唯一的锚点, 且 ADR-0042 要求改
+    内置正文必须同时升版本并更新快照测试.
     """
 
     version: int
@@ -87,21 +86,7 @@ class PromptSnapshot:
             raise ValueError("PromptSnapshot.version 必须为正整数")
         if not self.blocks:
             raise ValueError("PromptSnapshot.blocks 不能为空")
-        self._assert_cache_partition()
         text = "\n\n".join(block.render() for block in self.blocks)
         object.__setattr__(self, "text", text)
-        # 指纹不放回文本: 自引用会让指纹不稳定 (ADR-0018 §8.1).
+        # 指纹不放回文本: 自引用会让指纹不稳定.
         object.__setattr__(self, "fingerprint", digest_text(f"{self.version}\n{text}"))
-
-    def _assert_cache_partition(self) -> None:
-        """可缓存块必须全部排在不可缓存块之前."""
-        seen_volatile = False
-        for block in self.blocks:
-            if not block.cacheable:
-                seen_volatile = True
-                continue
-            if seen_volatile:
-                raise ValueError(
-                    f"{block.block_id.value} 声明 cacheable, "
-                    "却排在易变块之后; 稳定前缀因此不成立"
-                )

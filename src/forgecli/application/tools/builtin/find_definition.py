@@ -1,4 +1,4 @@
-"""code_definitions: 按符号名找**定义**, 用语法树而不是文本匹配.
+"""find_definition: 按符号名找**定义**, 用语法树而不是文本匹配.
 
 ## 为什么要它
 
@@ -65,12 +65,11 @@ from forgecli.domain.tool.plan import (
 from forgecli.domain.tool.result import ToolMetrics, ToolResult, ToolResultStatus
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
-    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
 
-__all__ = ["CodeDefinitionsTool"]
+__all__ = ["FindDefinitionTool"]
 
 _MAX_FILES = 2000
 _MAX_HITS = 200
@@ -80,17 +79,25 @@ _MAX_FILE_BYTES = 2 * 1024 * 1024
 _PARSE_TIMEOUT_MS = 500
 
 _SPEC = ToolSpec(
-    name="code_definitions",
+    name="find_definition",
     version="1",
     title="按符号名找定义",
     description=(
-        "找一个类, 函数, 方法, 接口或常量**定义在哪一行**, 按语法树判断, "
-        "不会命中 import, 注释, 字符串或调用点. "
-        "symbol 是符号名, 默认精确匹配 (区分大小写); "
-        "传 prefix=true 时按前缀匹配, 用来一次看完一族同名开头的符号. "
+        "在陌生代码库里定位一个类, 函数, 方法, 接口或常量: 返回它**定义在哪个文件的"
+        "第几行**, 按语法树判断, 不会命中 import, 注释, 字符串或调用点.\n"
+        "**返回行号是它的用处所在**: 拿到 `路径 + 行号` 之后, 用 fs_read 的 offset "
+        "与 limit 只读那一段, 不必把整个文件读回来. 一个类通常几百行, 你要看的常常只有"
+        "十几行.\n"
+        "symbol 只写**符号名本身** (getUserRoleCodes), 不要写声明语法 (class Foo, "
+        "def bar) —— 那是文字匹配的写法, 这里按语法树匹配, 写成那样必然空结果.\n"
+        "不确定确切名字时传 prefix=true 按前缀匹配, 比如 prefix=true symbol='getUser' "
+        "会一次列出 getUserById, getUserRoleCodes 这一族; 一个字都想不起来时才退回 "
+        "search_text 按内容找.\n"
         "path 可以是目录或单个文件, 省略时从工作区根开始. "
         "kind 可以把结果收窄到某一类, 取值见枚举. "
-        "认不出语言的文件会被跳过, 跳过的数量会在结果里说明."
+        "认不出语言的文件会被跳过, 跳过的数量会在结果里说明.\n"
+        "读到定义之后, 接着要找的是它的**引用** —— 那走 search_text, "
+        "不是拿同一个符号名再搜一遍定义."
     ),
     input_schema={
         "type": "object",
@@ -121,11 +128,10 @@ _SPEC = ToolSpec(
     ),
     target_declaration_ability=TargetDeclarationAbility.EXPANDABLE,
     default_timeout_seconds=60.0,
-    action=ToolAction.LOCATE_SYMBOL,
 )
 
 
-class CodeDefinitionsTool(Tool):
+class FindDefinitionTool(Tool):
     def __init__(
         self, governor: ResourceGovernor, artifacts: ArtifactStore | None = None
     ) -> None:
@@ -158,7 +164,7 @@ class CodeDefinitionsTool(Tool):
         if facts.is_symlink:
             return PreparationError(
                 code=PreparationErrorCode.UNSUPPORTED_REQUEST,
-                message=f"code_definitions 不跟随符号链接: {facts.realpath}",
+                message=f"find_definition 不跟随符号链接: {facts.realpath}",
                 field_path="path",
             )
         files: tuple[str, ...]
@@ -169,7 +175,7 @@ class CodeDefinitionsTool(Tool):
         else:
             return PreparationError(
                 code=PreparationErrorCode.TARGET_UNREADABLE,
-                message=f"code_definitions 的 path 必须是文件或目录: {facts.realpath}",
+                message=f"find_definition 的 path 必须是文件或目录: {facts.realpath}",
                 field_path="path",
             )
         scope = context.scope_of_all((facts.realpath, *files))
@@ -292,12 +298,21 @@ class CodeDefinitionsTool(Tool):
             invocation_id=plan.plan_id,
             limits=self._governor.limits_for(_SPEC),
             artifacts=self._artifacts,
-            artifact_name="code_definitions",
+            artifact_name="find_definition",
         )
         return ToolResult(
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=(ToolResultStatus.CANCELLED if cancelled else ToolResultStatus.OK),
+            summary=(
+                f"找 {plan.normalized_input.get('symbol', '')} 的定义: "
+                f"{hits} 处 (带行号)" + ("" if not notes else "; 结果不完整")
+            ),
+            data={
+                "hits": hits,
+                "files": len(files),
+                "complete": not notes,
+            },
             content_parts=emitted.parts,
             artifacts=emitted.artifacts,
             metrics=ToolMetrics(bytes_out=emitted.bytes_out),
@@ -392,6 +407,8 @@ def _stale(plan: ToolPlan, path: str) -> ToolResult:
         invocation_id=plan.plan_id,
         tool_name=_SPEC.name,
         status=ToolResultStatus.TOOL_ERROR,
+        summary=f"解析失败: {path} 在计划生成后发生变化",
+        data={"path": path},
         error=ToolError(
             code="target_changed",
             message=f"文件在计划生成后发生变化, 已拒绝继续解析: {path}",

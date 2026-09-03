@@ -116,14 +116,14 @@ type ToolSpec = {
   default_timeout_seconds: number;
 };
 /** `/tools` 的 `all`: 与模式无关的全量展示名, 见后端那个路由的说明。 */
-type ToolDirectoryItem = { name: string; title: string; action: string };
+type ToolDirectoryItem = { name: string; title: string; capabilities: string[] };
 /** 三种协议全都列出来; 不支持的要看得见但选不了。 */
 type ProviderProtocol = { value: string; label: string; supported: boolean };
 type ToolsResponse = { items: ToolSpec[]; all: ToolDirectoryItem[] };
 
 /** 后端给的是数组 (顺序稳定, 便于诊断), 展示要的是按名字查 —— 转一次即可。 */
 function indexTools(items: ToolDirectoryItem[]): ToolDirectory {
-  return Object.fromEntries(items.map((item) => [item.name, { title: item.title, action: item.action }]));
+  return Object.fromEntries(items.map((item) => [item.name, { title: item.title, capabilities: item.capabilities }]));
 }
 type StatusView = {
   session_id: string;
@@ -1047,7 +1047,17 @@ function App() {
 function Message({ item }: { item: TranscriptEvent }) {
   const user = item.payload.role === "user";
   const text = item.payload.text ?? "";
-  return <article className={`message ${user ? "user" : "assistant"}`}><div className="avatar">{user ? "你" : "F"}</div><div><strong>{user ? "你" : "Forge"}</strong>{user ? <p>{text}</p> : <><Markdown content={text} /><div className="message-footer"><span /><CopyButton content={text} className="message-copy-outside" /></div></>}</div></article>;
+  if (user) return <UserMessage text={text} />;
+  return <article className="message assistant"><div className="avatar">F</div><div><strong>Forge</strong><Markdown content={text} /><div className="message-footer"><span /><CopyButton content={text} className="message-copy-outside" /></div></div></article>;
+}
+
+/** 历史消息和刚发送的本地消息共用同一个操作区，避免复制能力只在刷新后才出现。 */
+function UserMessage({ text }: { text: string }) {
+  return <article className="message user"><div className="avatar">你</div><div>
+    <strong>你</strong>
+    <p>{text}</p>
+    <div className="message-footer"><span /><CopyButton content={text} className="message-copy-outside" /></div>
+  </div></article>;
 }
 
 /** 历史轮次: 与 LocalTurnView 同一个形状, 只是数据来自落盘的过程快照。 */
@@ -1069,7 +1079,7 @@ function LocalTurnView({ turn, directory }: { turn: LocalTurn; directory: ToolDi
   //
   // 占位轮次没有本地用户文本（刷新页面后接上的 turn），用户消息已经在 transcript 里。
   return <section className="local-turn">
-    {turn.userText && <article className="message user"><div className="avatar">你</div><div><strong>你</strong><p>{turn.userText}</p></div></article>}
+    {turn.userText && <UserMessage text={turn.userText} />}
     <article className="message assistant"><div className="avatar">F</div><div>
       <strong>Forge</strong>
       <RunProcess turn={turn} directory={directory} />

@@ -1,4 +1,11 @@
-"""RuntimeFacts: 可以安全渲染进提示词的运行事实 (ADR-0018 §4.3).
+"""RuntimeFacts: 可以安全渲染给模型的运行事实 (ADR-0041 第 [4] 层).
+
+它原先住在 `application/prompt`, 是系统提示词的一个块的输入. ADR-0042 把提示词收敛成
+纯静态策略层之后它搬来这里 —— 这一项每轮都可能变 (换档, /add-dir), 而提示词只依赖包版本
+与 FORGE.md.
+
+搬家不影响下面那条投影规则: 它说的是"哪些字段可以被渲染给模型", 与渲染成提示词的块还是
+渲染成请求的第 [4] 层无关.
 
 它不是 ExecutionProfile. profile 里带着 trusted_path, controlled_environment 与
 protected_roots_hash —— 这些绝不能进提示词. 让 builder 直接收 profile, 等于把"哪些
@@ -7,7 +14,7 @@ protected_roots_hash —— 这些绝不能进提示词. 让 builder 直接收 p
 投影发生在组合根 (from_profile), builder 只能看见已经脱敏的这一份. 于是"渲染全部字段"
 成为安全的默认行为, 而不是每次加字段都要重新判断一遍.
 
-刻意不带 catalog_snapshot_hash: 模型拿它做不了任何事, 它只进调用 trace (ADR-0018 §4.3).
+刻意不带 catalog_snapshot_hash: 模型拿它做不了任何事, 它只进调用 trace.
 """
 
 from __future__ import annotations
@@ -30,7 +37,7 @@ _ISOLATION_SUMMARY: dict[IsolationLevel, str] = {
 
 @dataclass(frozen=True)
 class RuntimeFacts:
-    """一轮开始时的运行环境事实. 全部字段都可以直接渲染."""
+    """一轮开始时的运行环境事实. 全部字段都可以直接渲染给模型."""
 
     platform: str
     shell_kind: str

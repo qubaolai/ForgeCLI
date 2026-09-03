@@ -89,6 +89,13 @@ SIBLING_BANS: tuple[tuple[str, str, str], ...] = (
         "application.security",
         "记忆不参与任何安全裁决 (ADR-0033 决策 3)",
     ),
+    # 上下文里装的东西有一半是模型自己写的 (记忆, 计划, 待办), 另一半是工具输出的转述.
+    # 两者都不该有机会影响裁决 —— 与上面那条给记忆定的边界同一个理由, 只是范围更大.
+    (
+        "application.context",
+        "application.security",
+        "上下文组装不参与任何安全裁决 (ADR-0041)",
+    ),
     (
         "application.agent_loop",
         "application.memory",

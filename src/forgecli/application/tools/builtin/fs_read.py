@@ -42,7 +42,6 @@ from forgecli.domain.tool.result import (
 from forgecli.domain.tool.spec import (
     ArtifactPolicy,
     TargetDeclarationAbility,
-    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -56,7 +55,12 @@ _SPEC = ToolSpec(
     description=(
         "读取一个文件的文本内容. 默认读全文; "
         "大文件可以传 offset (从第几行开始, 从 1 起) 与 limit (读多少行) 只取一段, "
-        "返回时会附带这一段在全文中的位置. 超长内容会截断并归档."
+        "返回时会附带这一段在全文中的位置. 超长内容会截断并归档.\n"
+        "已经知道是哪个文件时才用它. 要找一段文字出现在哪些地方, 走 search_text —— "
+        "不要把候选文件逐个读回来自己扫.\n"
+        "**手上有行号就按行号读**: find_definition 与 search_text 都带路径与行号. "
+        "拿到之后传 offset 与 limit 只取那一段 (比如 offset=40 limit=30), 不必把整个"
+        "文件读回来 —— 一个类常常几百行, 你要看的只有十几行."
     ),
     input_schema={
         "type": "object",
@@ -79,8 +83,11 @@ _SPEC = ToolSpec(
     ),
     target_declaration_ability=TargetDeclarationAbility.STATIC,
     default_timeout_seconds=10.0,
-    action=ToolAction.READ,
     artifact_policy=ArtifactPolicy(max_inline_bytes=16 * 1024),
+    # 全库唯一一个把正文带进会话窗口的工具 (ADR-0041 决策 6): 改代码之前必须看到原文,
+    # 而"先 artifact_read 取回来再改"是白花一次调用. 其余工具的判据已经在 summary
+    # 与 data 里, 正文只在需要细节时取.
+    body_in_window=True,
 )
 
 
@@ -160,6 +167,8 @@ class ReadFileTool(Tool):
                 invocation_id=plan.plan_id,
                 tool_name=_SPEC.name,
                 status=ToolResultStatus.TOOL_ERROR,
+                summary=f"读取失败: {path} 在计划生成后发生变化",
+                data={"path": path},
                 error=ToolError(code="target_changed", message=message, retryable=True),
             )
         requested = _positive(plan.normalized_input.get("max_bytes"))
@@ -186,10 +195,22 @@ class ReadFileTool(Tool):
             artifacts=self._artifacts,
             artifact_name="read_file",
         )
+        line_count = len(window.text.splitlines())
+        truncated = any(part.truncated for part in emitted.parts)
         return ToolResult(
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=ToolResultStatus.OK,
+            summary=(
+                f"读了 {path}, {line_count} 行"
+                + (", 已截断" if truncated else ", 未截断")
+            ),
+            data={
+                "path": path,
+                "lines": line_count,
+                "bytes": emitted.bytes_out,
+                "truncated": truncated,
+            },
             # 位置说明单独一个 part, 不拼进正文: 拼进去模型照抄一段内容当 old_string 时
             # 会把它一起抄走, 于是 fs_apply_patch 的 FIND 段 逐字比对必然对不上.
             content_parts=emitted.parts + window.notes,

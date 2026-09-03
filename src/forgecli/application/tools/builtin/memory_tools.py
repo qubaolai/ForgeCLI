@@ -48,7 +48,6 @@ from forgecli.domain.tool.result import (
 )
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
-    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -98,7 +97,6 @@ def _spec(
         declared_capabilities=frozenset({Capability.MEMORY_WRITE}),
         target_declaration_ability=TargetDeclarationAbility.STATIC,
         default_timeout_seconds=5.0,
-        action=ToolAction.MEMORY,
     )
 
 
@@ -145,10 +143,13 @@ class _MemoryTool(Tool):
         return MemoryScope(str(plan.normalized_input["scope"]))
 
     def _ok(self, plan: ToolPlan, body: str) -> ToolResult:
+        key = str(plan.normalized_input.get("key", ""))
         return ToolResult(
             invocation_id=plan.plan_id,
             tool_name=self._SPEC.name,
             status=ToolResultStatus.OK,
+            summary=f"{self._SPEC.title}: {key}" if key else self._SPEC.title,
+            data={"key": key, "scope": str(plan.normalized_input.get("scope", ""))},
             content_parts=(ContentPart(text=body),),
         )
 
@@ -159,6 +160,8 @@ class _MemoryTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=self._SPEC.name,
             status=ToolResultStatus.INVALID_INPUT,
+            summary=f"记忆写入被拒: {rejection.value}",
+            data={"rejection": rejection.value},
             error=ToolError(
                 code=rejection.value,
                 message=message,
@@ -175,7 +178,11 @@ class MemoryWriteTool(_MemoryTool):
         "把一条**脱离本次对话之后依然成立**的事实记下来, 供以后的会话使用. "
         "只记可验证的事实与用户明确说过的偏好; "
         "不要记推断, 猜测, 进度或决定 (那些属于计划), 更不要记任何凭证. "
-        "同一个 key 再写一次会覆盖旧值.",
+        "同一个 key 再写一次会覆盖旧值.\n"
+        "不记仓库自己已经记着的: 目录结构, 某个函数在哪, 这次改了什么 —— "
+        "那些下次读一遍就有. 也不记只在这次对话里成立的东西.\n"
+        "记之前先看有没有记过同一件事: 有就用同一个 key 改那一条, "
+        "不要再记一条并存的.",
         {
             "scope": {"type": "string", "description": _SCOPE_DESCRIPTION},
             "key": {

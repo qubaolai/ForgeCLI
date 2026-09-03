@@ -58,7 +58,6 @@ from forgecli.domain.tool.result import ToolMetrics, ToolResult, ToolResultStatu
 from forgecli.domain.tool.spec import (
     ArtifactPolicy,
     TargetDeclarationAbility,
-    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -82,7 +81,10 @@ _SPEC = ToolSpec(
         "name_glob='**/application*.yml' 按文件名找配置.\n"
         "depth 限制层数, max_entries 限制条目数. "
         "默认跳过 .git, node_modules, target 一类生成目录, "
-        "需要它们时传 include_ignored=true."
+        "需要它们时传 include_ignored=true.\n"
+        "name_glob 匹配的是**路径**, 不是文件内容 —— 把一段要搜的文字填进去只会得到"
+        "空结果, 那种检索走 search_text. "
+        "要看目录全貌就用一次递归 glob 拿到, 不要一层一层地列."
     ),
     input_schema={
         "type": "object",
@@ -107,7 +109,6 @@ _SPEC = ToolSpec(
     ),
     target_declaration_ability=TargetDeclarationAbility.EXPANDABLE,
     default_timeout_seconds=20.0,
-    action=ToolAction.LOCATE_PATH,
     artifact_policy=ArtifactPolicy(max_inline_bytes=32 * 1024),
 )
 
@@ -297,10 +298,21 @@ class FindTool(Tool):
             artifacts=self._artifacts,
             artifact_name="find",
         )
+        entry_count = len(body.splitlines())
         return ToolResult(
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=ToolResultStatus.OK,
+            summary=(
+                f"定位 {root}: {entry_count} 行结果"
+                + (f" ({'; '.join(notices)})" if notices else "")
+            ),
+            data={
+                "path": root,
+                "mode": str(data.get("mode", "glob")),
+                "lines": entry_count,
+                "complete": not notices,
+            },
             content_parts=emitted.parts,
             artifacts=emitted.artifacts,
             metrics=ToolMetrics(bytes_out=emitted.bytes_out),
@@ -326,7 +338,7 @@ def _empty_list_message(root: str, name_glob: str) -> str:
             f"{name_glob!r} 里没有任何 glob 元字符 (* ? [ ]), 也不含路径分隔符, "
             "所以它只能匹配一个同名文件. "
             "如果你要找的是**文件内容**里的这段文字, 请用 search_text(query=...); "
-            "如果要找的是一个类或函数的定义, 请用 code_definitions(symbol=...); "
+            "如果要找的是一个类或函数的定义, 请用 find_definition(symbol=...); "
             "按文件名找请写成 glob, 例如 '**/*.java'."
         )
     return (

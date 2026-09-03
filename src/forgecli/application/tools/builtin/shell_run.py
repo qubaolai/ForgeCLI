@@ -55,10 +55,10 @@ from forgecli.domain.tool.result import (
     ToolMetrics,
     ToolResult,
     ToolResultStatus,
+    clip_for_summary,
 )
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
-    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -94,7 +94,12 @@ _SPEC = ToolSpec(
     name="shell_run",
     version="2",
     title="执行 Shell 命令",
-    description="执行一条 Shell 命令. 复合命令, 管道和重定向都支持, 整条命令统一裁决.",
+    description=(
+        "执行一条 Shell 命令. 复合命令, 管道和重定向都支持, 整条命令统一裁决.\n"
+        "用于运行测试, 构建, 包管理, 以及没有专用工具覆盖的命令. "
+        "读文件, 检索与改文件都有专用工具, 它们的输出已经结构化, 优先用那些 —— "
+        "再解析一遍 stdout 既慢又容易读错."
+    ),
     input_schema={
         "type": "object",
         "properties": {
@@ -117,7 +122,6 @@ _SPEC = ToolSpec(
     # 工具层无法封闭目标集合: 这正是 opaque 的定义.
     target_declaration_ability=TargetDeclarationAbility.OPAQUE,
     default_timeout_seconds=120.0,
-    action=ToolAction.EXECUTE,
 )
 
 
@@ -204,6 +208,7 @@ class ShellRunTool(Tool):
             ),
             cancel,
         )
+        command = clip_for_summary(str(plan.normalized_input["command"]))
         text = _render(outcome)
         emitted = emit_text(
             text,
@@ -229,6 +234,18 @@ class ShellRunTool(Tool):
                 invocation_id=plan.plan_id,
                 tool_name=_SPEC.name,
                 status=ToolResultStatus.OK,
+                # shell_run 是 ADR-0041 决策 12 的那个例外: 跑任意命令的工具给不出有
+                # 意义的 data, 只报机制事实 (退出码, 耗时, 输出规模).
+                summary=(
+                    f"{command} -> 退出 {outcome.exit_code}, "
+                    f"{emitted.bytes_out} 字节输出, "
+                    f"{outcome.duration_seconds:.1f}s"
+                ),
+                data={
+                    "exit_code": outcome.exit_code,
+                    "duration_seconds": round(outcome.duration_seconds, 2),
+                    "bytes_out": emitted.bytes_out,
+                },
                 content_parts=emitted.parts,
                 artifacts=emitted.artifacts,
                 metrics=metrics,
@@ -239,6 +256,11 @@ class ShellRunTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=_status_of(outcome.timed_out, outcome.cancelled),
+            summary=(
+                f"{command} 没跑成: "
+                + ("超时" if outcome.timed_out else "取消, 或者子进程起不来")
+            ),
+            data={"timed_out": outcome.timed_out, "cancelled": outcome.cancelled},
             content_parts=emitted.parts,
             artifacts=emitted.artifacts,
             metrics=metrics,

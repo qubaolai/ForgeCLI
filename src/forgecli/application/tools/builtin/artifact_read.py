@@ -50,7 +50,6 @@ from forgecli.domain.tool.result import (
 )
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
-    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -81,7 +80,11 @@ _SPEC = ToolSpec(
     declared_capabilities=frozenset({Capability.ARTIFACT_READ}),
     target_declaration_ability=TargetDeclarationAbility.STATIC,
     default_timeout_seconds=5.0,
-    action=ToolAction.READ,
+    # 它**就是**取回路径, 所以正文必须进窗口 (ADR-0041 决策 6 的例外).
+    #
+    # 不置 True 的话: 结果自带一个指向同一份归档的句柄, 于是模型读到"内容已归档 X,
+    # 用 artifact_read 取回"—— 而它刚做的就是这件事. 一个自指的循环.
+    body_in_window=True,
 )
 
 
@@ -151,6 +154,8 @@ class ArtifactReadTool(Tool):
                 invocation_id=plan.plan_id,
                 tool_name=_SPEC.name,
                 status=ToolResultStatus.TOOL_ERROR,
+                summary=f"归档 {artifact_id} 已过期回收, 取不回来了",
+                data={"artifact_id": artifact_id},
                 content_parts=(
                     ContentPart(text=render_notice("context.artifact_missing")),
                 ),
@@ -173,6 +178,8 @@ class ArtifactReadTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=ToolResultStatus.OK,
+            summary=f"取回归档 {artifact_id}, {len(text.splitlines())} 行",
+            data={"artifact_id": artifact_id, "lines": len(text.splitlines())},
             content_parts=(ContentPart(text=text),),
             metrics=ToolMetrics(bytes_out=len(body.encode("utf-8"))),
             # 取回来的这一条本身也能再被降级, 而且降回同一个 id —— 内容寻址让这件事

@@ -12,6 +12,7 @@ import {
   metricsFor,
   newLocalTurn,
   summariseTools,
+  terminalFailureDetail,
   toolActionLabel,
   restoreTurn,
   shouldAutoFollow,
@@ -257,13 +258,15 @@ function toolCall(base, name, invocation, capabilities = ["workspace_read"]) {
  * 后端 `/api/v1/tools` 的 `all` 索引之后的形状。写成固定值而不是去拉接口: 这些用例
  * 钉的是"查得到就用 title, 查不到就退回工具名"这条规则, 不是后端此刻叫什么名字。
  */
+// 后端 /tools 的 `all` 那一段。ADR-0042 删掉 ToolAction 之后, 目录里带的是工具**声明的
+// 能力上界**, 归类因此只剩 CAPABILITY_CATEGORIES 一张表, 而不是两张要互相对齐的表。
 const DIRECTORY = {
-  todo_set_status: { title: "更新待办状态", action: "process" },
-  todo_write: { title: "重写待办", action: "process" },
-  shell_run: { title: "执行 Shell 命令", action: "execute" },
-  fs_apply_patch: { title: "应用补丁", action: "write" },
-  search_text: { title: "搜索文本", action: "locate_text" },
-  memory_write: { title: "记住一件事", action: "memory" },
+  todo_set_status: { title: "更新待办状态", capabilities: ["plan_only"] },
+  todo_write: { title: "重写待办", capabilities: ["plan_only"] },
+  shell_run: { title: "执行 Shell 命令", capabilities: ["execute_shell"] },
+  fs_apply_patch: { title: "应用补丁", capabilities: ["workspace_write"] },
+  search_text: { title: "搜索文本", capabilities: ["workspace_read"] },
+  memory_write: { title: "记住一件事", capabilities: ["memory_write"] },
 };
 
 test("a tool is categorised by the capabilities it declared, not by its name", () => {
@@ -275,8 +278,9 @@ test("a tool is categorised by the capabilities it declared, not by its name", (
   // 同时声明读和写的调用算写入: 它的后果是写。
   assert.equal(categoryOf("fs_move", ["workspace_read", "path_move"]).id, "write");
   assert.equal(categoryOf("shell_run", ["execute_shell", "workspace_write"]).id, "shell");
-  // 连 prepare 都没走到就没有能力可看, 这时查后端目录里的动作。目录是后端发的, 不再是
-  // 一份手抄清单 —— 早先那份躺着 fs.create_file / fs.list_files 这些 ADR-0029 就删掉的名字。
+  // 连 prepare 都没走到就没有能力可看, 这时退回目录里那个工具**声明**的能力上界。目录是
+  // 后端发的, 不再是一份手抄清单 —— 早先那份躺着 fs.create_file / fs.list_files 这些
+  // ADR-0029 就删掉的名字。
   assert.equal(categoryOf("fs_apply_patch", [], DIRECTORY).id, "write");
   assert.equal(categoryOf("search_text", [], DIRECTORY).id, "read");
   assert.equal(categoryOf("memory_write", [], DIRECTORY).id, "memory");
@@ -295,7 +299,7 @@ test("consecutive same-kind tool calls aggregate even with a decision between th
     event("model_completed", 2, { tool_call_count: 3, text_chars: 20 }, { request_id: "r1" }),
     ...toolCall(10, "fs_read", "i1"),
     ...toolCall(20, "fs_read", "i2"),
-    ...toolCall(30, "fs_scan_tree", "i3"),
+    ...toolCall(30, "fs_read", "i3"),
     ...toolCall(40, "shell_run", "i4", ["execute_shell"]),
   ];
   const timeline = buildTimeline(events, {}, { r1: "我来看几个文件" });
@@ -305,6 +309,21 @@ test("consecutive same-kind tool calls aggregate even with a decision between th
   );
   assert.equal(timeline[1].groups.length, 3, "三次读取合成一段");
   assert.equal(timeline[1].reason, "模型请求 1 个工具调用", "决策摘要挂到它解释的那一步上");
+});
+
+test("different tools do not merge even when they fall in the same category", () => {
+  // 合并粒度是**工具名**, 不是类别: `fs_read` 与 `fs_find` 同属"读取文件", 并成一行之后
+  // 就读不出模型到底是在检索还是在读文件了。这一条原先靠后端的 ToolAction 撑着, 那个字段
+  // 已随 ADR-0042 删除。
+  const events = [
+    ...toolCall(10, "fs_read", "i1"),
+    ...toolCall(20, "fs_find", "i2"),
+  ];
+  const timeline = buildTimeline(events, {}, {});
+  assert.deepEqual(
+    timeline.map((item) => item.kind),
+    ["tools", "tools"],
+  );
 });
 
 test("tool calls separated by something the model said are not merged across it", () => {
@@ -415,6 +434,20 @@ test("a terminal turn reports its outcome instead of a live activity", () => {
   assert.equal(activityOf(turn), "处理已取消");
 });
 
+test("a failed turn exposes the provider detail carried by its terminal event", () => {
+  const events = [
+    event("model_started", 1, {}, { request_id: "r1" }),
+    event("turn_failed", 2, {
+      detail: "[openai:gpt-test] 认证失败：请检查对应供应商的 API Key 环境变量。",
+    }),
+  ];
+  assert.equal(
+    terminalFailureDetail(events),
+    "[openai:gpt-test] 认证失败：请检查对应供应商的 API Key 环境变量。",
+  );
+  assert.equal(terminalFailureDetail([event("turn_failed", 1, {})]), "");
+});
+
 test("an unknown tool falls back to its own name rather than an invented action", () => {
   assert.equal(toolActionLabel("todo_write", DIRECTORY), "重写待办");
   assert.equal(toolActionLabel("mcp_acme_do_thing", DIRECTORY), "mcp_acme_do_thing");
@@ -450,7 +483,7 @@ test("every model call's text stays in the flow, none of it is retracted", () =>
 test("a merged group shows only what it did, never which file", () => {
   // 收起时摆一个路径, 等于让一个随机挑出来的文件占满整行, 而它并不比另外几个更值得看。
   // 具体是哪几个展开就有。
-  const directory = { fs_read: { title: "读取文件", action: "read" } };
+  const directory = { fs_read: { title: "读取文件", capabilities: ["workspace_read"] } };
   const call = (id, target) => ({ id, events: [
     event("tool_prepared", 1, { tool_name: "fs_read", targets: [target] }, { invocation_id: id }),
   ] });
@@ -466,10 +499,10 @@ test("a merged group shows only what it did, never which file", () => {
 test("no separator dot and no path ever reach the collapsed line", () => {
   // 回归: 那一行曾经是"按符号名找定义 · /Users/.../SysUserServiceImpl.java" —— 一条
   // 一百多字符的绝对路径占满整行。
-  const directory = { code_definitions: { title: "按符号名找定义", action: "locate_symbol" } };
+  const directory = { find_definition: { title: "按符号名找定义", capabilities: ["workspace_read"] } };
   const summary = summariseTools([{ id: "a", events: [
     event("tool_prepared", 1, {
-      tool_name: "code_definitions",
+      tool_name: "find_definition",
       arguments: [["symbol", "SysUserServiceImpl"]],
       targets: ["/Users/almond/Desktop/tmp_ant/test/backend/src/main/java/SysUserServiceImpl.java"],
     }, { invocation_id: "i1" }),
@@ -481,7 +514,7 @@ test("no separator dot and no path ever reach the collapsed line", () => {
 });
 
 test("a single shell command stays on the line, because it is not a path", () => {
-  const directory = { shell_run: { title: "执行 Shell 命令", action: "execute" } };
+  const directory = { shell_run: { title: "执行 Shell 命令", capabilities: ["execute_shell"] } };
   const summary = summariseTools([{ id: "a", events: [
     event("tool_prepared", 1, { tool_name: "shell_run", arguments: [["command", "mvn -q compile"]] }, { invocation_id: "i1" }),
   ] }], directory);
@@ -492,7 +525,7 @@ test("a single shell command stays on the line, because it is not a path", () =>
 test("the count is a separate field, never spliced into the label", () => {
   // 拼进文字要做"读取文件"→"读取 6 个文件"的动宾拆分, 而那对"执行 Shell 命令"
   // "按符号名找定义"这类标题根本拆不开。
-  const directory = { fs_find: { title: "定位文件与认识目录", action: "locate_path" } };
+  const directory = { fs_find: { title: "定位文件与认识目录", capabilities: ["workspace_read"] } };
   const summary = summariseTools(
     [1, 2, 3].map((n) => ({ id: `g${n}`, events: [event("tool_prepared", n, { tool_name: "fs_find" }, { invocation_id: `i${n}` })] })),
     directory,
@@ -515,8 +548,8 @@ test("an unknown tool falls back to a count rather than inventing a verb", () =>
 test("different tools merged into one line still name their kinds", () => {
   // 同一类的工具会被并进一组。退化成"3 次工具调用"就把信息全丢了。
   const directory = {
-    fs_read: { title: "读取文件", action: "read" },
-    search_text: { title: "搜索文本", action: "locate_text" },
+    fs_read: { title: "读取文件", capabilities: ["workspace_read"] },
+    search_text: { title: "搜索文本", capabilities: ["workspace_read"] },
   };
   const summary = summariseTools([
     { id: "a", events: [event("tool_prepared", 1, { tool_name: "fs_read" }, { invocation_id: "i1" })] },
@@ -528,12 +561,12 @@ test("different tools merged into one line still name their kinds", () => {
   assert.equal(summary.count, 3);
 });
 
-test("merging is by action, not by the coarser category", () => {
-  // 四种定位与读取全都属于"读取文件"这一类。按类别并会把 6 次 fs_find 与 10 次 fs_read
+test("merging is by tool name, not by the coarser category", () => {
+  // fs_find 与 fs_read 都属于"读取文件"这一类。按类别并会把 6 次 fs_find 与 10 次 fs_read
   // 压成一行"18 次工具调用" —— 从平铺一个极端跳到另一个极端。
   const directory = {
-    fs_find: { title: "定位文件与认识目录", action: "locate_path" },
-    fs_read: { title: "读取文件", action: "read" },
+    fs_find: { title: "定位文件与认识目录", capabilities: ["workspace_read"] },
+    fs_read: { title: "读取文件", capabilities: ["workspace_read"] },
   };
   const events = [
     ...toolCall(10, "fs_find", "i1"),

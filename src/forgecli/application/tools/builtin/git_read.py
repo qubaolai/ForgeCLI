@@ -60,7 +60,6 @@ from forgecli.domain.tool.result import (
 )
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
-    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -120,7 +119,6 @@ _SPEC = ToolSpec(
     declared_capabilities=frozenset({Capability.WORKSPACE_READ}),
     target_declaration_ability=TargetDeclarationAbility.STATIC,
     default_timeout_seconds=30.0,
-    action=ToolAction.READ,
 )
 
 
@@ -188,6 +186,8 @@ class GitReadTool(Tool):
             return self._failed(plan, "git_unsupported", str(exc), started)
         except GitQueryError as exc:
             return self._failed(plan, "git_failed", str(exc), started)
+        git_mode = str(plan.normalized_input.get("mode", ""))
+        line_count = len(text.splitlines())
         emitted = emit_text(
             text,
             invocation_id=plan.plan_id,
@@ -199,6 +199,8 @@ class GitReadTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=ToolResultStatus.OK,
+            summary=f"读 git {git_mode}: {line_count} 行",
+            data={"mode": git_mode, "lines": line_count},
             content_parts=emitted.parts,
             artifacts=emitted.artifacts,
             metrics=ToolMetrics(
@@ -215,6 +217,8 @@ class GitReadTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=ToolResultStatus.TOOL_ERROR,
+            summary=f"读 git 失败: {code}",
+            data={"error_code": code},
             metrics=ToolMetrics(duration_seconds=time.perf_counter() - started),
             error=ToolError(code=code, message=message, retryable=False),
         )

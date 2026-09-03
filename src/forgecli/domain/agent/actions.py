@@ -86,6 +86,9 @@ class LoopObservation:
     # ToolResultBlock 上, 供上下文管理判断能不能去重与降级. 循环自己不读它 ——
     # 它只是个传递者, 判断在 application/context.
     provenance: ResultProvenance | None = None
+    # 这条结果正文的归档句柄, 空串表示没有归档. 循环拿它判"这次有没有带回新信息" ——
+    # 句柄是内容寻址的, 所以正文不同则句柄不同, 比比对渲染文本准.
+    handle: str = ""
 
 
 @dataclass(frozen=True)

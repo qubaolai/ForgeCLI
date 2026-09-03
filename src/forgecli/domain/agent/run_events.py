@@ -192,7 +192,7 @@ class ModelUsagePayload(RunEventPayload):
 
 @dataclass(frozen=True)
 class ContextCompactedPayload(RunEventPayload):
-    """一次上下文压缩 (ADR-0032 决策 1 / 2).
+    """一次窗口淘汰 (ADR-0041 决策 5).
 
     这里的 token 数是**省下多少上下文**, 与同一次压缩发出的 ModelUsagePayload 是两个
     方向相反的数: 那个是这次压缩**花掉**多少. 两个数并排出现才读得懂 —— 只给省下的,
@@ -206,11 +206,9 @@ class ContextCompactedPayload(RunEventPayload):
     tokens_before: int = 0
     tokens_after: int = 0
     tokens_saved: int = 0
-    # 一级降级改写了几个 tool result 块.
-    blocks_rewritten: int = 0
-    # 二级摘要顶替了几条消息.
+    # 这次淘汰丢掉了几条消息.
     messages_replaced: int = 0
-    # 二级摘要用的模型; 一级降级不调模型, 两项为空.
+    # 交接说明用的模型; 没接网关时不调模型, 两项为空.
     provider: str = ""
     model: str = ""
 

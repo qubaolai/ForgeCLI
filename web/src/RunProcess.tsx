@@ -13,6 +13,7 @@ import {
   ToolDirectory,
   ToolGroup,
   summariseTools,
+  terminalFailureDetail,
   toolActionLabel,
   toolNameOf,
   wasExecuted,
@@ -50,17 +51,22 @@ export function RunProcess({ turn, directory }: { turn: LocalTurn; directory: To
 
   const metrics = metricsFor(turn.events, Date.now(), turn.startedAt);
   const timeline = buildTimeline(turn.events, directory, turn.outputs);
+  const failureDetail = terminalFailureDetail(turn.events);
+  // model_failed 已在它自己的模型节点中显示；终态详情只补没有模型失败事件的异常路径，
+  // 否则同一句供应商错误会出现两遍。
+  const modelFailureShown = turn.events.some((event) => event.kind === "model_failed");
 
   return (
     <section className={`run-flow ${turn.status}`}>
       {timeline.map((item) => {
         if (item.kind === "model") {
-          return <NarrationBlock events={item.events} output={turn.outputs[item.key] ?? ""} key={item.id} />;
+          return <NarrationBlock events={item.events} output={turn.outputs[item.key] ?? ""} terminal={turn.status !== "running"} key={item.id} />;
         }
         if (item.kind === "tools") return <ToolRun groups={item.groups} turnStatus={turn.status} reason={item.reason} directory={directory} key={item.id} />;
         return <NoteStep event={item.event} key={item.id} />;
       })}
-      {!timeline.length && <p className="run-flow-pending">正在建立本轮事件流…</p>}
+      {!timeline.length && !failureDetail && <p className="run-flow-pending">正在建立本轮事件流…</p>}
+      {failureDetail && !modelFailureShown && <p className="run-flow-error" role="alert">{failureDetail}</p>}
       {/* 指标行放在最后: 一轮跑完之后才有意义, 跑的过程中它一直在变, 摆在顶上会让眼睛
           跟着数字跑而不是跟着内容走。 */}
       <footer className="run-flow-meta">
@@ -78,7 +84,7 @@ export function RunProcess({ turn, directory }: { turn: LocalTurn; directory: To
  * 它可能是过程叙述 ("我先看一下目录"), 也可能是最终回答 —— 在这里不区分, 因为区分
  * 需要等调用收尾, 而那时字已经流完了。
  */
-function NarrationBlock({ events, output }: { events: RunEvent[]; output: string }) {
+function NarrationBlock({ events, output, terminal }: { events: RunEvent[]; output: string; terminal: boolean }) {
   const completed = events.find((event) => event.kind === "model_completed");
   const failed = events.find((event) => event.kind === "model_failed");
   const reasoning = [...events].reverse().find((event) => event.kind === "model_reasoning_status");
@@ -88,6 +94,9 @@ function NarrationBlock({ events, output }: { events: RunEvent[]; output: string
     return <p className="run-flow-error">{stringValue(failed.payload.message) || stringValue(failed.payload.error_kind)}</p>;
   }
   if (!output.trim()) {
+    // 供应商异常路径可能只有 turn_failed，没有 model_failed/model_completed。此时本轮已经
+    // 结束，不能让先前的 reasoning_started 继续显示成“思考中”。错误由终态详情展示。
+    if (terminal) return null;
     // 还没吐字。思考与生成分开说 —— 思考可能持续很久且一个字都不吐, 看起来像卡住了。
     return completed ? null : <p className="run-flow-waiting">{thinking ? "思考中…" : "生成中…"}</p>;
   }
@@ -258,13 +267,13 @@ function NoteStep({ event }: { event: RunEvent }) {
   if (event.kind === "context_compacted") {
     // 省下的是**上下文**, 花掉的是 token —— 两个方向相反的数, 所以这一行只讲省下多少,
     // 花掉多少并进上面那条合计里 (ADR-0037)。
-    const summary = stringValue(event.payload.level) === "summary";
+    //
+    // 只剩一种压缩了: ADR-0041 删掉了"降级为引用"那一级, 工具结果正文现在本来就不进
+    // 窗口, 没有可降的东西。
     const replaced = numberValue(event.payload.messages_replaced);
-    const rewritten = numberValue(event.payload.blocks_rewritten);
-    return <Step state="done" title="上下文压缩" subject={summary ? "摘要" : "降级为引用"}>
+    return <Step state="done" title="窗口淘汰" subject="交接说明">
       <p className="step-line muted">
-        省下 {formatTokens(numberValue(event.payload.tokens_saved))} tokens
-        {summary ? ` · 顶替 ${replaced} 条消息` : ` · 改写 ${rewritten} 段工具输出`}
+        省下 {formatTokens(numberValue(event.payload.tokens_saved))} tokens · 丢掉 {replaced} 条消息
       </p>
     </Step>;
   }
@@ -340,4 +349,3 @@ function clip(value: string, limit = 480) {
 function formatDuration(milliseconds: number) {
   return milliseconds >= 1000 ? `${(milliseconds / 1000).toFixed(1)}s` : `${Math.round(milliseconds)}ms`;
 }
-

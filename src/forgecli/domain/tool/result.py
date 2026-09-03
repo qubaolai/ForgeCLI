@@ -12,9 +12,28 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import ClassVar
+
+# 摘要的字符上限.
+#
+# 摘要是**唯一无条件进窗口**的那一段, 所以它必须是一行. shell_run 把整条命令,
+# search_text 把整个 query 嵌进去, 而那两样都是模型写的, 长度不受控 —— 一段 heredoc
+# 或一个几 KB 的正则就能让"省下正文"的那点额度被摘要自己吃回去.
+MAX_SUMMARY_CHARS = 200
+
+# 小于这个字符数的正文一律直接进窗口, 不换成句柄.
+#
+# 判据是**换成句柄划不划算**. 省下 B token 的收益是"往后每一轮少发 B"; 代价是模型要多发
+# 一次 artifact_read, 而那一次往返要把当前整个上下文重发一遍. 按实测的上下文规模
+# (5k~21k) 与每轮十来步算, 盈亏平衡大约落在 1500 token, 也就是四五千字符.
+#
+# 取 6000 而不是更小: 真实日志里被换成句柄又立刻取回的两条是 4210 与 3956 字节 —— 一次
+# 目录列举和一次检索命中, 都是模型下一步就要用的东西. 定在它们之下, 等于每次检索都白
+# 搭一个往返. 8 个会话 416 次工具调用里, artifact_read 占了 26 次 (6.2%), 全是二次取回.
+_INLINE_ALWAYS_BELOW_CHARS = 6_000
 
 __all__ = [
     "ArtifactRef",
@@ -25,7 +44,19 @@ __all__ = [
     "ToolResult",
     "ToolResultStatus",
     "TurnDisposition",
+    "clip_for_summary",
 ]
+
+
+def clip_for_summary(text: str, *, budget: int = MAX_SUMMARY_CHARS) -> str:
+    """把一段不受控的文本裁到能进摘要的长度.
+
+    显式截断并留下省略号: 悄悄截掉后半段, 模型会以为命令就是这么短的.
+    """
+    flat = " ".join(text.split())
+    if len(flat) <= budget:
+        return flat
+    return f"{flat[: budget - 1]}…"
 
 
 class ToolResultStatus(Enum):
@@ -137,9 +168,27 @@ class TurnDisposition(Enum):
 
 @dataclass(frozen=True)
 class ToolResult:
+    """一次工具调用的结果, 分三段 (ADR-0041 决策 6).
+
+    ``summary``  一行, 必填. 做了什么, 结果规模, 是否截断.
+    ``data``     结构化小字段. 调用方不必再解析散文.
+    ``content_parts``  不限长的正文. **默认不进会话窗口**, 溢写 artifact 后留句柄.
+
+    分三段的理由是窗口增长的主项就是正文: 前三项加起来约三百 token 且可预测, 全部方差
+    都来自正文. 把它拿出来单独定策, 窗口增长从约 1k/步 降到约 300/步.
+
+    一个产不出简短 ``summary`` 的工具本身就是设计得不好 —— 这个必填把质量压力推到了它该
+    在的地方. ``shell_run`` 一类跑任意命令的工具是明确的例外: 它给不出有意义的 ``data``,
+    退化成 summary + 正文, 不硬编一份 schema.
+    """
+
     invocation_id: str
     tool_name: str
     status: ToolResultStatus
+    # 必填而不是给个默认值再运行期校验: 漏填的后果是模型看到一条没有结论的结果, 而那不会
+    # 报错, 只会让它多调一次工具去问同一件事. 让类型检查在装配期就拦住.
+    summary: str
+    data: Mapping[str, object] = field(default_factory=dict)
     content_parts: tuple[ContentPart, ...] = ()
     artifacts: tuple[ArtifactRef, ...] = ()
     metrics: ToolMetrics = field(default_factory=ToolMetrics)
@@ -153,6 +202,8 @@ class ToolResult:
     provenance: ResultProvenance | None = None
 
     def __post_init__(self) -> None:
+        if not self.summary.strip():
+            raise ValueError(f"{self.tool_name} 的 ToolResult.summary 不能为空")
         if self.status is ToolResultStatus.OK and self.error is not None:
             raise ValueError("status=ok 的结果不能带 error")
         if self.status is not ToolResultStatus.OK and self.error is None:
@@ -164,13 +215,15 @@ class ToolResult:
             # 失败的调用没有可供人裁决的产出. 允许它停下, 人看到的会是一个空的评审界面.
             raise ValueError("只有成功的结果才能要求人裁决")
 
-    @property
-    def text(self) -> str:
-        """拼接成回填模型的文本 (截断片段带显式标记).
+    def raw_output(self) -> str:
+        """工具跑出来的原始输出全文, 失败时并上错误消息.
 
-        失败时把 ``ToolError.message`` 也拼进去. content_parts 装的是工具跑出来的输出,
-        而一次 mkdir 失败根本没有输出 —— 只填 error 的结果回到模型手里就是一个空字符串,
-        它读不出发生过什么, 只能原样再试一次, 或者改用 shell 自己去摸文件系统.
+        **给围栏用, 不给模型看** (ADR-0041 决策 9). `fence_hint` 正则扫的是命令实际
+        输出里有没有越界痕迹, 拿摘要去扫等于把那道防线关掉.
+
+        失败时把 ``ToolError.message`` 也拼进去: content_parts 装的是工具跑出来的输出,
+        而一次 mkdir 失败根本没有输出 —— 只填 error 的结果回到手里就是一个空字符串,
+        读不出发生过什么.
         """
         lines = [
             f"{part.text}\n[输出已截断, 完整内容见产物 {part.artifact_id}]"
@@ -181,6 +234,46 @@ class ToolResult:
         if self.error is not None:
             lines.append(self.error.message)
         return "\n".join(lines)
+
+    def render_for_model(self, *, include_body: bool) -> str:
+        """回填会话窗口的形态: 摘要 + 结构化字段 (+ 正文或句柄).
+
+        ``include_body`` 来自 ``ToolSpec.body_in_window``, 逐工具声明. 但它只是**倾向**,
+        不是最终决定 —— 下面两条压过它, 因为省掉正文本身也是有代价的:
+
+        **① 没有句柄就必须带正文.** 不然内容等于被删了还不告诉人去哪找. 计划, 待办与
+        记忆那几个工具都不归档 (``provenance`` 为 None), 少了这一条, ``plan_read`` 回给
+        模型的就只有一句"读取计划", 正文凭空消失且无从取回.
+
+        **② 小正文一律带上.** 省下一段 300 token 的正文, 换来的是模型多发一次
+        ``artifact_read`` —— 而那一次往返要把**整个上下文**重发一遍. 省小的花大的,
+        净效果是负的. 阈值按"一次往返的代价"定, 不是按"看起来长不长"定.
+        """
+        lines = [self.summary]
+        if self.data:
+            pairs = ", ".join(
+                f"{key}={value}" for key, value in sorted(self.data.items())
+            )
+            lines.append(f"[{pairs}]")
+        body = self.raw_output()
+        handle = (
+            self.provenance.artifact_id
+            if self.provenance is not None and self.provenance.archived
+            else ""
+        )
+        if include_body or not handle or len(body) <= _INLINE_ALWAYS_BELOW_CHARS:
+            if body:
+                lines.append(body)
+            return "\n".join(line for line in lines if line)
+        if self.error is not None:
+            # 失败一律带上原因: 模型据此改方案, 而"退出 1"本身说明不了改什么.
+            lines.append(self.error.message)
+        lines.append(
+            f"[完整输出已归档 {handle}"
+            f" ({self.provenance.byte_size if self.provenance else 0} 字节),"
+            " 需要细节时用 artifact_read 取回]"
+        )
+        return "\n".join(line for line in lines if line)
 
     def to_audit_payload(self) -> dict[str, object]:
         """工具侧审计只记机制事实: 状态, 耗时, 退出码, 产物引用与截断情况."""

@@ -1050,7 +1050,16 @@ def create_app(
         return {
             "items": [to_jsonable(item) for item in catalog.entries],
             "all": [
-                {"name": spec.name, "title": spec.title, "action": spec.action.value}
+                {
+                    "name": spec.name,
+                    "title": spec.title,
+                    # 归类按能力, 不按另立的分类字段: 能力是安全层已经在消费的真相
+                    # (catalog_predicates 就按它过滤目录), 而原先那个 action 只有
+                    # 展示这一个消费方 (ADR-0042 决策 6).
+                    "capabilities": sorted(
+                        item.value for item in spec.declared_capabilities
+                    ),
+                }
                 for spec in runtime.tools.registry.describe_all()
             ],
         }

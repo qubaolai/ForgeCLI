@@ -38,7 +38,7 @@ __all__ = [
 ]
 
 
-# glob 展开的候选上限. 三个工具 (fs_find, search_text, code_definitions) 走同一条
+# glob 展开的候选上限. 三个工具 (fs_find, search_text, find_definition) 走同一条
 # 展开路径, 上限必须是同一个 —— 各自留一份副本时, 为性能调低其中一个的人不会知道
 # 另外两个还停在旧值.
 MAX_GLOB_CANDIDATES = 10_000

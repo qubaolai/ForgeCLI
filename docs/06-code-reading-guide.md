@@ -178,7 +178,7 @@ cache / 熔断实现方式, 以及 ADR-0035 的日志开关归属.
 命令替换用 `\x00subN\x00` 占位.
 
 > 注意别被 grep 误导: `tree-sitter-language-pack` **在依赖表里, 也确实在用** —— 但只用于
-> `application/tools/builtin/code_definitions.py` 的代码定义提取. Shell 解析仍然是
+> `application/tools/builtin/find_definition.py` 的代码定义提取. Shell 解析仍然是
 > `domain/security/shell/` 那一整套手写实现.
 
 4.9 的第一行表格是决定性的: 开熵检测器能抓到全部十种真凭证, 但**文件路径, 40 位 commit
@@ -405,7 +405,7 @@ fs_find.py         看 EXPANDABLE: 在 prepare 里把 glob 展开成封闭集合
                    pattern 走 (tree_view.py 是它不带 pattern 时的渲染)
 search_text.py     看它为什么不 shell out 到 grep/rg; 正则由 `regex` 的 timeout 兜底,
                    不再按语法拒绝
-code_definitions.py 看它与 search_text 的分工: 语法树只出定义, 不出 import 与调用点
+find_definition.py 看它与 search_text 的分工: 语法树只出定义, 不出 import 与调用点
 git_read.py        看它为什么一个进程都不起. 查询走 libgit2 (application/tools/
                    git_queries.py 是端口, infrastructure/workspace/
                    pygit2_git_queries.py 是实现), 于是 SPAWN_PROCESS 也不用声明
@@ -423,7 +423,7 @@ shell_run.py       能力上界最宽的一个. OPAQUE + 12 个能力
 当前注册的 14 个工具 (见 `interfaces/runtime/tool_wiring.py` 的 `register_all`):
 `plan_read`, `plan_write`, `todo_write`, `todo_set_status`,
 `artifact_read`, `memory_write`, `memory_forget`, `fs_find`, `fs_read`, `search_text`,
-`code_definitions`, `git_read`, `fs_apply_patch`, `shell_run`.
+`find_definition`, `git_read`, `fs_apply_patch`, `shell_run`.
 每个工具在 spec 里声明自己承担哪个动作 (`ToolAction`), 提示词的工具表据此分组; 没有
 `todo_read`, 因为待办全文每轮由 `todo_state` 块进提示词.
 

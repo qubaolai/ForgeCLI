@@ -61,7 +61,6 @@ from forgecli.domain.tool.result import (
 )
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
-    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -122,7 +121,6 @@ _SPEC = ToolSpec(
     # 删目录时 prepare 会展开成逐个文件并给出 FORGE_EXPANDED, STATIC 只允许 STATIC.
     target_declaration_ability=TargetDeclarationAbility.EXPANDABLE,
     default_timeout_seconds=30.0,
-    action=ToolAction.WRITE,
 )
 
 
@@ -281,6 +279,8 @@ class ApplyPatchTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=ToolResultStatus.OK,
+            summary=f"改了 {len(set(mutated))} 个文件, {len(applied)} 处改动",
+            data={"paths": sorted(set(mutated)), "changes": len(applied)},
             content_parts=(ContentPart(text="\n".join(lines)),),
             metrics=ToolMetrics(bytes_out=len("\n".join(lines).encode("utf-8"))),
             workspace_mutated=True,
@@ -567,6 +567,8 @@ def _stale_result(
         invocation_id=plan.plan_id,
         tool_name=_SPEC.name,
         status=ToolResultStatus.TOOL_ERROR,
+        summary=f"写入失败: {path} 在计划生成后发生变化",
+        data={"path": path},
         error=ToolError(
             code="target_changed",
             message=f"目标在计划生成后发生变化, 已拒绝写入: {path}.{done}",
@@ -590,6 +592,8 @@ def _failed_result(
         invocation_id=plan.plan_id,
         tool_name=_SPEC.name,
         status=ToolResultStatus.TOOL_ERROR,
+        summary=f"写入失败: {raw['path']}",
+        data={"path": str(raw["path"])},
         error=ToolError(code="apply_failed", message=f"{raw['path']}: {exc}.{done}"),
         workspace_mutated=bool(applied),
         provenance=ResultProvenance(mutated_paths=tuple(mutated)),

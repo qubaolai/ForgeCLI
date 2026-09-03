@@ -623,7 +623,7 @@ class ToolRequestCoordinator:
         # 先问再取: result.text 会把所有内容块拼成一整段, 一次大文件读取就是几 MB,
         # 而参数在调用之前就求值了.
         if _log.enabled_for_debug():
-            _log.debug("tool.output", text=result.text)
+            _log.debug("tool.output", text=result.raw_output())
         self._recovery.finish(transaction, plan, result)
         self._audit.tool_completed(result, plan_hash=plan.plan_hash)
         self._observer.tool_completed(
@@ -639,7 +639,9 @@ class ToolRequestCoordinator:
             envelope,
             # 只在有围栏时才算: 没围栏的话那句 Permission denied 只能是文件系统
             # 本身的权限, 说成围栏就是在骗模型.
-            fence_hint(result.text, policy.fence, confined=policy.confined),
+            # 围栏扫的是命令**实际输出**里有没有越界痕迹, 给它摘要等于把这道
+            # 防线关掉 (ADR-0041 决策 9).
+            fence_hint(result.raw_output(), policy.fence, confined=policy.confined),
         )
 
     def _authorization_refused(
@@ -699,7 +701,23 @@ class ToolRequestCoordinator:
             ),
             result=result,
             fence_hint=hint,
+            body_in_window=self._body_in_window(result.tool_name),
         )
+
+    def _body_in_window(self, tool_name: str) -> bool:
+        """这个工具的正文进不进窗口 (ADR-0041 决策 6).
+
+        先问 `contains` 再取: `describe` 对未注册的名字抛 UnknownToolError, 而这一步跑在
+        工具**已经执行完**之后 —— 事务已 finish, 审计已落盘. 让它在这里抛, 等于把一次
+        已经产生真实写入的调用变成一个异常, 而恢复点已经过去了.
+
+        认不出名字时按 False: 少给正文只是多一次取回, 而把不该进窗口的正文放进去是
+        每一轮都要付的账.
+        """
+        if not self._registry.contains(tool_name):
+            _log.warning("tool.spec_missing", tool=tool_name)
+            return False
+        return self._registry.describe(tool_name).body_in_window
 
     def _denied(
         self, decision: AuthorizationDecision, invocation_id: str

@@ -111,14 +111,14 @@ def build_llm_runtime(
 def _budget_reader(
     resolver: ConfigBackedSelectionResolver,
 ) -> Callable[[], ContextBudget | None]:
-    """把当前主模型的窗口折成一份预算 (ADR-0032 决策 1).
+    """把当前主模型的窗口折成一份预算 (ADR-0041 决策 5).
 
     走 resolver 而不是直接读 llm.json: 当前模型是谁, 有没有按用途覆盖, 目录里的窗口
     是多少 —— 这三件事的口径必须与真正发请求时用的那一份完全一致. 各读各的, 压缩就会
     按 A 模型的窗口去压一份要发给 B 模型的请求.
 
-    解析不出来时返回 None, **不猜一个窗口**: 猜小了平白压掉内容, 猜大了等于没有这道
-    防线. 返回 None 只是回到接入压缩之前的行为, 而那不会让这一轮失败.
+    解析不出来时返回 None, **不猜一个窗口**: 猜小了平白丢内容, 猜大了等于没有这道
+    防线. 返回 None 只是回到接入淘汰之前的行为, 而那不会让这一轮失败.
     """
 
     def _current() -> ContextBudget | None:
@@ -131,6 +131,9 @@ def _budget_reader(
         return ContextBudget(
             context_window=entry.context_window,
             reserved_output_tokens=entry.max_output_tokens or 0,
+            # 目录里没填就是 None, 水位退化为只按硬限兜底 (ADR-0041 决策 5).
+            # 不在这里替它猜一个 —— 有效上下文长度是按模型不同的事实.
+            effective_context_tokens=entry.effective_context_tokens,
         )
 
     return _current
@@ -139,7 +142,8 @@ def _budget_reader(
 def _build_provider_registry(llm_config_service: LlmConfigService) -> ProviderRegistry:
     registry = ProviderRegistry()
     config = llm_config_service.config()
-    for provider_id, spec in provider_registry.REGISTRY.items():
+    registered = provider_registry.REGISTRY | provider_registry.USER_PROVIDERS
+    for provider_id, spec in registered.items():
         provider_config = config.provider(provider_id)
         api_base = (
             provider_config.api_base if provider_config else spec.default_api_base

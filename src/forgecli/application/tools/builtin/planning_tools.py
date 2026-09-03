@@ -60,7 +60,6 @@ from forgecli.domain.tool.result import (
 )
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
-    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -102,7 +101,6 @@ def _spec(
         declared_capabilities=frozenset({Capability.PLAN_ONLY}),
         target_declaration_ability=TargetDeclarationAbility.STATIC,
         default_timeout_seconds=5.0,
-        action=ToolAction.PROCESS,
     )
 
 
@@ -152,12 +150,19 @@ class _PlanningTool(Tool):
         plan: ToolPlan,
         body: str,
         *,
+        summary: str = "",
         disposition: TurnDisposition = TurnDisposition.CONTINUE,
     ) -> ToolResult:
+        """摘要缺省取工具自己的 title.
+
+        计划与待办的结果本来就短 (一份清单, 一句确认), 摘要与正文差不多长. 逐个编一句
+        比"重写待办"更有信息量的话反而是噪音 —— 需要更具体的那几处显式传 summary.
+        """
         return ToolResult(
             invocation_id=plan.plan_id,
             tool_name=self._SPEC.name,
             status=ToolResultStatus.OK,
+            summary=summary or self._SPEC.title,
             content_parts=(ContentPart(text=body),),
             turn_disposition=disposition,
         )
@@ -209,7 +214,10 @@ class PlanWriteTool(_PlanningTool):
         "提交计划",
         (
             "提交一份计划供用户裁决. 传 plan_id 表示为已有计划提交新的一版. "
-            "只给结构化字段, 格式由 Forge 按固定模板渲染."
+            "只给结构化字段, 格式由 Forge 按固定模板渲染.\n"
+            "待办不需要计划: 直接用 todo_write 从需求建清单是常态. "
+            "只有需要人先对齐大方向时才用它, 而提交会停下来等用户裁决 —— "
+            "拿到裁决之前不要按已批准处理."
         ),
         {
             "name": {
@@ -317,7 +325,13 @@ class TodoWriteTool(_PlanningTool):
         "重写待办",
         (
             "用一份新清单整表替换当前待办. 用于步骤拆错, 顺序不对或需要增删时纠正内容; "
-            "全部状态会重置为 pending. 只改状态请用 todo_set_status."
+            "全部状态会重置为 pending. 只改状态请用 todo_set_status.\n"
+            "以下任一条成立就先建清单再动手: 要改 3 个以上文件或跨多个模块; "
+            "用户一句话里有多个可以分别交付的诉求; 要跨阶段推进 (改代码 -> 跑测试 -> "
+            "更新文档); 已经做了几轮工具调用还没收口, 自己也说不清还剩几步.\n"
+            "单文件的小改, 纯问答, 只读的探查不要建清单: 清单每轮都进上下文, "
+            "给一件两三步就完的事建清单只是噪音.\n"
+            "建了就要用, 清单与实际不符时用它重写整表."
         ),
         {
             "name": {
@@ -356,7 +370,9 @@ class TodoSetStatusTool(_PlanningTool):
         "更新待办状态",
         (
             "改一项或多项待办的状态. index 从 0 起, 与待办清单打印的序号一致. "
-            "同一时刻最多一条 in_progress."
+            "同一时刻最多一条 in_progress.\n"
+            "开始一项之前把它设成 in_progress, 做完立刻设 done, "
+            "不再需要的设 dropped —— 拖着不更新, 清单就不再反映此刻的执行状态."
         ),
         {
             "updates": {
@@ -398,6 +414,7 @@ class TodoSetStatusTool(_PlanningTool):
                 invocation_id=plan.plan_id,
                 tool_name=self._SPEC.name,
                 status=ToolResultStatus.TOOL_ERROR,
+                summary=f"更新待办状态失败: {exc}",
                 error=ToolError(
                     code=PreparationErrorCode.INVALID_INPUT.value, message=str(exc)
                 ),

@@ -18,29 +18,36 @@ __all__ = ["CompactionDraft", "CompactionLevel"]
 
 
 class CompactionLevel(Enum):
-    """压到了第几级. 值即落盘字符串."""
+    """压缩的种类. 值即落盘字符串.
 
-    # 一级: 把 tool result 正文换成 artifact 引用. 确定性, 不花钱, 3 天内可回取.
-    DOWNGRADE = "downgrade"
-    # 二级: 用模型把一批消息换成一段摘要. 不可复现.
+    只剩一种. 原先还有一级 ``DOWNGRADE`` (把工具结果正文换成 artifact 引用), 它随
+    ADR-0041 决策 6 消失 —— 正文现在**本来就不进窗口**, 没有可降的东西了. 留一个只有
+    一个成员的枚举是刻意的: 落盘字符串已经在历史事件里, 换成布尔要动重放.
+    """
+
+    # 用模型把一批被淘汰的消息换成一段交接说明. 不可复现, 所以正文进事件 payload.
     SUMMARY = "summary"
 
 
 @dataclass(frozen=True)
 class CompactionDraft:
-    """一次压缩的记录. 摘要正文进 payload, 不留引用.
+    """一次窗口淘汰的记录. 摘要正文进 payload, 不留引用.
 
     这一条与 ADR-0022 计划正文"只记引用"的取舍相反, 理由是**可复现性**: 计划正文的
     真相源是磁盘上的文件, 随时读得回来; 而摘要是模型一次性产出的, 引用的目标一旦被
     回收就永远重建不出来, 那条会话的 ``/resume`` 从此少一段历史.
+
+    ``summary`` 允许为空: 没接网关, 或者模型回了一段空白时, 淘汰照样发生 —— 窗口撞了
+    高水位, 不淘汰这一轮就发不出去. 那种情况下被丢掉的用户原话仍然逐字留在窗口首条
+    (ADR-0041 决策 5), 只是没有交接说明. 原先这里强制 SUMMARY 级必须带正文, 那是在
+    还有一个 DOWNGRADE 级可退的时候; 现在只剩这一级, 强制它等于让淘汰在最需要的时刻
+    抛异常.
     """
 
     level: CompactionLevel
     tokens_before: int
     tokens_after: int
-    # 一级降级改写了几个 tool result 块.
-    blocks_rewritten: int = 0
-    # 二级摘要顶替了几条消息.
+    # 这次淘汰丢掉了几条消息.
     messages_replaced: int = 0
     summary: str = ""
     provider: str = ""
@@ -49,8 +56,8 @@ class CompactionDraft:
     def __post_init__(self) -> None:
         if self.tokens_before < 0 or self.tokens_after < 0:
             raise ValueError("CompactionDraft 的 token 数不能为负")
-        if self.level is CompactionLevel.SUMMARY and not self.summary.strip():
-            raise ValueError("SUMMARY 级压缩必须带摘要正文")
+        if self.messages_replaced < 0:
+            raise ValueError("CompactionDraft.messages_replaced 不能为负")
 
     @property
     def tokens_saved(self) -> int:
@@ -62,7 +69,6 @@ class CompactionDraft:
             "tokens_before": self.tokens_before,
             "tokens_after": self.tokens_after,
             "tokens_saved": self.tokens_saved,
-            "blocks_rewritten": self.blocks_rewritten,
             "messages_replaced": self.messages_replaced,
             "summary": self.summary,
             "provider": self.provider,

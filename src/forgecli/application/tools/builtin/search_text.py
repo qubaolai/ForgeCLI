@@ -39,10 +39,10 @@ from forgecli.domain.tool.result import (
     ToolMetrics,
     ToolResult,
     ToolResultStatus,
+    clip_for_summary,
 )
 from forgecli.domain.tool.spec import (
     TargetDeclarationAbility,
-    ToolAction,
     ToolSpec,
 )
 from forgecli.shared.cancellation import CancelToken
@@ -63,7 +63,8 @@ _SPEC = ToolSpec(
     title="搜索文本",
     description=(
         "在**文件内容**里搜索一段文字, 按文件分组返回 行号:内容. "
-        "它命中的是文字出现的每一处, 定义, import, 注释与调用点都算.\n"
+        "它命中的是文字出现的每一处 —— import, 注释与调用点都算, 分不出哪一处是定义. "
+        "要精确定位一个符号定义在哪一行, 用 find_definition, 别拿它来凑.\n"
         "query 是要在内容里查的文字. "
         "path 可以是目录, 也可以是单个文件. "
         "默认递归扫描 path 下的整棵树 (in_files 默认 '**/*'), 不需要先列目录. "
@@ -74,7 +75,9 @@ _SPEC = ToolSpec(
         "context_lines 给出每个命中的前后文行数. "
         "默认跳过 .git, node_modules, target 一类生成目录, "
         "需要它们时传 include_ignored=true. "
-        "结果按源码优先排序, 日志与构建输出靠后."
+        "结果按源码优先排序, 日志与构建输出靠后.\n"
+        "命中之后直接读那几个关键文件, 不要继续换写法再搜一遍. "
+        "同一个关键词连续两次没有结果, 这本身就是结论, 如实说出来."
     ),
     input_schema={
         "type": "object",
@@ -132,7 +135,6 @@ _SPEC = ToolSpec(
     ),
     target_declaration_ability=TargetDeclarationAbility.EXPANDABLE,
     default_timeout_seconds=30.0,
-    action=ToolAction.LOCATE_TEXT,
 )
 
 
@@ -441,6 +443,7 @@ class SearchTextTool(Tool):
                     invocation_id=plan.plan_id,
                     tool_name=_SPEC.name,
                     status=ToolResultStatus.TOOL_ERROR,
+                    summary="搜索失败: 有文件在计划生成后发生变化",
                     error=ToolError(
                         code="target_changed", message=message, retryable=True
                     ),
@@ -509,6 +512,16 @@ class SearchTextTool(Tool):
             invocation_id=plan.plan_id,
             tool_name=_SPEC.name,
             status=(ToolResultStatus.CANCELLED if cancelled else ToolResultStatus.OK),
+            summary=(
+                f"搜 {clip_for_summary(str(plan.normalized_input.get('query', '')))}: "
+                f"{total} 处命中, {len(files)} 个文件"
+                + ("" if complete else "; 结果不完整")
+            ),
+            data={
+                "matches": total,
+                "files": len(files),
+                "complete": complete,
+            },
             content_parts=emitted.parts,
             artifacts=emitted.artifacts,
             metrics=ToolMetrics(bytes_out=emitted.bytes_out),

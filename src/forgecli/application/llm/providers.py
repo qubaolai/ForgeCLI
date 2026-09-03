@@ -64,7 +64,7 @@ def normalize_provider_id(raw: str) -> str:
 # 与 REGISTRY 分开而不是混进去: REGISTRY 是**代码事实** (内置几家, 各自的默认端点与
 # 环境变量名), 它随版本走; 这一份是**用户事实**, 随配置文件走. 混在一起之后, "为什么
 # 我的配置在另一台机器上不见了"就没有答案了.
-_USER_PROVIDERS: dict[str, ProviderSpec] = {}
+USER_PROVIDERS: dict[str, ProviderSpec] = {}
 
 
 def register_user_provider(spec: ProviderSpec) -> None:
@@ -76,24 +76,24 @@ def register_user_provider(spec: ProviderSpec) -> None:
     provider_id = normalize_provider_id(spec.id)
     if provider_id in REGISTRY:
         raise UnknownProvider(f"{spec.id!r} 是内置供应商, 改端点请编辑它的 api_base")
-    _USER_PROVIDERS[provider_id] = spec
+    USER_PROVIDERS[provider_id] = spec
 
 
 def forget_user_providers() -> None:
     """清空用户自建登记. 配置重载与测试用."""
-    _USER_PROVIDERS.clear()
+    USER_PROVIDERS.clear()
 
 
 def is_known_provider(provider_id: str) -> bool:
     normalized = normalize_provider_id(provider_id)
-    return normalized in REGISTRY or normalized in _USER_PROVIDERS
+    return normalized in REGISTRY or normalized in USER_PROVIDERS
 
 
 def require_known_provider(provider_id: str) -> ProviderSpec:
     normalized = normalize_provider_id(provider_id)
-    spec = REGISTRY.get(normalized) or _USER_PROVIDERS.get(normalized)
+    spec = REGISTRY.get(normalized) or USER_PROVIDERS.get(normalized)
     if spec is None:
-        allowed = " / ".join(sorted({*REGISTRY, *_USER_PROVIDERS}))
+        allowed = " / ".join(sorted({*REGISTRY, *USER_PROVIDERS}))
         raise UnknownProvider(
             f"未知供应商 {provider_id!r}；已知的有 [{allowed}]。"
             f"要加一家讲 OpenAI 兼容协议的, 在设置页的供应商标签里添加。"

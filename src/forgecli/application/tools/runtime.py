@@ -130,6 +130,8 @@ class ToolRuntime:
                 invocation_id=invocation_id,
                 tool_name=plan.tool_name,
                 status=ToolResultStatus.TOOL_ERROR,
+                summary=f"{plan.tool_name} 抛异常: {type(exc).__name__}",
+                data={"exception": type(exc).__name__},
                 metrics=ToolMetrics(duration_seconds=self._timer() - started),
                 error=ToolError(
                     code="tool_exception", message=str(exc) or type(exc).__name__
@@ -191,6 +193,7 @@ def _cancelled_result(invocation_id: str, tool_name: str) -> ToolResult:
         invocation_id=invocation_id,
         tool_name=tool_name,
         status=ToolResultStatus.CANCELLED,
+        summary=f"{tool_name} 在执行前已被取消",
         error=ToolError(code="cancelled", message="调用在执行前已被取消"),
     )
 

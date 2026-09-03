@@ -4,14 +4,42 @@ Forge 撰写的, 会进入模型上下文的**全部**文字都在这个目录�
 渲染入口只有一个: `application/prompt/template_renderer.py`.
 
 ```text
-blocks/<block_id>.md.j2   系统提示词的块正文. 有骨架: 哪几节, 什么条件下出现
-headings.md.j2            九个块的标题, 一张表
+blocks/<block_id>.md.j2   系统提示词的块正文. 会话级稳定, 由 SystemPromptBuilder 渲染
+headings.md.j2            六个块的标题, 一张表
+runtime/<name>.md.j2      当前运行事实. 请求的第 [4] 层, 由 application/context 渲染
+state/<name>.md.j2        当前状态帧. 请求的第 [6] 层, 同上
 notices/<group>.md.j2     回合中的引导, 收摊通知, 工具回执, 压缩占位. 一条一个 macro
 ```
 
 `blocks/` 的文件名与 `headings.md.j2` 的键都是 `PromptBlockId` 的取值, 有用例钉住.
 `notices/` 按组存: `render_notice("loop.halt")` 里 `loop` 是文件, `halt` 是那份文件里的
 一个 macro.
+
+## 四个目录对应请求的四个位置
+
+ADR-0041 把一次请求按**变更源**分成六层, 这个目录的四支各占其中一层:
+
+| 目录 | 层 | 生命周期 | 在请求里的位置 |
+|---|---|---|---|
+| `blocks/` | [2][3] | 包版本级 / 会话级 | system prompt |
+| `runtime/` | [4] | 模式级 | 接在 system prompt 之后 |
+| `state/` | [6] | 每轮重建 | 整条请求的最后一个内容块 |
+| `notices/` | 进 [5] | 每次发生 | 窗口里的一条消息 |
+
+分成 `runtime/` 与 `state/` 两支而不是合成一支, 是因为它们在缓存上是相反的: 前者进前缀
+(它的变化是工具目录变化的子集, 额外成本为零), 后者只能待在末尾 (待办每轮都可能变, 进前缀
+就等于每轮作废整个窗口). 合成一个目录, 迟早有人把一份每轮都变的正文放进前缀那一支.
+
+## 规则的来源要写在 `{# why: #}` 里
+
+`blocks/` 下每一条规则行前必须有一行 `{# why: … #}`, 记的是**删掉这一句之后, 哪个具体的
+错误动作会变得可能** (ADR-0042 决策 3). 答不上来的规则就不该加.
+
+写成注释而不是另建一张表: 注释不进指纹, 补一条来源不需要升版本, 也就不会因为摩擦而没人
+写. 由 `tests/prompt/test_rule_provenance.py` 查, 漏一条构建就失败.
+
+静态提示词还有一个 token 预算 `PROMPT_STATIC_BUDGET`, **只能下调**: 想加一条规则就得先
+删一条.
 
 **为什么按组而不是一条一个文件.** 五十几句话拆成五十几个文件, 找是好找了, 但"这几句彼此
 矛盾没有"就再也看不出来了 —— 而那正是 ADR-0031 当初收拢正文要解决的问题. 一组并排放着,
@@ -37,8 +65,8 @@ USER / TOOL 消息. 模型读它们的方式与读系统提示词完全一样, �
 **`stop`** —— 收摊时的文字. 双读者: 先显示给用户, 同时作为 assistant 文本进入历史, 下一轮
 模型会读到它. 因此措辞既要对人说得清, 也不能给模型留下"再试一次"的余地.
 
-**`memory`** —— `memory_write` / `memory_forget` 回给模型的那几句. 状态块的正文在
-`blocks/memory_state.md.j2`.
+**`memory`** —— `memory_write` / `memory_forget` 回给模型的那几句. 记忆本身的正文在
+`state/frame.md.j2` 里那一节.
 
 **`context`** —— 压缩, 去重与归档占位. 这些文本会**顶替掉** transcript 里原本的工具结果
 正文, 措辞因此比别处更要紧: 模型读到的不再是内容本身, 而是这一行 —— 它得凭这一行判断

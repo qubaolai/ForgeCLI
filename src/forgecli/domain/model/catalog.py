@@ -38,6 +38,14 @@ class ModelCatalogEntry:
     model: str
     context_window: int
     max_output_tokens: int | None = None
+    # 这个模型能**可靠工作**的长度, 与标称窗口是两回事 (ADR-0041 决策 5).
+    #
+    # 注意力衰减是绝对 token 数的函数, 不是填充比例: 标称 200k 的模型在装到 150k 时早已
+    # 开始漏读, 而它不会报错. 这个数推不出来, 只能按模型填, 所以它与 context_window 并列
+    # 住在这里 —— 别处没有地方放.
+    #
+    # None 表示未知, 上下文预算据此退化为只按硬限兜底; 不猜一个数.
+    effective_context_tokens: int | None = None
     supports_structured_output: bool = False
     supports_tool_calling: bool = False
     thinking_capabilities: ModelThinkingCapabilities = field(

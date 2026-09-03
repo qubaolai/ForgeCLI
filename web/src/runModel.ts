@@ -217,6 +217,17 @@ export function isTerminalEvent(event: RunEvent) {
   return terminalKinds.has(event.kind);
 }
 
+/**
+ * 一轮失败时给人的安全错误摘要。
+ *
+ * 后端已经把供应商响应归一化、截断后放进 `turn_failed.detail`；这里不再猜异常类型，也不
+ * 回退到原始响应体。取最后一条是为了兼容事件重放以及未来可能增加的阶段性失败事件。
+ */
+export function terminalFailureDetail(events: RunEvent[]) {
+  const failed = [...events].reverse().find((event) => event.kind === "turn_failed");
+  return stringValue(failed?.payload.detail);
+}
+
 export function shouldSendOnEnter(key: string, shiftKey: boolean, isComposing: boolean, compositionActive: boolean) {
   return key === "Enter" && !shiftKey && !isComposing && !compositionActive;
 }
@@ -390,35 +401,24 @@ const OTHER_TOOLS: ToolCategory = { id: "other", label: "其他工具" };
 const CAPABILITY_CATEGORIES: Array<{ id: string; label: string; capabilities: string[] }> = [
   { id: "shell", label: "执行命令", capabilities: ["execute_shell", "execute_script"] },
   { id: "write", label: "修改文件", capabilities: ["workspace_write", "workspace_delete", "path_move", "external_write"] },
-  { id: "read", label: "读取文件", capabilities: ["workspace_read", "external_read"] },
+  { id: "read", label: "读取文件", capabilities: ["workspace_read", "external_read", "artifact_read"] },
   { id: "planning", label: "任务", capabilities: ["plan_only"] },
+  { id: "memory", label: "记忆", capabilities: ["memory_write"] },
 ];
 
 /**
  * 后端工具目录里的一条, 取自 `GET /api/v1/tools` 的 `all`。
  *
- * `title` 与 `action` 都是 `ToolSpec` 上的字段, 前端不另存一份。这里曾经有一张手抄的
- * 名字表, 它按定义会过期: 后端把 `artifact_read` 的 title 改成"读回已归档的输出"之后,
+ * `title` 与 `capabilities` 都是 `ToolSpec` 上的字段, 前端不另存一份。这里曾经有一张手抄
+ * 的名字表, 它按定义会过期: 后端把 `artifact_read` 的 title 改成"读回已归档的输出"之后,
  * 界面上仍然写着"读取产物", 而没有任何东西会因此报错。
- */
-export type ToolDirectoryEntry = { title: string; action: string };
-export type ToolDirectory = Record<string, ToolDirectoryEntry>;
-
-/**
- * 动作 -> 类别。类别比动作粗一档: 三种定位在看的人眼里都是"读取文件"。
  *
- * 认不出的动作不猜, 归"其他工具" —— 与下面按能力归类同一条判据。
+ * `capabilities` 原先是 `action` —— 后端一个只服务于展示的分类字段。它已随 ADR-0042
+ * 删除, 归类改走能力: 那样这里只剩 CAPABILITY_CATEGORIES 一张表, 而不是两张需要互相
+ * 对齐的表。
  */
-const ACTION_CATEGORIES: Record<string, { id: string; label: string }> = {
-  locate_symbol: { id: "read", label: "读取文件" },
-  locate_text: { id: "read", label: "读取文件" },
-  locate_path: { id: "read", label: "读取文件" },
-  read: { id: "read", label: "读取文件" },
-  write: { id: "write", label: "修改文件" },
-  execute: { id: "shell", label: "执行命令" },
-  process: { id: "planning", label: "任务" },
-  memory: { id: "memory", label: "记忆" },
-};
+export type ToolDirectoryEntry = { title: string; capabilities: string[] };
+export type ToolDirectory = Record<string, ToolDirectoryEntry>;
 
 /**
  * 步骤标题上那一行: 认得的用它自己的 title, 认不得的老老实实显示工具名。
@@ -437,9 +437,12 @@ export function categoryOf(toolName: string, capabilities: string[] = [], direct
   // 顺序即优先级: 一次调用同时声明读和写时, 它是一次写入。
   const byCapability = CAPABILITY_CATEGORIES.find((item) => item.capabilities.some((name) => capabilities.includes(name)));
   if (byCapability) return { id: byCapability.id, label: byCapability.label };
-  // 连 prepare 都没走到的调用没有能力可看, 这时才查目录。不按命名空间猜: 模型编出来的
-  // `fs_write_file` 也以 `fs_` 开头, 猜成"读取文件"就是在替一次没发生过的写入洗白。
-  return ACTION_CATEGORIES[directory[toolName]?.action ?? ""] ?? OTHER_TOOLS;
+  // 连 prepare 都没走到的调用没有能力可看, 这时退回目录里那个工具**声明**的能力上界。
+  // 不按命名空间猜: 模型编出来的 `fs_write_file` 也以 `fs_` 开头, 猜成"读取文件"就是在
+  // 替一次没发生过的写入洗白 —— 目录里没有的名字归"其他工具"。
+  const declared = directory[toolName]?.capabilities ?? [];
+  const byDeclared = CAPABILITY_CATEGORIES.find((item) => item.capabilities.some((name) => declared.includes(name)));
+  return byDeclared ? { id: byDeclared.id, label: byDeclared.label } : OTHER_TOOLS;
 }
 
 /** 这次调用声明的能力, 取自 prepare 之后的那条事件。 */
@@ -580,10 +583,12 @@ export function buildTimeline(
       kind: "tools",
       sequence: Math.min(...group.events.map((event) => event.sequence)),
       category: categoryOf(name, capabilitiesOf(group.events), directory),
-      // 合并粒度用**动作**而不是类别: 四种定位与读取全都属于"读取文件"这一类, 按类别
-      // 并会把 6 次 fs_find 与 10 次 fs_read 压成一行"18 次工具调用" —— 从一个极端跳到
-      // 另一个。动作是后端 ToolAction 的粒度, 正好分得开。
-      mergeKey: directory[name]?.action ?? categoryOf(name, capabilitiesOf(group.events), directory).id,
+      // 合并粒度用**工具名**而不是类别: 按类别并会把 6 次 fs_find 与 10 次 fs_read 压成
+      // 一行"18 次工具调用" —— 从一个极端跳到另一个。这里原先用的是后端的 ToolAction,
+      // 但那个字段已随 ADR-0042 删除, 而工具名比它更细也更准: `fs_read` 与 `git_read`
+      // 曾经同属 "read", 并成一行其实读不出发生了什么。
+      // 认不出名字的调用退回类别, 不让它们各自成行。
+      mergeKey: name || categoryOf(name, capabilitiesOf(group.events), directory).id,
       groups: [group],
       reason: "",
     });

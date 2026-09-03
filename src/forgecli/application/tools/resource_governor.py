@@ -5,6 +5,10 @@
 
 一条注意: 输出截断必须是显式的. 悄悄截掉后半段, 模型会以为命令只输出了这些, 然后基于
 残缺的输出做下一步决定.
+
+上限的**口径**在 ADR-0041 决策 6 之后变了: 原先按"一次调用能占多少内存和磁盘"定 (那是
+ADR-0014 的执行资源治理), 现在按"这条正文值不值得在往后每一轮都重发一遍"定. 数字因此
+收紧了一半, 机制没变.
 """
 
 from __future__ import annotations
@@ -34,12 +38,24 @@ class ResourceGovernor:
         self,
         *,
         max_timeout_seconds: float = 600.0,
-        max_inline_bytes: int = 64 * 1024,
+        # 16 KiB ≈ 4k token. 与 ArtifactPolicy 的缺省同一个口径 (ADR-0041 决策 6):
+        # 它是"单条结果最多能占窗口多少"的硬顶, 不是内存上限.
+        max_inline_bytes: int = 16 * 1024,
         max_artifact_bytes: int = 32 * 1024 * 1024,
     ) -> None:
         self._max_timeout = max_timeout_seconds
         self._max_inline = max_inline_bytes
         self._max_artifact = max_artifact_bytes
+
+    @property
+    def max_inline_bytes(self) -> int:
+        """单条结果最多能占窗口多少字节.
+
+        暴露出来是给窗口水位用的 (ADR-0041 决策 8): 淘汰之后窗口里必然还留着最近那一条,
+        连它自己都超过低水位的话, 淘汰多少次都没用. 那条判据要同时知道这个数和当前模型的
+        窗口, 而只有装配层同时看得见两者.
+        """
+        return self._max_inline
 
     def limits_for(
         self, spec: ToolSpec, *, timeout_override: float | None = None

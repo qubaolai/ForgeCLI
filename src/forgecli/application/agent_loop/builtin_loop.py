@@ -34,7 +34,7 @@ from dataclasses import dataclass
 
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_run.scrubbing import scrub_arguments
-from forgecli.application.context.manager import ContextFitResult, ContextManager
+from forgecli.application.context.window_manager import WindowFitResult, WindowManager
 from forgecli.application.llm.error_hints import actionable_message
 from forgecli.application.llm.gateway.errors import (
     MalformedToolCallError,
@@ -73,10 +73,11 @@ from forgecli.domain.agent.run_events import (
     ToolQueuedPayload,
     TurnFinishedPayload,
 )
-from forgecli.domain.agent.state import LoopInput
+from forgecli.domain.agent.state import AssembledContext, LoopInput
 from forgecli.domain.agent.stop import LoopStopReason, StopClassification
 from forgecli.domain.context.budget import ContextBudget
 from forgecli.domain.context.compaction import CompactionDraft
+from forgecli.domain.context.window import Window
 from forgecli.domain.conversation.message import (
     ChatMessage,
     TextBlock,
@@ -93,7 +94,6 @@ from forgecli.domain.model.response import (
 )
 from forgecli.domain.model.streaming import ModelStreamChunk
 from forgecli.domain.model.usage import UsageRecordDraft
-from forgecli.domain.prompt.blocks import PromptSnapshot
 from forgecli.domain.tool.catalog import ToolCatalog
 from forgecli.domain.tool.tool_call import ToolCall, ToolSchema
 from forgecli.shared.cancellation import CancelToken
@@ -274,7 +274,7 @@ class BuiltinAgentLoop:
         cancel_token_factory: Callable[[], CancelToken | None] = lambda: None,
         event_bus: AgentRunEventBus | None = None,
         timer: Callable[[], float] = time.monotonic,
-        context: ContextManager | None = None,
+        context: WindowManager | None = None,
     ) -> None:
         self._gateway = gateway
         self._meter = usage_meter
@@ -290,10 +290,14 @@ class BuiltinAgentLoop:
         # usage_drafts 同一条分工: 循环可以调模型, 但不写事件 (ADR-0010).
         self._compaction_drafts: list[CompactionDraft] = []
         self._partial_answer: str | None = None
-        # 本轮的运行 transcript: 每次模型调用都基于它, 工具结果按 §10 写回这里.
-        self._messages: tuple[ChatMessage, ...] = ()
+        # 本轮的会话窗口: 每次模型调用都基于它, 工具结果按 §10 写回这里.
+        #
+        # 存 Window 而不是裸元组, 是因为 `evicted_count` 必须跨调用累计 —— 淘汰要靠它
+        # 判断"头一条是不是上一份交接说明". 每次现造一个 Window(messages=...) 的话那个
+        # 计数永远是 0, 那条防线就永远不触发, 而它不会报错.
+        self._window = Window()
         # start() 之前为 None. 循环不自己造提示词 —— 编译是 application 的事.
-        self._prompt: PromptSnapshot | None = None
+        self._assembled: AssembledContext | None = None
         self._session_id = ""
         self._tools: tuple[ToolSchema, ...] = ()
         # 缺省为 None: 没给预算就不压缩, 与接入之前的行为一致. 不猜一个窗口大小.
@@ -311,7 +315,7 @@ class BuiltinAgentLoop:
         self._overflow_compactions = 0
         # 连续几次工具调用没带回新信息, 以及上一次带回的是什么.
         self._barren_streak = 0
-        self._last_observation: str | None = None
+        self._last_observation: tuple[str, str] | None = None
         self._tools_closed = False
         self._model_calls = 0
         self._tool_calls = 0
@@ -327,11 +331,11 @@ class BuiltinAgentLoop:
         self._started = True
         self._turn_id = loop_input.turn_id
         self._session_id = loop_input.session_id
-        self._messages = loop_input.context_package.messages
-        # 本轮所有模型调用复用同一份提示词. 不在工具调用之间隐式换 (ADR-0018 §6.2):
+        self._window = Window(messages=loop_input.context.initial_window)
+        # 本轮所有模型调用复用同一份上下文前缀. 不在工具调用之间隐式换 (ADR-0018 §6.2):
         # 换了之后"模型为什么突然改了行为"就再也对不上任何一条事件.
-        self._prompt = loop_input.context_package.prompt
-        self._context_budget = loop_input.context_package.budget
+        self._assembled = loop_input.context
+        self._context_budget = loop_input.context.budget
         self._tools = _schemas_of(loop_input.tool_catalog)
         self._turn_started_at = self._timer()
         # 本轮的标识就位, 上一轮的清零. `update` 没有还原点, 所以由每一轮自己把
@@ -349,7 +353,7 @@ class BuiltinAgentLoop:
             tools=[schema.name for schema in self._tools],
             messages=len(self._messages),
             prompt_fingerprint=(
-                "" if self._prompt is None else self._prompt.fingerprint
+                "" if self._assembled is None else self._assembled.policy.fingerprint
             ),
             max_model_calls=_DEFAULT_MAX_MODEL_CALLS,
             max_tool_calls=_DEFAULT_MAX_TOOL_CALLS,
@@ -378,6 +382,29 @@ class BuiltinAgentLoop:
     # ---- 驱动方读取 ----
 
     @property
+    def _messages(self) -> tuple[ChatMessage, ...]:
+        """窗口里的消息. 读多写少, 所以只读走这里, 写走 `_append` 与 `_window`."""
+        return self._window.messages
+
+    def _append(self, *messages: ChatMessage) -> None:
+        """窗口只追加 (ADR-0041 决策 4). 全部写入都走这一个口子."""
+        self._window = self._window.append(*messages)
+
+    @property
+    def window(self) -> tuple[ChatMessage, ...]:
+        """本轮结束时的窗口. 驱动方拿它接着往下攒 (ADR-0041 决策 4).
+
+        原先驱动方是自己重建一份跨轮历史 (用户原话 + 一行工具结论 + 助手回复), 工具结果
+        整个不跨回合. 那是在工具结果还带着几 KB 正文的时候的取舍 —— 正文进跨轮历史等于
+        把回合内溢出提前到第二轮.
+
+        ADR-0041 决策 6 之后正文本来就不进窗口了, 一条结果只剩摘要与结构化字段, 于是原样
+        留着比重述一遍便宜也准确. 更要紧的是: 窗口只追加, 而"跨轮重建一份不一样的历史"
+        本身就是一次中段改写 —— 上一轮发出去的前缀, 下一轮对不上了.
+        """
+        return self._messages
+
+    @property
     def usage_drafts(self) -> tuple[UsageRecordDraft, ...]:
         """本轮产生的 usage 草稿 (落盘由 AgentTurnService 执行)."""
         return tuple(self._usage_drafts)
@@ -400,7 +427,7 @@ class BuiltinAgentLoop:
         if over_budget is not None:
             return over_budget
 
-        too_long = self._fit_context()
+        too_long = self._fit_window()
         if too_long is not None:
             return too_long
 
@@ -580,8 +607,7 @@ class BuiltinAgentLoop:
             limit=_MAX_IDENTICAL_CALLS,
             seen=self._call_counts[_signature_of(call)],
         )
-        self._messages = (
-            *self._messages,
+        self._append(
             ChatMessage(
                 role=MessageRole.TOOL,
                 content=(
@@ -617,17 +643,13 @@ class BuiltinAgentLoop:
             is_error=observation.is_error,
             disposition=observation.disposition.value,
             chars=len(observation.content),
-            content=observation.content,
         )
-        # 变更通知追加在这条结果的末尾, 而不是回头改写前面那次读: 改写 transcript 中段
-        # 会让它之后的全部内容丢掉前缀缓存 (见 application/context/dedup 的模块说明).
-        # 这里是尾部, 缓存代价为零, 而且一次工具结果只回填一次, 天生不会重复追加.
+        # 回填正文单独走 debug: info 级别无条件打整段, 一次带正文的读取就是几 KB,
+        # 而日志文件是每一轮都在写的. 协调器那边早就是这个写法.
+        if _log.enabled_for_debug():
+            _log.debug("tool.observed.content", content=observation.content)
         content = _labelled(call, observation.content)
-        notice = self._change_notice(observation)
-        if notice:
-            content = f"{content}\n\n{notice}"
-        self._messages = (
-            *self._messages,
+        self._append(
             ChatMessage(
                 role=MessageRole.TOOL,
                 content=(
@@ -666,8 +688,7 @@ class BuiltinAgentLoop:
         # "assistant 的 tool_calls -> 配对的 tool result"这段连续区, 供应商会拒.
         nudge = self._barren_nudge()
         if nudge is not None:
-            self._messages = (
-                *self._messages,
+            self._append(
                 ChatMessage(role=MessageRole.USER, content=(TextBlock(nudge),)),
             )
         return self._advance()
@@ -675,7 +696,12 @@ class BuiltinAgentLoop:
     def _track_progress(self, observation: LoopObservation) -> None:
         """记一次调用有没有带回新信息.
 
-        判据两条, 满足其一就算没有: 内容为空, 或与上一次的内容完全相同.
+        判据两条, 满足其一就算没有: 内容为空, 或与上一次的**摘要加句柄**完全相同.
+
+        比的是 `(content, handle)` 而不是只比 content: ADR-0041 把正文移出窗口之后
+        content 短了很多, 两次不同的调用更容易撞出同一段文字 —— 而句柄是内容寻址的,
+        正文不一样句柄就不一样. 没有句柄的结果 (计划, 记忆一类) 退回只比 content,
+        它们本来也不归档.
 
         失败的观察不参与计数 —— 它们有专门的闸 (_MAX_BLOCKED_CALLS 与 HALT). 两个计数器
         数同一件事, 事后就说不清到底是哪条规则停的.
@@ -683,21 +709,12 @@ class BuiltinAgentLoop:
         if observation.is_error:
             return
         content = observation.content.strip()
-        if not content or content == self._last_observation:
+        fingerprint = (content, observation.handle)
+        if not content or fingerprint == self._last_observation:
             self._barren_streak += 1
         else:
             self._barren_streak = 0
-        self._last_observation = content
-
-    def _change_notice(self, observation: LoopObservation) -> str:
-        """这次结果让前面哪几次读作废 —— 改过的, 或者同路径读到了不同状态的.
-
-        没接 ContextManager 时返回空串: 通知是锦上添花, 缺了它模型只是少一条线索,
-        而这一层本来就允许在没有上下文管理的情况下跑 (测试与最小装配都走那条路).
-        """
-        if self._context is None:
-            return ""
-        return self._context.change_notice(self._messages, observation.provenance)
+        self._last_observation = fingerprint
 
     def _barren_nudge(self) -> str | None:
         """到了连续次数就给一句提醒, 并把计数清零 —— 否则之后每一步都会再提醒一次."""
@@ -750,8 +767,7 @@ class BuiltinAgentLoop:
         self._tools_closed = True
         self._pending_calls = []
         self._dispatched = None
-        self._messages = (
-            *self._messages,
+        self._append(
             ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)),
         )
         self._publish(
@@ -763,37 +779,52 @@ class BuiltinAgentLoop:
     def _recover_from_overflow(self, exc: ModelGatewayError) -> LoopStepResult:
         """供应商说上下文太长: 强压一次再发, 而不是让这一轮作废.
 
-        走到这里说明估算与供应商的分词对不上 —— ``_fit_context`` 算着放得下, 实际放不下.
+        走到这里说明估算与供应商的分词对不上 —— ``_fit_window`` 算着放得下, 实际放不下.
         近似估算永远会有这种偏差, 所以这条路必须存在.
 
-        只给一次: 二级摘要跑完之后 transcript 只剩一段摘要加最近几条, 再超就不是压缩
-        能解决的问题了. 压不动时按 CONTEXT_COMPACTION_REQUIRED 停 —— 那是可恢复的暂停,
-        而 MODEL_ERROR_BLOCKING 会把已经跑了几十步的一轮直接判死.
+        降级路径是**强制一次淘汰**: `fit(force=True)` 跳过水位判断, 无条件淘汰一次.
+        不另开一个 summarize_now 入口 —— 两条路各自决定切点与保留策略, 迟早有一条漏掉
+        "用户原话逐字保留"这类规则.
+
+        只给一次: 淘汰跑完之后窗口只剩一段交接说明加最近几条, 再超就不是淘汰能解决的
+        问题了. 那时按 CONTEXT_COMPACTION_REQUIRED 停 —— 那是可恢复的暂停, 而
+        MODEL_ERROR_BLOCKING 会把已经跑了几十步的一轮直接判死.
         """
-        if self._context is None or self._overflow_compactions:
-            _log.error("context.overflow_unrecoverable", message=str(exc))
+        if (
+            self._context is None
+            or self._context_budget is None
+            or self._overflow_compactions
+        ):
+            _log.error("window.overflow_unrecoverable", message=str(exc))
             return self._stop(
                 LoopStopReason.CONTEXT_COMPACTION_REQUIRED,
                 render_notice("context.compaction_failed"),
             )
         self._overflow_compactions += 1
-        result = self._context.summarize_now(
-            self._messages,
+        result = self._context.fit(
+            self._window,
+            budget=self._context_budget,
+            # 供应商说放不下, 那就是放不下: 估算说什么都不作数了.
+            force=True,
             session_id=self._session_id,
             turn_id=self._turn_id or "",
+            system_prompt=(
+                "" if self._assembled is None else self._assembled.system_prompt
+            ),
+            tools=self._tools,
         )
-        self._messages = result.messages
+        self._window = result.window
         self._compaction_drafts.extend(result.drafts)
         self._usage_drafts.extend(result.usage_drafts)
         self._publish_compaction(result)
         if not result.drafts:
-            _log.error("context.overflow_uncompactable", message=str(exc))
+            _log.error("window.overflow_uncompactable", message=str(exc))
             return self._stop(
                 LoopStopReason.CONTEXT_COMPACTION_REQUIRED,
                 render_notice("context.compaction_failed"),
             )
         _log.warning(
-            "context.overflow_compacted",
+            "window.overflow_evicted",
             message=str(exc),
             messages=len(self._messages),
             estimated_input=result.estimated_input,
@@ -823,8 +854,7 @@ class BuiltinAgentLoop:
                 render_notice("stop.malformed", count=self._malformed_responses),
             )
         notice = render_notice("loop.malformed", detail=detail)
-        self._messages = (
-            *self._messages,
+        self._append(
             ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)),
         )
         self._publish(
@@ -840,8 +870,7 @@ class BuiltinAgentLoop:
         下一次请求就是残缺的, 供应商会拒。所以是"标记为未执行", 不是"当作没发生过".
         """
         for call in self._pending_calls:
-            self._messages = (
-                *self._messages,
+            self._append(
                 ChatMessage(
                     role=MessageRole.TOOL,
                     content=(
@@ -876,26 +905,28 @@ class BuiltinAgentLoop:
             )
         return None
 
-    def _fit_context(self) -> LoopStop | None:
-        """调模型之前整理一次上下文 (ADR-0032 决策 1).
+    def _fit_window(self) -> LoopStop | None:
+        """调模型之前看一眼窗口撞没撞高水位 (ADR-0041 决策 5).
 
         放在这里而不是等网关抛 ModelContextOverflowError: 那条路上请求已经组好了, 而且
         它今天是终止性的 —— 一轮跑了二十步的工作会因为最后一次调用超窗而整个作废.
 
-        压完仍然放不下时停在 CONTEXT_COMPACTION_REQUIRED, 不把一个必然被拒的请求发出去.
-        它归类为 RESUMABLE_PAUSE: 这一轮干不下去了, 但会话没坏.
+        淘汰完仍然放不下时停在 CONTEXT_COMPACTION_REQUIRED, 不把一个必然被拒的请求
+        发出去. 它归类为 RESUMABLE_PAUSE: 这一轮干不下去了, 但会话没坏.
         """
         if self._context is None:
             return None
         result = self._context.fit(
-            self._messages,
+            self._window,
             budget=self._context_budget,
             session_id=self._session_id,
             turn_id=self._turn_id or "",
-            system_prompt="" if self._prompt is None else self._prompt.text,
+            system_prompt=(
+                "" if self._assembled is None else self._assembled.system_prompt
+            ),
             tools=self._tools,
         )
-        self._messages = result.messages
+        self._window = result.window
         self._compaction_drafts.extend(result.drafts)
         # 压缩那次模型调用的账 (ADR-0037): 与循环自己的调用走同一条路 —— 攒进
         # _usage_drafts 交给 AgentTurnService 落盘, 同时发一条 MODEL_USAGE 让终端
@@ -904,25 +935,25 @@ class BuiltinAgentLoop:
         self._publish_compaction(result)
         if result.drafts:
             _log.info(
-                "context.fit",
+                "window.fit",
                 drafts=len(result.drafts),
                 tokens_saved=sum(draft.tokens_saved for draft in result.drafts),
-                messages=len(result.messages),
+                messages=len(result.window.messages),
                 over_allowance=result.over_allowance,
             )
         if result.over_allowance:
-            _log.error("context.over_allowance", messages=len(result.messages))
+            _log.error("window.over_allowance", messages=len(result.window.messages))
             return self._stop(
                 LoopStopReason.CONTEXT_COMPACTION_REQUIRED,
                 render_notice("context.compaction_failed"),
             )
         return None
 
-    def _publish_compaction(self, result: ContextFitResult) -> None:
+    def _publish_compaction(self, result: WindowFitResult) -> None:
         """把压缩这件事报出去 (ADR-0037).
 
         以前它在界面上完全不可见: 用户看到的是"卡了几秒", 而实际发生的是一次额外的
-        模型调用把一段历史换掉了. 两类事件都发 —— 压缩本身 (省下多少) 与它的用量
+        模型调用把一段历史换掉了. 两类事件都发 —— 淘汰本身 (省下多少) 与它的用量
         (花掉多少) 是方向相反的两个数, 只报一个都会读错.
         """
         for draft in result.drafts:
@@ -933,7 +964,6 @@ class BuiltinAgentLoop:
                     tokens_before=draft.tokens_before,
                     tokens_after=draft.tokens_after,
                     tokens_saved=draft.tokens_saved,
-                    blocks_rewritten=draft.blocks_rewritten,
                     messages_replaced=draft.messages_replaced,
                     provider=draft.provider,
                     model=draft.model,
@@ -955,8 +985,7 @@ class BuiltinAgentLoop:
         tool_call_id 关联到它 (§10), 丢了这条消息, 供应商侧就对不上号.
         """
         content = (TextBlock(outcome.text),) if outcome.text else ()
-        self._messages = (
-            *self._messages,
+        self._append(
             ChatMessage(
                 role=MessageRole.ASSISTANT,
                 content=content,
@@ -976,9 +1005,16 @@ class BuiltinAgentLoop:
                 # 带工具目录的调用属于 act 阶段; 纯对话仍记 chat (ADR-0011 §3.3).
                 RequestOrigin.ACT if self._tools else RequestOrigin.CHAT
             ),
-            messages=self._messages,
+            # [5] 窗口 + [6] 状态帧. 顺序在 AssembledContext 里定, 这里不自己拼.
+            messages=(
+                self._messages
+                if self._assembled is None
+                else self._assembled.to_request_messages(self._messages)
+            ),
             params=ModelParams(),
-            system_prompt=self._prompt.text if self._prompt is not None else None,
+            system_prompt=(
+                self._assembled.system_prompt if self._assembled is not None else None
+            ),
             tools=self._tools,
             # 没有 cache_hint 这类字段: 当前唯一的 adapter 走自动前缀缓存, 标不标
             # 一样. 原先那个字段已按此删除, 理由见 llm/gateway/cache.py 的模块注释.

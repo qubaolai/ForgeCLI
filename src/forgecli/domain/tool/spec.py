@@ -8,8 +8,11 @@
    所有执行统一走 ToolRuntime 的强制授权前置. 真正不需要裁决的纯函数不该注册为工具.
 3. **没有 risk_level.** 静态风险等级表达不了"同一个工具读工作区文件与读凭证文件"的
    差异, 留着它会诱导安全模块按等级而不是按事实裁决.
-4. **`action` 是展示分类, 不是第 3 条的例外.** 它只决定工具表在提示词里怎么分组;
-   裁决与目录过滤一概不读它. 详见 `ToolAction`.
+4. **没有 action.** 原先有一个 `ToolAction` 枚举, 用途只有一个: 让提示词里的工具表按
+   动作分组. ADR-0042 删掉那张表之后它的消费方归零 —— tool schema 已经带了 name,
+   description 与 parameters, 那就是模型选工具的全部依据, 再叠一层 Forge 自造的分类,
+   等于要求模型先学会我们的词汇表才能用我们的工具. 而它的成本不是零: 每加一个工具都要
+   在一张自己不消费的分类表里选一格, 选错还不报错 (ADR-0028 规则 C).
 """
 
 from __future__ import annotations
@@ -28,7 +31,6 @@ from forgecli.domain.tool.tool_call import ToolSchema
 __all__ = [
     "ArtifactPolicy",
     "TargetDeclarationAbility",
-    "ToolAction",
     "ToolSpec",
 ]
 
@@ -41,41 +43,6 @@ __all__ = [
 # 叫 run 的工具与另一个叫 read 的工具放在同一张表里, 模型分不出谁管什么.
 # 段内不允许空段, 所以 `fs__read` 与 `fs_read_` 都不合法.
 _NAME_PATTERN = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
-
-
-class ToolAction(Enum):
-    """这个工具承担哪一个**动作**. 只用于把工具表按动作分组渲染进提示词.
-
-    ## 为什么它不违反"没有 risk_level"那一条
-
-    本文件口径 3 反对的是**按静态标签裁决**. 这个字段与裁决完全无关: 目录过滤只看
-    `declared_capabilities` (`catalog_predicates._plan_mode_visible`), 策略引擎只看
-    `AnalysisFindings` 与 `ToolPlan`. 谁都不读 action. 加一个按 action 放行的分支就是
-    在重造 risk_level, 那时该删的是那条分支, 不是这个枚举.
-
-    ## 为什么它是 spec 上的字段, 而不是提示词层的一张表
-
-    工具表按动作分组之后, "检索顺序"那一节就能只写动作, 不点工具名 —— 两处的对应关系
-    由渲染算出来, 不再靠人手抄 (那份手抄原先散在三个工具的 description 里, 加一个工具
-    要回头改别人的文案, 删一个会留下指向空气的引用).
-
-    放在 spec 上, 新工具漏填在**构造期**就报错; 放在提示词层的名字表里, 漏填只会让它
-    静默掉进"其他", 而提示词类缺陷没有任何一层会说话.
-
-    ## 定位为什么拆成三个成员
-
-    "检索顺序"分的是按符号 / 按内容 / 按文件名三种意图, 一个笼统的 LOCATE 让表回答不了
-    模型正在问的那个问题. 拆到与那一节同一粒度, 组名与条目才对得上.
-    """
-
-    LOCATE_SYMBOL = "locate_symbol"
-    LOCATE_TEXT = "locate_text"
-    LOCATE_PATH = "locate_path"
-    READ = "read"
-    WRITE = "write"
-    EXECUTE = "execute"
-    PROCESS = "process"
-    MEMORY = "memory"
 
 
 class TargetDeclarationAbility(Enum):
@@ -109,7 +76,9 @@ _PERMITTED_RESOLUTIONS: dict[TargetDeclarationAbility, frozenset[TargetResolutio
 class ArtifactPolicy:
     """输出溢写阈值: 超过 max_inline_bytes 的内容落 artifact, 回填只留引用."""
 
-    max_inline_bytes: int = 16 * 1024
+    # 8 KiB ≈ 2k token. 这个数按**上下文经济**定, 不按执行资源 (ADR-0041 决策 6):
+    # 它回答的是"这条正文值不值得在往后每一轮都重发一遍", 而不是"一次调用能占多少内存".
+    max_inline_bytes: int = 8 * 1024
     max_artifact_bytes: int = 8 * 1024 * 1024
 
     def __post_init__(self) -> None:
@@ -132,8 +101,12 @@ class ToolSpec:
     declared_capabilities: frozenset[Capability]
     target_declaration_ability: TargetDeclarationAbility
     default_timeout_seconds: float
-    action: ToolAction
     artifact_policy: ArtifactPolicy = field(default_factory=ArtifactPolicy)
+    # 这个工具的结果正文进不进会话窗口 (ADR-0041 决策 6).
+    #
+    # 默认 False: 窗口增长的主项就是正文, 而绝大多数结果的判据已经在 summary 与 data 里.
+    # 只有"改代码之前必须看到原文"这一类才置 True —— 那不是通例, 是例外.
+    body_in_window: bool = False
     # 派生字段: 不由调用方传入, __post_init__ 算好后写入.
     spec_hash: str = field(default="", compare=False)
 
@@ -172,6 +145,6 @@ class ToolSpec:
             "declared_capabilities": self.declared_capabilities,
             "target_declaration_ability": self.target_declaration_ability,
             "default_timeout_seconds": self.default_timeout_seconds,
-            "action": self.action,
             "artifact_policy": self.artifact_policy,
+            "body_in_window": self.body_in_window,
         }

@@ -1,19 +1,18 @@
 {#
-九个块的标题. 与块正文分开是因为它是 PromptBlock 的字段, 由 render() 加 `# ` 前缀;
-与彼此放在一起是因为它们是同一张表 —— 九份各一行的文件, 谁也看不出这九个标题是不是
+六个块的标题. 与块正文分开是因为它是 PromptBlock 的字段, 由 render() 加 `# ` 前缀;
+与彼此放在一起是因为它们是同一张表 —— 六份各一行的文件, 谁也看不出这几个标题是不是
 还成套.
 
 键即 PromptBlockId 的取值. 缺一个不会静默渲染成空: StrictUndefined 会抛.
+
+"契约"一词已从三处标题里去掉: 这几块装的就是规则, 名字直说.
 #}
 {% set headings = {
     "core_identity": "ForgeCLI 编码 Agent",
-    "tool_contract": "工具与交互契约",
-    "work_contract": "工作方式",
-    "answer_contract": "回答契约",
+    "safety_rules": "安全边界",
+    "tool_protocol": "工具时序",
+    "work_rules": "工作方式",
+    "answer_rules": "回答方式",
     "workspace_instructions": "项目指令",
-    "runtime_facts": "当前运行事实",
-    "plan_state": "当前计划",
-    "todo_state": "当前待办",
-    "memory_state": "跨会话记忆",
 } %}
 {{ headings[block_id] }}

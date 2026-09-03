@@ -23,10 +23,10 @@ from __future__ import annotations
 import json
 import uuid
 
-from forgecli.application.context.transcript import safe_split_points
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.llm.metering import UsageMeter
 from forgecli.application.prompt.template_renderer import render_notice
+from forgecli.domain.context.window import EvictionPlan
 from forgecli.domain.conversation.message import (
     ChatMessage,
     TextBlock,
@@ -39,16 +39,13 @@ from forgecli.domain.model.request import ModelRequest
 from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.tool.tool_call import ToolCall
 
-__all__ = ["KEEP_RECENT_MESSAGES", "Summary", "summarize"]
-
-# 摘要之后至少留几条原始消息.
-#
-# 留的是**最近**的: 模型正在做的那件事全在这几条里, 换成摘要等于让它凭一段转述接着
-# 干活. 6 条大致覆盖"用户提问 + 一次工具往返 + 一次回答"这样一个完整片段.
-KEEP_RECENT_MESSAGES = 6
+__all__ = ["Summary", "summarize"]
 
 # 拍平工具调用参数时每个值留多少字符. 够认出路径与关键选项, 不够把补丁正文带进来.
 _ARGUMENT_PREVIEW_CHARS = 120
+
+# 送进摘要请求的那段历史最多多少字符 (约 30k token 的三分之一). 见 `_flatten`.
+_MAX_FLATTENED_CHARS = 30_000
 
 
 class Summary:
@@ -77,22 +74,28 @@ class Summary:
 
 
 def summarize(
-    messages: tuple[ChatMessage, ...],
+    plan: EvictionPlan,
     gateway: LlmGateway,
     *,
     session_id: str,
     turn_id: str,
     meter: UsageMeter | None = None,
 ) -> tuple[tuple[ChatMessage, ...], Summary]:
-    """把靠前的一段换成摘要. 压不动时原样返回.
+    """把被淘汰的那一段换成一份交接说明, 返回淘汰后的完整窗口.
 
-    ``meter`` 缺省为 None: 没接计量时照常摘要, 只是这次调用不产出计量草稿. 与
-    ``gateway`` 缺省为 None 是同一条取舍 —— 缺一个可选协作件不该让功能塌掉.
+    ## 为什么摘要没有随 ADR-0041 一起删掉
+
+    工具结果的结论已经在 ``summary`` 与 ``data`` 里了, 但被淘汰区间里还有 assistant 的
+    **自然语言** —— 取舍理由, 承诺, 对用户约束的复述. 那些提取不出来, 丢了就是丢了.
+    用户原话不走这条路: 它便宜且精确, 由 ``EvictionPlan`` 逐字保留 (决策 5).
+
+    ## 与 ADR-0032 的那次摘要有什么不同
+
+    触发点从"压不下去了"改成"撞高水位". 高水位对模型窗口还有大把余量, 摘要不再是在
+    上下文已经吃紧时跑 —— 那时候摘不好就没有第二次机会了.
+
+    ``meter`` 缺省为 None: 没接计量时照常摘要, 只是这次调用不产出计量草稿.
     """
-    split = _split_at(messages)
-    if split <= 0:
-        return messages, Summary()
-    head = messages[:split]
     request = ModelRequest(
         request_id=f"req_{uuid.uuid4().hex[:12]}",
         session_id=session_id,
@@ -105,7 +108,8 @@ def summarize(
                 role=MessageRole.USER,
                 content=(
                     TextBlock(
-                        f"{render_notice("context.compaction_instruction")}\n\n{_flatten(head)}"
+                        f"{render_notice("context.compaction_instruction")}\n\n"
+                        f"{_flatten(plan.dropped)}"
                     ),
                 ),
             ),
@@ -117,36 +121,90 @@ def summarize(
         tools=(),
     )
     response = gateway.complete(request)
-    # 草稿在这里就建好: 下面两条"没压动"的返回路径同样要带着它. 请求已经发出去了,
+    # 草稿在这里就建好: 下面那条"没摘出东西"的返回路径同样要带着它. 请求已经发出去了,
     # 这笔钱花没花与摘要好不好用无关.
     usage = None if meter is None else meter.build_draft(request, response)
     text = response.content.strip()
     if not text:
-        return messages, Summary(usage=usage)
-    replacement = ChatMessage(
-        role=MessageRole.USER,
-        content=(TextBlock(f"{render_notice("context.compaction_header")}\n\n{text}"),),
-    )
-    return (replacement, *messages[split:]), Summary(
+        # 摘不出东西也照样淘汰: 窗口撞了高水位, 不淘汰这一轮就发不出去.
+        return (_verbatim_block(plan), *plan.kept), Summary(
+            messages_replaced=len(plan.dropped), usage=usage
+        )
+    return (_summary_block(plan, text), *plan.kept), Summary(
         text=text,
-        messages_replaced=split,
+        messages_replaced=len(plan.dropped),
         provider=response.provider,
         model=response.model,
         usage=usage,
     )
 
 
-def _split_at(messages: tuple[ChatMessage, ...]) -> int:
-    """在不破坏配对的前提下, 能切掉的最靠后的位置."""
-    ceiling = len(messages) - KEEP_RECENT_MESSAGES
-    if ceiling <= 0:
-        return 0
-    usable = [point for point in safe_split_points(messages) if 0 < point <= ceiling]
-    return max(usable) if usable else 0
+def _summary_block(plan: EvictionPlan, text: str) -> ChatMessage:
+    """淘汰后窗口的第一条: 交接说明 + 逐字保留的用户原话.
+
+    合成一条而不是两条, 是因为它们描述的是同一段被丢掉的历史; 拆成两条之后, 下一次淘汰
+    的切点计算还要额外考虑"别把这一对切开".
+    """
+    return ChatMessage(
+        role=MessageRole.USER,
+        content=(
+            TextBlock(
+                f"{render_notice("context.compaction_header")}\n\n{text}"
+                f"{_verbatim_section(plan)}"
+            ),
+        ),
+    )
+
+
+def _verbatim_block(plan: EvictionPlan) -> ChatMessage:
+    """摘要为空时的兜底: 至少把用户原话留住.
+
+    模型的话丢了是损失, 用户的话丢了是错误 —— 那是这次任务的目标与约束本身.
+    """
+    return ChatMessage(
+        role=MessageRole.USER,
+        content=(
+            TextBlock(
+                f"{render_notice("context.compaction_header")}\n\n"
+                f"{_verbatim_section(plan).strip() or _nothing_kept()}"
+            ),
+        ),
+    )
+
+
+def _nothing_kept() -> str:
+    return render_notice("context.compaction_nothing_kept")
+
+
+def _verbatim_section(plan: EvictionPlan) -> str:
+    """被淘汰区间里的用户原话, 逐字.
+
+    不走摘要: 用户约束是摘要最容易丢, 丢了也最贵的东西, 而它便宜 —— 一次会话十几条,
+    占窗口不到 2%. 花那点 token 换"目标不会被转述走样", 是这一整套里最划算的一笔.
+    """
+    if not plan.preserved_user_messages:
+        return ""
+    lines = [
+        _block_text(block)
+        for message in plan.preserved_user_messages
+        for block in message.content
+    ]
+    body = "\n".join(line for line in lines if line.strip())
+    if not body:
+        return ""
+    return f"\n\n{render_notice("context.compaction_user_verbatim")}\n{body}"
 
 
 def _flatten(messages: tuple[ChatMessage, ...]) -> str:
-    """拍平成带角色前缀的文本.
+    """拍平成带角色前缀的文本, 并封顶.
+
+    **封顶是必须的**: 淘汰刻意挑最靠后的合法切点 (丢得越多, 下一次淘汰离得越远), 所以
+    交到这里的这一段是系统性最大的一段. 不封顶的话, 一个 30k 的窗口撞水位时, 摘要调用
+    自己就要发 30k 输入 —— 而它极可能因此超窗抛异常, 从 fit() 一路穿出去, 把本该被救回
+    的这一轮判死.
+
+    截掉的是**前面**那一半: 交接说明是给"接着往下做"用的, 越靠后越相关; 而更早那部分里
+    真正不能丢的目标与约束, 已经由 EvictionPlan 逐字保留了, 不靠这条路.
 
     角色名取枚举值而不是另写一套中文标签: 那是事实不是措辞, 抄一份到 text.py 就是
     第二份会漂的真相 (ADR-0031 的收录判据).
@@ -159,7 +217,11 @@ def _flatten(messages: tuple[ChatMessage, ...]) -> str:
             body = f"{body}\n{calls}" if body else calls
         if body.strip():
             lines.append(f"{message.role.value}: {body}")
-    return "\n\n".join(lines)
+    flat = "\n\n".join(lines)
+    if len(flat) <= _MAX_FLATTENED_CHARS:
+        return flat
+    notice = render_notice("context.compaction_input_clipped")
+    return f"{notice}\n\n{flat[-_MAX_FLATTENED_CHARS:]}"
 
 
 def _call_line(call: ToolCall) -> str:

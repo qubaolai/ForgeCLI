@@ -42,7 +42,7 @@ from forgecli.application.tools.artifact_store import (
     ArtifactStore,
 )
 from forgecli.application.tools.builtin.artifact_read import ArtifactReadTool
-from forgecli.application.tools.builtin.code_definitions import CodeDefinitionsTool
+from forgecli.application.tools.builtin.find_definition import FindDefinitionTool
 from forgecli.application.tools.builtin.fs_apply_patch import ApplyPatchTool
 from forgecli.application.tools.builtin.fs_find import FindTool
 from forgecli.application.tools.builtin.fs_read import ReadFileTool
@@ -124,9 +124,15 @@ class ToolStack:
     # 记忆 (ADR-0033 决策 10). 工具经它写, AgentTurnService 经它读 —— 必须是同一个
     # 实例, 否则模型这一轮记下的东西下一轮读不到.
     memory: MemoryService
-    # 归档存储 (ADR-0032). 上下文管理要它来判断降级之后取不取得回来, 所以它必须与
-    # 工具写进去的是**同一个实例** —— 各建一个的话, 写在 A 里的内容 B 说不存在.
+    # 归档存储. 工具写进去, artifact_read 取回来, 所以它必须是**同一个实例** ——
+    # 各建一个的话, 写在 A 里的内容 B 说不存在.
+    #
+    # 上下文管理不再需要它: 归档只在工具产出那一刻发生 (ADR-0041 决策 6), 窗口维护那一层
+    # 不再回头去问"这份内容还取不取得回来".
     artifacts: ArtifactStore
+    # 单条工具结果的内联上限. 窗口水位的构建期判据要用它 (ADR-0041 决策 8), 而只有装配层
+    # 同时看得见它和当前模型的窗口.
+    max_inline_bytes: int
 
 
 def build_tool_stack(
@@ -246,7 +252,7 @@ def build_tool_stack(
             FindTool(governor, store),
             ReadFileTool(governor, store),
             SearchTextTool(governor, store),
-            CodeDefinitionsTool(governor, store),
+            FindDefinitionTool(governor, store),
             GitReadTool(Pygit2GitQueries(), governor, store),
             ApplyPatchTool(
                 _create_file,
@@ -318,6 +324,7 @@ def build_tool_stack(
         planning=planning,
         memory=memory,
         artifacts=store,
+        max_inline_bytes=governor.max_inline_bytes,
     )
 
 

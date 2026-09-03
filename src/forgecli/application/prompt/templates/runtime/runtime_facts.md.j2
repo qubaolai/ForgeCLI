@@ -1,4 +1,10 @@
 {#
+当前运行事实. ADR-0041 之后它不再是系统提示词的一个块, 而是请求的第 [4] 层, 由
+application/context 渲染 —— 提示词只剩静态策略, 而这里的每一项都随模式与工作区变.
+
+原先末尾还有一行"tools: N 个". 删了: tool schema 就在同一个请求里, 模型自己数得出来,
+而多说一遍就是关于工具的第二份说法 (ADR-0042 决策 5), 还让这一层平白依赖工具目录.
+
 自动放行的能力名: 全库唯一一处按能力枚举写死的表, 它值得 —— 能力词汇是闭集, 改动要走
 ADR 并升 CAPABILITY_VOCABULARY_VERSION (ADR-0004 5), 因此这张表不会悄悄漂. 而按模式各写
 一段散文会漂 —— 那是四份互相独立的副本.
@@ -54,4 +60,3 @@ git_repository: {{ git_repository }}
 {% for root in extra_roots %}
 额外工作目录: {{ root }}
 {% endfor %}
-tools: {{ tool_count }} 个

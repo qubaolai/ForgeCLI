@@ -12,7 +12,8 @@ from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_turn import AgentTurnService
 from forgecli.application.agent_turn.cancellation import TurnCancelSource
 from forgecli.application.config.config_service import ConfigService
-from forgecli.application.context.manager import ContextManager
+from forgecli.application.context.runtime_facts import RuntimeFacts
+from forgecli.application.context.window_manager import WindowManager
 from forgecli.application.llm.availability import EnvProviderAvailability
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
@@ -22,7 +23,6 @@ from forgecli.application.planning.plan_review import (
     PlanReviewService,
 )
 from forgecli.application.project.project_service import ProjectService
-from forgecli.application.prompt.runtime_facts import RuntimeFacts
 from forgecli.application.prompt.system_prompt_builder import SystemPromptBuilder
 from forgecli.application.security.workspace_grants import GrantAccess
 from forgecli.application.session.resume_service import ResumeService
@@ -156,10 +156,12 @@ class ProjectRuntime:
         self._agent_turn = self._build_agent_turn()
 
     def _build_agent_turn(self) -> AgentTurnService:
-        # 必须拿工具栈里那个 ArtifactStore 实例 (ADR-0032), 否则工具写进去的内容,
-        # 降级时会被判成"已过期回收". 计量器与循环也共用同一个 (ADR-0037).
-        context_manager = ContextManager(
-            artifacts=self.tools.artifacts,
+        # 计量器与循环共用同一个 (ADR-0037): 各建一个迟早会出现两套单价.
+        #
+        # 不再需要 ArtifactStore: 归档只在工具产出那一刻发生 (ADR-0041 决策 6), 窗口维护
+        # 这一层不再回头去问"这份内容还取不取得回来".
+        window_manager = WindowManager(
+            max_inline_bytes=self.tools.max_inline_bytes,
             gateway=self.llm.gateway,
             meter=self.llm.usage_meter,
         )
@@ -170,7 +172,7 @@ class ProjectRuntime:
                 self.llm.usage_meter,
                 cancel_token_factory=self.cancel_source.current,
                 event_bus=self.event_bus,
-                context=context_manager,
+                context=window_manager,
             )
 
         def runtime_facts() -> RuntimeFacts:
@@ -189,7 +191,7 @@ class ProjectRuntime:
             runtime_facts=runtime_facts,
             instructions=FsProjectInstructionReader(),
             context_budget=self.llm.context_budget,
-            context=context_manager,
+            context=window_manager,
             memory=self.tools.memory,
             planning=self.tools.planning,
             run_bus=self.event_bus,
