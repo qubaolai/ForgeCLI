@@ -120,14 +120,15 @@ _STYLE = Style.from_dict(
         "runtime-status": "#9198a7",  # 输入框下方右侧的模型 / thinking
         "runtime-status-error": "#f4bd61",
         # 斜杠命令菜单（背景透明：不设 bg，终端底色透出来）。
-        # 选中项同时使用 ❯、青绿色和深色背景，不依赖单一颜色线索。
+        # 选中项用 ❯ 加青绿色，不铺底色：深色块在浅色主题的终端上是一道突兀的暗条，
+        # 非颜色线索由行首的 ❯ 承担。
         "menu-marker": "bold #62d6ad",
         "menu-category": "#767e8f",
         "menu-name": "#b8bec9",  # 普通行：命令名
         "menu-meta": "#767e8f",  # 普通行：说明（更暗）
-        "menu-category-current": "#62d6ad bg:#191d25",
-        "menu-name-current": "bold #62d6ad bg:#191d25",
-        "menu-meta-current": "#e7e9ee bg:#191d25",
+        "menu-category-current": "#62d6ad",
+        "menu-name-current": "bold #62d6ad",
+        "menu-meta-current": "#b8bec9",
     }
 )
 

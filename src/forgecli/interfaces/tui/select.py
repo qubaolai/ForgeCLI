@@ -36,7 +36,8 @@ __all__ = ["Group", "Option", "SelectUnavailable", "select_grouped", "select_one
 #
 # 必须留: `rich.Live` 不滚动, 画得比屏幕高就是把顶上的选项顶出可视区, 而那几行**不会**
 # 进滚动历史 —— Live 每帧都在原地重画, 用户往上翻只能翻到菜单出现之前的东西.
-_RESERVED_ROWS = 4
+# 4 行是提示行加上不贴屏幕底边的余量, 另外 2 行是菜单自己的上下留白 (见 frame).
+_RESERVED_ROWS = 6
 # 开始滚动之后还要两行放"上面/下面还有几项", 它们也占位置.
 _SCROLL_MARKER_ROWS = 2
 # 再挤也至少给三行选项: 少于这个数, 菜单本身就没法用了.
@@ -47,13 +48,16 @@ _HINT_KEYS = "↑↓ 选择"
 _HINT_TABS = "←→ 分类"
 _HINT_TAIL = "Enter 确认 · 数字键直选 · Esc 返回"
 
-# 分类头也占一行.
-_TAB_ROWS = 1
+# 分类头一行, 它下面的空行一行.
+_TAB_ROWS = 2
 
 _CURSOR = "#62d6ad"
 _CURRENT_TAB = "bold #62d6ad"
-_CURRENT = "bold #62d6ad on #191d25"
-_CURRENT_DETAIL = "#e7e9ee on #191d25"
+# 选中行只换文字颜色, 不铺底色. 深色块在浅色主题的终端上是一道突兀的暗条, 而在暗色
+# 主题上它与背景差得太少, 换来的对比还不如加粗本身多. 非颜色线索由行首的 ❯ 承担,
+# 所以去掉底色并没有把判据压回单一颜色上.
+_CURRENT = "bold #62d6ad"
+_CURRENT_DETAIL = "#b8bec9"
 _NORMAL = "#b8bec9"
 _DETAIL = "#767e8f"
 _HINT = "bright_black"
@@ -137,9 +141,16 @@ def select_grouped(
     index = max(0, min(default_index, len(groups[current].options) - 1))
 
     def frame() -> Text:
+        """菜单四周留白.
+
+        上下各空一行, 分类头与选项之间再空一行: 紧贴着排时, 分类, 选项与提示行读起来
+        是同一块东西, 而它们是三种不同的东西.
+        """
         options = groups[current].options
         visible = _visible_rows(console, len(options), tabs=tabs)
-        body = _render_tabs(groups, current) if tabs else Text()
+        body = Text("\n")
+        if tabs:
+            body.append_text(_render_tabs(groups, current))
         body.append_text(_render(options, index, visible, tabs=tabs))
         return body
 
@@ -188,7 +199,7 @@ def _render_tabs(groups: Sequence[Group], current: int) -> Text:
         if index:
             body.append("  ")
         body.append(group.label, style=_CURRENT_TAB if index == current else _DETAIL)
-    body.append("\n")
+    body.append("\n\n")
     return body
 
 
@@ -224,5 +235,7 @@ def _render(
     if rest > 0:
         body.append(f"  ↓ 下面还有 {rest} 项\n", style=_HINT)
     parts = [_HINT_KEYS] + ([_HINT_TABS] if tabs else []) + [_HINT_TAIL]
+    # 与分类头, 选项同一条左边线: 三块贴着同一个 2 列的边距才读得出是一个整体.
+    body.append("\n  ")
     body.append(" · ".join(parts), style=_HINT)
     return body

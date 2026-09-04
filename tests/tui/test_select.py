@@ -10,10 +10,16 @@ from __future__ import annotations
 import io
 
 from rich.console import Console
+from rich.text import Text
 
 from forgecli.interfaces.tui.select import (
+    _RESERVED_ROWS,
+    _SCROLL_MARKER_ROWS,
+    _TAB_ROWS,
+    Group,
     Option,
     _render,
+    _render_tabs,
     _visible_rows,
     _window,
 )
@@ -32,7 +38,7 @@ def test_short_list_shows_everything() -> None:
 def test_long_list_leaves_room_for_the_markers() -> None:
     """滚动之后还要两行放"上面/下面还有几项", 它们也占位置."""
     visible = _visible_rows(_console(24), 40)
-    assert visible == 24 - 4 - 2
+    assert visible == 24 - _RESERVED_ROWS - _SCROLL_MARKER_ROWS
 
 
 def test_a_tiny_terminal_still_gets_usable_rows() -> None:
@@ -84,13 +90,27 @@ def test_tabs_only_show_up_with_more_than_one_group() -> None:
 
 
 def test_tabs_leave_room_in_the_viewport() -> None:
-    """分类头也占一行; 不减掉它, 有分类的菜单就比没分类的高一行, 正好溢出."""
-    from forgecli.interfaces.tui.select import _visible_rows
-
+    """分类头连同它下面的空行都要减掉, 否则有分类的菜单正好溢出一屏."""
     assert (
         _visible_rows(_console(24), 40, tabs=True)
-        == _visible_rows(_console(24), 40, tabs=False) - 1
+        == _visible_rows(_console(24), 40, tabs=False) - _TAB_ROWS
     )
+
+
+def test_a_full_frame_fits_the_terminal() -> None:
+    """真正要守的不变量: 画出来的整帧不高于终端.
+
+    上下留白, 分类头, 滚动标记与提示行都会长高一帧, 而它们各自加行时不会有任何东西
+    报错 —— 只会把顶上的选项顶出可视区, 而那几行进不了滚动历史.
+    """
+    height = 24
+    console = _console(height)
+    groups = (Group("界面", _MANY[:1]), Group("日志", _MANY))
+    visible = _visible_rows(console, len(_MANY), tabs=True)
+    frame = Text("\n")
+    frame.append_text(_render_tabs(groups, 1))
+    frame.append_text(_render(_MANY, 10, visible, tabs=True))
+    assert len(frame.plain.splitlines()) <= height
 
 
 def test_hint_line_only_advertises_keys_that_work() -> None:
