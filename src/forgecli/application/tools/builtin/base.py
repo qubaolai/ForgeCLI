@@ -38,9 +38,12 @@ __all__ = [
 ]
 
 
-# glob 展开的候选上限. 三个工具 (fs_find, search_text, find_definition) 走同一条
-# 展开路径, 上限必须是同一个 —— 各自留一份副本时, 为性能调低其中一个的人不会知道
-# 另外两个还停在旧值.
+# glob 展开的候选上限. 原先是三个工具 (fs_find, search_text, find_definition) 共用的
+# 同一条展开路径, 剩下的只有 search_text —— 另外两个的活由 shell_run 的 find 与 grep
+# 接了过去, 而它们的上限由围栏与超时管, 不由这个常量管.
+#
+# 仍然留在 base.py 而不是收进 search_text.py: 下一个走 expand_glob 的工具应当共用这个
+# 上限, 而不是各自再定一个.
 MAX_GLOB_CANDIDATES = 10_000
 
 

@@ -695,6 +695,28 @@ class ToolRequestCoordinator:
     def _denied(
         self, decision: AuthorizationDecision, invocation_id: str
     ) -> ToolObservation:
+        # "跑不了"与"不许跑"分流. 两者都不执行, 但模型该做的下一步完全相反: 前者要换一条
+        # 命令, 后者换写法就是绕过尝试. 混成一种时模型拿到的是 can_retry: false 加一个
+        # 它无从下手的理由码 —— 于是它要么原地重试, 要么把一次环境问题当成被禁止.
+        unrunnable = decision.unrunnable
+        if unrunnable is not None:
+            _log.warning(
+                "pipeline.unrunnable",
+                reason=unrunnable.value,
+                message=decision.message,
+                risk_facts=[fact.code for fact in decision.risk_facts],
+            )
+            return rejected(
+                ObservationKind.COMMAND_UNRUNNABLE,
+                decision.message or "这条命令在当前环境下接不起来",
+                invocation_id=invocation_id,
+                tool_name=decision.effective_plan.tool_name,
+                reason_code=unrunnable.value,
+                plan=decision.effective_plan,
+                risk_facts=decision.risk_facts,
+                # 换一条命令是有意义的: 这里拒的是"我们没接起来", 不是"你不该做这件事".
+                can_retry=True,
+            )
         _log.warning(
             "pipeline.denied",
             reason=decision.reason.value,

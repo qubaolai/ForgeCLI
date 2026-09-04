@@ -48,6 +48,12 @@ class AnalysisFindings:
     #
     # 结果是 DENY 而不是 ASK, 理由是**批准买不到任何东西**: 解析用的受控 PATH 与执行用的
     # 是同一份, 人点了同意它照样失败. 一个批准了也没用的请求不该占用一次人类打断.
+    #
+    # 但它**不走 POLICY_DENIED**: 协调器按这个字段分流成 ObservationKind
+    # .COMMAND_UNRUNNABLE, can_retry=True. 上面那句"只该让模型换个命令"此前只写在注释
+    # 里, 而管线把它和策略拒绝合成了同一种回填, 于是模型收到的是"不许, 别再试" ——
+    # 一次实测里, 一行 `# 注释` 被当成命令, 整条命令因此被判死
+    # (见 tokens._skip_comment).
     unrunnable: DecisionReason | None = None
     requires_ask: DecisionReason | None = None
     mandatory_ask: bool = False

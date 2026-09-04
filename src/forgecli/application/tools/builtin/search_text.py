@@ -64,7 +64,9 @@ _SPEC = ToolSpec(
     description=(
         "在**文件内容**里搜索一段文字, 按文件分组返回 行号:内容. "
         "它命中的是文字出现的每一处 —— import, 注释与调用点都算, 分不出哪一处是定义. "
-        "要精确定位一个符号定义在哪一行, 用 find_definition, 别拿它来凑.\n"
+        "要精确定位一个符号定义在哪一行, 用 shell_run 跑一条带语言模式的 grep "
+        "(例如 grep -rn 'class Foo' 或 grep -rnE '(func|def) foo'), "
+        "别指望在这里的结果里挑出定义那一条.\n"
         "query 是要在内容里查的文字. "
         "path 可以是目录, 也可以是单个文件. "
         "默认递归扫描 path 下的整棵树 (in_files 默认 '**/*'), 不需要先列目录. "

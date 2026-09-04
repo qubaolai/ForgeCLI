@@ -48,6 +48,11 @@ class JsonConfigStore(ConfigStore):
             _set(document, dotted.split("."), value)
         write_document(self._path, document)
 
+    def remove(self, key: str) -> None:
+        document = read_document(self._path)
+        if _remove(document, key.split(".")):
+            write_document(self._path, document)
+
 
 def _set(document: dict[str, Any], path: list[str], value: str) -> None:
     """按 dotted key 逐段下钻；中途遇到非对象就地换成对象，让写入总能落下去。"""
@@ -59,3 +64,21 @@ def _set(document: dict[str, Any], path: list[str], value: str) -> None:
             table[segment] = nested
         table = nested
     table[path[-1]] = value
+
+
+def _remove(document: dict[str, Any], path: list[str]) -> bool:
+    """删一个叶子并清掉由此变空的父对象；未知键不改写文件。"""
+    if not path:
+        return False
+    head, *tail = path
+    if not tail:
+        if head not in document:
+            return False
+        del document[head]
+        return True
+    nested = document.get(head)
+    if not isinstance(nested, dict) or not _remove(nested, tail):
+        return False
+    if not nested:
+        document.pop(head, None)
+    return True

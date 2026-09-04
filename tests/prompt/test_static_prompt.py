@@ -118,11 +118,9 @@ def test_the_prompt_never_names_a_tool(spec: ToolSpec) -> None:
 # 键是工具名, 值是那句话里必须留下的关键片段. 不比对整句: 措辞可以改, 但**这件事有没有
 # 被说出来**不能丢 —— 删分流段时最容易发生的就是顺手把内容也丢了, 而那不会报错.
 _SUNK_DISAMBIGUATION = {
-    "search_text": ("find_definition", "分不出哪一处是定义"),
-    "fs_find": ("路径", "search_text"),
+    "search_text": ("grep", "分不出哪一处是定义"),
     "fs_read": ("已经知道是哪个文件", "search_text", "offset"),
-    "find_definition": ("引用", "search_text", "只写**符号名本身**"),
-    "shell_run": ("专用工具",),
+    "shell_run": ("专用工具", "heredoc", "grep", "sed", "精确替换文件内文字"),
 }
 
 

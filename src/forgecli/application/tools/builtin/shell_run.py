@@ -95,10 +95,15 @@ _SPEC = ToolSpec(
     version="2",
     title="执行 Shell 命令",
     description=(
-        "执行一条 Shell 命令. 复合命令, 管道和重定向都支持, 整条命令统一裁决.\n"
-        "用于运行测试, 构建, 包管理, 以及没有专用工具覆盖的命令. "
-        "读文件, 检索与改文件都有专用工具, 它们的输出已经结构化, 优先用那些 —— "
-        "再解析一遍 stdout 既慢又容易读错."
+        "执行一条 Shell 命令或脚本. 支持复合命令, 管道, 重定向, heredoc / here-string, "
+        "以及 POSIX Shell、cmd、PowerShell 可用的命令. 整条命令统一安全裁决.\n"
+        "可用于运行测试、构建、包管理, 也可使用 grep / rg / find / cat / sed / awk 等"
+        "命令检索和处理文件. 需要精确替换文件内文字时, "
+        "先用 grep / rg 定位并核对上下文, "
+        "再用 sed、perl、python 或 heredoc 脚本完成替换; "
+        "复杂的多文件修改也可以通过脚本一次完成.\n"
+        "读文件、检索与改文件也有专用工具, 它们的输出已经结构化, 简单场景优先用那些; "
+        "shell_run 适合需要命令组合、原生命令选项或精确文本处理的场景."
     ),
     input_schema={
         "type": "object",

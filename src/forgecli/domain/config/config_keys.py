@@ -69,6 +69,12 @@ class ConfigKey:
     # 和它的类型、默认值一样，所以住在这里。
     label: str = ""
     help: str = ""
+    # 这些也是配置声明的一部分，而不是某个入口自己的文案。终端与 Web 都可以据此告诉
+    # 用户“什么时候生效”，避免保存成功后还要靠猜。
+    effect: str = "保存后立即生效"
+    # 空字符串对少数配置有业务含义（例如“使用默认日志目录”）。此前帮助文案允许留空，
+    # 校验器却一律拒绝；显式声明后，界面与直写路径共用同一条语义。
+    allow_empty: bool = False
 
     @property
     def title(self) -> str:
@@ -82,6 +88,8 @@ class ConfigKey:
         """
         text = value.strip()
         if not text:
+            if self.allow_empty:
+                return ""
             raise ConfigValidationError(f"配置项 {self.name} 不能为空")
 
         if self.kind is ValueKind.BOOL:
@@ -126,6 +134,7 @@ SCHEMA: tuple[ConfigKey, ...] = (
         choices=("dark", "light"),
         label="界面主题",
         help="深色或浅色。",
+        effect="下次打开界面生效",
     ),
     ConfigKey(
         LOGGING_LEVEL,
@@ -135,6 +144,7 @@ SCHEMA: tuple[ConfigKey, ...] = (
         choices=("debug", "info", "warn"),
         label="日志级别",
         help="下次启动生效。debug 会把每次模型调用的请求体也写进去。",
+        effect="下次启动生效",
     ),
     ConfigKey(
         LOGGING_CONSOLE,
@@ -143,6 +153,7 @@ SCHEMA: tuple[ConfigKey, ...] = (
         default="false",
         label="日志同时写终端",
         help="默认只写文件。开启后日志会打到 stderr，终端里的对话区会被戳花。",
+        effect="下次启动生效",
     ),
     ConfigKey(
         LOGGING_DIRECTORY,
@@ -150,6 +161,8 @@ SCHEMA: tuple[ConfigKey, ...] = (
         ValueKind.TEXT,
         label="日志目录",
         help="留空表示 Forge 主目录下的 logs/。",
+        effect="下次启动生效",
+        allow_empty=True,
     ),
     ConfigKey(
         LOGGING_MAX_VALUE_CHARS,
@@ -157,6 +170,8 @@ SCHEMA: tuple[ConfigKey, ...] = (
         ValueKind.INT,
         label="日志单值截断长度",
         help="一条日志里单个值最多写多少字符，0 表示不截断。留空用内置上限。",
+        effect="下次启动生效",
+        allow_empty=True,
     ),
     ConfigKey(
         LOGGING_INCLUDE_HTTP,
@@ -166,6 +181,7 @@ SCHEMA: tuple[ConfigKey, ...] = (
         label="日志包含 HTTP 库",
         help="把 httpx / uvicorn 的日志收进同一个文件。排查卡在供应商上的问题时需要，"
         "平时会淹掉自己的日志。",
+        effect="下次启动生效",
     ),
     ConfigKey(
         EXECUTION_ENV_INHERIT,
@@ -178,6 +194,7 @@ SCHEMA: tuple[ConfigKey, ...] = (
         "它让 Agent 跑出来的结果与你自己在终端里跑一致；core 只留少数几个基础变量，"
         "none 一个都不继承。收紧会让工具链找不到自己的配置，只在需要跨机器复现时用。"
         "PATH 无论哪一档都会去掉工作区内的目录。",
+        effect="下一次工具调用生效",
     ),
     # 项目级 → forge.json
     ConfigKey(
@@ -186,6 +203,7 @@ SCHEMA: tuple[ConfigKey, ...] = (
         ValueKind.TEXT,
         label="默认模型供应商",
         help="由模型选择流程写入，一般不手改。",
+        effect="下次启动或切换项目生效",
     ),
     ConfigKey(
         DEFAULT_MODEL_NAME_KEY,
@@ -193,6 +211,7 @@ SCHEMA: tuple[ConfigKey, ...] = (
         ValueKind.TEXT,
         label="默认模型",
         help="由模型选择流程写入，一般不手改。",
+        effect="下次启动或切换项目生效",
     ),
 )
 

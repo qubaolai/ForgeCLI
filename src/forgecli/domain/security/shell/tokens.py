@@ -176,6 +176,8 @@ class _Scanner:
                 self._emit_operator("\n")
                 self._pos += 1
                 self._consume_heredoc_bodies()
+            elif char == "#" and not self._has_content:
+                self._skip_comment()
             else:
                 operator = self._match_operator()
                 if operator is not None:
@@ -197,6 +199,24 @@ class _Scanner:
         return self._tokens
 
     # ---- 读取各类结构 ----
+
+    def _skip_comment(self) -> None:
+        """`#` 起头的注释直到行尾, 整段丢掉.
+
+        只有**词首**的 `#` 才是注释 (POSIX XCU 2.3): `echo a#b` 里的是普通字符,
+        `curl http://x/#frag` 也是. 判据就是当前有没有攒着半个词, 引号内的 `#` 更早就
+        被引号读取分支收走了.
+
+        不丢掉的后果实测过一次: 模型发了一条三行命令, 中间一行是
+        `# 在 SecurityConfig 中添加权限配置`. 扫描器把 `#` 当成这一行的第一个词, 于是
+        它成了这条命令的可执行文件, 受控 PATH 上自然找不到 —— 整条命令被判
+        EXECUTABLE_NOT_FOUND -> DENY, 模型收到的是"这条命令在当前环境下无法执行".
+        那条命令在 bash 里跑得好好的 (forge-20260904-133236 的 step 51).
+
+        行尾的换行留给主循环: 它要在那里产出 `\\n` 操作符并接着收 heredoc 正文.
+        """
+        while self._pos < len(self._src) and self._src[self._pos] != "\n":
+            self._pos += 1
 
     def _read_escape(self) -> None:
         nxt = self._peek(1)

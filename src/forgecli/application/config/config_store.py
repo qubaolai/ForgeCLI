@@ -25,3 +25,7 @@ class ConfigStore(ABC):
     @abstractmethod
     def save(self, values: Mapping[str, str]) -> None:
         """持久化全部覆盖项（幂等、可复现）。"""
+
+    @abstractmethod
+    def remove(self, key: str) -> None:
+        """删除一个 dotted-key 覆盖；键不存在时保持幂等。"""

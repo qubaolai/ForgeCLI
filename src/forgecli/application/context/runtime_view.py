@@ -33,7 +33,12 @@ def render_runtime_context(
 ) -> str:
     """渲染这一轮的运行上下文."""
     allowed = fence_allowed_capabilities(
-        fence, confined=facts.isolation_level.contained
+        fence,
+        confined=facts.isolation_level.contained,
+        # 报**看得清时**的边界. 这一层要回答的是"哪些能力会自动放行", 而按 False 报
+        # 会在 accept_edits 下少报 EXECUTE_SHELL —— 于是模型以为每跑一条命令都要先问人,
+        # 而实际上目标封闭的命令根本不会停. 报窄比报宽更误导: 前者让它不敢动手.
+        targets_closed=True,
     )
     return render_runtime(
         "runtime_facts",

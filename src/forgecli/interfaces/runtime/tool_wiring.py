@@ -41,11 +41,8 @@ from forgecli.application.tools.artifact_store import (
     ArtifactStore,
 )
 from forgecli.application.tools.builtin.artifact_read import ArtifactReadTool
-from forgecli.application.tools.builtin.find_definition import FindDefinitionTool
 from forgecli.application.tools.builtin.fs_apply_patch import ApplyPatchTool
-from forgecli.application.tools.builtin.fs_find import FindTool
 from forgecli.application.tools.builtin.fs_read import ReadFileTool
-from forgecli.application.tools.builtin.git_read import GitReadTool
 from forgecli.application.tools.builtin.memory_tools import (
     MemoryForgetTool,
     MemoryWriteTool,
@@ -101,7 +98,6 @@ from forgecli.infrastructure.security.protected_paths_builder import (
 )
 from forgecli.infrastructure.tools.fs_artifact_store import FsArtifactStore
 from forgecli.infrastructure.workspace.os_filesystem_view import OsFileSystemView
-from forgecli.infrastructure.workspace.pygit2_git_queries import Pygit2GitQueries
 from forgecli.shared.utils import now_iso
 
 __all__ = ["ToolStack", "build_tool_stack"]
@@ -248,11 +244,8 @@ def build_tool_stack(
             ArtifactReadTool(governor, store),
             MemoryWriteTool(memory),
             MemoryForgetTool(memory),
-            FindTool(governor, store),
             ReadFileTool(governor, store),
             SearchTextTool(governor, store),
-            FindDefinitionTool(governor, store),
-            GitReadTool(Pygit2GitQueries(), governor, store),
             ApplyPatchTool(
                 _create_file,
                 _replace_file,

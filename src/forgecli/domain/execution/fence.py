@@ -1,8 +1,8 @@
 """围栏策略: 子进程能否自动启动, 能写哪里, 不能读哪里, 能不能联网 (ADR-0030 决策 1 / 4).
 
 围栏是**运行期**强制的, 不是执行前推导的. 所以这里只有模式边界, 没有任何命令正文
-知识 ---- `rm -rf $DIR` 和 `ls` 在这个模块眼里没有区别: accept_edits 下都先问人,
-auto 下都交给内核在系统调用那一刻守住路径与网络边界.
+知识 ---- `rm -rf $DIR` 和 `ls` 在这个模块眼里没有区别, 两者的差异由分析器算成能力集合,
+再由 `domain/security/budget` 拿这份边界去减.
 
 两条边界的形态不对称, 这是实测出来的 (ADR-0030 实测记录第二节):
 
@@ -30,13 +30,21 @@ class FencePolicy:
     writable_roots: tuple[str, ...] = ()
     denied_read_paths: tuple[str, ...] = ()
     network_allowed: bool = False
-    # 是否允许裁决层在不询问人的情况下启动通用 Shell. 它不改变操作系统围栏本身,
-    # 只表达模式的自主性边界: accept_edits 可以自动使用专用文件工具, 但 shell_run
-    # 必须先问; auto / full_access 才能在真围栏内自动启动 Shell.
+    # 能否不问人就启动一条**已经解析清楚**的 Shell 命令: Forge 认得出每一个命令单元,
+    # 且这次的目标集合已经封闭. `sed -i x README.md` 属于这一类, `npm test` 不属于.
     #
-    # 仍放在围栏策略里, 是为了和 writable_roots / unrestricted 一样进入 policy_hash:
-    # 切模式后, 旧授权不能沿用到自主性更高的新边界.
+    # 判据来自隔离档而不是审批档, 而这是这个字段唯一一处不按模块开头那条"自主性来自
+    # 审批档"走的地方: 它是**下界**不是自主性决定 —— read_only 档的语义就是只看不改,
+    # 在那里自动起子进程没有用例. 真正的自主性决定是下面那个字段.
     automatic_shell: bool = False
+    # 连 Forge **看不透要跑什么**的执行也不问人: 脚本正文, `java -jar`, `find -exec`,
+    # 以及网络. 这是 accept_edits 与 auto 的分界 (ADR-0046).
+    #
+    # 分成两个字段而不是一个, 是因为原先那一个把"它是不是一次 shell 调用"当成了判据,
+    # 于是 `cat README.md` 与 `rm -rf /tmp` 在 accept_edits 下得到同一个结论 —— 分析器
+    # 明明已经把两者的能力集合算得清清楚楚 (前者 workspace_read, 后者 external_write),
+    # 那份精度被一个与命令内容无关的项盖掉了.
+    automatic_opaque_execution: bool = False
     # full_access: 围栏就是全部边界, 裁决侧除 Hard Deny 外不再另设闸 (ADR-0030 决策 4
     # 的 2026-08-28 修订). 它进 policy_hash, 所以切模式会让旧授权失效.
     #
@@ -92,7 +100,8 @@ def fence_for(
         writable_roots=writable,
         denied_read_paths=tuple(sorted(dict.fromkeys(protected_paths))),
         network_allowed=mode.sandbox is SandboxLevel.FULL_ACCESS,
-        automatic_shell=mode.approval is not ApprovalPolicy.ALWAYS,
+        automatic_shell=mode.sandbox is not SandboxLevel.READ_ONLY,
+        automatic_opaque_execution=mode.approval is not ApprovalPolicy.ALWAYS,
         unrestricted=mode.approval is ApprovalPolicy.NEVER,
         # 实例私有临时目录始终可写, 否则连 mktemp 都用不了, 而那会让绝大多数真实命令
         # 失败. 它不算"工作区可写", 所以不进 writable_roots.

@@ -78,8 +78,17 @@ def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
     if findings.unrunnable is not None:
         # 排在 Hard Deny 之后: 一条既危险又跑不了的命令, 审计里该记的是安全理由.
         # 但排在其余所有分支之前 —— 跑不了的东西不值得再走模式预算与人类审批.
+        #
+        # 措辞只说**我们**没能把它接起来, 不说"这条命令无法执行". 后者是一个我们其实
+        # 证明不了的结论: 它成立的前提是"不是内建 + 不在受控 PATH"这套判断本身没有缺口,
+        # 而缺口是有过的 —— 一行 `# 注释` 曾经被当成一条命令, 于是整条命令被判死, 模型
+        # 收到的是一句关于 bash 里跑得好好的命令的假话.
+        #
+        # 具体是哪个 token, 为什么接不起来, 由 risk_facts 逐条带给模型 (见 render).
         return _Verdict(
-            Decision.DENY, findings.unrunnable, message="这条命令在当前环境下无法执行"
+            Decision.DENY,
+            findings.unrunnable,
+            message="Forge 没能在当前环境里把这条命令接起来",
         )
 
     unrestricted = _only_hard_deny(context)
@@ -108,7 +117,12 @@ def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
         )
 
     outside_fence = capabilities_requiring_approval(
-        capabilities, context.fence, confined=context.confined
+        capabilities,
+        context.fence,
+        confined=context.confined,
+        # 目标封没封闭是**本次调用**的事实, 不是模式的属性. accept_edits 用它区分
+        # "Forge 看得清这条命令会碰哪些路径"和"推不出来" (ADR-0046); auto 不看它.
+        targets_closed=findings.plan.target_resolution.closed,
     )
     if outside_fence:
         # 理由取分析器给出的那一条 (更具体), 只在没有时才落到围栏边界. 反过来写会把

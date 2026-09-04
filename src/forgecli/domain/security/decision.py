@@ -53,6 +53,15 @@ class AuthorizationDecision:
         return self.findings.risk_facts
 
     @property
+    def unrunnable(self) -> DecisionReason | None:
+        """这次 DENY 是"跑不了"而不是"不许跑"时的那条理由, 否则 None.
+
+        协调器据此分流成 COMMAND_UNRUNNABLE 而不是 POLICY_DENIED. 判据留在 findings
+        里而不是在协调器另立一张理由表: 理由是分析器给的, 再抄一份就会漂.
+        """
+        return self.findings.unrunnable
+
+    @property
     def executable_identity_hash(self) -> str:
         return self.findings.executable_identity_hash
 

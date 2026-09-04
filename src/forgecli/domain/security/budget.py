@@ -79,11 +79,16 @@ _WORKSPACE_MUTATION = frozenset(
 # accept_edits / auto 的 Shell 自主性边界影响.
 _NEEDS_FENCE = frozenset({Capability.MODEL_CALL})
 
-# 只有模式明确允许自动 Shell, 且围栏真的立起来了, 才自动放行的能力.
+# 一条**已经解析清楚**的 Shell 命令 (ADR-0046). accept_edits 起就自动放行, 但要满足
+# 两个额外条件: 围栏真的立起来了, 且这次的目标集合已经封闭.
 #
-# accept_edits 与 auto 的文件边界相同, 自主性边界不同: 前者可以自动调用专用文件工具,
-# 但任何通用 Shell 都要问人; 后者才允许 Shell 在围栏内自动执行. 没有围栏
-# (UNCONFINED) 时两档都落回 ASK, 而不是退回去证明 —— ADR-0030 决策 5.
+# 目标封闭这一条只加在这一档上, 不加在 auto 上: auto 的语义就是"有围栏时不必猜"
+# (ADR-0030 决策 1), 而 accept_edits 的语义是"只在看得清的时候放行". 差别落在
+# `cat $SOMEVAR` 这类命令上 —— 它的目标推不出来, 于是分析器连 read 能力都derive 不出,
+# 看上去比 `cat README.md` 还干净. 不要求封闭的话, 恰恰是这一类会溜过去.
+_TRANSPARENT_SHELL = frozenset({Capability.EXECUTE_SHELL})
+
+# 连 Forge 看不透要跑什么的执行, 以及网络. auto 起才自动放行.
 #
 # NETWORK_ACCESS 在这一组里, 而**不是**"围栏放开网络时才自动放行" (ADR-0040 §8.3 的
 # C 类处置, 2026-08-28):
@@ -98,9 +103,8 @@ _NEEDS_FENCE = frozenset({Capability.MODEL_CALL})
 # 于是 `NETWORK_TOOLS` 那张命令名表退出授权路径, 只剩两个用处: 生成给人看的风险摘要
 # (`PlanEffects.network_targets`), 以及 Hard Deny 的 `curl | sh` 形状判定. 表里漏一条
 # 网络工具, 后果从"少一次审批"变成"风险摘要少一行".
-_AUTOMATIC_SHELL = frozenset(
+_OPAQUE_EXECUTION = frozenset(
     {
-        Capability.EXECUTE_SHELL,
         Capability.EXECUTE_SCRIPT,
         Capability.NETWORK_ACCESS,
     }
@@ -108,9 +112,14 @@ _AUTOMATIC_SHELL = frozenset(
 
 
 def fence_allowed_capabilities(
-    fence: FencePolicy | None, *, confined: bool
+    fence: FencePolicy | None, *, confined: bool, targets_closed: bool = False
 ) -> frozenset[Capability]:
-    """这道围栏下可以自动放行的能力集合."""
+    """这道围栏下可以自动放行的能力集合.
+
+    `targets_closed` 是**这一次调用**的事实 (`ToolPlan.target_resolution.closed`), 不是
+    围栏的属性. 它只影响 `_TRANSPARENT_SHELL` 那一档 —— 见该常量的说明. 缺省 False 是
+    fail closed: 不知道目标封没封闭时, 按没封闭办.
+    """
     allowed = set(_ALWAYS)
     if fence is None:
         return frozenset(allowed)
@@ -121,8 +130,12 @@ def fence_allowed_capabilities(
         allowed |= _WORKSPACE_MUTATION
     if confined:
         allowed |= _NEEDS_FENCE
-        if fence.automatic_shell:
-            allowed |= _AUTOMATIC_SHELL
+        if fence.automatic_opaque_execution:
+            # auto: 看不透的也放行, 因此不必再问目标封没封闭 (ADR-0030 决策 1).
+            allowed |= _TRANSPARENT_SHELL | _OPAQUE_EXECUTION
+        elif fence.automatic_shell and targets_closed:
+            # accept_edits: 只放行看得清的那一类 (ADR-0046).
+            allowed |= _TRANSPARENT_SHELL
     return frozenset(allowed - _NEVER_AUTO)
 
 
@@ -131,8 +144,12 @@ def capabilities_requiring_approval(
     fence: FencePolicy | None,
     *,
     confined: bool,
+    targets_closed: bool = False,
 ) -> frozenset[Capability]:
     """本次调用中围栏兜不住, 因而需要人类确认的能力."""
     return frozenset(
-        capabilities - fence_allowed_capabilities(fence, confined=confined)
+        capabilities
+        - fence_allowed_capabilities(
+            fence, confined=confined, targets_closed=targets_closed
+        )
     )

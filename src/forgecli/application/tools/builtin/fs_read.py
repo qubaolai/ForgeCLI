@@ -58,9 +58,9 @@ _SPEC = ToolSpec(
         "返回时会附带这一段在全文中的位置. 超长内容会截断并归档.\n"
         "已经知道是哪个文件时才用它. 要找一段文字出现在哪些地方, 走 search_text —— "
         "不要把候选文件逐个读回来自己扫.\n"
-        "**手上有行号就按行号读**: find_definition 与 search_text 都带路径与行号. "
-        "拿到之后传 offset 与 limit 只取那一段 (比如 offset=40 limit=30), 不必把整个"
-        "文件读回来 —— 一个类常常几百行, 你要看的只有十几行."
+        "**手上有行号就按行号读**: search_text 与 shell_run 里的 grep -n 都带路径与"
+        "行号. 拿到之后传 offset 与 limit 只取那一段 (比如 offset=40 limit=30), "
+        "不必把整个文件读回来 —— 一个类常常几百行, 你要看的只有十几行."
     ),
     input_schema={
         "type": "object",

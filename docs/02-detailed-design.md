@@ -843,20 +843,34 @@ git 写不做硬性限制，按普通命令走。高危 deny 穿透所有模式�
 `accept_edits` 的命令询问支持 once/always/session/deny（学习式授权）。**MVP 即实现 glob 规则
 配置语法**（gitignore 式 `//`/`~/`/`/`/`./` 路径锚定 + Bash `*` 模式）。
 
+> 2026-09-04 修订（ADR-0046）：这张表描述的 `accept_edits` 行为一度没有落地——实现把判据写成了
+> "它是不是一次 shell 调用"，于是前三行在 `accept_edits` 下全部变成"询问"。现在判据回到这张表：
+> 按**分析器推导出的能力集合与目标集合**裁决，而不是按上面那些示例命令名——ADR-0024 已经拒绝过
+> 命令名白名单（名字不是事实，`cat` 可以是 Agent 自己写进 PATH 的一个文件）。第四行"其他命令"
+> 对应的机制判据是 `Capability.EXECUTE_SCRIPT`：有脚本正文、`java -jar` 一类跑任意代码的、
+> 以及 `find -exec` 这种把目标交给内层命令的。
+
 ### 8.3 内置工具
 
 以 ADR-0004 §14 的清单为准，那张表带能力上界、目标声明能力和"是否已注册"，并由
 `tests/tool_request/test_registered_tool_stack.py` 对组合根的产物断言。这里只列名字：
 
-- 读：`fs.scan_tree`、`fs_read`、`fs.list_files`、`search_text`、`git_read`
-- 写：`fs.create_file`、`fs.edit_file`、`fs.move`、`fs.delete`
+- 读：`fs_read`、`search_text`、`artifact_read`
+- 写：`fs_apply_patch`
 - 执行：`shell_run`
 - 计划与待办：`plan_read`、`plan_write`、`todo_write`、`todo_set_status`
+- 记忆：`memory_write`、`memory_forget`
 
 > 2026-08-20 修订：本节此前列的是首版设想（`fs.write_patch`、`git.status`、`git.diff`、
 > `git.show`、`test.run`），其中后四个从未实现——git 只读查询合并成了一个 `git_read`，
 > 跑测试走 `shell_run`。列一份没人维护的清单，比不列更容易让人以为工具已经存在。
-- `artifact.write`
+
+> 2026-09-04 修订：删掉 `fs_find`、`find_definition`、`git_read` 与未注册的 `tree_view`。
+> 判据不是数量而是**每个工具换来了什么 shell 给不了的东西**：这四个换不来任何东西，
+> `find` / `grep` / `git log` 做同一件事且更灵活，而每个工具的 schema 都要在每一步重发一次。
+> 留下的四个各自换来一样：`fs_read` 是 read-before-edit 的强制点与
+> `body_in_window` 的窗口语义，`fs_apply_patch` 是审批界面上的逐字 diff（`ContentPreview`），
+> `search_text` 是结构化命中与编码/忽略规则的正确处理，`artifact_read` 是内容寻址取回。
 
 文件修改应优先通过 patch 语义执行，便于审计和回滚。
 

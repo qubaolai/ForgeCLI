@@ -65,6 +65,28 @@ __all__ = ["ShellCapabilityAnalyzer"]
 # 写 / 删 / 移的命令清单在 domain.security.shell.effects: 那里的默认值是 UNPROVEN
 # 而不是"只读", 而默认值的方向正是这份知识唯一要紧的性质.
 
+# 一条命令的目标展开最多收多少条. 分析器读的是**模型写的命令串**, 里面任何一段带
+# `*` 的文本都会被当成目标候选去 glob —— `sed` 脚本里的 `/api/orders/**` 就是这么来的.
+# 遍历起点已经下沉到 pattern 的确定前缀 (`os_filesystem_view._literal_prefix`), 但首段
+# 就带通配符的绝对模式 (`/*`, 而 `/*` 正是 C 注释的开头) 仍然要从磁盘根走起.
+_MAX_GLOB_TARGETS = 1000
+
+
+def _expand(context: ExecutionContext, pattern: str) -> tuple[str, ...]:
+    """给展开层用的 glob: 超过上限一律当成**展不开**, 而不是交出前 N 条.
+
+    这一步的产出是"目标集合就是这些"的证据, 所以截断不是省事, 是伪证: 交出前 1000 条
+    会让 `expand_targets` 判成 FORGE_EXPANDED, 于是一次实际覆盖上万个文件的命令拿着
+    一份一千条的清单去过受保护路径检查, 再以封闭目标的身份走普通 ALLOW.
+
+    返回空元组时展开层记 "glob 无法展开", 目标集合落 DYNAMIC —— 与它本来就展不开的
+    情形同一条路径, 裁决按最保守的一档走.
+    """
+    matched = context.filesystem.expand_glob(
+        pattern, root=context.cwd, max_results=_MAX_GLOB_TARGETS + 1
+    )
+    return () if len(matched) > _MAX_GLOB_TARGETS else matched
+
 
 class ShellCapabilityAnalyzer(CapabilityAnalyzer):
     def __init__(self, resolver: ExecutableResolver) -> None:
@@ -110,9 +132,7 @@ class ShellCapabilityAnalyzer(CapabilityAnalyzer):
         expansion = expand_targets(
             command,
             resolve=context.resolve,
-            glob=lambda pattern: context.filesystem.expand_glob(
-                pattern, root=context.cwd
-            ),
+            glob=lambda pattern: _expand(context, pattern),
             home=home,
         )
         effects = effects_of(command, expansion.targets, home, resolve=context.resolve)

@@ -39,6 +39,14 @@ class ObservationKind(Enum):
     APPROVAL_UNAVAILABLE = "approval_unavailable"
     TOOL_UNAVAILABLE_IN_MODE = "tool_unavailable_in_mode"
     TOOL_UNAVAILABLE = "tool_unavailable"
+    # 这次调用在这台机器上跑不起来 (可执行文件不在受控 PATH 上, 脚本正文读不全).
+    # 与 POLICY_DENIED 分开, 判据是**谁说的不行**: 那边是策略不许, 这边是环境不支持.
+    #
+    # 分开的理由不是措辞. 一条被策略拒绝的命令换个写法重试属于绕过尝试; 而"这台机器上
+    # 没有这个命令"恰恰应该换个写法 —— 换成 `dir`, 换成别的工具, 或者先装上它.
+    # 混在一起时模型收到的是"reason: executable_not_found, can_retry: false", 于是它
+    # 既不知道该换什么, 也被告知不要再试.
+    COMMAND_UNRUNNABLE = "command_unrunnable"
     PREPARATION_FAILED = "preparation_failed"
     AUTHORIZATION_MISSING = "authorization_missing"
     EXECUTION_ENVIRONMENT_CHANGED = "execution_environment_changed"
@@ -99,6 +107,8 @@ _BLOCKING_KINDS = frozenset(
         ObservationKind.APPROVAL_REQUIRED,
         ObservationKind.RECOVERY_UNAVAILABLE,
         ObservationKind.AUTHORIZATION_MISSING,
+        # 计数而不是放行: 换个命令是对的, 但一条一条试过去仍然是撞墙.
+        ObservationKind.COMMAND_UNRUNNABLE,
     }
 )
 

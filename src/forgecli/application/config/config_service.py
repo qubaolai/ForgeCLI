@@ -11,11 +11,22 @@ ConfigKey 负责。项目级 store 在装配时绑定当前项目的 forge.json�
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from forgecli.application.config.config_store import ConfigStore
 from forgecli.domain.config import config_keys
 from forgecli.domain.config.config_keys import ConfigKey, ConfigLevel
 from forgecli.domain.config.effective_config import EffectiveConfig
 from forgecli.domain.config.errors import ConfigValidationError
+
+
+@dataclass(frozen=True)
+class ConfigValueView:
+    """一个配置项的有效值与来源，供所有外层界面渲染。"""
+
+    key: ConfigKey
+    value: str
+    overridden: bool
 
 
 class ConfigService:
@@ -70,6 +81,23 @@ class ConfigService:
             values[config_key.name] = config_key.default if raw is None else raw
         return values
 
+    def value_views(self) -> tuple[ConfigValueView, ...]:
+        """一次读盘得到全部配置值及其来源，不让界面用 N 次 ``get`` 猜来源。"""
+        loaded: dict[ConfigLevel, dict[str, str]] = {}
+        views: list[ConfigValueView] = []
+        for config_key in config_keys.SCHEMA:
+            if config_key.level not in loaded:
+                loaded[config_key.level] = self._store(config_key).load()
+            raw = loaded[config_key.level].get(config_key.name)
+            views.append(
+                ConfigValueView(
+                    key=config_key,
+                    value=config_key.default if raw is None else raw,
+                    overridden=raw is not None,
+                )
+            )
+        return tuple(views)
+
     def set(self, key: str, value: str) -> None:
         """校验并持久化一个配置项；按 level 路由到对应文件。
 
@@ -80,3 +108,8 @@ class ConfigService:
         overrides = store.load()
         overrides[key] = config_key.validate(value)
         store.save(overrides)
+
+    def unset(self, key: str) -> None:
+        """删除用户覆盖，让该项重新继承 SCHEMA 默认值。"""
+        config_key = config_keys.require_known(key)
+        self._store(config_key).remove(key)

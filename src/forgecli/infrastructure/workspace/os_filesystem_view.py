@@ -172,6 +172,34 @@ def decode_text(raw: bytes) -> str:
     return str(best)
 
 
+def _literal_prefix(pattern: str) -> tuple[str, str]:
+    """把 pattern 切成 (不含通配符的前缀目录, 余下的 pattern).
+
+    存在的理由是一次实测: 分析 `sed` 脚本里的 `/api/orders/**` 时, 展开层拿它当目标
+    候选去 glob, 而这里从 `/` 开始 `os.walk` 整块磁盘 —— 一次裁决耗时 183 秒
+    (forge-20260904-133236 的 step 51), 同一会话另一条 `python3 -c` 耗时 99 秒. 模型和
+    用户都只会看到"卡住了", 没有任何一层会说是 glob 在扫全盘.
+
+    前缀里的每一段都是确定的目录名, 直接并进遍历起点即可; `/api/orders` 不存在时
+    `os.walk` 立刻收工, 而不是把整棵树走完再逐条比对.
+
+    最后一段永远留给 pattern: 整条 pattern 都不含通配符时 (`docs/readme.md`), 起点是
+    它的父目录, 匹配的是文件名 —— 而不是把它整条当成起点去遍历一个文件.
+
+    `.` 与 `..` 不并入: 它们要么无意义, 要么会把起点带出调用方给的 root, 而 root 正是
+    这次展开的边界.
+    """
+    segments = pattern.replace("\\", "/").split("/")
+    absorbed = 0
+    for segment in segments[:-1]:
+        if segment in ("", ".", "..") or any(char in segment for char in "*?["):
+            break
+        absorbed += 1
+    if absorbed == 0:
+        return "", pattern
+    return "/".join(segments[:absorbed]), "/".join(segments[absorbed:])
+
+
 def _walk_glob(
     base: Path, pattern: str, max_results: int | None, skip_ignored: bool
 ) -> tuple[str, ...]:
@@ -188,6 +216,10 @@ def _walk_glob(
     - **"这条路径中不中用户给的 glob"** 交给 `wcmatch.globmatch`. 它的 `*` 不跨 `/`,
       `**` 跨整棵树, 与 bash 和 `Path.glob` 一致.
 
+    遍历起点按 `_literal_prefix` 下沉到 pattern 的确定前缀, 但**忽略判断仍然按调用方
+    给的 base 提问**: 判据是"这条路径在这个仓库里要不要跳过", 换个起点重新提问会让
+    libgit2 拿到一条它无法归位的相对路径. 起点是性能, base 是语义, 两者不能混。
+
     排序固定: 目录遍历顺序在不同文件系统上不一样, 而顺序一变 plan_hash 就变, 上一次
     批准也就绑不住这一次.
     """
@@ -198,24 +230,29 @@ def _walk_glob(
     collected: list[str] = []
     root = str(base)
     ignored = ignore_predicate(root) if skip_ignored else None
+    absorbed, remainder = _literal_prefix(pattern)
+    start = os.path.join(root, *absorbed.split("/")) if absorbed else root
+    outer = f"{absorbed}/" if absorbed else ""
     try:
-        walker = os.walk(root, followlinks=False)
+        walker = os.walk(start, followlinks=False)
         for current, directories, files in walker:
-            relative_dir = os.path.relpath(current, root)
-            prefix = "" if relative_dir == "." else f"{relative_dir}/"
+            relative_dir = os.path.relpath(current, start)
+            inner = "" if relative_dir == "." else f"{relative_dir}/"
             if ignored is not None:
                 # 原地改写才有效: os.walk 读的就是这个列表, 换成新列表它看不见.
                 # 砍掉一个目录, 它整棵子树连 stat 都不会发生.
                 directories[:] = [
-                    name for name in directories if not ignored(f"{prefix}{name}/")
+                    name
+                    for name in directories
+                    if not ignored(f"{outer}{inner}{name}/")
                 ]
             for name in (*directories, *files):
-                entry = f"{prefix}{name}"
-                if ignored is not None and ignored(entry):
+                entry = f"{inner}{name}"
+                if ignored is not None and ignored(f"{outer}{entry}"):
                     continue
-                if not wcglob.globmatch(entry, pattern, flags=flags):
+                if not wcglob.globmatch(entry, remainder, flags=flags):
                     continue
-                collected.append(os.path.join(root, entry))
+                collected.append(os.path.join(start, entry))
                 if limit is not None and len(collected) >= limit:
                     return tuple(sorted(collected))
     except (OSError, ValueError):
