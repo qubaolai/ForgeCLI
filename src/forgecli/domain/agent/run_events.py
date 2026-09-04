@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from forgecli.domain.model.usage import UsageRecordDraft
+from forgecli.domain.workspace.changes import WorkspaceChange
 
 __all__ = [
     "AgentRunEvent",
@@ -47,6 +48,7 @@ __all__ = [
     "ToolQueuedPayload",
     "ToolStartedPayload",
     "TurnFinishedPayload",
+    "WorkspaceChangedPayload",
 ]
 
 
@@ -69,6 +71,9 @@ class AgentRunEventKind(Enum):
 
     # -- 上下文压缩 (ADR-0032 决策 1) --
     CONTEXT_COMPACTED = "context_compacted"
+
+    # -- 工作区变化 --
+    WORKSPACE_CHANGED = "workspace_changed"
 
     # -- 计划与待办 (ADR-0022 §7) --
     PLAN_PROPOSED = "plan_proposed"
@@ -211,6 +216,13 @@ class ContextCompactedPayload(RunEventPayload):
     # 交接说明用的模型; 没接网关时不调模型, 两项为空.
     provider: str = ""
     model: str = ""
+
+
+@dataclass(frozen=True)
+class WorkspaceChangedPayload(RunEventPayload):
+    """一次模型调用前发现的工作区文件变化。"""
+
+    changes: tuple[WorkspaceChange, ...] = ()
 
 
 @dataclass(frozen=True)

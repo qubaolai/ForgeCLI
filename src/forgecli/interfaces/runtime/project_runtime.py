@@ -57,6 +57,9 @@ from forgecli.infrastructure.session.fs_session_catalog import FsSessionCatalog
 from forgecli.infrastructure.session.json_state_store import JsonStateStore
 from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
 from forgecli.infrastructure.session.jsonl_run_store import JsonlRunStore
+from forgecli.infrastructure.workspace.snapshot_provider import (
+    OsWorkspaceSnapshotProvider,
+)
 from forgecli.interfaces.runtime.event_hub import RunEventHub
 from forgecli.interfaces.runtime.human_prompt import BlockingHumanPromptBroker
 from forgecli.interfaces.runtime.llm_wiring import LlmRuntime, build_llm_runtime
@@ -188,6 +191,9 @@ class ProjectRuntime:
                 cancel_token_factory=self.cancel_source.current,
                 event_bus=self.event_bus,
                 context=window_manager,
+                workspace_snapshot_provider=OsWorkspaceSnapshotProvider(
+                    lambda: self.tools.context_factory().workspace_roots
+                ),
             )
 
         def runtime_facts() -> RuntimeFacts:

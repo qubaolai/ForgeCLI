@@ -140,7 +140,7 @@ AutoGen。字段口径以 ADR-0010 §4 为准，本节只作索引。
 - `context_package`：本轮模型上下文。
 - `mode` / `mode_policy`：当前模式能力边界。
 - `tool_catalog`：当前允许暴露给模型的工具清单。
-- `budgets`：本轮 step / tool call / model call / token 预算。
+- `budgets`：本轮 step / model call / token 预算；tool call 数量作为运行指标统计，不作为固定总数上限。
 
 输出（每次迭代三选一）：
 
@@ -201,6 +201,11 @@ MVP 默认实现，也是当前唯一实现：ForgeCLI 自研的轻量 ReAct 循
 - 便于验证 ForgeCLI 自有事件和权限模型。
 
 `BuiltinAgentLoop` 的目标不是替代所有框架，而是在 MVP 阶段提供最小、透明、可调试的 Agent 编排能力。等核心闭环稳定后，复杂流程可逐步迁移到 LangGraph adapter。
+
+当前实现补充约定：单轮不按工具调用总次数截断。工具调用次数仍作为运行指标统计，但不会因为达到一个
+固定总数而停止；重复相同调用、安全策略连续拒绝、模型调用和整体循环步数仍可触发各自的安全处理。
+工作区快照在工具边界与模型请求边界检查，发现的新增、修改、删除会以 `workspace_changed` 事件记录，
+并在下一次模型请求中注明是本 agent 还是外部参与者（其他 agent 或人类）造成的变化。
 
 ### 2.4 LangGraphWorkflowAdapter
 
@@ -405,7 +410,7 @@ AutoGen 更适合 V2 的完整 Multi-Agent 能力，不进入 MVP。
 - `require_plan_before_write`
 - `require_approval_for_risk`
 - `max_steps`
-- `max_tool_calls`
+- `tool_calls`（仅统计，不设固定总数上限）
 - `max_runtime_seconds`
 - `context_budget_tokens`
 

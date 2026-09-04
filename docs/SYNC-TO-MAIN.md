@@ -405,8 +405,8 @@ def total(self) -> int:
   的 tool result. 直接丢掉排队项, 下一次请求就是残缺的, 供应商会拒.
 - `_tools_closed` 这个标志**不是冗余的**. 只把 `_tools` 置空等于靠"没给你看你就不会要"——
   模型幻觉一个工具名, 或供应商重放上一条 `tool_call`, `_advance` 照样会派发. 强制点在派发那里.
-- `_DEFAULT_MAX_MODEL_CALLS` / `_DEFAULT_MAX_TOOL_CALLS` 目前是 9999. 长任务确实可能几百次调用,
-  按次数设限是错的约束.
+- `_DEFAULT_MAX_MODEL_CALLS` 仍是 9999 的模型调用兜底；工具调用只计量，不设固定总数上限。长任务确实可能几百次调用,
+  按工具次数设限是错的约束.
 - `ObservationSource` 必须含 `SECURITY` —— `tool_request/observations.py` 用到它.
 - 每次模型调用都发 `MODEL_COMPLETED` (含流式中断与取消路径). 组 13 的终端渲染靠它收正文块 ——
   漏发会让半行正文一直挂在活动区.

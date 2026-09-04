@@ -96,7 +96,7 @@ def test_the_text_is_pinned_by_fingerprint() -> None:
     这一条钉的是**措辞**; 块的构成与顺序由 test_static_prompt 那边的快照指纹钉.
     两个分开是因为它们坏掉的原因不同: 改一句话与改一层结构该分别看得见.
     """
-    assert PROMPT_TEXT_VERSION == 19
+    assert PROMPT_TEXT_VERSION == 20
     assert templates_fingerprint() == (
-        "sha256:42ab5c42ae579cba282cb0cdacb74dd6ac23b5f2f7a2a0d8997440e206f6c305"
+        "sha256:eee767c2d022e27d5c055f6b47aa9482313bc5c974547ac40ec793b31f6022ea"
     )

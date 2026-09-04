@@ -47,6 +47,17 @@
 当前会话未装配工具系统
 {% endmacro %}
 {#
+工作区变化由 loop 在下一次模型调用前追加. 路径是文件系统事实, 不把文件正文带进通知;
+模型需要的是重新读取/确认的线索. source 要明确区分本 agent 与外部参与者.
+#}
+{% macro workspace_changed(changes) %}
+工作区文件发生变化, 请不要继续依据变化前的内容做决定. 必要时重新读取相关文件:
+{% for change in changes %}
+- {{ change.source_label }} · {{ change.kind_label }} · {{ change.display_path }}
+{% endfor %}
+其中 "外部参与者" 表示其他 agent 或人类在本 agent 工具边界之外做的修改.
+{% endmacro %}
+{#
 疑似被围栏拦下 (ADR-0030). 这一条要同时说清三件事, 少一件模型就会走错路:
 
 1. **这不是"文件不存在"或"你写错了路径"** —— 否则它会去改路径, 而路径是对的.

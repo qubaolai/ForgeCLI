@@ -70,7 +70,7 @@ __all__ = [
 #
 # 接 MAIN_AGENT_PROMPT_VERSION 的 5 与 PROMPT_TEXT_VERSION 的 10 往下数: 三个常量数的是
 # 同一件事 (Forge 撰写的正文改了没有), 只是管辖范围一次比一次大.
-PROMPT_TEXT_VERSION = 19
+PROMPT_TEXT_VERSION = 20
 
 # 静态提示词 (blocks/ 下的五个内置块) 的 token 上限 (ADR-0042 决策 4).
 #

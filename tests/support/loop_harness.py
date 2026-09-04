@@ -20,6 +20,7 @@ from forgecli.application.context.window_manager import WindowManager
 from forgecli.application.llm.catalog import InMemoryModelCatalog
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.llm.metering import CostEstimator, UsageMeter
+from forgecli.application.workspace.monitor import WorkspaceSnapshotProvider
 from forgecli.domain.agent.run_events import AgentRunEvent, AgentRunEventKind
 from forgecli.domain.agent.state import LoopInput
 from forgecli.domain.conversation.message import ChatMessage, TextBlock
@@ -161,7 +162,10 @@ def response(text: str = "", tool_calls: tuple[ToolCall, ...] = ()) -> ModelResp
 
 
 def loop_with(
-    gateway: ScriptedGateway, *, context: WindowManager | None = None
+    gateway: ScriptedGateway,
+    *,
+    context: WindowManager | None = None,
+    workspace_snapshot_provider: WorkspaceSnapshotProvider | None = None,
 ) -> tuple[BuiltinAgentLoop, Collector]:
     bus = AgentRunEventBus()
     collector = Collector()
@@ -171,6 +175,7 @@ def loop_with(
         UsageMeter(CostEstimator(InMemoryModelCatalog())),
         event_bus=bus,
         context=context,
+        workspace_snapshot_provider=workspace_snapshot_provider,
     )
     return loop, collector
 

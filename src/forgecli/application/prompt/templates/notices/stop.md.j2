@@ -13,9 +13,6 @@
 {% macro model_budget(limit) %}
 本轮模型调用已达上限 {{ limit }}.
 {% endmacro %}
-{% macro tool_budget(limit) %}
-本轮工具调用已达上限 {{ limit }}.
-{% endmacro %}
 {% macro empty_response() %}
 模型既没有回复也没有请求工具.
 {% endmacro %}

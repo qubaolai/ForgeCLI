@@ -48,6 +48,10 @@ from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.llm.gateway.streaming import StreamAccumulator
 from forgecli.application.llm.metering import UsageMeter
 from forgecli.application.prompt.template_renderer import render_notice
+from forgecli.application.workspace.monitor import (
+    WorkspaceChangeMonitor,
+    WorkspaceSnapshotProvider,
+)
 from forgecli.domain.agent.actions import (
     AnswerAction,
     LoopAction,
@@ -73,6 +77,7 @@ from forgecli.domain.agent.run_events import (
     ToolCompletedPayload,
     ToolQueuedPayload,
     TurnFinishedPayload,
+    WorkspaceChangedPayload,
 )
 from forgecli.domain.agent.state import AssembledContext, LoopInput
 from forgecli.domain.agent.stop import LoopStopReason, StopClassification
@@ -97,15 +102,15 @@ from forgecli.domain.model.streaming import ModelStreamChunk
 from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.tool.catalog import ToolCatalog
 from forgecli.domain.tool.tool_call import ToolCall, ToolSchema
+from forgecli.domain.workspace.changes import WorkspaceChange, WorkspaceChangeSource
 from forgecli.shared.cancellation import CancelToken
 from forgecli.shared.observability.context import update as update_run_context
 from forgecli.shared.observability.log import get_log
 
 _log = get_log(__name__)
 
-# 单轮内的硬上限, 防止模型与工具互相喂招停不下来.
+# 单轮内模型调用的兜底上限, 防止模型与工具互相喂招停不下来. 工具调用本身不设总数上限.
 _DEFAULT_MAX_MODEL_CALLS = 9999
-_DEFAULT_MAX_TOOL_CALLS = 9999
 
 # 同一个工具 + 同一份参数在一轮里允许重复几次.
 #
@@ -276,6 +281,7 @@ class BuiltinAgentLoop:
         event_bus: AgentRunEventBus | None = None,
         timer: Callable[[], float] = time.monotonic,
         context: WindowManager | None = None,
+        workspace_snapshot_provider: WorkspaceSnapshotProvider | None = None,
     ) -> None:
         self._gateway = gateway
         self._meter = usage_meter
@@ -304,6 +310,12 @@ class BuiltinAgentLoop:
         # 缺省为 None: 没给预算就不压缩, 与接入之前的行为一致. 不猜一个窗口大小.
         self._context = context
         self._context_budget: ContextBudget | None = None
+        self._workspace_monitor = (
+            None
+            if workspace_snapshot_provider is None
+            else WorkspaceChangeMonitor(workspace_snapshot_provider)
+        )
+        self._workspace_changes: list[WorkspaceChange] = []
         # 模型一次要了多个工具时的等待队列, 以及正在等 observation 的那一个.
         self._pending_calls: list[ToolCall] = []
         self._dispatched: ToolCall | None = None
@@ -338,6 +350,8 @@ class BuiltinAgentLoop:
         self._assembled = loop_input.context
         self._context_budget = loop_input.context.budget
         self._tools = _schemas_of(loop_input.tool_catalog)
+        if self._workspace_monitor is not None:
+            self._workspace_monitor.start()
         self._turn_started_at = self._timer()
         # 本轮的标识就位, 上一轮的清零. `update` 没有还原点, 所以由每一轮自己把
         # step / req / tool 归零 —— 否则 loop.start 那一行会带着上一轮的步号.
@@ -357,7 +371,7 @@ class BuiltinAgentLoop:
                 "" if self._assembled is None else self._assembled.policy.fingerprint
             ),
             max_model_calls=_DEFAULT_MAX_MODEL_CALLS,
-            max_tool_calls=_DEFAULT_MAX_TOOL_CALLS,
+            max_tool_calls="unlimited",
             context_window=(
                 None
                 if self._context_budget is None
@@ -424,6 +438,8 @@ class BuiltinAgentLoop:
 
     def _advance(self) -> LoopStepResult:
         """调一次模型, 把产出翻译成动作."""
+        self._check_workspace_changes(WorkspaceChangeSource.EXTERNAL)
+        self._publish_workspace_notice()
         over_budget = self._check_model_budget()
         if over_budget is not None:
             return over_budget
@@ -496,6 +512,12 @@ class BuiltinAgentLoop:
             # _call_stream 已经自己收过尾 (中断 / 取消), 这里只补 turn 终态.
             self._publish_turn_finished(outcome.reason)
             return outcome
+        # 模型生成期间也可能有人改了工作区. 如果这次本来要直接回答, 不能把一个基于旧
+        # 文件状态的答案当成最终答案; 追加事实后重新请求一次让模型重新判断.
+        self._check_workspace_changes(WorkspaceChangeSource.EXTERNAL)
+        if self._workspace_changes and not outcome.tool_calls:
+            self._publish_workspace_notice()
+            return self._advance()
         if outcome.empty:
             _log.warning("model.empty_response")
             return self._stop(
@@ -553,13 +575,9 @@ class BuiltinAgentLoop:
 
     def _dispatch_next(self, *, reason: str) -> LoopStepResult:
         """派发队列里的下一个工具调用. 一次一个, 不并行."""
-        budget_notice = self._tool_budget_notice()
-        if budget_notice is not None:
-            # 整批调用已经对外可见，预算耗尽时必须给尚未派发的调用补终态，否则页面会
-            # 永远把它们留在“待处理”。终态要先于 turn_failed 发布，保持时间线因果顺序。
-            self._abandon_pending(budget_notice)
-            self._pending_calls = []
-            return self._stop(LoopStopReason.BUDGET_EXHAUSTED, budget_notice)
+        # 模型思考和真正执行之间也留出一个外部修改窗口. 这个检查点还没有 agent 工具
+        # 在运行, 因此这里发现的变化明确归为 external.
+        self._check_workspace_changes(WorkspaceChangeSource.EXTERNAL)
         call = self._pending_calls.pop(0)
         signature = _signature_of(call)
         self._call_counts[signature] = self._call_counts.get(signature, 0) + 1
@@ -662,6 +680,9 @@ class BuiltinAgentLoop:
         call = self._dispatched
         assert call is not None
         self._dispatched = None
+        # 上一个检查点位于工具派发前. 这段差异属于刚刚完成的 agent 工具操作, 包括 shell
+        # 这类无法在结果中列出具体 mutation path 的工具.
+        self._check_workspace_changes(WorkspaceChangeSource.AGENT)
         _log.info(
             "tool.observed",
             tool=call.name,
@@ -922,6 +943,34 @@ class BuiltinAgentLoop:
 
     # ---- 预算 ----
 
+    def _check_workspace_changes(self, source: WorkspaceChangeSource) -> None:
+        if self._workspace_monitor is None:
+            return
+        self._workspace_changes.extend(self._workspace_monitor.checkpoint(source))
+
+    def _publish_workspace_notice(self) -> None:
+        if not self._workspace_changes:
+            return
+        changes = tuple(self._workspace_changes)
+        self._workspace_changes.clear()
+        notice = render_notice("loop.workspace_changed", changes=changes)
+        self._append(ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)))
+        self._publish(
+            AgentRunEventKind.WORKSPACE_CHANGED,
+            WorkspaceChangedPayload(changes=changes),
+        )
+        _log.info(
+            "workspace.changed",
+            changes=[
+                {
+                    "path": change.path,
+                    "kind": change.kind.value,
+                    "source": change.source.value,
+                }
+                for change in changes
+            ],
+        )
+
     def _check_model_budget(self) -> LoopStop | None:
         limit = _DEFAULT_MAX_MODEL_CALLS
         if self._model_calls >= limit:
@@ -930,13 +979,6 @@ class BuiltinAgentLoop:
                 LoopStopReason.BUDGET_EXHAUSTED,
                 render_notice("stop.model_budget", limit=limit),
             )
-        return None
-
-    def _tool_budget_notice(self) -> str | None:
-        limit = _DEFAULT_MAX_TOOL_CALLS
-        if self._tool_calls >= limit:
-            _log.warning("loop.tool_budget_exhausted", limit=limit)
-            return render_notice("stop.tool_budget", limit=limit)
         return None
 
     def _fit_window(self) -> LoopStop | None:
