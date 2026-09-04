@@ -32,6 +32,16 @@ from forgecli.interfaces.tui.tty import (
 
 __all__ = ["Option", "SelectUnavailable", "select_one"]
 
+# 菜单之外要留给终端的行数: 提示行, 上一条输出, 以及不贴着屏幕底边.
+#
+# 必须留: `rich.Live` 不滚动, 画得比屏幕高就是把顶上的选项顶出可视区, 而那几行**不会**
+# 进滚动历史 —— Live 每帧都在原地重画, 用户往上翻只能翻到菜单出现之前的东西.
+_RESERVED_ROWS = 4
+# 开始滚动之后还要两行放"上面/下面还有几项", 它们也占位置.
+_SCROLL_MARKER_ROWS = 2
+# 再挤也至少给三行选项: 少于这个数, 菜单本身就没法用了.
+_MIN_VISIBLE = 3
+
 _CURSOR = "#94e2d5"
 _NORMAL = "#9399b2"
 _DETAIL = "#6c7086"
@@ -85,7 +95,10 @@ def select_one(
     _require_readable_stdin()
     index = max(0, min(default_index, len(options) - 1))
     live = Live(
-        _render(options, index), console=console, transient=True, auto_refresh=False
+        _render(options, index, _visible_rows(console, len(options))),
+        console=console,
+        transient=True,
+        auto_refresh=False,
     )
     with live, KeyReader() as keys:
         while True:
@@ -105,12 +118,35 @@ def select_one(
                 continue
             else:
                 continue
-            live.update(_render(options, index), refresh=True)
+            # 每帧现算可见行数: 用户拉窗口是常事, 而拉窄之后按原来的高度画就又溢出了.
+            live.update(
+                _render(options, index, _visible_rows(console, len(options))),
+                refresh=True,
+            )
 
 
-def _render(options: Sequence[Option], index: int) -> Text:
+def _visible_rows(console: Console, total: int) -> int:
+    """这一屏能放下几个选项."""
+    room = console.size.height - _RESERVED_ROWS
+    if total <= room:
+        return total
+    return max(_MIN_VISIBLE, room - _SCROLL_MARKER_ROWS)
+
+
+def _window(total: int, index: int, visible: int) -> int:
+    """可见窗口从第几项开始. 光标尽量居中, 到两端就贴边."""
+    if total <= visible:
+        return 0
+    return min(max(0, index - visible // 2), total - visible)
+
+
+def _render(options: Sequence[Option], index: int, visible: int) -> Text:
+    start = _window(len(options), index, visible)
     body = Text()
-    for position, option in enumerate(options):
+    if start > 0:
+        body.append(f"  ↑ 上面还有 {start} 项\n", style=_HINT)
+    for position in range(start, min(start + visible, len(options))):
+        option = options[position]
         current = position == index
         body.append("❯ " if current else "  ", style=_CURSOR)
         body.append(
@@ -120,5 +156,8 @@ def _render(options: Sequence[Option], index: int) -> Text:
         if option.hint:
             body.append(f"  {option.hint}", style=_DETAIL)
         body.append("\n")
+    rest = len(options) - (start + visible)
+    if rest > 0:
+        body.append(f"  ↓ 下面还有 {rest} 项\n", style=_HINT)
     body.append("↑↓ 选择 · Enter 确认 · 数字键直选 · Esc 取消", style=_HINT)
     return body

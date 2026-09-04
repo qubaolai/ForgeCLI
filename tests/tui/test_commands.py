@@ -143,3 +143,71 @@ def test_interrupting_a_menu_does_not_kill_the_session(
     # 两次中断各说一次"已取消", 而且第三条命令仍然读得到 —— 会话活着.
     assert screen.getvalue().count("已取消") == 2
     assert context.exit_requested
+
+
+def _with_stub_runtime(context: CommandContext) -> None:
+    """给 registry 挂一个只够 /config 用的替身.
+
+    真的 ProjectRuntime 会拿项目锁, 装配整条工具链与 LLM 网关 —— 而这两条用例问的
+    只是"菜单里有没有那一项".
+    """
+    from types import SimpleNamespace
+
+    from forgecli.domain.config import config_keys
+
+    values = {entry.name: entry.default for entry in config_keys.SCHEMA}
+    context.registry._active = SimpleNamespace(  # type: ignore[attr-defined]
+        busy=False,
+        config=SimpleNamespace(display_all=lambda: values),
+    )
+
+
+def test_config_offers_a_way_into_model_and_gateway(
+    context: CommandContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """用户是照着 Web 的设置页来找的, 而那一页把常规和模型放在同一个地方.
+
+    /config 只列 SCHEMA 的话, 一个来这里找"添加供应商"的人会得出"这个 CLI 加不了
+    供应商"的结论 —— 而它其实在 /model 底下.
+    """
+    from forgecli.interfaces.tui.commands import config as config_command
+
+    offered: list[str] = []
+    called: list[str] = []
+
+    def fake_choose(_console: object, _title: str, options: object, **_kw: object):
+        offered.extend(item.key for item in options)  # type: ignore[union-attr]
+        return None
+
+    _with_stub_runtime(context)
+    monkeypatch.setattr(config_command, "choose", fake_choose)
+    monkeypatch.setattr(
+        config_command.model_commands,
+        "cmd_model",
+        lambda *_args: called.append("model"),
+    )
+    config_command.cmd_config(context, "")
+    assert "__models__" in offered
+    assert "__gateway__" in offered
+
+
+def test_config_dispatches_into_the_model_menu(
+    context: CommandContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from forgecli.interfaces.tui.commands import config as config_command
+    from forgecli.interfaces.tui.select import Option as SelectOption
+
+    called: list[str] = []
+    _with_stub_runtime(context)
+    monkeypatch.setattr(
+        config_command,
+        "choose",
+        lambda *_args, **_kw: SelectOption("__models__", "模型与供应商"),
+    )
+    monkeypatch.setattr(
+        config_command.model_commands,
+        "cmd_model",
+        lambda *_args: called.append("model"),
+    )
+    config_command.cmd_config(context, "")
+    assert called == ["model"]
