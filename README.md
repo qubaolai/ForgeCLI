@@ -27,6 +27,9 @@ poetry run forge --open --port 8899
 poetry run forge --cli
 ```
 
+`make run-cli`是同一条命令的快捷方式。它需要一个真正的终端：stdin/stdout 被重定向时
+forge 会直接拒绝启动 (退出码 4)，而不是挂在那里等一个永远不会来的回答。
+
 它和 Web 是同一个 Forge：同一份装配、同一把项目锁、同一套裁决与审批语义，只是交互在终端里。
 直接输入文字就是和模型说话，`/help` 列出全部斜杠命令（`/mode`、`/model`、`/config`、
 `/dirs`、`/plan`、`/checkpoints` 等，与 Web 上的面板一一对应）。Tab 补全命令，

@@ -109,3 +109,37 @@ def test_exit_is_a_request_not_a_control_flow_jump(context: CommandContext) -> N
     assert not context.exit_requested
     dispatch(context, "/exit")
     assert context.exit_requested
+
+
+def test_interrupting_a_menu_does_not_kill_the_session(
+    context: CommandContext, monkeypatch: pytest.MonkeyPatch, screen: io.StringIO
+) -> None:
+    """命令里的菜单停在 input() 上; 在那里按 Ctrl-C 是这一步不做了, 不是退出 Forge.
+
+    不接住的话, KeyboardInterrupt 会一路冒出 REPL 并以 130 结束进程 —— 从 make 里起
+    的时候那就是一行 `Error 130`, 而用户只是选错了菜单想退出来.
+    """
+    from rich.console import Console
+
+    from forgecli.interfaces.exit_codes import ExitCode
+    from forgecli.interfaces.tui import session_app as module
+
+    def fake_dispatch(ctx: CommandContext, line: str) -> None:
+        if line == "/exit":
+            ctx.exit_requested = True
+            return
+        raise KeyboardInterrupt
+
+    lines = iter(["/mode", "/plan", "/exit"])
+    monkeypatch.setattr(module, "dispatch", fake_dispatch)
+    monkeypatch.setattr(module.LineEditor, "read", lambda self, prompt: next(lines))
+    app = module.SessionApp(
+        Console(file=screen, width=100, no_color=True, highlight=False),
+        context.registry,
+    )
+    app.context = context
+
+    assert app.run() == ExitCode.OK
+    # 两次中断各说一次"已取消", 而且第三条命令仍然读得到 —— 会话活着.
+    assert screen.getvalue().count("已取消") == 2
+    assert context.exit_requested

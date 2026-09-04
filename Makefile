@@ -10,12 +10,13 @@
 # test                  poetry run pytest
 # ci                    check + lint + format-check + type + arch + test
 # run                   poetry run forge
+# run-cli               poetry run forge --cli
 # format-check          poetry run ruff format --check $(LINT_PATHS)
 # package               web-build + poetry build
 # install-cli           build wheel and install forge with pip
 # uninstall-cli         uninstall forgecli with pip
 # verify-cli            verify installed forge command
-.PHONY: help install lock check lint format format-check type arch test web-install web-type web-test web-build ci run package install-cli uninstall-cli verify-cli
+.PHONY: help install lock check lint format format-check type arch test web-install web-type web-test web-build ci run run-cli package install-cli uninstall-cli verify-cli
 
 # 变量定义
 POETRY ?= poetry
@@ -45,6 +46,7 @@ help:
 	@echo "make web-build         - 构建并嵌入 Web 静态资源"
 	@echo "make ci                - 本地等价 CI: Python + Web + test"
 	@echo "make run               - 启动本地 Forge Web"
+	@echo "make run-cli           - 启动终端交互式会话 (ADR-0045)"
 	@echo "make package           - 构建 wheel 和 sdist 到 dist/"
 	@echo "make install-cli       - 构建后用 python -m pip 安装 forge 命令"
 	@echo "make uninstall-cli     - 用 python -m pip 卸载 forgecli"
@@ -97,6 +99,17 @@ ci: check lint format-check type arch web-type web-test web-build test
 
 run: 
 	$(POETRY) run forge $(FORGE_RUN_ARGS)
+
+# 终端会话要读人的输入, 所以 stdin/stdout 必须还是这个终端: 别给它加 tee 或重定向,
+# forge 会以 NO_TTY (4) 拒绝启动而不是挂在那里等. FORGE_RUN_ARGS 照样透传, 但 --cli
+# 不接受 --port / --open.
+#
+# 会话里的 Ctrl-C 由 forge 自己处理 (停这一轮 / 取消当前菜单), 会话不会因此结束.
+# 但 make 也收得到那一下: 它会等子进程结束再把信号补给自己, 于是会话正常退出之后
+# make 仍可能以信号收场. 那只是这一层的噪音 —— 嫌它碍事就直接跑
+# `poetry run forge --cli`, 少一层 make 和一层 poetry.
+run-cli:
+	$(POETRY) run forge --cli $(FORGE_RUN_ARGS)
 
 # 先重建前端再打包: wheel 里的静态资源不入库 (见 .gitignore), 打包时现生成.
 # 少了这条依赖, 打出来的 wheel 带的是上一次谁在本机构建过的那一版.

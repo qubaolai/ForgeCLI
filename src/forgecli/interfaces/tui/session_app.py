@@ -88,6 +88,17 @@ class SessionApp:
                     self._turn(text)
             except NoActiveProject as exc:
                 error(self.console, str(exc))
+            except KeyboardInterrupt:
+                # 命令里的菜单也停在 input() 上. 在那里按 Ctrl-C 是"这一步不做了",
+                # 不是"退出 Forge" —— 让它冒到这里之外, 一次选错菜单就会把整个会话
+                # (连同还没提交的项目激活状态) 一起带走.
+                self.console.print()
+                self.console.print(Text("已取消", style=STYLE_DIM))
+            except EOFError:
+                # 菜单里按 Ctrl-D 同理: input() 抛的是 EOFError, 不接住就是崩在
+                # 一个空 stdin 上.
+                self.console.print()
+                self.console.print(Text("已取消", style=STYLE_DIM))
         self.console.print(Text("再见.", style=STYLE_DIM))
         return ExitCode.OK
 
