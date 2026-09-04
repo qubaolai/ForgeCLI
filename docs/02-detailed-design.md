@@ -145,8 +145,11 @@ AutoGen。字段口径以 ADR-0010 §4 为准，本节只作索引。
 输出（每次迭代三选一）：
 
 - `LoopDecision`：可审计的决策摘要，不含 raw chain-of-thought。
-- `LoopAction`：`answer` / `request_tool` / `ask_user` / `request_approval` /
-  `request_compaction`，只表达意图。
+- `LoopAction`：`answer` / `request_tool`，只表达意图。
+  （早先这里还列着 `ask_user` / `request_approval` / `request_compaction`。三者都没有
+  也不会有构造点：审批由 `ApprovalService` 承担，压缩由 `WindowManager` 承担，向人提问
+  由 `ask_user` 工具承担（ADR-0043 决策 1）。一张列着三个不存在动作的表，读起来像三条
+  已经接好的路。）
 - `LoopStop`：以统一 `LoopStopReason` 表达正常完成、可恢复暂停或阻塞停止。
 
 约束：

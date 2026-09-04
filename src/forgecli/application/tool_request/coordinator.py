@@ -31,10 +31,7 @@ from forgecli.application.recovery.coordinator import (
     RecoveryUnavailableError,
     WorkspaceMutationCoordinator,
 )
-from forgecli.application.security.approval_service import (
-    ApprovalService,
-    PendingApprovalService,
-)
+from forgecli.application.security.approval_service import ApprovalService
 from forgecli.application.security.authorization_service import ToolAuthorizationService
 from forgecli.application.security.learned_rules import LearnedRuleService
 from forgecli.application.tool_request.approval_flow import (
@@ -126,8 +123,9 @@ class ToolRequestCoordinator:
         self._registry = registry
         self._runtime = runtime
         self._authorization = authorization
-        # 默认 PendingApprovalService: 没接交互界面时 ASK 停在 pending, 不自动放行.
-        self._approval = approval or PendingApprovalService()
+        # 默认接 PendingHumanPromptService 那一档 (ApprovalService 的缺省): 没接交互
+        # 界面时 ASK 停在 pending, 不自动放行.
+        self._approval = approval or ApprovalService()
         self._recovery = RecoveryFlow(mutations, workspace_id)
         self._observer = observer
         # 与 ToolAuthorizationService 共用同一个实例: 一边写规则一边查规则.
@@ -657,7 +655,8 @@ class ToolRequestCoordinator:
     ) -> ToolObservation:
         return ToolObservation(
             # 按**字段**置 kind, 不按工具名 (ADR-0023 决策 1). 协调器因此不需要认识
-            # plan_write, 而机制对将来的 ask_user 一类工具同样成立.
+            # plan_write —— 尽管 ADR-0043 之后它确定是唯一的产出方 (提问走阻塞式工具,
+            # 不走回合边界停顿).
             kind=(
                 ObservationKind.PLAN_REVIEW_REQUIRED
                 if result.turn_disposition is TurnDisposition.AWAIT_USER_DECISION

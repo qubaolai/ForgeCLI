@@ -304,6 +304,9 @@ button { color: inherit; }
 .approval-card footer button:disabled { opacity: .42; cursor: not-allowed; }
 .approval-card footer button.ac-deny { background: transparent; color: var(--danger); border-color: color-mix(in srgb, var(--danger) 34%, var(--border)); }
 .approval-card footer button.primary { background: var(--accent); color: #07130f; border-color: transparent; font-weight: 650; }
+/* 提问卡片的自由输入: 选项是建议, 这一行永远在 (ADR-0043 决策 7). */
+.approval-card .ac-answer { flex: 1 1 260px; min-width: 0; border: 1px solid var(--border); background: var(--surface-3); color: var(--text); border-radius: 8px; padding: 8px 11px; font-size: 12.5px; }
+.approval-card .ac-answer:focus { outline: none; border-color: var(--accent); }
 
 .project-switcher-layer { position: fixed; inset: 0; z-index: 45; overflow: auto; background: var(--bg); }
 .project-switcher { position: relative; min-height: 100vh; }

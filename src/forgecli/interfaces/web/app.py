@@ -115,8 +115,11 @@ class MessageRequest(BaseModel):
     text: str = Field(min_length=1)
 
 
-class ApprovalDecisionRequest(BaseModel):
-    decision: str
+class PromptResolveRequest(BaseModel):
+    """一次作答. 审批只用 choice, 提问两者都可能有 (ADR-0043 决策 3)."""
+
+    choice: str = ""
+    text: str = ""
 
 
 class PlanReviewRequest(BaseModel):
@@ -635,17 +638,18 @@ def create_app(
             merged[str(item.get("turn_id", ""))] = item
         return {"items": list(merged.values())}
 
-    @app.get("/api/v1/approvals")
-    async def approvals(request: Request) -> dict[str, object]:
-        return {"items": list(_runtime(request).approvals.list_pending())}
+    @app.get("/api/v1/prompts")
+    async def prompts(request: Request) -> dict[str, object]:
+        return {"items": list(_runtime(request).prompts.list_pending())}
 
-    @app.post("/api/v1/approvals/{approval_id}/resolve")
-    async def resolve_approval(
-        approval_id: str, body: ApprovalDecisionRequest, request: Request
+    @app.post("/api/v1/prompts/{prompt_id}/resolve")
+    async def resolve_prompt(
+        prompt_id: str, body: PromptResolveRequest, request: Request
     ) -> dict[str, bool]:
-        resolved = _runtime(request).approvals.resolve(approval_id, body.decision)
+        runtime = _runtime(request)
+        resolved = runtime.resolve_prompt(prompt_id, body.choice, body.text)
         if not resolved:
-            raise HTTPException(status.HTTP_409_CONFLICT, "审批不存在或决议无效")
+            raise HTTPException(status.HTTP_409_CONFLICT, "该提示不在等待中或作答无效")
         return {"resolved": True}
 
     @app.get("/api/v1/planning")

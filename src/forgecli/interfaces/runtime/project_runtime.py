@@ -34,6 +34,7 @@ from forgecli.application.security.workspace_grants import GrantAccess
 from forgecli.application.session.resume_service import ResumeService
 from forgecli.application.session.session_service import SessionService
 from forgecli.domain.conversation.turn import AssistantResponse, TurnPause, TurnStatus
+from forgecli.domain.human_prompt import HumanPrompt, PromptKind
 from forgecli.domain.intents import InputOrigin, SessionMode
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
@@ -56,8 +57,8 @@ from forgecli.infrastructure.session.fs_session_catalog import FsSessionCatalog
 from forgecli.infrastructure.session.json_state_store import JsonStateStore
 from forgecli.infrastructure.session.jsonl_event_store import JsonlEventStore
 from forgecli.infrastructure.session.jsonl_run_store import JsonlRunStore
-from forgecli.interfaces.runtime.approval import BlockingApprovalBroker
 from forgecli.interfaces.runtime.event_hub import RunEventHub
+from forgecli.interfaces.runtime.human_prompt import BlockingHumanPromptBroker
 from forgecli.interfaces.runtime.llm_wiring import LlmRuntime, build_llm_runtime
 from forgecli.interfaces.runtime.tool_wiring import ToolStack, build_tool_stack
 from forgecli.shared.errors import SessionStateError
@@ -79,8 +80,10 @@ class TurnRun:
 class ProjectRuntime:
     """一个激活项目的长生命周期对象；同一时间只运行一个 turn。"""
 
-    def __init__(self, project: ProjectConfig) -> None:
+    def __init__(self, project: ProjectConfig,) -> None:
         self.project = project
+        # 非空表示这一轮用按脚本回话的假网关 (--mock-llm). 留着是因为 reload_llm 要用:
+        # 用户在假模型下敲 /config 改点东西, 不该把它悄悄换回真网关.
         project_home = config_dir() / "projects" / project.project_id
         sessions_dir = project_home / "sessions"
         self.lock = ProcessLock(project_home / "forge.lock")
@@ -107,7 +110,10 @@ class ProjectRuntime:
             self.thinking = ThinkingRuntimeState()
             self.availability = EnvProviderAvailability()
             self.llm: LlmRuntime = build_llm_runtime(
-                self.config, self.llm_config, self.forge_json, self.thinking
+                self.config,
+                self.llm_config,
+                self.forge_json,
+                self.thinking,
             )
             self.cancel_source = TurnCancelSource()
             self.event_bus = AgentRunEventBus()
@@ -119,7 +125,7 @@ class ProjectRuntime:
                 sessions_dir, lambda: self.session.current().session_id
             )
             self.event_bus.subscribe(self.runs)
-            self.approvals = BlockingApprovalBroker()
+            self.prompts = BlockingHumanPromptBroker()
             self.tools = self._build_tool_stack()
             self._run_lock = threading.Lock()
             self._run: TurnRun | None = None
@@ -138,7 +144,7 @@ class ProjectRuntime:
             session=self.session,
             gateway=self.llm.gateway,
             run_bus=self.event_bus,
-            approval=self.approvals,
+            prompts=self.prompts,
             environment_inheritance=self.config.effective().environment_inheritance,
         )
         granted_at = now_iso()
@@ -152,7 +158,10 @@ class ProjectRuntime:
             raise RuntimeError("turn 运行期间不能重载模型配置")
         grants = self.tools.grants.grants
         self.llm = build_llm_runtime(
-            self.config, self.llm_config, self.forge_json, self.thinking
+            self.config,
+            self.llm_config,
+            self.forge_json,
+            self.thinking,
         )
         self.tools = self._build_tool_stack()
         for grant in grants:
@@ -234,6 +243,9 @@ class ProjectRuntime:
 
     def _execute_turn(self, run_id: str, text: str, origin: InputOrigin) -> None:
         self.cancel_source.issue()
+        # 本轮的提问额度归零 (ADR-0043 决策 9). 与上一句同一个位置: 这里已经是"按轮
+        # 起始"该做的事所在的地方, 分开写就多了一个会忘记跟上的调用点.
+        self.prompts.begin_turn()
         _log.info(
             "turn.started",
             run_id=run_id,
@@ -281,8 +293,9 @@ class ProjectRuntime:
             token = self.cancel_source.current()
             if token is not None:
                 token.cancel()
-            # 审批 broker 是无超时阻塞的: 不放开它, "停止"按不动一个正在等审批的 turn。
-            self.approvals.release_pending("用户停止了这一轮，审批未完成")
+            # 提示通道是无超时阻塞的: 不放开它, "停止"按不动一个正在等人回话的 turn.
+            # 审批与 ask_user 在同一条队列上, 所以这一句同时放开两者 (ADR-0043 决策 10).
+            self.prompts.release_pending("用户停止了这一轮, 未收到回答")
         return running
 
     def new_session(self) -> SessionSnapshot:
@@ -304,6 +317,31 @@ class ProjectRuntime:
         with self._run_lock:
             self._run = None
         return resumed
+
+    def resolve_prompt(self, prompt_id: str, choice: str = "", text: str = "") -> bool:
+        """记下一个人对一条待答提示的作答. 两个界面共用这一个入口.
+
+        审批与 ask_user 走同一条队列 (ADR-0043 决策 3), 所以这里也不按工具名分派 —— 按
+        ``kind`` 决定要不要多记一条会话事件.
+
+        **回答的正文要进 events.jsonl** (决策 12): TOOL_COMPLETED 的 payload 来自
+        ``ToolResult.to_audit_payload()``, 那里只有机制事实, 不记就是永久丢失 —— 而这段
+        字是人写的, 不可复现.
+        """
+        prompt = self.prompts.find(prompt_id)
+        if not self.prompts.resolve(prompt_id, choice, text):
+            return False
+        if prompt is not None and prompt.kind is PromptKind.QUESTION:
+            self.session.record_tool_event(
+                EventType.USER_QUESTION_ANSWERED,
+                {
+                    "prompt_id": prompt_id,
+                    "question": prompt.title,
+                    "choice": choice,
+                    "answer": text or _label_of(prompt, choice),
+                },
+            )
+        return True
 
     def resolve_plan_review(
         self, choice: PlanReviewChoice, note: str = ""
@@ -501,7 +539,7 @@ class ProjectRuntime:
 
     def close(self) -> None:
         self.cancel()
-        self.approvals.close()
+        self.prompts.close()
         self.events.close()
         thread = self._thread
         if thread is not None and thread.is_alive():
@@ -512,8 +550,12 @@ class ProjectRuntime:
 class ProjectRuntimeRegistry:
     """本地服务只激活一个项目；项目中心本身仍可列出全部项目。"""
 
-    def __init__(self, projects: ProjectService) -> None:
+    def __init__(
+        self, projects: ProjectService
+    ) -> None:
         self.projects = projects
+        # 假网关的脚本路径 (--mock-llm). 由进程入口一路传下来而不是各自现读: 一次启动
+        # 里所有项目运行时要么都是假的, 要么都是真的.
         self._lock = threading.Lock()
         self._active: ProjectRuntime | None = None
 
@@ -552,3 +594,11 @@ def build_project_service() -> ProjectService:
         JsonProjectIndexStore(projects / "index.json"),
         JsonProjectConfigStore(projects),
     )
+
+
+def _label_of(prompt: HumanPrompt, choice: str) -> str:
+    """点了选项时记那一项的 label. value 是给机器的, 事件流是给人读的."""
+    for item in prompt.choices:
+        if item.value == choice:
+            return item.label
+    return choice

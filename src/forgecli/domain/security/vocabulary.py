@@ -64,6 +64,7 @@ class DecisionReason(Enum):
     PLAN_ONLY_FAST_PATH = "plan_only_fast_path"
     ARTIFACT_READ_FAST_PATH = "artifact_read_fast_path"
     MEMORY_WRITE_FAST_PATH = "memory_write_fast_path"
+    USER_PROMPT_FAST_PATH = "user_prompt_fast_path"
     WORKSPACE_READ_FAST_PATH = "workspace_read_fast_path"
     # 围栏把这次执行关住了 (ADR-0030). 与上一条分开是为了让审计能回答"这次为什么没
     # 问人": 一个是工具自己就窄, 一个是内核拦住了它伸出去的路.

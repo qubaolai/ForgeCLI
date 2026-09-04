@@ -108,7 +108,11 @@ def load_web_secrets() -> tuple[str, str]:
     return session, csrf
 
 
-def run(*, port: int = DEFAULT_PORT, open_browser: bool = False) -> int:
+def run(
+    *,
+    port: int = DEFAULT_PORT,
+    open_browser: bool = False,
+) -> int:
     """只监听 loopback，并用一次性启动令牌打开控制面。"""
     console = Console()
     status = start_observability()

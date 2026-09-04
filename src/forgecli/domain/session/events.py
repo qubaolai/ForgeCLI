@@ -48,6 +48,19 @@ class EventType(Enum):
     # 往下走. 事件在日志里的位置本身就定义了它覆盖的范围, 所以不另存起止 event_id.
     CONTEXT_COMPACTED = "context_compacted"
 
+    # -- 模型向人提问 (ADR-0043 决策 12) --
+    #
+    # 与 CONTEXT_COMPACTED 同一条判据: **可复现性, 不是大小**. 计划正文的真相源是磁盘上
+    # 的文件, 随时读得回来, 所以那几条只记引用; 摘要与**用户的回答**都不可复现, 所以正文
+    # 进事件流.
+    #
+    # 不记就是永久丢失: TOOL_COMPLETED 的 payload 来自 ToolResult.to_audit_payload(),
+    # 那里面只有机制事实, 一个字的回答正文都没有.
+    #
+    # 只有"答了"这一条, 没有"问了": 提问本身已由 TOOL_REQUESTED 记下, 而一条有问无答的
+    # 记录说明不了比"进程在等待时退出了"更多的东西 (ADR-0028 规则 C).
+    USER_QUESTION_ANSWERED = "user_question_answered"
+
 
 @dataclass(frozen=True)
 class SessionEvent:

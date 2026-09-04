@@ -22,6 +22,10 @@ from pathlib import Path
 
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_run.tool_observer import EventBusToolRunObserver
+from forgecli.application.human_prompt import (
+    HumanPromptService,
+    PendingHumanPromptService,
+)
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.memory.memory_service import MemoryService
 from forgecli.application.planning.planning_service import PlanningService
@@ -41,6 +45,7 @@ from forgecli.application.tools.artifact_store import (
     ArtifactStore,
 )
 from forgecli.application.tools.builtin.artifact_read import ArtifactReadTool
+from forgecli.application.tools.builtin.ask_user import AskUserTool
 from forgecli.application.tools.builtin.fs_apply_patch import ApplyPatchTool
 from forgecli.application.tools.builtin.fs_read import ReadFileTool
 from forgecli.application.tools.builtin.memory_tools import (
@@ -136,7 +141,7 @@ def build_tool_stack(
     workspace_id: str,
     session: SessionService,
     gateway: LlmGateway,
-    approval: ApprovalService | None = None,
+    prompts: HumanPromptService | None = None,
     artifacts: ArtifactStore | None = None,
     run_bus: AgentRunEventBus,
     environment_inheritance: EnvironmentInheritance = EnvironmentInheritance.ALL,
@@ -148,6 +153,9 @@ def build_tool_stack(
     roots = tuple(dict.fromkeys(str(Path(root).resolve()) for root in workspace_roots))
     if not roots:
         raise ValueError("workspace_roots 不能为空")
+    # 审批与 ask_user 走同一条队列 (ADR-0043 决策 3). 没给就落到"无人可答"那一档:
+    # 审批停在 PENDING, 提问回一句"没人可问, 你自己判断" —— 两个方向都朝安全.
+    channel = prompts or PendingHumanPromptService()
     workspace_roots = roots
 
     # 1. 受保护路径先生成: 执行画像要绑定它的哈希.
@@ -241,6 +249,7 @@ def build_tool_stack(
             PlanWriteTool(planning),
             TodoWriteTool(planning),
             TodoSetStatusTool(planning),
+            AskUserTool(channel),
             ArtifactReadTool(governor, store),
             MemoryWriteTool(memory),
             MemoryForgetTool(memory),
@@ -293,7 +302,7 @@ def build_tool_stack(
         registry,
         ToolRuntime(registry),
         authorization,
-        approval=approval,
+        approval=ApprovalService(channel),
         mutations=mutations,
         learned=learned,
         # 订阅者抛异常被总线隔离, 因此展示侧出问题不会影响裁决与执行.

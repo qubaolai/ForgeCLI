@@ -30,7 +30,8 @@ _log = get_log(__name__)
 
 
 def run() -> int:
-    """跑一个终端会话, 返回进程退出码."""
+    """跑一个终端会话, 返回进程退出码.
+    """
     console = make_console()
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         # 审批, 菜单和计划评审都要读人的输入. 没有终端就没有人能回答, 而一个读不到
@@ -86,14 +87,10 @@ def _resolve_project(
     shown = display_path(str(cwd))
     console.print(f"[{STYLE_DIM}]当前目录还没有作为 Forge 项目打开过: {shown}[/]")
     try:
-        trusted = confirm(console, "信任这个目录并作为项目打开?")
+        confirm(console, "信任这个目录并作为项目打开?")
     except (KeyboardInterrupt, EOFError):
         # 在这个问句上按 Ctrl-C 的意思是"先别信任", 不是"进程该崩". 不接住的话,
         # KeyboardInterrupt 会一路冒出 main() 并以 130 退出 —— 从 make 里起的时候
         # 那就是一行 `Error 130`, 而用户只是不想现在回答.
         console.print()
-        trusted = False
-    if not trusted:
-        console.print(f"[{STYLE_DIM}]没有激活项目; 用 /projects 选一个.[/]")
-        return None
     return projects.trust(cwd)

@@ -205,6 +205,8 @@ def _allow_reason(
         return DecisionReason.ARTIFACT_READ_FAST_PATH
     if capabilities <= {Capability.MEMORY_WRITE}:
         return DecisionReason.MEMORY_WRITE_FAST_PATH
+    if capabilities <= {Capability.USER_PROMPT}:
+        return DecisionReason.USER_PROMPT_FAST_PATH
     if capabilities <= {Capability.WORKSPACE_READ, Capability.SPAWN_PROCESS}:
         return DecisionReason.WORKSPACE_READ_FAST_PATH
     if context.confined:

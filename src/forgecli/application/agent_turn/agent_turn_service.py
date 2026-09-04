@@ -363,7 +363,9 @@ class AgentTurnService:
                     LoopObservation(content="noop", source=ObservationSource.CONTEXT)
                 )
             else:
-                # ask_user / approval / compaction 属后续切片.
+                # LoopAction 只有 answer 与 request_tool 两种 (ADR-0043 决策 1):
+                # 审批走 ApprovalService, 压缩走 WindowManager, 提问走 ask_user 工具.
+                # 走到这里说明有人加了第三种动作却没接上驱动.
                 return _TurnOutcome(
                     text=render_notice("stop.unsupported_action"),
                     status=TurnStatus.FAILED,
@@ -636,9 +638,29 @@ def _rebuild_window(events: list[SessionEvent]) -> Window:
     重建出来的窗口**没有工具结果**: 事件流里只有用户与助手的文本, TOOL_COMPLETED 的
     payload 是机制事实, 不含回填给模型的那一段. `/resume` 因此会丢掉上一次会话的工具
     往返细节 —— 那是既有行为, 不是本次引入的.
+
+    唯一的例外是 ask_user 的回答 (ADR-0043 决策 12): 那是人写的字, 不可复现, 丢了就再也
+    找不回来. 它在会话内是一条 tool result, 这里换成一条用户消息 —— 形状不一致, 但比丢掉
+    强.
     """
     transcript: list[ChatMessage] = []
     for event in events:
+        if event.type == EventType.USER_QUESTION_ANSWERED:
+            transcript.append(
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=(
+                        TextBlock(
+                            render_notice(
+                                "ask_user.answer_replay",
+                                question=str(event.payload.get("question", "")),
+                                answer=str(event.payload.get("answer", "")),
+                            )
+                        ),
+                    ),
+                )
+            )
+            continue
         if event.type == EventType.CONTEXT_COMPACTED:
             summary = _summary_of(event)
             if summary:

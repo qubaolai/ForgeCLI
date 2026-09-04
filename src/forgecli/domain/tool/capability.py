@@ -45,6 +45,12 @@ class Capability(Enum):
     # 不复用 PLAN_ONLY: 复用会让安全矩阵里"计划"和"记忆"变成同一件事, 而将来任何一条
     # 只想管其中一个的规则都写不出来.
     MEMORY_WRITE = "memory_write"
+    # 向人提一个问题 (ADR-0043 决策 4). 它碰不到工作区, 也碰不到网络: 唯一的效果是在
+    # 界面上摆一张卡片, 然后等一句话.
+    #
+    # 不复用 PLAN_ONLY: 复用会让安全矩阵里"计划"和"提问"变成同一件事, 而将来任何一条
+    # 只想管其中一个的规则都写不出来 —— 与 MEMORY_WRITE 当初不复用它是同一条理由.
+    USER_PROMPT = "user_prompt"
     WORKSPACE_READ = "workspace_read"
     WORKSPACE_WRITE = "workspace_write"
     WORKSPACE_DELETE = "workspace_delete"

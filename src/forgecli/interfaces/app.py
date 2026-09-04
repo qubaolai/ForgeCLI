@@ -13,9 +13,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 from rich.console import Console
 
+from forgecli.infrastructure.config.paths import config_dir
+from forgecli.infrastructure.llm.mock_gateway import write_example_script
 from forgecli.interfaces.tui.bootstrap import run as run_cli
 from forgecli.interfaces.web.server import DEFAULT_PORT
 from forgecli.interfaces.web.server import run as run_web

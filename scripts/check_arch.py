@@ -109,6 +109,31 @@ SIBLING_BANS: tuple[tuple[str, str, str], ...] = (
         "application.agent_run",
         "工具链路不认识终端事件总线, 只发 ToolRunObserver (ADR-0016 §4.3)",
     ),
+    # 人机提示通道是审批与 ask_user 共用的那一条队列 (ADR-0043 决策 3). 它承重的地方
+    # 恰恰是**它什么都不认识**: 一旦 HumanPrompt 里出现 ApprovalScope 或 ToolPlan,
+    # 下一次给审批加字段就会顺手让提问也拿到它, 而那个字段可能正是一档授权范围.
+    #
+    # 这条边界必须是机器守得住的 —— 写在注释里的"请保持哑"挡不住任何一次顺手.
+    (
+        "domain.human_prompt",
+        "domain.security",
+        "人机提示通道不认识授权词汇 (ADR-0043 决策 3 纪律 1)",
+    ),
+    (
+        "domain.human_prompt",
+        "domain.tool",
+        "人机提示通道不认识工具计划 (ADR-0043 决策 3 纪律 1)",
+    ),
+    (
+        "application.human_prompt",
+        "domain.security",
+        "人机提示通道不认识授权词汇 (ADR-0043 决策 3 纪律 1)",
+    ),
+    (
+        "application.human_prompt",
+        "domain.tool",
+        "人机提示通道不认识工具计划 (ADR-0043 决策 3 纪律 1)",
+    ),
 )
 
 

@@ -38,7 +38,41 @@ export type ApprovalView = {
   learn_blocked_reason: string;
 };
 
+export type PromptChoice = { value: string; label: string; detail: string };
+
+/**
+ * 后端待答队列里的一条提示 (ADR-0043 决策 3)。
+ *
+ * 审批与模型提问共用这一条队列, `kind` 决定渲染哪个分支。`detail` 是**不透明的** ——
+ * 审批那侧装的就是 `ApprovalView.to_payload()` 加一个 `mandatory` 键, 通道原样搬运。
+ */
+export type Prompt = {
+  prompt_id: string;
+  kind: "approval" | "question";
+  title: string;
+  body: string;
+  choices: PromptChoice[];
+  free_text: boolean;
+  detail: Record<string, unknown>;
+};
+
 export type Approval = { approval_id: string; mandatory: boolean; view: ApprovalView };
+
+/**
+ * 把一条审批提示还原成卡片逻辑要的形状。
+ *
+ * 这是一次**投影而不是重建**: `detail` 本身就是后端那份 `ApprovalView.to_payload()`,
+ * 这里只是把它和 `mandatory` 拆回两个字段。逐字段抄一遍就会多一处会漂的地方 ——
+ * 而漂了不会报错, 只会让卡片上少一样东西。
+ */
+export function approvalOf(prompt: Prompt): Approval {
+  const detail = prompt.detail as ApprovalView & { mandatory?: boolean };
+  return {
+    approval_id: prompt.prompt_id,
+    mandatory: Boolean(detail.mandatory),
+    view: detail,
+  };
+}
 
 export type Severity = "calm" | "caution" | "critical";
 

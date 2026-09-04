@@ -45,8 +45,12 @@ _NEVER_AUTO = frozenset(
     }
 )
 
-# 不需要围栏就能自动放行的: 读工作区, 写计划, 读回自己落盘的输出, 起一个已被裁决
-# 绑定的子进程.
+# 不需要围栏就能自动放行的: 读工作区, 写计划, 读回自己落盘的输出, 向人提一个问题,
+# 起一个已被裁决绑定的子进程.
+#
+# USER_PROMPT 在这里是因为**为"要不要问你一个问题"再问一次人是一个字面意义上的死循环**
+# (ADR-0043 决策 4). 它的效果全部发生在界面上, 而界面前面坐着的正是那个会被问的人 ——
+# 他看到问题本身就是那道确认.
 #
 # ARTIFACT_READ 在这里而不是走 EXTERNAL_READ: 它读的确实是工作区之外的路径, 但那个
 # 路径不由模型指定 —— 入参是一个十六进制内容哈希, 校验过才拼得出文件名. 按
@@ -61,6 +65,7 @@ _ALWAYS = frozenset(
         Capability.PLAN_ONLY,
         Capability.ARTIFACT_READ,
         Capability.MEMORY_WRITE,
+        Capability.USER_PROMPT,
         Capability.WORKSPACE_READ,
         Capability.SPAWN_PROCESS,
     }

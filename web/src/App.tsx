@@ -1,7 +1,7 @@
 import { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckIcon, ChevronIcon, GearIcon, PlanIcon, ShieldIcon } from "./icons";
 import { CopyButton, Markdown } from "./Markdown";
-import { Approval, canLearn, defaultOpenSections, headlineOf, isConsequential, learnHintOf, severityOf, shownTargetGroups } from "./approvalModel";
+import { Approval, Prompt, approvalOf, canLearn, defaultOpenSections, headlineOf, isConsequential, learnHintOf, severityOf, shownTargetGroups } from "./approvalModel";
 import { RunProcess } from "./RunProcess";
 import { buildInitialModelParams, DEFAULT_TEMPERATURE, DEFAULT_TOP_P, modelPlaceholder, modelRef, providerAvailabilityCopy, splitModelRef } from "./modelSettings";
 import { appendRunEvent, failUnboundTurn, finishLocalTurn, formatTokens, isTerminalEvent, LocalTurn, metricsFor, newLocalTurn, restoreTurn, RunEvent, RunSnapshot, shouldAutoFollow, shouldSendOnEnter, ToolDirectory } from "./runModel";
@@ -311,7 +311,7 @@ function App() {
   const [stance, setStance] = useState<Stance>({ sandbox: "workspace_write", approval: "always" });
   const [error, setError] = useState("");
   const [trustPath, setTrustPath] = useState("");
-  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [planning, setPlanning] = useState<Planning>({});
   const [settings, setSettings] = useState<Setting[]>([]);
   const [showSettings, setShowSettings] = useState(false);
@@ -377,9 +377,9 @@ function App() {
   }, []);
 
   const loadWorkspace = useCallback(async () => {
-    const [sessionResult, approvalResult, planningResult, settingResult, runResult] = await Promise.all([
+    const [sessionResult, promptResult, planningResult, settingResult, runResult] = await Promise.all([
       api<{ current_session_id: string; current_session: Session; items: Session[] }>("/sessions"),
-      api<{ items: Approval[] }>("/approvals"),
+      api<{ items: Prompt[] }>("/prompts"),
       api<Planning>("/planning"),
       api<{ items: Setting[] }>("/settings"),
       api<TurnRunState | null>("/turns/current"),
@@ -387,7 +387,7 @@ function App() {
     setSessions(sessionResult.items);
     setCurrentSessionId(sessionResult.current_session_id);
     setStance(sessionResult.current_session.mode ?? { sandbox: "workspace_write", approval: "always" });
-    setApprovals(approvalResult.items);
+    setPrompts(promptResult.items);
     setPlanning(planningResult);
     api<PlanIndexView>("/plans").then(setPlanIndex).catch(() => undefined);
     setSettings(settingResult.items);
@@ -767,10 +767,11 @@ function App() {
     } catch (reason) { setError((reason as Error).message); }
   }
 
-  async function resolveApproval(id: string, decision: string) {
+  /** 审批与提问同一条路: choice 是点了哪个选项, text 是自己写的那一句。 */
+  async function resolvePrompt(id: string, choice: string, text = "") {
     try {
-      await api(`/approvals/${id}/resolve`, {
-        method: "POST", body: JSON.stringify({ decision }),
+      await api(`/prompts/${id}/resolve`, {
+        method: "POST", body: JSON.stringify({ choice, text }),
       });
       await loadWorkspace();
     } catch (reason) { setError((reason as Error).message); }
@@ -1019,7 +1020,7 @@ function App() {
           </div>
           <div className="conversation-footer">
             {showJumpToBottom && <button className="jump-bottom" onClick={jumpToBottom}>回到底部 ↓</button>}
-            {approvals[0] && <ApprovalCard approval={approvals[0]} onResolve={resolveApproval} />}
+            {prompts[0] && <PromptCard prompt={prompts[0]} onResolve={resolvePrompt} />}
             <form className={`composer ${connection === "stopped" ? "offline" : ""}`} onSubmit={send}>
               <textarea ref={composerRef} value={message} rows={1} disabled={connection === "stopped"} onChange={(event) => setMessage(event.target.value)} onCompositionStart={() => { composingRef.current = true; }} onCompositionEnd={() => { composingRef.current = false; }} onKeyDown={(event) => { if (shouldSendOnEnter(event.key, event.shiftKey, event.nativeEvent.isComposing, composingRef.current)) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={connection === "stopped" ? "连不上本地服务，请重新运行 forge 后刷新页面" : "描述你想理解、规划或修改的工程任务…"} />
               <div className="composer-bar">
@@ -1269,7 +1270,56 @@ function PlanningPanel({ planning, index, onResolve, onActivate }: { planning: P
   </div>;
 }
 
-function ApprovalCard({ approval, onResolve }: { approval: Approval; onResolve: (id: string, decision: string) => void }) {
+/** 待答队列只有一条, 卡片按 kind 分支 (ADR-0043 决策 11)。 */
+function PromptCard({ prompt, onResolve }: { prompt: Prompt; onResolve: (id: string, choice: string, text?: string) => void }) {
+  if (prompt.kind === "question") return <QuestionCard prompt={prompt} onResolve={onResolve} />;
+  return <ApprovalCard approval={approvalOf(prompt)} onResolve={onResolve} />;
+}
+
+/**
+ * 模型的一次提问。
+ *
+ * 正文按**纯文本**渲染, 不走 Markdown (ADR-0043 决策 6): 这段文案是模型写的, 而
+ * Markdown 能藏链接 —— 一张由模型控制文案的卡片正是钓鱼最省事的位置。
+ *
+ * 输入框恒在: 选项是建议, 自由文本永远可答 (决策 7)。模型对情况的理解不完整才会提问,
+ * 而它列出的选项恰恰是那份不完整理解的产物。
+ */
+function QuestionCard({ prompt, onResolve }: { prompt: Prompt; onResolve: (id: string, choice: string, text?: string) => void }) {
+  const [text, setText] = useState("");
+  return <section className="approval-card sev-calm">
+    <span className="ac-stripe" />
+    <header>
+      <span className="ac-badge"><ShieldIcon /></span>
+      <div className="ac-heading">
+        <h2>{prompt.title}</h2>
+        <p>{prompt.body || "回答之后这一轮会接着往下走"}</p>
+      </div>
+    </header>
+    <footer>
+      <p className="ac-learn">选项只是建议, 也可以直接写。</p>
+      <span className="ac-btns">
+        {prompt.choices.map((choice) => (
+          <button key={choice.value} title={choice.detail} onClick={() => onResolve(prompt.prompt_id, choice.value)}>{choice.label}</button>
+        ))}
+      </span>
+    </footer>
+    {prompt.free_text && <footer>
+      <input
+        className="ac-answer"
+        value={text}
+        placeholder="或者直接写一句…"
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => { if (event.key === "Enter" && text.trim()) onResolve(prompt.prompt_id, "", text.trim()); }}
+      />
+      <span className="ac-btns">
+        <button className="primary" disabled={!text.trim()} onClick={() => onResolve(prompt.prompt_id, "", text.trim())}>回答</button>
+      </span>
+    </footer>}
+  </section>;
+}
+
+function ApprovalCard({ approval, onResolve }: { approval: Approval; onResolve: (id: string, choice: string, text?: string) => void }) {
   const view = approval.view;
   const severity = severityOf(approval);
   const openBy = defaultOpenSections(approval);

@@ -1,11 +1,17 @@
-"""终端里的审批卡片与决议入口.
+"""终端里的提示卡片与作答入口 (ADR-0043 决策 11).
 
-画的是与 Web 同一份 ``ApprovalView.to_payload()``: 用户在两条入口看到的目标, 脚本正文
-与可选范围必须逐字一致 —— 各画各的话, 同一次调用在终端上少列一个目标, 而两边都不会
-报错.
+一条待答提示可能是一次安全审批, 也可能是模型的一次提问 —— 它们走同一条队列, 在这里按
+``kind`` 分两个渲染分支.
 
-**不设等待超时**, 与 broker 的语义一致 (ADR-0025 决策 7): 终止条件只有用户做决定,
-用户停止这一轮, 进程退出三个.
+审批分支画的是与 Web 同一份 ``ApprovalView.to_payload()`` (躺在 ``detail`` 里): 用户在
+两条入口看到的目标, 脚本正文与可选范围必须逐字一致 —— 各画各的话, 同一次调用在终端上
+少列一个目标, 而两边都不会报错.
+
+选项文案也不在这里写死: 它随提示一起来自 ``ApprovalService``, 否则同一个选项在
+终端与 Web 上会叫两个名字.
+
+**不设等待超时**, 与通道的语义一致: 终止条件只有用户做决定, 用户停止这一轮, 进程退出
+三个.
 """
 
 from __future__ import annotations
@@ -37,16 +43,38 @@ _MAX_SOURCE_LINES = 40
 _SUMMARY_TARGETS = 4
 _SUMMARY_SOURCE_LINES = 8
 
-_SCOPE_LABELS = {
-    "once": "允许这一次",
-    "workspace": "本工作区始终允许",
-}
+# 自己写一句. 与任何一个后端选项都不会撞: 后端的 value 来自 ApprovalScope 或模型给的
+# 选项值, 两者都不会是这个形状.
+_FREE_TEXT = "__text__"
+_DETAILS = "__details__"
 
 
-def render_card(
-    console: Console, view: Mapping[str, object], *, mandatory: bool
-) -> None:
-    """把一次待决议的调用完整摆出来."""
+def render_card(console: Console, prompt: Mapping[str, object]) -> None:
+    """把一条待答提示完整摆出来."""
+    if str(prompt.get("kind", "")) == "question":
+        _render_question(console, prompt)
+        return
+    detail = prompt.get("detail")
+    _render_approval(console, detail if isinstance(detail, Mapping) else {})
+
+
+def _render_question(console: Console, prompt: Mapping[str, object]) -> None:
+    """模型的一次提问.
+
+    正文按**纯文本**打, 不走 Markdown (ADR-0043 决策 6): 这段文案是模型写的, 而 Markdown
+    能藏链接 —— 一张由模型控制文案的卡片正是钓鱼最省事的位置.
+    """
+    console.print()
+    console.print(Text(f"{ASK} 需要你回答", style=f"bold {STYLE_WARN}"))
+    console.print(Padding(Text(str(prompt.get("title", ""))), (0, 0, 0, 2)))
+    body = str(prompt.get("body", ""))
+    if body:
+        console.print(Padding(Text(body, style=STYLE_DIM), (0, 0, 0, 2)))
+
+
+def _render_approval(console: Console, view: Mapping[str, object]) -> None:
+    """一次待决议的调用."""
+    mandatory = bool(view.get("mandatory"))
     tool_name = str(view.get("tool_name", ""))
     console.print()
     header = Text(f"{ASK} 需要你确认  ", style=f"bold {STYLE_WARN}")
@@ -88,63 +116,86 @@ def render_card(
     console.print(Text("  可在决议菜单中查看更多详情；默认焦点为拒绝", style=STYLE_DIM))
 
 
-def ask_decision(console: Console, view: Mapping[str, object]) -> str | None:
-    """读一个决议. 返回 broker 认识的 ``once`` / ``workspace`` / ``deny``.
+def ask_decision(
+    console: Console, prompt: Mapping[str, object]
+) -> tuple[str, str] | None:
+    """读一次作答. 返回 ``(choice, text)``, 两者都直接交给通道.
 
     选择方式是 ↑↓ + 回车, 与斜杠命令菜单一致; 数字键仍然直选, 照顾记得住"3 是拒绝"的
-    人. 高亮初始落在"拒绝"上；回车不会在用户还没移动光标时产生授权.
+    人.
+
+    **审批的高亮初始落在最后一项 (拒绝)**: 回车不会在用户还没移动光标时产生授权.
+    提问没有这个顾虑 —— 它的任何一项都不产生授权 —— 所以焦点落在第一项.
 
     返回 None 表示用户按了 Esc 或 Ctrl-C, 那是"停止这一轮", **不是**"我拒绝". 判成拒绝
     会让模型收到一条用户从来没说过的拒绝, 并据此往下走; 而两者都不会放行, 所以按更
     保守的那个理解并不更安全, 只是更不诚实.
     """
-    scopes = [
-        str(item)
-        for item in _as_list(view.get("allowed_scopes"))
-        if str(item) in _SCOPE_LABELS
+    question = str(prompt.get("kind", "")) == "question"
+    detail = prompt.get("detail")
+    view: Mapping[str, object] = detail if isinstance(detail, Mapping) else {}
+    options = [
+        Option(str(item.get("value", "")), str(item.get("label", "")))
+        for item in _as_list(prompt.get("choices"))
+        if isinstance(item, Mapping)
     ]
-    options = [Option(scope, _SCOPE_LABELS[scope]) for scope in scopes]
-    options.append(Option("deny", "拒绝"))
+    free_text = bool(prompt.get("free_text"))
     console.print()
-    blocked = str(view.get("learn_blocked_reason", ""))
-    if blocked and "workspace" not in scopes:
-        # 界面不自己推这句话: 只看得到 allowed_scopes 少了一档, 看不到少的是哪一条判据.
-        console.print(Text(f"  不能选 [始终允许]: {blocked}", style=STYLE_DIM))
+    if not question:
+        blocked = str(view.get("learn_blocked_reason", ""))
+        if blocked and not any(item.key == "workspace" for item in options):
+            # 界面不自己推这句话: 只看得到少了一档, 看不到少的是哪一条判据.
+            console.print(Text(f"  不能选 [始终允许]: {blocked}", style=STYLE_DIM))
     console.print(Text("  Esc / Ctrl-C 停止这一轮", style=STYLE_DIM))
+    if question and not options:
+        # 只收自由文本的提问: 摆一个只有一项的菜单是在让人多按一次回车.
+        return _typed_answer(console)
     try:
-        interactive = [Option("__details__", "查看更多详情", "不执行")]
-        interactive.extend(options)
         while True:
+            interactive: list[Option] = []
+            if not question:
+                interactive.append(Option(_DETAILS, "查看更多详情", "不执行"))
+            interactive.extend(options)
+            if free_text:
+                interactive.append(Option(_FREE_TEXT, "自己写一句"))
             picked = select_one(
                 console,
                 interactive,
-                # 最后一项始终是拒绝；details 插在前面不改变 broker 选项的顺序。
-                default_index=len(interactive) - 1,
+                default_index=0 if question else len(interactive) - 1,
             )
             if picked is None:
                 return None
-            if picked.key != "__details__":
-                return picked.key
-            console.print()
-            console.print(Text("完整审批详情", style=f"bold {STYLE_ACCENT}"))
-            _render_details(
-                console,
-                view,
-                target_limit=_MAX_TARGETS,
-                source_limit=_MAX_SOURCE_LINES,
-            )
+            if picked.key == _DETAILS:
+                console.print()
+                console.print(Text("完整审批详情", style=f"bold {STYLE_ACCENT}"))
+                _render_details(
+                    console,
+                    view,
+                    target_limit=_MAX_TARGETS,
+                    source_limit=_MAX_SOURCE_LINES,
+                )
+                continue
+            if picked.key == _FREE_TEXT:
+                return _typed_answer(console)
+            return (picked.key, "")
     except SelectUnavailable:
-        return _typed(console, options)
+        return _typed(console, options, free_text=free_text)
 
 
-def _typed(console: Console, options: Sequence[Option]) -> str | None:
+def _typed(
+    console: Console, options: Sequence[Option], *, free_text: bool
+) -> tuple[str, str] | None:
     """没有真终端时的回退: 打出选项再读一个编号.
 
     选项在交互路径上由 ``select_one`` 自己渲染, 所以这里必须补打一遍 —— 否则就是在问
     "请选择 [1/2/3]" 却没说 1/2/3 分别是什么.
     """
+    if not options:
+        return _typed_answer(console)
     for index, option in enumerate(options, start=1):
         console.print(Text(f"  {index}. {option.label}", style=STYLE_ACCENT))
+    if free_text:
+        console.print(Text("  或者直接写一句", style=STYLE_DIM))
     while True:
         try:
             raw = input("你的决定: ").strip()
@@ -152,8 +203,24 @@ def _typed(console: Console, options: Sequence[Option]) -> str | None:
             console.print()
             return None
         if raw.isdigit() and 1 <= int(raw) <= len(options):
-            return options[int(raw) - 1].key
+            return (options[int(raw) - 1].key, "")
+        if free_text and raw:
+            # 自由文本恒可答 (ADR-0043 决策 7): 一个都不合适的选项集合不该把人锁住.
+            return ("", raw)
         console.print(Text(f"输入 1-{len(options)} 之间的编号", style=STYLE_ERROR))
+
+
+def _typed_answer(console: Console) -> tuple[str, str] | None:
+    """读一行自由文本. 空行等同没答, 继续问."""
+    while True:
+        try:
+            raw = input("你的回答: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+            return None
+        if raw:
+            return ("", raw)
+        console.print(Text("写一句再回车, 或按 Ctrl-C 停止这一轮", style=STYLE_ERROR))
 
 
 def _counts(raw: object) -> str:

@@ -29,7 +29,6 @@ from forgecli.interfaces.runtime.project_runtime import (
     ProjectRuntimeRegistry,
 )
 from forgecli.interfaces.tui import banner
-from forgecli.interfaces.tui.approval_prompt import ask_decision, render_card
 from forgecli.interfaces.tui.commands.context import CommandContext, NoActiveProject
 from forgecli.interfaces.tui.commands.registry import COMMANDS, dispatch
 from forgecli.interfaces.tui.console import (
@@ -40,6 +39,7 @@ from forgecli.interfaces.tui.console import (
 )
 from forgecli.interfaces.tui.plan_review import review
 from forgecli.interfaces.tui.prompt import ForgePrompt, PromptCommand
+from forgecli.interfaces.tui.prompt_card import ask_decision, render_card
 from forgecli.interfaces.tui.run_view import RunEventCollector, TerminalRunView
 from forgecli.interfaces.tui.session_exit import SessionExit
 
@@ -227,9 +227,9 @@ class SessionApp:
             try:
                 for event in self._collector.drain():
                     view.handle(event)
-                pending = runtime.approvals.list_pending()
+                pending = runtime.prompts.list_pending()
                 if pending:
-                    self._resolve_approval(runtime, pending[0])
+                    self._resolve_prompt(runtime, pending[0])
                     continue
                 run = runtime.current_run()
                 if run is None or run.status != "running":
@@ -248,23 +248,22 @@ class SessionApp:
         for event in self._collector.drain():
             view.handle(event)
 
-    def _resolve_approval(
+    def _resolve_prompt(
         self, runtime: ProjectRuntime, pending: dict[str, object]
     ) -> None:
-        approval_id = str(pending.get("approval_id", ""))
-        view = pending.get("view")
-        if not isinstance(view, dict):
-            return
-        render_card(self.console, view, mandatory=bool(pending.get("mandatory")))
-        decision = ask_decision(self.console, view)
-        if decision is None:
+        """接住一条待答提示. 审批与模型提问走同一条路 (ADR-0043 决策 11)."""
+        prompt_id = str(pending.get("prompt_id", ""))
+        render_card(self.console, pending)
+        answered = ask_decision(self.console, pending)
+        if answered is None:
             # Ctrl-C 不等于拒绝: 那是"停止这一轮". 判成拒绝, 模型会收到一条用户从来
             # 没说过的拒绝, 并据此往下走.
             runtime.cancel()
             warn(self.console, "正在停止这一轮…")
             return
-        if not runtime.approvals.resolve(approval_id, decision):
-            error(self.console, "这条审批已经不在等待中了")
+        choice, text = answered
+        if not runtime.resolve_prompt(prompt_id, choice, text):
+            error(self.console, "这条提示已经不在等待中了")
 
     def _settle(self, runtime: ProjectRuntime) -> None:
         """收尾: 失败要说出来, 停在计划评审要把人接住."""
