@@ -1,37 +1,29 @@
 """编号菜单与几个小问句.
 
-Web 上一个下拉框在终端里就是"列出来 + 输编号". 这件事在模式, 模型, 恢复点, 计划,
-供应商每一处都要做一遍, 所以只写一份 —— 各写各的话, 有的地方 0 是取消, 有的地方
-回车是取消, 用户每进一个菜单都要重新学一次.
+Web 上一个下拉框在终端里就是"列出来 + 选一个". 这件事在模式, 模型, 恢复点, 计划,
+供应商每一处都要做一遍, 所以只写一份 —— 各写各的话, 有的地方 0 是取消, 有的地方回车
+是取消, 用户每进一个菜单都要重新学一次.
+
+选择走 `select_one`: ↑↓ 移动, Enter 确认, 数字键直选. 只在拿不到终端时 (管道, CI,
+用例) 才退回"输一个编号" —— 那条路仍然要留着, 但它不是主路径.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from rich.console import Console
 from rich.text import Text
 
-from forgecli.interfaces.tui.console import (
-    STYLE_ACCENT,
-    STYLE_DIM,
-    error,
-)
+from forgecli.interfaces.tui.console import STYLE_ACCENT, STYLE_DIM, error
+from forgecli.interfaces.tui.select import Option, SelectUnavailable, select_one
+
+__all__ = ["Option", "ask_text", "choose", "confirm"]
 
 # 取消菜单的输入. 直接回车也取消: 那是"我只是想看看"最自然的退出方式.
 _CANCEL = {"q", "quit", "cancel", "exit"}
 _YES = {"y", "yes"}
 _NO = {"n", "no"}
-
-
-@dataclass(frozen=True)
-class Option:
-    """菜单里的一项. ``key`` 是回给调用方的值, 不是显示给人的字符串."""
-
-    key: str
-    label: str
-    hint: str = ""
 
 
 def choose(
@@ -41,19 +33,29 @@ def choose(
     *,
     current: str = "",
 ) -> Option | None:
-    """列出选项并读一个编号. 返回 None 表示用户取消.
+    """列出选项并读一个选择. 返回 None 表示用户取消.
 
-    ``current`` 命中的那一项标一个点: 没有它, 用户要在菜单和 `/status` 之间来回跑才
-    知道现在是哪一档.
+    ``current`` 命中的那一项作为初始高亮: 没有它, 用户要在菜单和 `/status` 之间来回跑
+    才知道现在是哪一档.
     """
     if not options:
         error(console, "没有可选项")
         return None
     console.print(Text(title, style=f"bold {STYLE_ACCENT}"))
+    default = next(
+        (index for index, item in enumerate(options) if item.key == current), 0
+    )
+    try:
+        return select_one(console, options, default_index=default)
+    except SelectUnavailable:
+        return _numbered(console, options)
+
+
+def _numbered(console: Console, options: Sequence[Option]) -> Option | None:
+    """没有终端时的回退: 打印一遍再读一个编号."""
     for index, option in enumerate(options, start=1):
-        marker = "●" if option.key == current else " "
-        line = Text(f" {marker} {index}. ", style=STYLE_ACCENT)
-        line.append(option.label, style="bold" if option.key == current else "")
+        line = Text(f"  {index}. ", style=STYLE_ACCENT)
+        line.append(option.label)
         if option.hint:
             line.append(f"  {option.hint}", style=STYLE_DIM)
         console.print(line)

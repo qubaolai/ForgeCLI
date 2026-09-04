@@ -25,6 +25,7 @@ from forgecli.interfaces.tui.console import (
     kv_table,
     truncate,
 )
+from forgecli.interfaces.tui.select import Option, SelectUnavailable, select_one
 
 # 目标清单在卡片里最多列这么多条; 超出的只报剩余条数. 一次 glob 命中几百个文件时,
 # 全列出来会把决议入口顶出屏幕 —— 而那正是用户此刻要按的东西.
@@ -83,24 +84,41 @@ def render_card(
 def ask_decision(console: Console, view: Mapping[str, object]) -> str | None:
     """读一个决议. 返回 broker 认识的 ``once`` / ``workspace`` / ``deny``.
 
-    返回 None 表示用户按了 Ctrl-C —— 那不是"拒绝", 而是"停止这一轮", 由调用方决定
-    怎么收场. 把它当成拒绝会让模型收到一条它没被拒过的拒绝.
+    选择方式是 ↑↓ + 回车, 与斜杠命令菜单一致; 数字键仍然直选, 照顾记得住"3 是拒绝"的
+    人. 高亮初始落在"允许这一次"上 —— 它是范围最小的那一档.
+
+    返回 None 表示用户按了 Esc 或 Ctrl-C, 那是"停止这一轮", **不是**"我拒绝". 判成拒绝
+    会让模型收到一条用户从来没说过的拒绝, 并据此往下走; 而两者都不会放行, 所以按更
+    保守的那个理解并不更安全, 只是更不诚实.
     """
     scopes = [
         str(item)
         for item in _as_list(view.get("allowed_scopes"))
         if str(item) in _SCOPE_LABELS
     ]
-    options = [(scope, _SCOPE_LABELS[scope]) for scope in scopes]
-    options.append(("deny", "拒绝"))
+    options = [Option(scope, _SCOPE_LABELS[scope]) for scope in scopes]
+    options.append(Option("deny", "拒绝"))
     console.print()
-    for index, (_, label) in enumerate(options, start=1):
-        console.print(Text(f"  {index}. {label}", style=STYLE_ACCENT))
     blocked = str(view.get("learn_blocked_reason", ""))
     if blocked and "workspace" not in scopes:
         # 界面不自己推这句话: 只看得到 allowed_scopes 少了一档, 看不到少的是哪一条判据.
-        console.print(Text(f"     不能选 [始终允许]: {blocked}", style=STYLE_DIM))
-    console.print(Text("  Ctrl-C 停止这一轮", style=STYLE_DIM))
+        console.print(Text(f"  不能选 [始终允许]: {blocked}", style=STYLE_DIM))
+    console.print(Text("  Esc / Ctrl-C 停止这一轮", style=STYLE_DIM))
+    try:
+        picked = select_one(console, options)
+    except SelectUnavailable:
+        return _typed(console, options)
+    return None if picked is None else picked.key
+
+
+def _typed(console: Console, options: Sequence[Option]) -> str | None:
+    """没有真终端时的回退: 打出选项再读一个编号.
+
+    选项在交互路径上由 ``select_one`` 自己渲染, 所以这里必须补打一遍 —— 否则就是在问
+    "请选择 [1/2/3]" 却没说 1/2/3 分别是什么.
+    """
+    for index, option in enumerate(options, start=1):
+        console.print(Text(f"  {index}. {option.label}", style=STYLE_ACCENT))
     while True:
         try:
             raw = input("你的决定: ").strip()
@@ -108,7 +126,7 @@ def ask_decision(console: Console, view: Mapping[str, object]) -> str | None:
             console.print()
             return None
         if raw.isdigit() and 1 <= int(raw) <= len(options):
-            return options[int(raw) - 1][0]
+            return options[int(raw) - 1].key
         console.print(Text(f"输入 1-{len(options)} 之间的编号", style=STYLE_ERROR))
 
 

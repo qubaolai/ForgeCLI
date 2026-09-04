@@ -132,7 +132,7 @@ def test_interrupting_a_menu_does_not_kill_the_session(
 
     lines = iter(["/mode", "/plan", "/exit"])
     monkeypatch.setattr(module, "dispatch", fake_dispatch)
-    monkeypatch.setattr(module.LineEditor, "read", lambda self, prompt: next(lines))
+    monkeypatch.setattr(module.ForgePrompt, "read", lambda self: next(lines))
     app = module.SessionApp(
         Console(file=screen, width=100, no_color=True, highlight=False),
         context.registry,

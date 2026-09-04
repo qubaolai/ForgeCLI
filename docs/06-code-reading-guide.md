@@ -667,6 +667,7 @@ allowlist, 读**只能**用 denylist —— Seatbelt 下 `(deny default)` 会让
 | 共用组合根 | `interfaces/runtime/project_runtime.py` (546 行), `approval.py`, `event_hub.py` | 0025, 0045 | 要改一轮怎么起, 怎么停, 怎么等审批 |
 | Web 后端 | `interfaces/web/app.py` (1198 行), `server.py` (188 行) | 0025 | 要加接口或改启动行为 |
 | 终端入口 | `interfaces/tui/session_app.py` + `run_view.py` + `commands/` | 0045, 0016 | 要改终端交互或加一条斜杠命令 |
+| 终端输入面 | `interfaces/tui/prompt.py` (输入框与斜杠菜单), `tty.py` (逐键读取), `select.py` (↑↓ 单选) | 0045, 0040 | 要改按键, 菜单或提示行 |
 | Web 前端 | `web/src/App.tsx` (1833 行), `runModel.ts` (653 行), `RunProcess.tsx` (351 行) | 0025 | 要改界面 |
 | 可观测性 | `shared/observability/` + `interfaces/runtime/logging_wiring.py` + `diagnostics.py` | 0035 | 要排查线上行为 |
 | LLM 网关 | `application/llm/gateway/default_gateway.py` (1161 行) | 0011, 0012 | 要接新供应商 |

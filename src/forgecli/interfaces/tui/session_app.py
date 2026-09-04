@@ -16,7 +16,12 @@ from pathlib import Path
 from rich.console import Console
 from rich.text import Text
 
-from forgecli.domain.intents import InputOrigin, stance_label
+from forgecli.domain.intents import (
+    MODE_PRESETS,
+    PRESET_NAMES,
+    InputOrigin,
+    stance_label,
+)
 from forgecli.infrastructure.config import config_dir
 from forgecli.interfaces.exit_codes import ExitCode
 from forgecli.interfaces.runtime.project_runtime import (
@@ -25,7 +30,7 @@ from forgecli.interfaces.runtime.project_runtime import (
 )
 from forgecli.interfaces.tui.approval_prompt import ask_decision, render_card
 from forgecli.interfaces.tui.commands.context import CommandContext, NoActiveProject
-from forgecli.interfaces.tui.commands.registry import command_names, dispatch
+from forgecli.interfaces.tui.commands.registry import COMMANDS, dispatch
 from forgecli.interfaces.tui.console import (
     STYLE_ACCENT,
     STYLE_DIM,
@@ -33,14 +38,14 @@ from forgecli.interfaces.tui.console import (
     kv_table,
     warn,
 )
-from forgecli.interfaces.tui.line_editor import LineEditor
 from forgecli.interfaces.tui.plan_review import review
+from forgecli.interfaces.tui.prompt import ForgePrompt
 from forgecli.interfaces.tui.run_view import RunEventCollector, TerminalRunView
+from forgecli.interfaces.tui.session_exit import SessionExit
 from forgecli.shared import __version__
 
 # 轮询间隔. 够快到流式正文看不出卡顿, 又不至于让一个空闲的等待烧掉一个核.
 _POLL_SECONDS = 0.04
-_PROMPT = "› "
 
 
 class SessionApp:
@@ -50,7 +55,13 @@ class SessionApp:
         self.console = console
         self.registry = registry
         self.context = CommandContext(console=console, registry=registry)
-        self.editor = LineEditor(_history_file(), command_names())
+        # 输入框只要命令名与一句说明, 用来画 "/" 菜单; 执行仍由 registry 分派.
+        self.prompt = ForgePrompt(
+            [(item.name.removeprefix("/"), item.summary) for item in COMMANDS],
+            status_provider=self._runtime_status,
+            on_mode_step=self._step_mode,
+            history_file=_history_file(),
+        )
         self._bound: ProjectRuntime | None = None
         self._collector = RunEventCollector()
 
@@ -58,29 +69,23 @@ class SessionApp:
 
     def run(self) -> int:
         self._banner()
-        interrupts = 0
         while not self.context.exit_requested:
             self._bind_active()
-            self.console.print()
             try:
-                line = self.editor.read(_PROMPT)
-            except KeyboardInterrupt:
-                # 第一次 Ctrl-C 只清掉这一行. 敲了半句话手滑一下就退出, 那半句话就没了.
-                interrupts += 1
-                if interrupts >= 2:
-                    break
-                self.console.print()
-                self.console.print(
-                    Text("再按一次 Ctrl-C 退出, 或用 /exit", style=STYLE_DIM)
-                )
-                continue
-            except EOFError:
-                self.console.print()
+                line = self.prompt.read()
+            except SessionExit:
+                # 空行连按两次 Ctrl-C. 输入框自己判的三态退出, 这里只负责收尾.
                 break
-            interrupts = 0
+            except EOFError:
+                # 输入流走到尽头 (stdin 被关掉). 空行 Ctrl-D 不走这里 —— 输入框把它
+                # 消费掉了, 退出只认 Ctrl-C x2 或 /exit.
+                break
             text = line.strip()
             if not text:
                 continue
+            # 输入框提交后会把自己擦掉 (erase_when_done), 用户那一句不会留在滚动历史
+            # 里. 这里补回显一次, 否则翻上去看只有模型在自言自语.
+            self.console.print(Text(f"› {text}", style=STYLE_ACCENT), highlight=False)
             try:
                 if text.startswith("/"):
                     dispatch(self.context, text)
@@ -89,18 +94,67 @@ class SessionApp:
             except NoActiveProject as exc:
                 error(self.console, str(exc))
             except KeyboardInterrupt:
-                # 命令里的菜单也停在 input() 上. 在那里按 Ctrl-C 是"这一步不做了",
+                # 命令里的菜单也停在读键上. 在那里按 Ctrl-C 是"这一步不做了",
                 # 不是"退出 Forge" —— 让它冒到这里之外, 一次选错菜单就会把整个会话
                 # (连同还没提交的项目激活状态) 一起带走.
                 self.console.print()
                 self.console.print(Text("已取消", style=STYLE_DIM))
             except EOFError:
-                # 菜单里按 Ctrl-D 同理: input() 抛的是 EOFError, 不接住就是崩在
-                # 一个空 stdin 上.
+                # 菜单里按 Ctrl-D 同理: 读一行的回退路径抛的是 EOFError.
                 self.console.print()
                 self.console.print(Text("已取消", style=STYLE_DIM))
         self.console.print(Text("再见.", style=STYLE_DIM))
         return ExitCode.OK
+
+    # ---- 输入框要的两个回调 ----
+
+    def _runtime_status(self) -> str:
+        """输入框右下角: 当前模式, 模型与它的 thinking. 每次重绘现读.
+
+        模式必须在这里 —— Tab / Shift-Tab 切档的**唯一**视觉反馈就是这一行. 少了它,
+        那个快捷键按下去屏幕上什么都不会变, 而它改的是 Forge 能不动手做什么.
+
+        现读而不是缓存: /model 或 /thinking 改完, 下一帧就该反映出来.
+        """
+        runtime = self.registry.active
+        if runtime is None:
+            return ""
+        parts = [stance_label(runtime.session.current().mode)]
+        model = runtime.current_model()
+        if model is None:
+            parts.append("未设置模型")
+            return " · ".join(parts)
+        parts.append(str(model))
+        thinking = runtime.thinking_view()
+        if thinking.get("configured") and thinking.get("mode") == "on":
+            effort = str(thinking.get("effort", "") or "")
+            parts.append(f"thinking {effort}".strip())
+        return " · ".join(parts)
+
+    def _step_mode(self, step: int) -> None:
+        """Tab / Shift-Tab: 沿预设的权限梯度切一档.
+
+        两端截断不回绕: 从最松的一档再按一次 Tab 跳回最紧的, 是那种按下去才发现的
+        意外 —— 而这一轴上的每一步都在改 Forge 能不动手做什么。
+        """
+        runtime = self.registry.active
+        if runtime is None or runtime.busy:
+            return
+        names = [preset.value for preset in MODE_PRESETS]
+        current = runtime.session.current().mode
+        index = next(
+            (
+                position
+                for position, name in enumerate(names)
+                if PRESET_NAMES[name] == current
+            ),
+            # 当前是两个轴的自由组合, 不在预设里. 从哪一端起步跟着方向走, 免得
+            # "按一下 Tab 反而更严了"。
+            -1 if step > 0 else len(names),
+        )
+        target = max(0, min(index + step, len(names) - 1))
+        if PRESET_NAMES[names[target]] != current:
+            runtime.set_mode(PRESET_NAMES[names[target]])
 
     def _banner(self) -> None:
         runtime = self.registry.active
