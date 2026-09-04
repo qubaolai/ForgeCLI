@@ -9,7 +9,12 @@ from __future__ import annotations
 from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
 
-from forgecli.interfaces.tui.prompt import _HINT_GROUPS, _fit_hint, _SlashCompleter
+from forgecli.interfaces.tui.prompt import (
+    _HINT_GROUPS,
+    PromptCommand,
+    _fit_hint,
+    _SlashCompleter,
+)
 
 _COMMANDS = (
     ("mode", "隔离档与审批档"),
@@ -33,6 +38,17 @@ def test_slash_opens_the_menu_with_every_command() -> None:
 
 def test_menu_narrows_as_you_type() -> None:
     assert [name for name, _ in _completions("/mod")] == ["/mode", "/model"]
+
+
+def test_menu_can_search_chinese_summary_when_name_has_no_prefix() -> None:
+    commands = (
+        PromptCommand("config", "配置值与来源", "设置", ("日志",)),
+        PromptCommand("status", "当前状态", "会话"),
+    )
+    completer = _SlashCompleter(commands)
+    document = Document("/日志", 3)
+    found = [item.text for item in completer.get_completions(document, CompleteEvent())]
+    assert found == ["config"]
 
 
 def test_menu_carries_the_one_line_summary() -> None:

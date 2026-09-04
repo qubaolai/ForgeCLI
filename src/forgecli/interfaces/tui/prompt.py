@@ -10,7 +10,7 @@
 
 
 斜杠命令菜单（不同于内置浮动下拉，是自绘的全宽面板）：
-    - 输入 "/" 即出现，列出匹配命令，命令名与说明分两列对齐、铺满整行；
+    - 输入 "/" 即出现，列出匹配命令，分类、命令名与说明单行对齐；
     - ↑/↓ 移动高亮，Tab 同样可切换；
     - Enter 选中（填入输入行）；命令已完整时 Enter 直接提交；
     - Esc 关闭菜单。
@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from prompt_toolkit.application import Application
@@ -78,7 +79,7 @@ _MENU_CHROME_ROWS = 8
 #
 # 有上限是因为输入框长高会把上面的对话往上顶. 粘一篇长文进来时, 用户想看的是自己刚打的
 # 那几行, 不是让输入框吃掉整个屏幕.
-_INPUT_MAX_ROWS = 10
+_INPUT_MAX_ROWS = 8
 
 # Shift+Enter 的 CSI-u 序列 (kitty 键盘协议). prompt_toolkit 3.0.52 没有内置这一条,
 # 这里补进去并映射到 ControlJ —— 于是一条 c-j 绑定同时覆盖三种输入方式.
@@ -111,21 +112,34 @@ _EXIT_WINDOW = 0.8
 # "class:xxx" 在布局里被引用，这里给出每个 class 对应的样式字符串。
 _STYLE = Style.from_dict(
     {
-        "frame": "ansibrightblack",  # 输入框边框：灰色
-        "prompt": "bold ansigreen",  # 输入行前缀 "› "
-        "hint": "ansicyan",  # 提示行里的按键，如 "/"、"↵"
-        "hint-dim": "ansibrightblack",  # 提示行里的说明文字
+        "frame": "#454b58",  # 输入框边框：灰色
+        "prompt": "bold #62d6ad",  # 输入行前缀 "› "
+        "hint": "#62d6ad",  # 提示行里的按键，如 "/"、"↵"
+        "hint-dim": "#767e8f",  # 提示行里的说明文字
         "hint-alert": "#89a19d",  # "再按一次 Ctrl-C 退出" 警示
-        "runtime-status": "ansibrightblack",  # 输入框下方右侧的模型 / thinking
-        "runtime-status-error": "ansiyellow",
+        "runtime-status": "#9198a7",  # 输入框下方右侧的模型 / thinking
+        "runtime-status-error": "#f4bd61",
         # 斜杠命令菜单（背景透明：不设 bg，终端底色透出来）。
-        # 选中项仅靠文字颜色区分：普通行偏暗，选中行用青绿色 + 提亮的说明。
-        "menu-name": "#9399b2",  # 普通行：命令名（偏暗）
-        "menu-meta": "#6c7086",  # 普通行：说明（更暗）
-        "menu-name-current": "#94e2d5",  # 选中行：命令名（青绿）
-        "menu-meta-current": "#cdd6f4",  # 选中行：说明（提亮）
+        # 选中项同时使用 ❯、青绿色和深色背景，不依赖单一颜色线索。
+        "menu-marker": "bold #62d6ad",
+        "menu-category": "#767e8f",
+        "menu-name": "#b8bec9",  # 普通行：命令名
+        "menu-meta": "#767e8f",  # 普通行：说明（更暗）
+        "menu-category-current": "#62d6ad bg:#191d25",
+        "menu-name-current": "bold #62d6ad bg:#191d25",
+        "menu-meta-current": "#e7e9ee bg:#191d25",
     }
 )
+
+
+@dataclass(frozen=True)
+class PromptCommand:
+    """输入框需要的命令展示信息；执行仍由 CommandRegistry 负责。"""
+
+    name: str
+    summary: str
+    category: str = "其他"
+    keywords: tuple[str, ...] = ()
 
 
 class _SlashCompleter(Completer):
@@ -135,9 +149,13 @@ class _SlashCompleter(Completer):
     我们据此返回候选项；候选项由 ForgePrompt 自绘成全宽菜单。
     """
 
-    def __init__(self, commands: Sequence[tuple[str, str]]) -> None:
-        # commands 是 (命令名, 一句话说明) 的列表，来自 CommandRegistry。
-        self._commands = commands
+    def __init__(self, commands: Sequence[tuple[str, str] | PromptCommand]) -> None:
+        # 二元组兼容轻量调用方；生产路径传 PromptCommand，额外提供分类与中文关键词。
+        self._commands = tuple(
+            item if isinstance(item, PromptCommand) else PromptCommand(*item)
+            for item in commands
+        )
+        self.by_name = {item.name: item for item in self._commands}
 
     def get_completions(
         self, document: Document, complete_event: CompleteEvent
@@ -150,15 +168,24 @@ class _SlashCompleter(Completer):
         # 命令名后一旦出现空格，说明在写参数了，不再补全命令名。
         if " " in word:
             return
-        for name, summary in self._commands:
-            if name.startswith(word):
+        prefix_matches = [item for item in self._commands if item.name.startswith(word)]
+        matches = prefix_matches or [
+            item
+            for item in self._commands
+            if word.casefold()
+            in " ".join(
+                (item.name, item.summary, item.category, *item.keywords)
+            ).casefold()
+        ]
+        for item in matches:
+            if item:
                 yield Completion(
-                    name,
+                    item.name,
                     # start_position 是负数：从光标往前替换掉已输入的 word 部分，
                     # 这样选中后变成完整的 "/name"，而不是把 name 又接在后面。
                     start_position=-len(word),
-                    display=f"/{name}",  # 菜单里显示的命令名
-                    display_meta=summary,  # 菜单里显示的说明
+                    display=f"/{item.name}",  # 菜单里显示的命令名
+                    display_meta=item.summary,  # 菜单里显示的说明
                 )
 
 
@@ -167,7 +194,7 @@ class ForgePrompt:
 
     def __init__(
         self,
-        commands: Sequence[tuple[str, str]],
+        commands: Sequence[tuple[str, str] | PromptCommand],
         *,
         status_provider: Callable[[], str] | None = None,
         on_mode_step: Callable[[int], None],
@@ -191,8 +218,9 @@ class ForgePrompt:
         # 历史落盘, 于是"上次那句长指令"在重启之后还在. 多行缓冲下 ↑/↓ 先在行间走,
         # 到了第一 / 最后一行才翻历史 —— 那是 prompt_toolkit 的默认绑定, 也正是多行
         # 输入框该有的样子.
+        self._completer = _SlashCompleter(commands)
         self._buffer = Buffer(
-            completer=_SlashCompleter(commands),
+            completer=self._completer,
             complete_while_typing=True,
             multiline=True,
             history=_history(history_file),
@@ -277,10 +305,16 @@ class ForgePrompt:
             return [("class:runtime-status-error", "配置状态不可用  ")]
         if not status:
             return []
-        return [("class:runtime-status", f"{status}  ")]
+        columns = get_app().output.get_size().columns
+        return [
+            (
+                "class:runtime-status",
+                f"{_fit_text(status, max(12, columns // 2 - 2))}  ",
+            )
+        ]
 
     def _render_menu(self) -> StyleAndTextTuples:
-        """自绘斜杠命令菜单：每行 = 命令名(定宽) + 说明；选中项仅靠文字颜色区分。
+        """自绘斜杠命令菜单：分类、命令与说明单行对齐。
 
         放不下就按窗口滚动，高亮居中、两端贴边，并标出上下还剩多少条。菜单自己管这件
         事而不是指望终端：它画在 prompt_toolkit 的布局里，终端滚动条碰不到它。
@@ -297,8 +331,14 @@ class ForgePrompt:
         visible = self._menu_rows(len(completions))
         start = _menu_window(len(completions), selected, visible)
 
-        # 命令名列宽 = 最长的 "/name" 再留两格间距，保证说明列对齐。
-        name_width = max(len(c.display_text) for c in completions) + 2
+        name_width = max(get_cwidth(c.display_text) for c in completions) + 2
+        category_width = (
+            max(
+                get_cwidth(self._completer.by_name[c.text].category)
+                for c in completions
+            )
+            + 2
+        )
 
         # 按行组装再用 "\n" 接起来: 让每个分支自己决定要不要补换行, 出过一次
         # "滚动标记后面多一个空行"的问题 —— 标记自带换行, 紧跟的第一行又补了一个.
@@ -308,11 +348,20 @@ class ForgePrompt:
         for index in range(start, min(start + visible, len(completions))):
             comp = completions[index]
             current = "-current" if index == selected else ""
+            category = self._completer.by_name[comp.text].category
             lines.append(
                 [
                     (
+                        "class:menu-marker" if index == selected else "",
+                        "❯ " if index == selected else "  ",
+                    ),
+                    (
+                        f"class:menu-category{current}",
+                        _pad_display(category, category_width),
+                    ),
+                    (
                         f"class:menu-name{current}",
-                        f"  {comp.display_text.ljust(name_width)}",
+                        _pad_display(comp.display_text, name_width),
                     ),
                     (f"class:menu-meta{current}", comp.display_meta_text),
                 ]
@@ -348,7 +397,7 @@ class ForgePrompt:
             BufferControl(buffer=self._buffer),
             get_line_prefix=self._prompt_prefix,
             wrap_lines=True,
-            height=Dimension(min=1, max=_INPUT_MAX_ROWS),
+            height=self._input_dimension,
             dont_extend_height=True,
         )
 
@@ -366,6 +415,7 @@ class ForgePrompt:
         # 用 HSplit（纵向堆叠）拼出"菜单 / 上边框 / 输入行 / 下边框 / 提示行"。
         root = HSplit(
             [
+                menu_pane,
                 _border_row("╭", "╮"),
                 # 中间这行用 VSplit（横向）：左竖线 + 输入区 + 右竖线。
                 VSplit(
@@ -391,7 +441,6 @@ class ForgePrompt:
                         ),
                     ]
                 ),
-                menu_pane,
             ]
         )
 
@@ -408,6 +457,11 @@ class ForgePrompt:
             erase_when_done=True,
             mouse_support=False,
         )
+
+    def _input_dimension(self) -> Dimension:
+        """输入区最多占终端约三分之一；小窗口不再被十行编辑器吞掉。"""
+        rows = get_app().output.get_size().rows
+        return Dimension(min=1, max=max(3, min(_INPUT_MAX_ROWS, rows // 3)))
 
     def _key_bindings(self) -> KeyBindings:
         """自定义按键：菜单导航、回车提交、Ctrl-C 三态退出、Ctrl-D 删除。"""
@@ -534,6 +588,26 @@ def _menu_window(total: int, selected: int, visible: int) -> int:
     if total <= visible:
         return 0
     return min(max(0, selected - visible // 2), total - visible)
+
+
+def _pad_display(text: str, width: int) -> str:
+    """按终端显示列补空格；中文宽字符不能用 str.ljust 对齐。"""
+    return text + " " * max(0, width - get_cwidth(text))
+
+
+def _fit_text(text: str, width: int) -> str:
+    """按显示列截断状态文本，给左侧快捷键留出稳定空间。"""
+    if get_cwidth(text) <= width:
+        return text
+    kept: list[str] = []
+    used = 0
+    for char in text:
+        char_width = get_cwidth(char)
+        if used + char_width > max(0, width - 1):
+            break
+        kept.append(char)
+        used += char_width
+    return "".join(kept) + "…"
 
 
 def _history(history_file: Path | None) -> History:

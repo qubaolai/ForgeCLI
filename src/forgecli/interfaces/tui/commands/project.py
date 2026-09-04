@@ -16,6 +16,7 @@ from forgecli.interfaces.tui.chooser import Option, ask_text, choose
 from forgecli.interfaces.tui.commands.context import CommandContext
 from forgecli.interfaces.tui.console import (
     STYLE_DIM,
+    display_path,
     error,
     listing,
     ok,
@@ -42,7 +43,7 @@ def cmd_projects(context: CommandContext, argument: str) -> None:
                     (
                         item.project_id
                         + (" ●" if item.project_id == active_id else ""),
-                        item.primary_workspace_root,
+                        display_path(item.primary_workspace_root),
                         str(len(item.workspace_roots) - 1),
                     )
                     for item in trusted

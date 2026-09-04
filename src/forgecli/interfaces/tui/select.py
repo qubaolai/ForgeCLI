@@ -50,9 +50,12 @@ _HINT_TAIL = "Enter 确认 · 数字键直选 · Esc 返回"
 # 分类头也占一行.
 _TAB_ROWS = 1
 
-_CURSOR = "#94e2d5"
-_NORMAL = "#9399b2"
-_DETAIL = "#6c7086"
+_CURSOR = "#62d6ad"
+_CURRENT_TAB = "bold #62d6ad"
+_CURRENT = "bold #62d6ad on #191d25"
+_CURRENT_DETAIL = "#e7e9ee on #191d25"
+_NORMAL = "#b8bec9"
+_DETAIL = "#767e8f"
 _HINT = "bright_black"
 
 
@@ -184,7 +187,7 @@ def _render_tabs(groups: Sequence[Group], current: int) -> Text:
     for index, group in enumerate(groups):
         if index:
             body.append("  ")
-        body.append(group.label, style=_CURSOR if index == current else _DETAIL)
+        body.append(group.label, style=_CURRENT_TAB if index == current else _DETAIL)
     body.append("\n")
     return body
 
@@ -209,10 +212,13 @@ def _render(
         body.append("❯ " if current else "  ", style=_CURSOR)
         body.append(
             f"{position + 1}. {option.label}",
-            style=_CURSOR if current else _NORMAL,
+            style=_CURRENT if current else _NORMAL,
         )
         if option.hint:
-            body.append(f"  {option.hint}", style=_DETAIL)
+            body.append(
+                f"  {option.hint}",
+                style=_CURRENT_DETAIL if current else _DETAIL,
+            )
         body.append("\n")
     rest = len(options) - (start + visible)
     if rest > 0:

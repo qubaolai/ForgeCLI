@@ -275,3 +275,72 @@ def test_collector_hands_events_over_once() -> None:
     )
     assert len(collector.drain()) == 1
     assert collector.drain() == ()
+
+
+def test_the_turn_opens_with_a_blank_line(
+    view: TerminalRunView, screen: io.StringIO
+) -> None:
+    """过程与用户刚说的那句话之间要有一行空.
+
+    紧贴着排, 两个人说的话在滚动历史里看起来像同一段.
+    """
+    view.handle(_event(AgentRunEventKind.TOOL_STARTED, ToolStartedPayload("fs_read")))
+    assert screen.getvalue().startswith("\n")
+
+
+def test_only_one_blank_line_opens_the_turn(
+    view: TerminalRunView, screen: io.StringIO
+) -> None:
+    """开场那一行只留一次, 不是每种事件各留一次."""
+    view.handle(
+        _event(
+            AgentRunEventKind.MODEL_REASONING_STATUS,
+            ReasoningStatusPayload(ReasoningStatus.STARTED),
+        )
+    )
+    view.handle(
+        _event(
+            AgentRunEventKind.TOOL_STARTED, ToolStartedPayload("fs_read"), sequence=2
+        )
+    )
+    assert not screen.getvalue().startswith("\n\n")
+
+
+def test_the_answer_is_separated_from_the_process(
+    view: TerminalRunView, screen: io.StringIO
+) -> None:
+    """答案与工具行贴在一起时, 用户要先分辨哪一行才是回答."""
+    view.handle(_event(AgentRunEventKind.TOOL_STARTED, ToolStartedPayload("fs_read")))
+    view.handle(
+        _event(
+            AgentRunEventKind.TOOL_COMPLETED,
+            ToolCompletedPayload("fs_read", status="ok", result_summary="读了 12 行"),
+            sequence=2,
+        )
+    )
+    view.handle(
+        _event(
+            AgentRunEventKind.MODEL_OUTPUT_DELTA, TextDeltaPayload("改好了"), sequence=3
+        )
+    )
+    lines = screen.getvalue().splitlines()
+    assert lines[lines.index("改好了") - 1].strip() == ""
+
+
+def test_metrics_get_their_own_line_break(
+    view: TerminalRunView, screen: io.StringIO
+) -> None:
+    """读数是这一轮的落款, 不是回答的最后一句."""
+    view.handle(
+        _event(AgentRunEventKind.MODEL_OUTPUT_DELTA, TextDeltaPayload("改好了"))
+    )
+    view.handle(
+        _event(
+            AgentRunEventKind.TURN_COMPLETED,
+            TurnFinishedPayload(status="completed", elapsed_ms=1200),
+            sequence=2,
+        )
+    )
+    lines = [line for line in screen.getvalue().splitlines()]
+    metrics = next(index for index, line in enumerate(lines) if "1.2s" in line)
+    assert lines[metrics - 1].strip() == ""

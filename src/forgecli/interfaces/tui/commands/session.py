@@ -11,6 +11,7 @@ from forgecli.interfaces.tui.commands.context import CommandContext
 from forgecli.interfaces.tui.console import (
     STYLE_ACCENT,
     STYLE_DIM,
+    display_path,
     error,
     kv_table,
     listing,
@@ -41,7 +42,7 @@ def cmd_status(context: CommandContext, _argument: str) -> None:
     planning = runtime.tools.planning.load()
     rows = [
         ("项目", runtime.project.project_id),
-        ("主工作区", runtime.project.primary_workspace_root),
+        ("主工作区", display_path(runtime.project.primary_workspace_root)),
         ("会话", snapshot.session_id),
         ("模式", snapshot.mode.value),
         ("模型", str(model) if model is not None else "未设置"),
@@ -51,7 +52,7 @@ def cmd_status(context: CommandContext, _argument: str) -> None:
         rows.append(("thinking", f"{thinking.get('mode', '')} · {effort}"))
     extra = runtime.project.workspace_roots[1:]
     if extra:
-        rows.append(("额外目录", "\n".join(extra)))
+        rows.append(("额外目录", "\n".join(display_path(item) for item in extra)))
     if planning.plan is not None:
         rows.append(("计划", f"{planning.plan.title} · {planning.plan.status.value}"))
     if planning.todo is not None:

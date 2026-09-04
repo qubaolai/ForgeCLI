@@ -12,6 +12,7 @@ from forgecli.interfaces.tui.chooser import Option, ask_text, choose, confirm
 from forgecli.interfaces.tui.commands.context import CommandContext
 from forgecli.interfaces.tui.console import (
     STYLE_DIM,
+    display_path,
     error,
     listing,
     ok,
@@ -115,7 +116,7 @@ def cmd_dirs(context: CommandContext, argument: str) -> None:
             ("目录", "权限", "角色"),
             (
                 (
-                    root,
+                    display_path(root),
                     _access(context, root),
                     "主工作区" if index == 0 else "额外目录",
                 )

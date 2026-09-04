@@ -33,16 +33,15 @@ from forgecli.interfaces.tui.approval_prompt import ask_decision, render_card
 from forgecli.interfaces.tui.commands.context import CommandContext, NoActiveProject
 from forgecli.interfaces.tui.commands.registry import COMMANDS, dispatch
 from forgecli.interfaces.tui.console import (
-    STYLE_ACCENT,
     STYLE_DIM,
+    display_path,
     error,
     warn,
 )
 from forgecli.interfaces.tui.plan_review import review
-from forgecli.interfaces.tui.prompt import ForgePrompt
+from forgecli.interfaces.tui.prompt import ForgePrompt, PromptCommand
 from forgecli.interfaces.tui.run_view import RunEventCollector, TerminalRunView
 from forgecli.interfaces.tui.session_exit import SessionExit
-from forgecli.shared import __version__
 
 # 轮询间隔. 够快到流式正文看不出卡顿, 又不至于让一个空闲的等待烧掉一个核.
 _POLL_SECONDS = 0.04
@@ -57,7 +56,15 @@ class SessionApp:
         self.context = CommandContext(console=console, registry=registry)
         # 输入框只要命令名与一句说明, 用来画 "/" 菜单; 执行仍由 registry 分派.
         self.prompt = ForgePrompt(
-            [(item.name.removeprefix("/"), item.summary) for item in COMMANDS],
+            [
+                PromptCommand(
+                    item.name.removeprefix("/"),
+                    item.summary,
+                    item.category,
+                    item.keywords,
+                )
+                for item in COMMANDS
+            ],
             status_provider=self._runtime_status,
             on_mode_step=self._step_mode,
             history_file=_history_file(),
@@ -85,7 +92,9 @@ class SessionApp:
                 continue
             # 输入框提交后会把自己擦掉 (erase_when_done), 用户那一句不会留在滚动历史
             # 里. 这里补回显一次, 否则翻上去看只有模型在自言自语.
-            self.console.print(Text(f"› {text}", style=STYLE_ACCENT), highlight=False)
+            # 对话角色只用颜色区分：用户白色、助手青色。不要再加“你 / Forge”标签，
+            # 那会让终端像日志查看器而不是一段自然对话。
+            self.console.print(Text(text, style="white"), highlight=False)
             try:
                 if text.startswith("/"):
                     dispatch(self.context, text)
@@ -158,14 +167,16 @@ class SessionApp:
 
     def _banner(self) -> None:
         runtime = self.registry.active
-        rows = [("版本", __version__)]
+        # 版本不进这张表: 每一条渲染路径都已经写了它 —— 有 logo 时在标语那行,
+        # 没 logo 时在退回的 "Forge v0.0.1" 那行. 再列一次就是同一个事实说两遍.
+        rows: list[tuple[str, str]] = []
         if runtime is None:
             rows.append(("项目", "尚未选择, 用 /projects 打开一个"))
         else:
             model = runtime.current_model()
             rows.extend(
                 [
-                    ("工作区", runtime.project.primary_workspace_root),
+                    ("工作区", display_path(runtime.project.primary_workspace_root)),
                     ("模式", stance_label(runtime.session.current().mode)),
                     (
                         "模型",

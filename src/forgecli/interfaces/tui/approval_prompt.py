@@ -22,6 +22,7 @@ from forgecli.interfaces.tui.console import (
     STYLE_DIM,
     STYLE_ERROR,
     STYLE_WARN,
+    display_path,
     kv_table,
     truncate,
 )
@@ -33,6 +34,8 @@ _MAX_TARGETS = 12
 # 脚本正文与写入内容的行数上限. 超出部分不省略成"...", 而是明说还有多少行:
 # 一个看不出被截断过的正文, 用户会以为自己批准的就是这些.
 _MAX_SOURCE_LINES = 40
+_SUMMARY_TARGETS = 4
+_SUMMARY_SOURCE_LINES = 8
 
 _SCOPE_LABELS = {
     "once": "允许这一次",
@@ -69,23 +72,27 @@ def render_card(
         rows.append(("未封闭", str(unresolved)))
     roots = view.get("workspace_roots")
     if isinstance(roots, list) and roots:
-        rows.append(("工作区", " ".join(str(item) for item in roots)))
+        rows.append(("工作区", " ".join(display_path(str(item)) for item in roots)))
     mode = str(view.get("mode", ""))
     if mode:
         rows.append(("模式", mode))
     if rows:
         console.print(Padding(kv_table(rows), (0, 0, 0, 2)))
 
-    _render_targets(console, view.get("target_groups"))
-    _render_scripts(console, view.get("script_snapshots"))
-    _render_previews(console, view.get("content_previews"))
+    _render_details(
+        console,
+        view,
+        target_limit=_SUMMARY_TARGETS,
+        source_limit=_SUMMARY_SOURCE_LINES,
+    )
+    console.print(Text("  可在决议菜单中查看更多详情；默认焦点为拒绝", style=STYLE_DIM))
 
 
 def ask_decision(console: Console, view: Mapping[str, object]) -> str | None:
     """读一个决议. 返回 broker 认识的 ``once`` / ``workspace`` / ``deny``.
 
     选择方式是 ↑↓ + 回车, 与斜杠命令菜单一致; 数字键仍然直选, 照顾记得住"3 是拒绝"的
-    人. 高亮初始落在"允许这一次"上 —— 它是范围最小的那一档.
+    人. 高亮初始落在"拒绝"上；回车不会在用户还没移动光标时产生授权.
 
     返回 None 表示用户按了 Esc 或 Ctrl-C, 那是"停止这一轮", **不是**"我拒绝". 判成拒绝
     会让模型收到一条用户从来没说过的拒绝, 并据此往下走; 而两者都不会放行, 所以按更
@@ -105,10 +112,29 @@ def ask_decision(console: Console, view: Mapping[str, object]) -> str | None:
         console.print(Text(f"  不能选 [始终允许]: {blocked}", style=STYLE_DIM))
     console.print(Text("  Esc / Ctrl-C 停止这一轮", style=STYLE_DIM))
     try:
-        picked = select_one(console, options)
+        interactive = [Option("__details__", "查看更多详情", "不执行")]
+        interactive.extend(options)
+        while True:
+            picked = select_one(
+                console,
+                interactive,
+                # 最后一项始终是拒绝；details 插在前面不改变 broker 选项的顺序。
+                default_index=len(interactive) - 1,
+            )
+            if picked is None:
+                return None
+            if picked.key != "__details__":
+                return picked.key
+            console.print()
+            console.print(Text("完整审批详情", style=f"bold {STYLE_ACCENT}"))
+            _render_details(
+                console,
+                view,
+                target_limit=_MAX_TARGETS,
+                source_limit=_MAX_SOURCE_LINES,
+            )
     except SelectUnavailable:
         return _typed(console, options)
-    return None if picked is None else picked.key
 
 
 def _typed(console: Console, options: Sequence[Option]) -> str | None:
@@ -139,7 +165,21 @@ def _counts(raw: object) -> str:
     return " · ".join(parts)
 
 
-def _render_targets(console: Console, raw: object) -> None:
+def _render_details(
+    console: Console,
+    view: Mapping[str, object],
+    *,
+    target_limit: int,
+    source_limit: int,
+) -> None:
+    _render_targets(console, view.get("target_groups"), limit=target_limit)
+    _render_scripts(console, view.get("script_snapshots"), limit=source_limit)
+    _render_previews(console, view.get("content_previews"), limit=source_limit)
+
+
+def _render_targets(
+    console: Console, raw: object, *, limit: int = _MAX_TARGETS
+) -> None:
     for group in _as_list(raw):
         if not isinstance(group, Mapping):
             continue
@@ -148,7 +188,7 @@ def _render_targets(console: Console, raw: object) -> None:
             continue
         label = str(group.get("label", ""))
         console.print(Padding(Text(label, style=STYLE_DIM), (0, 0, 0, 2)))
-        shown = paths[:_MAX_TARGETS]
+        shown = paths[:limit]
         for path in shown:
             console.print(Padding(Text(path), (0, 0, 0, 4)))
         if len(paths) > len(shown):
@@ -160,7 +200,9 @@ def _render_targets(console: Console, raw: object) -> None:
             )
 
 
-def _render_scripts(console: Console, raw: object) -> None:
+def _render_scripts(
+    console: Console, raw: object, *, limit: int = _MAX_SOURCE_LINES
+) -> None:
     for snapshot in _as_list(raw):
         if not isinstance(snapshot, Mapping):
             continue
@@ -169,10 +211,12 @@ def _render_scripts(console: Console, raw: object) -> None:
         path = str(snapshot.get("path", "") or "")
         title = " · ".join(item for item in (language, origin, path) if item)
         console.print(Padding(Text(f"脚本 {title}", style=STYLE_DIM), (0, 0, 0, 2)))
-        _render_source(console, str(snapshot.get("source", "")))
+        _render_source(console, str(snapshot.get("source", "")), limit=limit)
 
 
-def _render_previews(console: Console, raw: object) -> None:
+def _render_previews(
+    console: Console, raw: object, *, limit: int = _MAX_SOURCE_LINES
+) -> None:
     for preview in _as_list(raw):
         if not isinstance(preview, Mapping):
             continue
@@ -181,17 +225,19 @@ def _render_previews(console: Console, raw: object) -> None:
         console.print(
             Padding(Text(f"写入 {path}{suffix}", style=STYLE_DIM), (0, 0, 0, 2))
         )
-        _render_source(console, str(preview.get("content", "")))
+        _render_source(console, str(preview.get("content", "")), limit=limit)
 
 
-def _render_source(console: Console, source: str) -> None:
+def _render_source(
+    console: Console, source: str, *, limit: int = _MAX_SOURCE_LINES
+) -> None:
     lines = source.splitlines()
-    for line in lines[:_MAX_SOURCE_LINES]:
+    for line in lines[:limit]:
         console.print(Padding(Text(truncate(line, 160), style="white"), (0, 0, 0, 4)))
-    if len(lines) > _MAX_SOURCE_LINES:
+    if len(lines) > limit:
         console.print(
             Padding(
-                Text(f"另有 {len(lines) - _MAX_SOURCE_LINES} 行", style=STYLE_DIM),
+                Text(f"另有 {len(lines) - limit} 行", style=STYLE_DIM),
                 (0, 0, 0, 4),
             )
         )

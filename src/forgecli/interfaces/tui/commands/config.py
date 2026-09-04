@@ -14,10 +14,12 @@
 
 from __future__ import annotations
 
+from rich.padding import Padding
 from rich.text import Text
 
+from forgecli.application.config.config_service import ConfigValueView
 from forgecli.domain.config import config_keys
-from forgecli.domain.config.config_keys import ConfigKey, ValueKind
+from forgecli.domain.config.config_keys import ConfigKey, ConfigLevel, ValueKind
 from forgecli.interfaces.tui.chooser import (
     Group,
     Option,
@@ -29,7 +31,13 @@ from forgecli.interfaces.tui.chooser import (
 from forgecli.interfaces.tui.commands import model as model_commands
 from forgecli.interfaces.tui.commands import provider as provider_commands
 from forgecli.interfaces.tui.commands.context import CommandContext
-from forgecli.interfaces.tui.console import STYLE_DIM, error, ok
+from forgecli.interfaces.tui.console import (
+    STYLE_ACCENT,
+    STYLE_DIM,
+    error,
+    kv_table,
+    ok,
+)
 from forgecli.shared.errors import ConfigValidationError
 
 # 键名前缀 -> 分类名. 顺序即分类的先后.
@@ -50,6 +58,11 @@ _JUMPS: tuple[tuple[str, str, str], ...] = (
 )
 _JUMP_CATEGORY = "模型"
 
+_LEVEL_LABELS = {
+    ConfigLevel.APP: "应用级 · config.json",
+    ConfigLevel.PROJECT: "项目级 · forge.json",
+}
+
 
 def cmd_config(context: CommandContext, argument: str) -> None:
     """菜单循环到 Esc 为止: 改完一项回到这一层, 而不是回到提示符."""
@@ -64,16 +77,19 @@ def cmd_config(context: CommandContext, argument: str) -> None:
             error(context.console, f"未知配置项: {raw[0]}")
             return
         if len(raw) == 2:
-            _write(context, item, raw[1])
+            if raw[1] == "--reset":
+                _reset(context, item)
+            else:
+                _write(context, item, raw[1])
         else:
-            _edit(context, item, context.runtime.config.display(item.name))
+            _edit(context, _view_for(context, item))
         return
 
     while True:
-        values = context.runtime.config.display_all()
+        views = _value_views(context)
         # 不打标题: 分类头已经写着"界面 日志 执行 模型", 再加一行"配置"是复述用户刚
         # 敲的那条命令.
-        picked = choose_grouped(context.console, _groups(values))
+        picked = choose_grouped(context.console, _groups(views))
         if picked is None:
             return
         if picked.key == "__model__":
@@ -83,21 +99,26 @@ def cmd_config(context: CommandContext, argument: str) -> None:
         elif picked.key == "__gateway__":
             model_commands.cmd_gateway(context, "")
         else:
-            item = next(
-                entry for entry in config_keys.SCHEMA if entry.name == picked.key
-            )
-            _edit(context, item, values[item.name])
+            _edit(context, views[picked.key])
 
 
-def _groups(values: dict[str, str]) -> list[Group]:
+def _groups(values: dict[str, str] | dict[str, ConfigValueView]) -> list[Group]:
     """按键名前缀分类. 认不出前缀的归"其他", 而不是消失."""
     buckets: dict[str, list[Option]] = {label: [] for _, label in _CATEGORIES}
     buckets[_OTHER] = []
     labels = dict(_CATEGORIES)
     for entry in config_keys.SCHEMA:
         prefix = entry.name.partition(".")[0]
+        raw = values[entry.name]
+        if isinstance(raw, ConfigValueView):
+            value = _shown_value(raw.value)
+            source = "已覆盖" if raw.overridden else "默认"
+            hint = f"{value}  ·  {source}  ·  {_short_level(entry.level)}"
+        else:
+            # 兼容只提供有效值的轻量调用方；生产路径始终传 ConfigValueView。
+            hint = _shown_value(raw)
         buckets[labels.get(prefix, _OTHER)].append(
-            Option(entry.name, entry.title, values[entry.name])
+            Option(entry.name, entry.title, hint)
         )
     buckets[_JUMP_CATEGORY].extend(
         Option(key, label, hint) for key, label, hint in _JUMPS
@@ -106,11 +127,44 @@ def _groups(values: dict[str, str]) -> list[Group]:
     return [Group(label, tuple(buckets[label])) for label in ordered if buckets[label]]
 
 
-def _edit(context: CommandContext, item: ConfigKey, current: str) -> None:
-    """改一项. 说明在这里打 —— 列表里每项都带一段多行说明会把菜单顶出屏幕."""
+def _edit(context: CommandContext, view: ConfigValueView) -> None:
+    """配置详情与动作。值、来源、作用域、生效时机都在提交前可见。"""
     console = context.console
-    console.print(Text(f"{item.title} ({item.name})", style=STYLE_DIM))
-    console.print(Text(item.help, style=STYLE_DIM))
+    item = view.key
+    console.print()
+    console.print(Text(item.title, style=f"bold {STYLE_ACCENT}"))
+    console.print(
+        Padding(
+            kv_table(
+                (
+                    ("键", item.name),
+                    ("当前值", _shown_value(view.value)),
+                    ("来源", "用户覆盖" if view.overridden else "SCHEMA 默认值"),
+                    ("作用域", _LEVEL_LABELS[item.level]),
+                    ("生效", item.effect),
+                )
+            ),
+            (0, 0, 0, 2),
+        )
+    )
+    console.print(Text(f"  {item.help}", style=STYLE_DIM))
+
+    actions = [Option("edit", "修改值", _value_hint(item))]
+    if item.allow_empty and view.value:
+        actions.append(Option("empty", "设为空", "使用该配置定义的空值语义"))
+    if view.overridden:
+        actions.append(Option("reset", "恢复默认", f"→ {_shown_value(item.default)}"))
+    picked = choose(console, actions)
+    if picked is None:
+        return
+    if picked.key == "reset":
+        _reset(context, item)
+        return
+    if picked.key == "empty":
+        _write(context, item, "")
+        return
+
+    current = view.value
     if item.kind is ValueKind.BOOL:
         _write(
             context,
@@ -127,7 +181,7 @@ def _edit(context: CommandContext, item: ConfigKey, current: str) -> None:
         if picked is not None:
             _write(context, item, picked.key)
         return
-    value = ask_text(console, item.title, default=current)
+    value = ask_text(console, item.title, default=current, allow_empty=item.allow_empty)
     if value is not None:
         _write(context, item, value)
 
@@ -138,4 +192,55 @@ def _write(context: CommandContext, item: ConfigKey, value: str) -> None:
     except ConfigValidationError as exc:
         error(context.console, str(exc))
         return
-    ok(context.console, f"{item.title} = {context.runtime.config.display(item.name)}")
+    ok(
+        context.console,
+        f"{item.title} = {_shown_value(context.runtime.config.display(item.name))}"
+        f"  ·  {item.effect}",
+    )
+
+
+def _reset(context: CommandContext, item: ConfigKey) -> None:
+    try:
+        context.runtime.config.unset(item.name)
+    except ConfigValidationError as exc:
+        error(context.console, str(exc))
+        return
+    ok(
+        context.console,
+        f"{item.title} 已恢复默认 = {_shown_value(item.default)}  ·  {item.effect}",
+    )
+
+
+def _value_views(context: CommandContext) -> dict[str, ConfigValueView]:
+    service = context.runtime.config
+    # value_views 是应用服务的新契约。保留这个窄回退，让文档示例和测试里的轻量替身不必
+    # 为了画菜单实现整套配置服务；真实运行时不会走这里。
+    if hasattr(service, "value_views"):
+        return {view.key.name: view for view in service.value_views()}
+    values = service.display_all()
+    return {
+        item.name: ConfigValueView(item, values[item.name], False)
+        for item in config_keys.SCHEMA
+    }
+
+
+def _view_for(context: CommandContext, item: ConfigKey) -> ConfigValueView:
+    return _value_views(context)[item.name]
+
+
+def _shown_value(value: str) -> str:
+    return value if value else "（空）"
+
+
+def _short_level(level: ConfigLevel) -> str:
+    return "应用" if level is ConfigLevel.APP else "项目"
+
+
+def _value_hint(item: ConfigKey) -> str:
+    if item.kind is ValueKind.BOOL:
+        return "是 / 否"
+    if item.kind is ValueKind.CHOICE:
+        return " / ".join(item.choices)
+    if item.kind is ValueKind.INT:
+        return "非负整数"
+    return "文本"

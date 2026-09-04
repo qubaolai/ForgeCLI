@@ -123,6 +123,44 @@ def test_bad_input_reasks(console: Console, monkeypatch: pytest.MonkeyPatch) -> 
     assert ask_decision(console, _VIEW) == "deny"
 
 
+def test_interactive_default_focus_is_deny(
+    console: Console, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from forgecli.interfaces.tui import approval_prompt
+
+    def pick_default(
+        _console: object, options: object, *, default_index: int
+    ) -> object:
+        return options[default_index]  # type: ignore[index]
+
+    monkeypatch.setattr(approval_prompt, "select_one", pick_default)
+    assert ask_decision(console, _VIEW) == "deny"
+
+
+def test_interactive_details_can_expand_before_deciding(
+    console: Console, screen: io.StringIO, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from forgecli.interfaces.tui import approval_prompt
+
+    source = "\n".join(f"line {index}" for index in range(12))
+    view = {
+        **_VIEW,
+        "script_snapshots": [
+            {"language": "bash", "origin": "inline", "path": "", "source": source}
+        ],
+    }
+    choices = iter(["__details__", "deny"])
+
+    def pick(_console: object, options: object, **_kw: object) -> object:
+        key = next(choices)
+        return next(item for item in options if item.key == key)  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(approval_prompt, "select_one", pick)
+    assert ask_decision(console, view) == "deny"
+    assert "完整审批详情" in screen.getvalue()
+    assert "line 11" in screen.getvalue()
+
+
 def test_card_reads_the_same_payload_the_web_gets(
     console: Console, screen: io.StringIO
 ) -> None:

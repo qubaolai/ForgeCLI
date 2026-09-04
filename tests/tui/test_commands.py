@@ -206,6 +206,26 @@ def test_config_groups_follow_the_key_prefix(context: CommandContext) -> None:
     assert "__provider__" in groups["模型"]
 
 
+def test_config_menu_explains_source_and_scope() -> None:
+    from forgecli.application.config.config_service import ConfigValueView
+    from forgecli.domain.config import config_keys
+    from forgecli.interfaces.tui.commands.config import _groups
+
+    views = {
+        item.name: ConfigValueView(
+            item,
+            "light" if item.name == "output.theme" else item.default,
+            item.name == "output.theme",
+        )
+        for item in config_keys.SCHEMA
+    }
+    options = {item.key: item for group in _groups(views) for item in group.options}
+    assert "已覆盖" in options["output.theme"].hint
+    assert "应用" in options["output.theme"].hint
+    assert "默认" in options["model.name"].hint
+    assert "项目" in options["model.name"].hint
+
+
 def test_config_dispatches_into_the_model_menu(
     context: CommandContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -39,7 +39,6 @@ from forgecli.interfaces.tui.console import (
     STYLE_ACCENT,
     STYLE_DIM,
     STYLE_ERROR,
-    STYLE_OK,
     STYLE_WARN,
     SUB,
     THINK,
@@ -99,6 +98,12 @@ class TerminalRunView:
         self.finished = False
         self._streaming = False
         self._thinking = False
+        # 本轮有没有往终端写过东西. 第一次写之前留一个空行, 把过程与用户刚说的那句
+        # 话隔开 —— 紧贴着排, 两个人说的话看起来像同一段.
+        self._opened = False
+        # 上一次输出是结构行 (工具, 裁决, 待办). 紧接着来的模型正文要另起一段:
+        # 答案与过程贴在一起时, 用户要先分辨哪一行才是回答.
+        self._pending_gap = False
         # DECISION_SUMMARY 解释的是紧跟着的那一步, 不单独占一行 (ADR-0025 决策 32
         # 修订): 让它自成一行, 连着六次读文件就没有一次是相邻的.
         self._pending_reason = ""
@@ -186,48 +191,71 @@ class TerminalRunView:
         """
         if not text:
             return
-        if self._thinking:
-            self._thinking = False
+        self._thinking = False
         if not self._streaming:
-            self.console.print()
+            self._open()
+            if self._pending_gap:
+                self.console.print()
+                self._pending_gap = False
             self._streaming = True
-        self.console.print(text, end="", markup=False, soft_wrap=True)
+        self.console.print(
+            text,
+            end="",
+            markup=False,
+            soft_wrap=True,
+            style=STYLE_ACCENT,
+        )
 
     def _close_stream(self) -> None:
         if self._streaming:
             self.console.print()
             self._streaming = False
 
+    def _open(self) -> None:
+        """本轮第一次输出之前留一个空行."""
+        if not self._opened:
+            self.console.print()
+            self._opened = True
+
     def _reasoning(self, payload: ReasoningStatusPayload) -> None:
         # 只报状态, 不报内容 (ADR-0016 §6): 供应商开了 thinking 却不返回可展示摘要是
         # 常态, 终端能说的就是"在想".
         if payload.status is ReasoningStatus.STARTED and not self._thinking:
             self._close_stream()
+            self._open()
             self.console.print(Text(f"{THINK} 思考中…", style=STYLE_DIM))
             self._thinking = True
+            self._pending_gap = True
 
     # ---- 结构化行 ----
 
     def _entry(self, title: str, detail: str = "", style: str = "") -> None:
         """时间线上的一步. 与 Web 的轨道圆点同一个位置."""
         self._close_stream()
-        line = Text(f"{DOT} ", style=style or STYLE_ACCENT)
-        line.append(title, style=style or "bold")
+        self._open()
+        line = Text(f"{DOT} ", style=style or STYLE_DIM)
+        line.append(title, style=style or STYLE_DIM)
         if detail:
             line.append(f"  {detail}", style=STYLE_DIM)
         self.console.print(line)
         if self._pending_reason:
             self._sub(self._pending_reason, STYLE_DIM)
             self._pending_reason = ""
+        self._pending_gap = True
 
     def _sub(self, text: str, style: str = STYLE_DIM) -> None:
         self.console.print(
-            Text(f"  {SUB} {truncate(text, _SUMMARY_WIDTH)}", style=style)
+            Text(f"  {SUB} {truncate(text, self._summary_width())}", style=style)
         )
 
     def _line(self, text: str, style: str) -> None:
         self._close_stream()
+        self._open()
         self.console.print(Text(f"{DOT} {text}", style=style))
+        self._pending_gap = True
+
+    def _summary_width(self) -> int:
+        return max(24, min(_SUMMARY_WIDTH, self.console.size.width - 6))
 
     # ---- 各类事件 ----
 
@@ -268,7 +296,10 @@ class TerminalRunView:
         self, tool_call_id: str | None, payload: ToolStartedPayload
     ) -> None:
         arguments = self._arguments.get(tool_call_id or "", ())
-        self._entry(payload.tool_name, _format_arguments(arguments))
+        self._entry(
+            payload.tool_name,
+            _format_arguments(arguments, min(_ARGS_WIDTH, self._summary_width())),
+        )
 
     def _tool_finished(
         self, tool_call_id: str | None, payload: ToolCompletedPayload
@@ -277,9 +308,14 @@ class TerminalRunView:
             # 连执行都没发生的调用没有 TOOL_STARTED, 时间线上必须自己补一行, 否则
             # 一次被拒或没等到批准的调用在终端上什么都不会留下.
             arguments = self._arguments.get(tool_call_id or "", ())
-            self._entry(payload.tool_name, _format_arguments(arguments), STYLE_WARN)
+            self._entry(
+                payload.tool_name,
+                _format_arguments(arguments, min(_ARGS_WIDTH, self._summary_width())),
+                STYLE_WARN,
+            )
         summary = payload.result_summary or payload.error_summary or payload.status
-        style = STYLE_OK if payload.status == "ok" else STYLE_ERROR
+        # 成功的工具回执与调用步骤同属浅灰时间线；失败和不确定副作用仍用语义色。
+        style = STYLE_DIM if payload.status == "ok" else STYLE_ERROR
         if payload.side_effect_unknown:
             # "没成功"与"没发生"是两回事 (ADR-0016 §10.1): 执行中被打断且不幂等时,
             # 显示成普通失败就是在替一次可能已经发生的写入下结论.
@@ -297,15 +333,26 @@ class TerminalRunView:
         self, kind: AgentRunEventKind, payload: TurnFinishedPayload
     ) -> None:
         self._close_stream()
+        self._open()
         self.finished = True
+        # 读数与正文之间空一行: 它是这一轮的落款, 不是回答的最后一句.
+        self.console.print()
         seconds = payload.elapsed_ms / 1000
         chips = [
             f"{seconds:.1f}s",
             f"模型 {payload.model_calls} 次",
             f"工具 {payload.tool_calls} 次",
-            f"{self.metrics.total_tokens} tokens"
-            + ("(估算)" if self.metrics.estimated else ""),
         ]
+        if self.metrics.input_tokens:
+            chips.append(f"输入 {self.metrics.input_tokens}")
+        if self.metrics.output_tokens:
+            chips.append(f"输出 {self.metrics.output_tokens}")
+        if self.metrics.reasoning_tokens:
+            chips.append(f"思考 {self.metrics.reasoning_tokens}")
+        chips.append(
+            f"{self.metrics.total_tokens} tokens"
+            + ("(估算)" if self.metrics.estimated else "")
+        )
         style = {
             AgentRunEventKind.TURN_COMPLETED: STYLE_DIM,
             AgentRunEventKind.TURN_CANCELLED: STYLE_WARN,
@@ -322,9 +369,11 @@ class TerminalRunView:
         self.console.print(Text(detail, style=style))
 
 
-def _format_arguments(arguments: Sequence[tuple[str, str]]) -> str:
+def _format_arguments(
+    arguments: Sequence[tuple[str, str]], limit: int = _ARGS_WIDTH
+) -> str:
     """入参压成一行. 逐字展示留给审批卡片, 这里只回答"它在干什么"."""
     if not arguments:
         return ""
     parts = [f"{name}={truncate(value, 40)}" for name, value in arguments]
-    return truncate(" ".join(parts), _ARGS_WIDTH)
+    return truncate(" ".join(parts), limit)

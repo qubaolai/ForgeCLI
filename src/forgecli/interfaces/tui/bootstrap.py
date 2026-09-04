@@ -21,7 +21,7 @@ from forgecli.interfaces.runtime.project_runtime import (
     build_project_service,
 )
 from forgecli.interfaces.tui.chooser import confirm
-from forgecli.interfaces.tui.console import STYLE_DIM, make_console
+from forgecli.interfaces.tui.console import STYLE_DIM, display_path, make_console
 from forgecli.interfaces.tui.session_app import SessionApp
 from forgecli.shared import __version__
 from forgecli.shared.observability.log import get_log
@@ -83,7 +83,8 @@ def _resolve_project(
     existing = projects.find_trusted(cwd)
     if existing is not None:
         return existing
-    console.print(f"[{STYLE_DIM}]当前目录还没有作为 Forge 项目打开过: {cwd}[/]")
+    shown = display_path(str(cwd))
+    console.print(f"[{STYLE_DIM}]当前目录还没有作为 Forge 项目打开过: {shown}[/]")
     try:
         trusted = confirm(console, "信任这个目录并作为项目打开?")
     except (KeyboardInterrupt, EOFError):

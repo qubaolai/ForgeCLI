@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
@@ -86,12 +87,37 @@ def listing(headers: Sequence[str], rows: Iterable[Sequence[str]]) -> Table:
     return table
 
 
+def display_path(path: str) -> str:
+    """把家目录折成 ``~``.
+
+    只用于展示, 绝不用来解析: 折回去要再猜一次 ``~`` 指哪里, 而路径是安全判断的输入.
+
+    值得一个函数是因为它省下的是**每一行**的宽度. 一条
+    ``/Users/someone/Documents/git_repostory/ForgeCLI`` 里前 25 列对读的人零信息, 却
+    足够把工作区那一行挤到换行 —— 而它出现在启动屏, /status, /dirs, /projects 和每一张
+    审批卡片上.
+    """
+    if not path:
+        return path
+    try:
+        home = str(Path.home())
+    except (OSError, RuntimeError):  # pragma: no cover - 拿不到家目录就原样给
+        return path
+    if path == home:
+        return "~"
+    prefix = home.rstrip("/") + "/"
+    return "~/" + path[len(prefix) :] if path.startswith(prefix) else path
+
+
 def shorten_path(path: str, limit: int = 56) -> str:
     """路径太长时留尾巴, 不留头.
 
     与 `truncate` 相反: 一串同前缀的路径, 砍掉尾巴之后每一条看起来都一样, 而尾巴正是
     它们唯一的区别. 完整路径仍然在上面那张表里逐字列着 —— 这里短的只是菜单项的标签.
+
+    先折家目录再判长度: 折完多半就不用截了, 而带 ``…`` 的那一版没法复制粘贴.
     """
+    path = display_path(path)
     if len(path) <= limit:
         return path
     return "…" + path[-(limit - 1) :]

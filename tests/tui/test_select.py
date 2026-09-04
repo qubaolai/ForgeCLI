@@ -99,3 +99,31 @@ def test_hint_line_only_advertises_keys_that_work() -> None:
     grouped = _render(_MANY[:3], index=0, visible=3, tabs=True).plain
     assert "←→ 分类" not in flat
     assert "←→ 分类" in grouped
+
+
+def test_home_folds_to_a_tilde() -> None:
+    """一条 /Users/someone/... 里前 25 列对读的人零信息, 却足够把那一行挤到换行."""
+    from pathlib import Path
+
+    from forgecli.interfaces.tui.console import display_path
+
+    home = str(Path.home())
+    assert display_path(f"{home}/Documents/ForgeCLI") == "~/Documents/ForgeCLI"
+    assert display_path(home) == "~"
+
+
+def test_paths_outside_home_are_untouched() -> None:
+    from forgecli.interfaces.tui.console import display_path
+
+    assert display_path("/etc/hosts") == "/etc/hosts"
+    assert display_path("") == ""
+
+
+def test_folding_happens_before_truncating() -> None:
+    """折完多半就不用截了, 而带 … 的那一版没法复制粘贴."""
+    from pathlib import Path
+
+    from forgecli.interfaces.tui.console import shorten_path
+
+    home = str(Path.home())
+    assert shorten_path(f"{home}/a/b/c") == "~/a/b/c"
