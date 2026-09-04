@@ -19,11 +19,13 @@ SUB = "⎿"
 THINK = "✻"
 ASK = "⏵"
 
-STYLE_DIM = "grey50"
-STYLE_ACCENT = "cyan"
-STYLE_WARN = "yellow"
-STYLE_ERROR = "red"
-STYLE_OK = "green"
+# 与 Web 控制面共享同一组语义色：不是要求终端逐像素复刻网页，而是让“强调 / 警告 /
+# 危险 / 成功”在两个入口表达同一件事。Rich 会在低色终端自动降级。
+STYLE_DIM = "#9198a7"
+STYLE_ACCENT = "#62d6ad"
+STYLE_WARN = "#f4bd61"
+STYLE_ERROR = "#ef7a81"
+STYLE_OK = "#62d6ad"
 
 
 def make_console() -> Console:
@@ -93,6 +95,27 @@ def shorten_path(path: str, limit: int = 56) -> str:
     if len(path) <= limit:
         return path
     return "…" + path[-(limit - 1) :]
+
+
+def grouped_listing(
+    groups: Iterable[tuple[str, Iterable[tuple[str, str]]]],
+) -> Table:
+    """分组清单: 每组一个小标题, **所有组共用一套列宽**.
+
+    一组一张表是天然的写法, 也是错的: 每张表各自算列宽, 于是九个分组的说明列在九个
+    不同的位置起头, 整块扫下来是锯齿状的; 而"命令 / 说明"那行表头会跟着重复九遍,
+    占掉的行数比它解释的东西还多.
+    """
+    table = Table.grid(padding=(0, 3))
+    table.add_column(no_wrap=True)
+    table.add_column(overflow="fold")
+    for index, (title, rows) in enumerate(groups):
+        if index:
+            table.add_row("", "")
+        table.add_row(Text(title, style=f"bold {STYLE_ACCENT}"), "")
+        for name, summary in rows:
+            table.add_row(Text(f"  {name}"), Text(summary, style=STYLE_DIM))
+    return table
 
 
 def truncate(text: str, limit: int) -> str:

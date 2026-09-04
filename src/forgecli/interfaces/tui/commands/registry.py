@@ -28,7 +28,7 @@ from forgecli.interfaces.tui.console import (
     STYLE_ACCENT,
     STYLE_DIM,
     error,
-    listing,
+    grouped_listing,
     rule,
 )
 
@@ -52,14 +52,23 @@ class Command:
     handler: Handler
     usage: str = ""
     detail: str = ""
+    category: str = "其他"
+    keywords: tuple[str, ...] = ()
 
 
 def cmd_help(context: CommandContext, _argument: str) -> None:
     rule(context.console, "斜杠命令")
     context.console.print(
-        listing(
-            ("命令", "说明"),
-            ((item.usage or item.name, item.summary) for item in COMMANDS),
+        grouped_listing(
+            (
+                category,
+                [
+                    (item.usage or item.name, item.summary)
+                    for item in COMMANDS
+                    if item.category == category
+                ],
+            )
+            for category in _category_order()
         )
     )
     context.console.print()
@@ -83,11 +92,36 @@ def show_command_help(context: CommandContext, command: Command) -> None:
 
 
 COMMANDS: tuple[Command, ...] = (
-    Command("/help", "列出全部命令", cmd_help),
-    Command("/status", "会话, 模式, 模型与目录的当前状态", session.cmd_status),
-    Command("/new", "开一个新会话", session.cmd_new),
-    Command("/sessions", "列出并恢复历史会话", session.cmd_sessions),
-    Command("/resume", "恢复指定会话", session.cmd_resume, usage="/resume <会话 id>"),
+    Command("/help", "列出全部命令", cmd_help, category="帮助", keywords=("帮助",)),
+    Command(
+        "/status",
+        "会话, 模式, 模型与目录的当前状态",
+        session.cmd_status,
+        category="会话",
+        keywords=("状态", "目录"),
+    ),
+    Command(
+        "/new",
+        "开一个新会话",
+        session.cmd_new,
+        category="会话",
+        keywords=("新建",),
+    ),
+    Command(
+        "/sessions",
+        "列出并恢复历史会话",
+        session.cmd_sessions,
+        category="会话",
+        keywords=("历史", "恢复"),
+    ),
+    Command(
+        "/resume",
+        "恢复指定会话",
+        session.cmd_resume,
+        usage="/resume <会话 id>",
+        category="会话",
+        keywords=("恢复",),
+    ),
     Command(
         "/mode",
         "隔离档与审批档",
@@ -98,6 +132,8 @@ COMMANDS: tuple[Command, ...] = (
             "预设名 plan / accept_edits / auto / full_access 是常用组合的快捷方式.\n"
             "输入框里 Tab / Shift-Tab 也能沿这条梯度切档."
         ),
+        category="运行",
+        keywords=("权限", "审批", "隔离"),
     ),
     Command(
         "/model",
@@ -108,6 +144,8 @@ COMMANDS: tuple[Command, ...] = (
             "带参数直接切当前模型; 不带参数进菜单.\n"
             "供应商 (地址, 协议, 密钥) 不在这里, 归 /provider."
         ),
+        category="模型",
+        keywords=("模型", "选择"),
     ),
     Command(
         "/provider",
@@ -118,6 +156,8 @@ COMMANDS: tuple[Command, ...] = (
             "供应商是接入点: 地址, 协议, 密钥取哪个环境变量.\n"
             "内置几家不用先添加, 直接在 /model 里给它加模型即可."
         ),
+        category="模型",
+        keywords=("供应商", "接入点"),
     ),
     Command(
         "/thinking",
@@ -128,20 +168,37 @@ COMMANDS: tuple[Command, ...] = (
             "只改本进程, 不落盘 —— 与模型配置里的持久 thinking 是两件事.\n"
             "可选强度由当前模型自己声明; 模型没声明就只有开关."
         ),
+        category="模型",
+        keywords=("思考", "强度"),
     ),
-    Command("/gateway", "网关的缓存, 熔断与重试", model.cmd_gateway),
+    Command(
+        "/gateway",
+        "网关的缓存, 熔断与重试",
+        model.cmd_gateway,
+        category="模型",
+        keywords=("网关", "缓存", "重试"),
+    ),
     Command(
         "/config",
-        "配置面",
+        "配置值、来源、作用域与生效时机",
         config.cmd_config,
-        usage="/config [键] [值]",
+        usage="/config [键] [值|--reset]",
         detail=(
             "按前缀分类, ←/→ 换分类.\n"
             "带键名直接改一项, 例如 /config logging.level debug.\n"
+            "用 /config logging.level --reset 删除覆盖并恢复默认值.\n"
             '模型, 供应商与网关在"模型"这一类里有入口.'
         ),
+        category="设置",
+        keywords=("设置", "默认", "日志", "界面"),
     ),
-    Command("/tools", "本档模式下模型看得见哪些工具", security.cmd_tools),
+    Command(
+        "/tools",
+        "本档模式下模型看得见哪些工具",
+        security.cmd_tools,
+        category="安全",
+        keywords=("工具", "权限"),
+    ),
     Command(
         "/rules",
         "学习到的放行规则",
@@ -151,6 +208,8 @@ COMMANDS: tuple[Command, ...] = (
             '人类明确选过"本工作区始终允许"才会有规则; 模型不能创建或扩大它们.\n'
             "prune 清掉过期或不再匹配当前执行画像的那些."
         ),
+        category="安全",
+        keywords=("规则", "授权"),
     ),
     Command(
         "/dirs",
@@ -161,26 +220,70 @@ COMMANDS: tuple[Command, ...] = (
             "额外目录重启后一律按只读恢复: 项目配置只存路径, 不存写授权.\n"
             "要写就在这里重新升一次 —— 安全上宁可多问一次."
         ),
+        category="安全",
+        keywords=("目录", "读写", "授权"),
     ),
-    Command("/projects", "项目中心", project.cmd_projects, usage="/projects [路径]"),
     Command(
-        "/plan", "计划目录与活动计划", planning.cmd_plan, usage="/plan [review|计划 id]"
+        "/projects",
+        "项目中心",
+        project.cmd_projects,
+        usage="/projects [路径]",
+        category="项目",
+        keywords=("项目", "工作区"),
     ),
-    Command("/todo", "当前待办清单", planning.cmd_todo),
+    Command(
+        "/plan",
+        "计划目录与活动计划",
+        planning.cmd_plan,
+        usage="/plan [review|计划 id]",
+        category="计划",
+        keywords=("计划", "评审"),
+    ),
+    Command(
+        "/todo",
+        "当前待办清单",
+        planning.cmd_todo,
+        category="计划",
+        keywords=("待办",),
+    ),
     Command(
         "/checkpoints",
         "恢复点: 预览与还原",
         recovery.cmd_checkpoints,
         detail="冲突项默认跳过, 不静默覆盖: 恢复点之后的改动不在任何恢复点里.",
+        category="恢复",
+        keywords=("恢复点", "还原"),
     ),
-    Command("/undo", "还原最近一次改动", recovery.cmd_undo),
-    Command("/recovery", "恢复层状态与未收尾事务", recovery.cmd_recovery),
-    Command("/clear", "清屏 (不动会话)", session.cmd_clear),
-    Command("/exit", "退出", session.cmd_exit),
+    Command(
+        "/undo",
+        "还原最近一次改动",
+        recovery.cmd_undo,
+        category="恢复",
+        keywords=("撤销",),
+    ),
+    Command(
+        "/recovery",
+        "恢复层状态与未收尾事务",
+        recovery.cmd_recovery,
+        category="恢复",
+        keywords=("恢复", "事务"),
+    ),
+    Command(
+        "/clear",
+        "清屏 (不动会话)",
+        session.cmd_clear,
+        category="会话",
+        keywords=("清屏",),
+    ),
+    Command("/exit", "退出", session.cmd_exit, category="会话", keywords=("退出",)),
 )
 
 
 _BY_NAME = {item.name: item for item in COMMANDS}
+
+
+def _category_order() -> tuple[str, ...]:
+    return tuple(dict.fromkeys(item.category for item in COMMANDS))
 
 
 def command_names() -> tuple[str, ...]:

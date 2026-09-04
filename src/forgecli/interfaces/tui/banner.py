@@ -32,8 +32,12 @@ _FLAME = ("bright_yellow", "yellow", "orange1", "dark_orange", "orange_red1", "r
 
 _TAGLINE = "在终端里锻造代码的 AI 助手"
 
-# 窄到画不下 logo 时只出文字. 42 是 logo 本身的宽度, 加上右栏至少要的空间.
-_MIN_WIDTH_FOR_LOGO = 88
+# 左右分栏要的宽度: logo 本身 42 列, 右栏还要放得下一条工作区路径.
+_MIN_WIDTH_FOR_COLUMNS = 110
+# 只画 logo 要的宽度. 42 是它本身的宽度, 少一列都会把最右边那道竖线切掉.
+_MIN_WIDTH_FOR_LOGO = 42
+# logo 占六行. 终端矮到这个数以下, 开场就吃掉四分之一屏.
+_MIN_HEIGHT_FOR_LOGO = 30
 
 
 def logo() -> Text:
@@ -53,9 +57,16 @@ def logo() -> Text:
 def render(console: Console, rows: Sequence[tuple[str, str]]) -> None:
     """左边 logo, 右边这一次会话的事实."""
     facts = kv_table(rows)
-    if console.size.width < _MIN_WIDTH_FOR_LOGO:
-        # 挤不下就只留右栏: 半个 logo 比没有 logo 难看得多.
+    width, height = console.size.width, console.size.height
+    if width < _MIN_WIDTH_FOR_LOGO or height < _MIN_HEIGHT_FOR_LOGO:
+        # 挤不下就只留事实: 半个 logo 比没有 logo 难看得多.
         console.print(Text(f"Forge v{__version__}", style="bold cyan"))
+        console.print(facts)
+        return
+    if width < _MIN_WIDTH_FOR_COLUMNS:
+        # 分不了栏但画得下 logo 时上下叠着放, 而不是把 logo 整个丢掉 —— 80 到 110 列
+        # 是最常见的终端宽度, 按"要么分栏要么没有"处理, 等于大多数人从来见不到它.
+        console.print(logo())
         console.print(facts)
         return
     layout = Table.grid(padding=(0, 4))
