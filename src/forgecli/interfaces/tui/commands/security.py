@@ -84,7 +84,7 @@ def cmd_rules(context: CommandContext, argument: str) -> None:
         ),
         Option("__prune__", "清理失效规则", "过期或不再匹配当前画像的"),
     ]
-    picked = choose(context.console, "要做什么", actions)
+    picked = choose(context.console, actions)
     if picked is None:
         return
     if picked.key == "__prune__":
@@ -129,7 +129,7 @@ def cmd_dirs(context: CommandContext, argument: str) -> None:
         *(Option(f"grant:{root}", f"改权限 {shorten_path(root)}") for root in extra),
         *(Option(f"remove:{root}", f"移除 {shorten_path(root)}") for root in extra),
     ]
-    picked = choose(context.console, "要做什么", actions)
+    picked = choose(context.console, actions)
     if picked is None:
         return
     if picked.key == "__add__":

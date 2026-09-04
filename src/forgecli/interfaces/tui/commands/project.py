@@ -62,7 +62,7 @@ def cmd_projects(context: CommandContext, argument: str) -> None:
         ),
         Option("__trust__", "信任一个新目录", "把它作为项目打开"),
     ]
-    picked = choose(context.console, "切换到哪个项目", options, current=active_id or "")
+    picked = choose(context.console, options, current=active_id or "")
     if picked is None:
         return
     if picked.key == "__trust__":

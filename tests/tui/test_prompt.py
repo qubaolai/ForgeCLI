@@ -96,3 +96,16 @@ def test_history_falls_back_to_memory_without_a_file() -> None:
     from forgecli.interfaces.tui.prompt import _history
 
     assert isinstance(_history(None), InMemoryHistory)
+
+
+def test_menu_window_keeps_the_highlight_visible() -> None:
+    """截断成"只显示前 N 条"的那一版让 /clear 在菜单里根本不存在.
+
+    而用户看到的是一张看起来完整的表, 没有任何东西提示它下面还有.
+    """
+    from forgecli.interfaces.tui.prompt import _menu_window
+
+    assert _menu_window(total=21, selected=0, visible=10) == 0
+    assert _menu_window(total=21, selected=19, visible=10) == 11
+    assert _menu_window(total=21, selected=10, visible=10) == 5
+    assert _menu_window(total=5, selected=4, visible=10) == 0

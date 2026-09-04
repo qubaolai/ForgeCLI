@@ -36,7 +36,7 @@ def review(console: Console, runtime: ProjectRuntime) -> bool:
         console.print(Markdown(markdown))
     console.print(Text(f"plan_id={plan.plan_id} · r{plan.revision}", style=STYLE_DIM))
     console.print()
-    picked = choose(console, "怎么处理这份计划", _CHOICES)
+    picked = choose(console, _CHOICES)
     if picked is None:
         warn(console, "计划还挂着; 想继续时再用 /plan review")
         return False

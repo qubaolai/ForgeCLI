@@ -29,10 +29,10 @@ _SECTIONS = (
 
 
 def cmd_mode(context: CommandContext, argument: str) -> None:
+    """两级菜单; Esc 从轴退回分组, 再按一次退回提示符."""
     if not context.require_idle():
         return
     runtime = context.runtime
-    current = runtime.session.current().mode
     raw = argument.strip()
     if raw:
         try:
@@ -43,42 +43,35 @@ def cmd_mode(context: CommandContext, argument: str) -> None:
         _apply(context, target)
         return
 
-    context.console.print()
-    section = choose(
-        context.console,
-        f"当前是 {stance_label(current)} ({current.value})",
-        list(_SECTIONS),
-    )
-    if section is None:
-        return
-    if section.key == "preset":
-        picked = choose(
-            context.console,
-            "选一档预设",
-            _options(MODE_PRESETS),
-            current=_preset_name(current),
-        )
-        if picked is not None:
-            _apply(context, PRESET_NAMES[picked.key])
-        return
-    if section.key == "sandbox":
-        picked = choose(
-            context.console,
-            "隔离档",
-            _options(SANDBOX_OPTIONS),
-            current=current.sandbox.value,
-        )
-        if picked is not None:
-            _apply(context, SessionMode(SandboxLevel(picked.key), current.approval))
-        return
-    picked = choose(
-        context.console,
-        "审批档",
-        _options(APPROVAL_OPTIONS),
-        current=current.approval.value,
-    )
-    if picked is not None:
-        _apply(context, SessionMode(current.sandbox, ApprovalPolicy(picked.key)))
+    while True:
+        current = runtime.session.current().mode
+        section = choose(context.console, list(_SECTIONS))
+        if section is None:
+            return
+        if section.key == "preset":
+            picked = choose(
+                context.console, _options(MODE_PRESETS), current=_preset_name(current)
+            )
+            if picked is not None:
+                _apply(context, PRESET_NAMES[picked.key])
+        elif section.key == "sandbox":
+            picked = choose(
+                context.console,
+                _options(SANDBOX_OPTIONS),
+                current=current.sandbox.value,
+            )
+            if picked is not None:
+                _apply(context, SessionMode(SandboxLevel(picked.key), current.approval))
+        else:
+            picked = choose(
+                context.console,
+                _options(APPROVAL_OPTIONS),
+                current=current.approval.value,
+            )
+            if picked is not None:
+                _apply(
+                    context, SessionMode(current.sandbox, ApprovalPolicy(picked.key))
+                )
 
 
 def _options(items: tuple[StanceOption, ...]) -> list[Option]:

@@ -30,7 +30,7 @@ from forgecli.interfaces.tui.tty import (
     stdin_is_tty,
 )
 
-__all__ = ["Option", "SelectUnavailable", "select_one"]
+__all__ = ["Group", "Option", "SelectUnavailable", "select_grouped", "select_one"]
 
 # 菜单之外要留给终端的行数: 提示行, 上一条输出, 以及不贴着屏幕底边.
 #
@@ -41,6 +41,14 @@ _RESERVED_ROWS = 4
 _SCROLL_MARKER_ROWS = 2
 # 再挤也至少给三行选项: 少于这个数, 菜单本身就没法用了.
 _MIN_VISIBLE = 3
+
+# 提示行按实际可用的键拼: 只有一个分类时写着"←→ 分类"是在教一个按下去没反应的键.
+_HINT_KEYS = "↑↓ 选择"
+_HINT_TABS = "←→ 分类"
+_HINT_TAIL = "Enter 确认 · 数字键直选 · Esc 返回"
+
+# 分类头也占一行.
+_TAB_ROWS = 1
 
 _CURSOR = "#94e2d5"
 _NORMAL = "#9399b2"
@@ -59,6 +67,18 @@ class Option:
     key: str
     label: str
     hint: str = ""
+
+
+@dataclass(frozen=True)
+class Group:
+    """一类选项. 分类多于一个时用 ←/→ 切换.
+
+    分类而不是把几十项排成一条: 配置项按前缀天然分成界面, 日志, 执行几类, 排成一条之后
+    找一项要从头扫到尾, 而分类头一眼就能定位.
+    """
+
+    label: str
+    options: tuple[Option, ...]
 
 
 def _require_readable_stdin() -> None:
@@ -87,26 +107,54 @@ def select_one(
 
     ``default_index`` 是初始高亮项 —— 直接回车就选它.
     """
-    if not options:
-        raise ValueError("select_one 至少需要一个选项")
+    return select_grouped(
+        console, (Group("", tuple(options)),), default_index=default_index
+    )
+
+
+def select_grouped(
+    console: Console,
+    groups: Sequence[Group],
+    *,
+    default_index: int = 0,
+    group_index: int = 0,
+) -> Option | None:
+    """分类版: ←/→ 换分类, ↑↓ 在分类内移动. 返回 None 表示取消.
+
+    分类只有一个时不画分类头 —— 一个只有一项的标签栏是噪音.
+    """
+    if not groups or not any(group.options for group in groups):
+        raise ValueError("select_grouped 至少需要一个非空分类")
     if not stdin_is_tty():
         raise SelectUnavailable("当前不在终端中, 无法交互式选择")
 
     _require_readable_stdin()
-    index = max(0, min(default_index, len(options) - 1))
-    live = Live(
-        _render(options, index, _visible_rows(console, len(options))),
-        console=console,
-        transient=True,
-        auto_refresh=False,
-    )
+    tabs = len(groups) > 1
+    current = max(0, min(group_index, len(groups) - 1))
+    index = max(0, min(default_index, len(groups[current].options) - 1))
+
+    def frame() -> Text:
+        options = groups[current].options
+        visible = _visible_rows(console, len(options), tabs=tabs)
+        body = _render_tabs(groups, current) if tabs else Text()
+        body.append_text(_render(options, index, visible, tabs=tabs))
+        return body
+
+    live = Live(frame(), console=console, transient=True, auto_refresh=False)
     with live, KeyReader() as keys:
         while True:
+            options = groups[current].options
             press = keys.read()
             if press.key is Keys.Up:
                 index = (index - 1) % len(options)
             elif press.key is Keys.Down:
                 index = (index + 1) % len(options)
+            elif tabs and press.key in (Keys.Left, Keys.Right):
+                step = -1 if press.key is Keys.Left else 1
+                current = (current + step) % len(groups)
+                # 换分类后高亮回到第一项: 沿用上一类的下标会落在一个用户没看过的位置,
+                # 而下一次回车按的就是那一项.
+                index = 0
             elif press.key in CONFIRM_KEYS:
                 return options[index]
             elif press.key in (Keys.Escape, Keys.ControlC):
@@ -119,18 +167,26 @@ def select_one(
             else:
                 continue
             # 每帧现算可见行数: 用户拉窗口是常事, 而拉窄之后按原来的高度画就又溢出了.
-            live.update(
-                _render(options, index, _visible_rows(console, len(options))),
-                refresh=True,
-            )
+            live.update(frame(), refresh=True)
 
 
-def _visible_rows(console: Console, total: int) -> int:
+def _visible_rows(console: Console, total: int, *, tabs: bool = False) -> int:
     """这一屏能放下几个选项."""
-    room = console.size.height - _RESERVED_ROWS
+    room = console.size.height - _RESERVED_ROWS - (_TAB_ROWS if tabs else 0)
     if total <= room:
         return total
     return max(_MIN_VISIBLE, room - _SCROLL_MARKER_ROWS)
+
+
+def _render_tabs(groups: Sequence[Group], current: int) -> Text:
+    """分类头. 不写"←/→ 切换"四个字 —— 底下那行提示已经说了."""
+    body = Text("  ")
+    for index, group in enumerate(groups):
+        if index:
+            body.append("  ")
+        body.append(group.label, style=_CURSOR if index == current else _DETAIL)
+    body.append("\n")
+    return body
 
 
 def _window(total: int, index: int, visible: int) -> int:
@@ -140,7 +196,9 @@ def _window(total: int, index: int, visible: int) -> int:
     return min(max(0, index - visible // 2), total - visible)
 
 
-def _render(options: Sequence[Option], index: int, visible: int) -> Text:
+def _render(
+    options: Sequence[Option], index: int, visible: int, *, tabs: bool = False
+) -> Text:
     start = _window(len(options), index, visible)
     body = Text()
     if start > 0:
@@ -159,5 +217,6 @@ def _render(options: Sequence[Option], index: int, visible: int) -> Text:
     rest = len(options) - (start + visible)
     if rest > 0:
         body.append(f"  ↓ 下面还有 {rest} 项\n", style=_HINT)
-    body.append("↑↓ 选择 · Enter 确认 · 数字键直选 · Esc 取消", style=_HINT)
+    parts = [_HINT_KEYS] + ([_HINT_TABS] if tabs else []) + [_HINT_TAIL]
+    body.append(" · ".join(parts), style=_HINT)
     return body

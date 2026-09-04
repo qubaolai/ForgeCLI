@@ -28,6 +28,7 @@ from forgecli.interfaces.runtime.project_runtime import (
     ProjectRuntime,
     ProjectRuntimeRegistry,
 )
+from forgecli.interfaces.tui import banner
 from forgecli.interfaces.tui.approval_prompt import ask_decision, render_card
 from forgecli.interfaces.tui.commands.context import CommandContext, NoActiveProject
 from forgecli.interfaces.tui.commands.registry import COMMANDS, dispatch
@@ -35,7 +36,6 @@ from forgecli.interfaces.tui.console import (
     STYLE_ACCENT,
     STYLE_DIM,
     error,
-    kv_table,
     warn,
 )
 from forgecli.interfaces.tui.plan_review import review
@@ -174,10 +174,12 @@ class SessionApp:
                 ]
             )
         self.console.print()
-        self.console.print(Text("Forge", style=f"bold {STYLE_ACCENT}"))
-        self.console.print(kv_table(rows))
+        banner.render(self.console, rows)
         self.console.print(
-            Text("/help 看全部命令; 直接说话就是和模型对话.", style=STYLE_DIM)
+            Text(
+                "/help 看全部命令; /<命令> -h 看某一条; 直接说话就是和模型对话.",
+                style=STYLE_DIM,
+            )
         )
 
     def _bind_active(self) -> None:

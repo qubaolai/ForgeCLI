@@ -72,3 +72,30 @@ def test_render_drops_the_markers_when_nothing_is_hidden() -> None:
     body = _render(_MANY[:3], index=0, visible=5).plain
     assert "还有" not in body
     assert "选项 2" in body
+
+
+def test_tabs_only_show_up_with_more_than_one_group() -> None:
+    """一个只有一项的标签栏是噪音."""
+    from forgecli.interfaces.tui.select import Group, _render_tabs
+
+    groups = (Group("界面", (Option("a", "A"),)), Group("日志", (Option("b", "B"),)))
+    assert "界面" in _render_tabs(groups, 0).plain
+    assert "日志" in _render_tabs(groups, 0).plain
+
+
+def test_tabs_leave_room_in_the_viewport() -> None:
+    """分类头也占一行; 不减掉它, 有分类的菜单就比没分类的高一行, 正好溢出."""
+    from forgecli.interfaces.tui.select import _visible_rows
+
+    assert (
+        _visible_rows(_console(24), 40, tabs=True)
+        == _visible_rows(_console(24), 40, tabs=False) - 1
+    )
+
+
+def test_hint_line_only_advertises_keys_that_work() -> None:
+    """只有一个分类时写着"←→ 分类"是在教一个按下去没反应的键."""
+    flat = _render(_MANY[:3], index=0, visible=3).plain
+    grouped = _render(_MANY[:3], index=0, visible=3, tabs=True).plain
+    assert "←→ 分类" not in flat
+    assert "←→ 分类" in grouped

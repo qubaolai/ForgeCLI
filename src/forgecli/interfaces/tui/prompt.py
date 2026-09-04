@@ -65,8 +65,14 @@ from prompt_toolkit.utils import get_cwidth
 
 from forgecli.interfaces.tui.session_exit import SessionExit
 
-# 命令菜单最多显示的行数；命令很多时只显示前若干行（当前命令数远小于它）。
+# 命令菜单一屏最多几行候选。超出的按窗口滚动，不是"只显示前 N 条" ——
+# 截断的那一版让 /clear 这种排在后面的命令在菜单里根本不存在，而用户看到的是一张
+# 看起来完整的表，没有任何东西提示它下面还有。
 _MENU_MAX_ROWS = 12
+# 滚动时上下各留一行说明还剩多少。
+_MENU_MARKER_ROWS = 2
+# 输入框、边框与提示行占掉的行数：菜单的可见高度要从终端高度里先减掉它们。
+_MENU_CHROME_ROWS = 8
 
 # 输入框最多长到几行. 到顶之后在框内滚动, 光标始终可见.
 #
@@ -276,7 +282,9 @@ class ForgePrompt:
     def _render_menu(self) -> StyleAndTextTuples:
         """自绘斜杠命令菜单：每行 = 命令名(定宽) + 说明；选中项仅靠文字颜色区分。
 
-        背景透明（不铺底色），故无需按终端宽度补齐整行。
+        放不下就按窗口滚动，高亮居中、两端贴边，并标出上下还剩多少条。菜单自己管这件
+        事而不是指望终端：它画在 prompt_toolkit 的布局里，终端滚动条碰不到它。
+
         数据来自缓冲区的补全状态 complete_state：
             - .completions     当前匹配到的候选项列表
             - .complete_index  当前选中的下标（可能为 None，此时默认高亮第一行）
@@ -286,19 +294,47 @@ class ForgePrompt:
             return []
         completions = state.completions
         selected = state.complete_index if state.complete_index is not None else 0
+        visible = self._menu_rows(len(completions))
+        start = _menu_window(len(completions), selected, visible)
 
         # 命令名列宽 = 最长的 "/name" 再留两格间距，保证说明列对齐。
         name_width = max(len(c.display_text) for c in completions) + 2
 
-        fragments: StyleAndTextTuples = []
-        for index, comp in enumerate(completions):
+        # 按行组装再用 "\n" 接起来: 让每个分支自己决定要不要补换行, 出过一次
+        # "滚动标记后面多一个空行"的问题 —— 标记自带换行, 紧跟的第一行又补了一个.
+        lines: list[StyleAndTextTuples] = []
+        if start:
+            lines.append([("class:menu-meta", f"  ↑ 上面还有 {start} 项")])
+        for index in range(start, min(start + visible, len(completions))):
+            comp = completions[index]
             current = "-current" if index == selected else ""
-            if index:  # 行之间换行（最后一行不加，避免多出空行）
+            lines.append(
+                [
+                    (
+                        f"class:menu-name{current}",
+                        f"  {comp.display_text.ljust(name_width)}",
+                    ),
+                    (f"class:menu-meta{current}", comp.display_meta_text),
+                ]
+            )
+        rest = len(completions) - (start + visible)
+        if rest > 0:
+            lines.append([("class:menu-meta", f"  ↓ 下面还有 {rest} 项")])
+
+        fragments: StyleAndTextTuples = []
+        for position, line in enumerate(lines):
+            if position:
                 fragments.append(("", "\n"))
-            name = f"  {comp.display_text.ljust(name_width)}"
-            fragments.append((f"class:menu-name{current}", name))
-            fragments.append((f"class:menu-meta{current}", comp.display_meta_text))
+            fragments.extend(line)
         return fragments
+
+    def _menu_rows(self, total: int) -> int:
+        """这一屏给菜单几行候选。终端拉矮了就少画几行，而不是溢出。"""
+        room = get_app().output.get_size().rows - _MENU_CHROME_ROWS
+        budget = max(3, min(_MENU_MAX_ROWS, room))
+        if total <= budget:
+            return total
+        return max(3, budget - _MENU_MARKER_ROWS)
 
     def _build_app(self) -> Application[str]:
         """把缓冲区、布局、按键、样式组装成一个可运行的 Application。"""
@@ -321,7 +357,7 @@ class ForgePrompt:
         menu_pane = ConditionalContainer(
             content=Window(
                 FormattedTextControl(self._render_menu),
-                height=Dimension(min=1, max=_MENU_MAX_ROWS),
+                height=Dimension(min=1, max=_MENU_MAX_ROWS + _MENU_MARKER_ROWS),
                 dont_extend_height=True,
             ),
             filter=has_completions,
@@ -491,6 +527,13 @@ class ForgePrompt:
                 self._disarm_exit()  # 退出只接受空行 Ctrl-C×2，空行 Ctrl-D 不退出
 
         return kb
+
+
+def _menu_window(total: int, selected: int, visible: int) -> int:
+    """可见窗口从第几条开始。高亮尽量居中，到两端就贴边。"""
+    if total <= visible:
+        return 0
+    return min(max(0, selected - visible // 2), total - visible)
 
 
 def _history(history_file: Path | None) -> History:

@@ -96,7 +96,6 @@ def cmd_sessions(context: CommandContext, argument: str) -> None:
     )
     picked = choose(
         context.console,
-        "恢复哪一个",
         [
             Option(item.session_id, item.session_id, truncate(item.title, 40))
             for item in sessions

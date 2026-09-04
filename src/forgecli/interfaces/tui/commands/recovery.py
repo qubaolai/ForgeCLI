@@ -47,7 +47,6 @@ def cmd_checkpoints(context: CommandContext, argument: str) -> None:
     )
     picked = choose(
         context.console,
-        "预览哪一个",
         [
             Option(
                 item.checkpoint_id,

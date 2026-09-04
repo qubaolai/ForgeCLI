@@ -65,7 +65,6 @@ def cmd_plan(context: CommandContext, argument: str) -> None:
         context.console.print(Markdown(markdown))
     picked = choose(
         context.console,
-        "切换活动计划",
         [
             Option(item.plan_id, item.plan_id, truncate(item.title, 40))
             for item in index.plans
