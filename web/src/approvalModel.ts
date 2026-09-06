@@ -53,6 +53,9 @@ export type Prompt = {
   body: string;
   choices: PromptChoice[];
   free_text: boolean;
+  selection_mode?: "single" | "multiple";
+  recommended_option_id?: string;
+  allow_skip?: boolean;
   detail: Record<string, unknown>;
 };
 

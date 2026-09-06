@@ -16,6 +16,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.text import Text
 
+from forgecli.domain.human_prompt import PromptAnswer
 from forgecli.domain.intents import (
     MODE_PRESETS,
     PRESET_NAMES,
@@ -261,8 +262,17 @@ class SessionApp:
             runtime.cancel()
             warn(self.console, "正在停止这一轮…")
             return
-        choice, text = answered
-        if not runtime.resolve_prompt(prompt_id, choice, text):
+        if isinstance(answered, PromptAnswer):
+            resolved = runtime.resolve_prompt(
+                prompt_id,
+                text=answered.text,
+                selected_values=answered.selected_values,
+                skipped=answered.skipped,
+            )
+        else:
+            choice, text = answered
+            resolved = runtime.resolve_prompt(prompt_id, choice, text)
+        if not resolved:
             error(self.console, "这条提示已经不在等待中了")
 
     def _settle(self, runtime: ProjectRuntime) -> None:

@@ -35,7 +35,7 @@ from forgecli.domain.human_prompt import (
     PromptKind,
 )
 from forgecli.domain.tool.capability import Capability
-from forgecli.domain.tool.errors import PreparationError
+from forgecli.domain.tool.errors import PreparationError, PreparationErrorCode
 from forgecli.domain.tool.plan import (
     DeclarationConfidence,
     PlanEffects,
@@ -62,31 +62,50 @@ _DESCRIPTION = (
     "都得不到. 需求有多种合理解读且会导向完全不同的产出, 也算.\n"
     "不要用它请求执行许可 —— 需要许可时 Forge 会自己问, 你问了也不会得到授权. "
     "不要问代码里查得到的事实. 不要为了确认进度或让人放心而提问.\n"
-    "options 是给用户的建议, 不是限制: 他随时可以不选任何一项而直接写一句话."
+    "通过结构化工具参数提交问题，不要把问题 JSON 写成普通回复。"
+    "selection_mode 为 single 时只能选一项，为 multiple 时可选多项；不填默认为 single。"
+    "每个 options 必须给出 value、标题 label 和说明 detail。"
+    "recommended_option_id 只能指定一个选项的 value，不推荐时省略。"
+    "options 是建议，用户可直接写文字或跳过本题；跳过不表示同意推荐项。"
 )
 
 
 class AskUserTool(Tool):
     _SPEC = ToolSpec(
         name="ask_user",
-        version="1",
+        version="2",
         title="向用户提问",
         description=_DESCRIPTION,
         input_schema={
             "type": "object",
             "properties": {
-                "question": {"type": "string", "maxLength": 500},
+                "question": {"type": "string", "minLength": 1, "maxLength": 500},
+                "description": {"type": "string", "maxLength": 1000},
+                "selection_mode": {"type": "string", "enum": ["single", "multiple"]},
+                "recommended_option_id": {"type": "string"},
                 "options": {
                     "type": "array",
                     "maxItems": _MAX_OPTIONS,
                     "items": {
                         "type": "object",
                         "properties": {
-                            "value": {"type": "string"},
-                            "label": {"type": "string"},
-                            "detail": {"type": "string"},
+                            "value": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": r"\S",
+                            },
+                            "label": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": r"\S",
+                            },
+                            "detail": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": r"\S",
+                            },
                         },
-                        "required": ["value", "label"],
+                        "required": ["value", "label", "detail"],
                         "additionalProperties": False,
                     },
                 },
@@ -96,7 +115,15 @@ class AskUserTool(Tool):
             # 目标集合在机制上封闭的证明.
             "additionalProperties": False,
         },
-        output_schema={"type": "object", "properties": {"answer": {"type": "string"}}},
+        output_schema={
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["answered", "skipped"]},
+                "selected_values": {"type": "array", "items": {"type": "string"}},
+                "text": {"type": "string"},
+            },
+            "required": ["status", "selected_values", "text"],
+        },
         declared_capabilities=frozenset({Capability.USER_PROMPT}),
         target_declaration_ability=TargetDeclarationAbility.STATIC,
         # **这个数不会被任何人读.** ToolRuntime 不拿它中断谁, 它只经
@@ -118,6 +145,10 @@ class AskUserTool(Tool):
         invalid = validate_arguments(self._SPEC, request.arguments)
         if invalid is not None:
             return invalid
+        try:
+            _prompt(request.invocation_id, request.arguments)
+        except ValueError as exc:
+            return PreparationError(PreparationErrorCode.INVALID_INPUT, str(exc))
         return ToolPlan(
             plan_id=request.invocation_id,
             tool_name=self._SPEC.name,
@@ -140,26 +171,22 @@ class AskUserTool(Tool):
         cancel: CancelToken | None = None,
     ) -> ToolResult:
         arguments = plan.normalized_input
-        answer = self._prompts.ask(
-            HumanPrompt(
-                prompt_id=plan.plan_id,
-                kind=PromptKind.QUESTION,
-                title=str(arguments.get("question", "")),
-                choices=_choices(arguments.get("options")),
-                # 恒为 True (ADR-0043 决策 7): 模型对情况的理解不完整才会提问, 而它列出
-                # 的选项恰恰是那份不完整理解的产物. 把人锁进四个都不对的选项里, 得到的
-                # 答案比不问更糟.
-                free_text=True,
-            )
-        )
+        answer = self._prompts.ask(_prompt(plan.plan_id, arguments))
         if not answer.resolved:
             return self._unanswered(plan, answer, cancel)
         return ToolResult(
             invocation_id=plan.plan_id,
             tool_name=self._SPEC.name,
             status=ToolResultStatus.OK,
-            summary="用户已回答",
-            data={"choice": answer.choice} if answer.choice else {},
+            summary="用户已跳过本题" if answer.skipped else "用户已回答",
+            data={
+                "status": "skipped" if answer.skipped else "answered",
+                "selected_values": list(
+                    answer.selected_values
+                    or ((answer.choice,) if answer.choice else ())
+                ),
+                "text": answer.text,
+            },
             content_parts=(ContentPart(text=_answer_text(arguments, answer)),),
         )
 
@@ -204,7 +231,7 @@ def _choices(raw: object) -> tuple[PromptChoice, ...]:
             detail=str(item.get("detail", "")),
         )
         for item in items
-        if isinstance(item, Mapping) and str(item.get("value", "")).strip()
+        if isinstance(item, Mapping)
     )
 
 
@@ -214,9 +241,29 @@ def _answer_text(arguments: Mapping[str, object], answer: PromptAnswer) -> str:
     点了选项时回那一项的 label 而不是 value: 两者都是模型自己写的, 但 label 是它给人读
     的那一句, 读起来就是一句话; value 另外进 `data`, 需要精确匹配时用它.
     """
-    if answer.text:
-        return answer.text
-    for choice in _choices(arguments.get("options")):
-        if choice.value == answer.choice:
-            return choice.label
-    return answer.choice
+    if answer.skipped:
+        return (
+            "用户跳过了本题，未提供答案。不要视为同意推荐项；"
+            "按已有信息继续并说明必要假设。"
+        )
+    values = answer.selected_values or ((answer.choice,) if answer.choice else ())
+    labels = [
+        choice.label
+        for choice in _choices(arguments.get("options"))
+        if choice.value in values
+    ]
+    return "\n".join([*labels, *([answer.text] if answer.text else [])])
+
+
+def _prompt(prompt_id: str, arguments: Mapping[str, object]) -> HumanPrompt:
+    return HumanPrompt(
+        prompt_id=prompt_id,
+        kind=PromptKind.QUESTION,
+        title=str(arguments.get("question", "")),
+        body=str(arguments.get("description", "")),
+        choices=_choices(arguments.get("options")),
+        free_text=True,
+        selection_mode=str(arguments.get("selection_mode", "single")),
+        recommended_option_id=str(arguments.get("recommended_option_id", "")),
+        allow_skip=True,
+    )

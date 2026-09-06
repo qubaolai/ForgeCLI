@@ -80,6 +80,9 @@ class HumanPrompt:
     # 自由文本永远可答), 审批恒为 False —— 一次授权的取值集合必须是封闭的.
     free_text: bool = False
     detail: Mapping[str, object] = field(default_factory=dict)
+    selection_mode: str = "single"
+    recommended_option_id: str = ""
+    allow_skip: bool = False
 
     def __post_init__(self) -> None:
         if not self.prompt_id.strip():
@@ -93,6 +96,35 @@ class HumanPrompt:
         values = [choice.value for choice in self.choices]
         if len(values) != len(set(values)):
             raise ValueError("HumanPrompt.choices 的 value 不能重复")
+        if self.selection_mode not in {"single", "multiple"}:
+            raise ValueError("selection_mode 必须是 single 或 multiple")
+        if self.recommended_option_id and self.recommended_option_id not in values:
+            raise ValueError("推荐项必须来自选项")
+        if self.kind is PromptKind.APPROVAL and (
+            self.selection_mode != "single" or self.allow_skip
+        ):
+            raise ValueError("审批只支持单选且不能跳过")
+
+    def accepts_answer(self, answer: PromptAnswer) -> bool:
+        # 审批协议继续使用单个 choice，不能用问题的回答数组替代。
+        if self.kind is PromptKind.APPROVAL and answer.selected_values:
+            return False
+        if answer.skipped:
+            return self.allow_skip and not (
+                answer.choice or answer.selected_values or answer.text
+            )
+        if answer.choice and answer.selected_values:
+            return False
+        values = answer.selected_values or ((answer.choice,) if answer.choice else ())
+        if len(values) != len(set(values)):
+            return False
+        if self.selection_mode == "single" and len(values) > 1:
+            return False
+        if any(not value or not self.accepts(value) for value in values):
+            return False
+        if answer.text and not self.free_text:
+            return False
+        return bool(values) or (self.free_text and bool(answer.text.strip()))
 
     def accepts(self, choice: str) -> bool:
         """这个 ``choice`` 是不是本条提示提供过的选项.
@@ -115,6 +147,9 @@ class HumanPrompt:
             "choices": [choice.to_payload() for choice in self.choices],
             "free_text": self.free_text,
             "detail": dict(self.detail),
+            "selection_mode": self.selection_mode,
+            "recommended_option_id": self.recommended_option_id,
+            "allow_skip": self.allow_skip,
         }
 
 
@@ -122,10 +157,8 @@ class HumanPrompt:
 class PromptAnswer:
     """一个人对一条提示的回答, 或者"没有人回答".
 
-    ``resolved`` 是**唯一**判断有没有人答过的依据. 空的 ``choice`` 加空的 ``text``
-    是一个合法的回答 (在只收自由文本的提示上按回车), 拿它们是否为空去猜, 会把"答了个
-    空"和"根本没人在"混成一件事 —— 而这两件事在审批那侧分别是"批准了吗"与"这个环境里
-    有没有人", 混掉之后非交互环境下模型会对着一个永远不会有人应答的提示反复重试.
+    ``resolved`` 表示人已提交，``skipped`` 明确表示跳过；空白不是有效回答。
+    ``selected_values`` 保存单选/多选，``choice`` 兼容审批及旧调用者。
     """
 
     prompt_id: str
@@ -135,3 +168,5 @@ class PromptAnswer:
     # 没人回答时说明为什么 (取消了 / 进程在退出 / 这个环境里没有人). 进审计与回给模型
     # 的结果, 不进任何裁决.
     note: str = ""
+    selected_values: tuple[str, ...] = ()
+    skipped: bool = False

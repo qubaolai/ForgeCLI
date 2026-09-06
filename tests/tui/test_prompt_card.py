@@ -282,3 +282,37 @@ def test_card_reads_the_same_payload_the_channel_sends(
     assert "shell_run" in output
     assert "rm -rf build" in output
     assert "/repo" in output
+
+
+@pytest.mark.parametrize(
+    "mode, inputs, values, skipped",
+    [
+        (
+            "multiple",
+            ["1,2", "补充说明", "/submit"],
+            ("deleted_at", "is_deleted"),
+            False,
+        ),
+        ("single", ["1,2", "2", "/submit"], ("is_deleted",), False),
+        ("multiple", ["1", "/skip"], (), True),
+    ],
+)
+def test_structured_question_controls(
+    console, screen, monkeypatch, mode, inputs, values, skipped
+):
+    from forgecli.domain.human_prompt import PromptAnswer
+
+    _answers(monkeypatch, *inputs)
+    result = ask_decision(
+        console,
+        _question(
+            allow_skip=True,
+            selection_mode=mode,
+            recommended_option_id="deleted_at",
+        ),
+    )
+    assert isinstance(result, PromptAnswer)
+    assert result.selected_values == values
+    assert result.skipped is skipped
+    assert screen.getvalue().count("推荐") == 1
+    assert "全部不回答" not in screen.getvalue()

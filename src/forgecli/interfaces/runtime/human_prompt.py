@@ -6,7 +6,7 @@
 
 **它不认识审批, 也不认识提问.** 队列里躺的是 ``HumanPrompt``, 交回去的是
 ``PromptAnswer``; 唯一的校验是"这个选项是不是这条提示自己摆出来的"
-(``HumanPrompt.accepts``). 至于 ``once`` 意味着一档授权范围, 那是
+(``HumanPrompt.accepts_answer``). 至于 ``once`` 意味着一档授权范围, 那是
 ``ApprovalService`` 的事, 而它给出的响应还要再过
 ``ApprovalRequest.response_error`` 那道闸 (见 ``coordinator.py``).
 
@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from forgecli.application.human_prompt import (
@@ -38,8 +39,9 @@ class _Pending:
 class BlockingHumanPromptBroker(HumanPromptService):
     """一个 ``prompt_id`` 只接受一次作答; 没拿到作答一律 ``resolved=False``."""
 
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
+    def __init__(self, on_change: Callable[[str, str], None] | None = None) -> None:
+        self._on_change = on_change
+        self._lock = threading.RLock()
         self._pending: dict[str, _Pending] = {}
         self._questions_this_turn = 0
         self._closed = False
@@ -47,15 +49,19 @@ class BlockingHumanPromptBroker(HumanPromptService):
     # ---- 调用者一侧 ----
 
     def ask(self, prompt: HumanPrompt) -> PromptAnswer:
-        refusal = self._refuse(prompt)
-        if refusal is not None:
-            return refusal
         pending = _Pending(prompt)
         with self._lock:
+            refusal = self._refuse(prompt)
+            if refusal is not None:
+                return refusal
             self._pending[prompt.prompt_id] = pending
-        pending.ready.wait()
-        with self._lock:
-            self._pending.pop(prompt.prompt_id, None)
+        try:
+            self._notify(prompt.prompt_id, "prompt_requested")
+            pending.ready.wait()
+        finally:
+            with self._lock:
+                self._pending.pop(prompt.prompt_id, None)
+            self._notify(prompt.prompt_id, "prompt_resolved")
         if pending.answer is not None:
             return pending.answer
         return PromptAnswer(
@@ -63,6 +69,10 @@ class BlockingHumanPromptBroker(HumanPromptService):
             resolved=False,
             note=pending.release_note or "没有拿到回答",
         )
+
+    def _notify(self, prompt_id: str, kind: str) -> None:
+        if self._on_change is not None:
+            self._on_change(prompt_id, kind)
 
     def _refuse(self, prompt: HumanPrompt) -> PromptAnswer | None:
         """不必挂进队列就能答复的两种情况.
@@ -94,7 +104,9 @@ class BlockingHumanPromptBroker(HumanPromptService):
 
     def list_pending(self) -> tuple[dict[str, object], ...]:
         with self._lock:
-            items = tuple(self._pending.values())
+            items = tuple(
+                item for item in self._pending.values() if not item.ready.is_set()
+            )
         return tuple(item.prompt.to_payload() for item in items)
 
     def find(self, prompt_id: str) -> HumanPrompt | None:
@@ -103,10 +115,19 @@ class BlockingHumanPromptBroker(HumanPromptService):
             pending = self._pending.get(prompt_id)
         return None if pending is None else pending.prompt
 
-    def resolve(self, prompt_id: str, choice: str = "", text: str = "") -> bool:
+    def resolve(
+        self,
+        prompt_id: str,
+        choice: str = "",
+        text: str = "",
+        *,
+        selected_values: tuple[str, ...] = (),
+        skipped: bool = False,
+        before_resolve: Callable[[HumanPrompt, PromptAnswer], None] | None = None,
+    ) -> bool:
         """记下一个人的作答. 返回 False 表示这条提示不在等待中, 或这个作答不合法.
 
-        两条校验都只看这条提示自己声明了什么, 不看它是审批还是提问:
+        校验使用提示声明的选择模式、可用选项、自由文本与跳过规则:
 
         - ``choice`` 必须是它摆出来过的选项 (空串只在收自由文本时合法).
         - 不收自由文本的提示不接受 ``text``. 静默丢掉的话, 用户以为自己写下的理由被
@@ -114,19 +135,21 @@ class BlockingHumanPromptBroker(HumanPromptService):
         """
         with self._lock:
             pending = self._pending.get(prompt_id)
-            if pending is None or pending.answer is not None:
+            if pending is None or pending.ready.is_set():
                 return False
-            prompt = pending.prompt
-            if not prompt.accepts(choice):
-                return False
-            if text and not prompt.free_text:
-                return False
-            pending.answer = PromptAnswer(
+            answer = PromptAnswer(
                 prompt_id=prompt_id,
                 choice=choice,
                 text=text,
                 resolved=True,
+                selected_values=selected_values,
+                skipped=skipped,
             )
+            if not pending.prompt.accepts_answer(answer):
+                return False
+            if before_resolve is not None:
+                before_resolve(pending.prompt, answer)
+            pending.answer = answer
             pending.ready.set()
             return True
 
@@ -138,10 +161,9 @@ class BlockingHumanPromptBroker(HumanPromptService):
 
     def release_pending(self, note: str) -> None:
         with self._lock:
-            pending = tuple(self._pending.values())
-        for item in pending:
-            item.release_note = note
-            item.ready.set()
+            for item in self._pending.values():
+                item.release_note = note
+                item.ready.set()
 
     def close(self) -> None:
         with self._lock:

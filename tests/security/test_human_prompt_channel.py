@@ -296,3 +296,75 @@ def test_mandatory_ask_offers_only_once() -> None:
     assert [choice.value for choice in prompt.choices] == ["once", "deny"]
     assert prompt.detail["mandatory"] is True
     assert prompt.free_text is False
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"selected_values": ("postgres", "missing")},
+        {"selected_values": ("postgres", "postgres")},
+        {"selected_values": ("postgres",), "choice": "postgres"},
+        {"skipped": True, "text": "矛盾"},
+        {"text": " "},
+    ],
+)
+def test_invalid_structured_answer_keeps_question_pending(payload: dict) -> None:
+    from dataclasses import replace
+
+    broker = BlockingHumanPromptBroker()
+    thread, _ = _ask_in_background(broker, replace(_question(), allow_skip=True))
+    try:
+        assert not broker.resolve("q1", **payload)
+        assert broker.list_pending()
+        assert broker.resolve("q1", skipped=True)
+    finally:
+        broker.close()
+        thread.join(timeout=2)
+
+
+def test_single_question_cannot_accept_two_distinct_choices() -> None:
+    from dataclasses import replace
+
+    broker = BlockingHumanPromptBroker()
+    prompt = replace(
+        _question(), choices=(PromptChoice("a", "A"), PromptChoice("b", "B"))
+    )
+    thread, _ = _ask_in_background(broker, prompt)
+    try:
+        assert not broker.resolve("q1", selected_values=("a", "b"))
+    finally:
+        broker.close()
+        thread.join(timeout=2)
+
+
+def test_approval_cannot_be_skipped_or_answered_using_question_array() -> None:
+    broker = BlockingHumanPromptBroker()
+    prompt = HumanPrompt(
+        "a", PromptKind.APPROVAL, "审批", choices=(PromptChoice("once", "允许"),)
+    )
+    thread, _ = _ask_in_background(broker, prompt)
+    try:
+        assert not broker.resolve("a", skipped=True)
+        assert not broker.resolve("a", selected_values=("once",))
+        assert broker.resolve("a", choice="once")
+    finally:
+        broker.close()
+        thread.join(timeout=2)
+
+
+def test_record_failure_does_not_release_question() -> None:
+    broker = BlockingHumanPromptBroker()
+    thread, _ = _ask_in_background(broker, _question())
+
+    def failed_record(*_args: object) -> None:
+        raise OSError("disk full")
+
+    try:
+        with pytest.raises(OSError):
+            broker.resolve("q1", "postgres", before_resolve=failed_record)
+        assert broker.list_pending()
+        assert thread.is_alive()
+        assert broker.resolve("q1", "postgres")
+    finally:
+        broker.close()
+        thread.join(timeout=2)

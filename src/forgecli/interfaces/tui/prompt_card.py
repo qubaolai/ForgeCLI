@@ -22,6 +22,7 @@ from rich.console import Console
 from rich.padding import Padding
 from rich.text import Text
 
+from forgecli.domain.human_prompt import PromptAnswer
 from forgecli.interfaces.tui.console import (
     ASK,
     STYLE_ACCENT,
@@ -118,7 +119,7 @@ def _render_approval(console: Console, view: Mapping[str, object]) -> None:
 
 def ask_decision(
     console: Console, prompt: Mapping[str, object]
-) -> tuple[str, str] | None:
+) -> tuple[str, str] | PromptAnswer | None:
     """读一次作答. 返回 ``(choice, text)``, 两者都直接交给通道.
 
     选择方式是 ↑↓ + 回车, 与斜杠命令菜单一致; 数字键仍然直选, 照顾记得住"3 是拒绝"的
@@ -132,6 +133,8 @@ def ask_decision(
     保守的那个理解并不更安全, 只是更不诚实.
     """
     question = str(prompt.get("kind", "")) == "question"
+    if question and bool(prompt.get("allow_skip")):
+        return _question_answer(console, prompt)
     detail = prompt.get("detail")
     view: Mapping[str, object] = detail if isinstance(detail, Mapping) else {}
     options = [
@@ -180,6 +183,74 @@ def ask_decision(
             return (picked.key, "")
     except SelectUnavailable:
         return _typed(console, options, free_text=free_text)
+
+
+def _question_answer(
+    console: Console, prompt: Mapping[str, object]
+) -> PromptAnswer | None:
+    """编号单选/多选，补充文字与显式跳过；所有标题说明来自同一 payload。"""
+    options = [
+        item for item in _as_list(prompt.get("choices")) if isinstance(item, Mapping)
+    ]
+    multiple = prompt.get("selection_mode") == "multiple"
+    selected: list[str] = []
+    text = ""
+    for index, option in enumerate(options, 1):
+        recommended = (
+            " · 推荐"
+            if option.get("value") == prompt.get("recommended_option_id")
+            else ""
+        )
+        console.print(Text(f"  {index}. {option.get('label', '')}{recommended}"))
+        console.print(Text(f"     {option.get('detail', '')}", style=STYLE_DIM))
+    console.print(
+        Text(
+            ("多选：输入编号，以逗号分隔" if multiple else "单选：输入一个编号")
+            + "；直接输入文字可补充回答；/skip 跳过本题；"
+            "/submit 提交；Ctrl-C 停止这一轮",
+            style=STYLE_DIM,
+        )
+    )
+    while True:
+        try:
+            raw = input("你的回答: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            return None
+        if raw == "/skip":
+            return PromptAnswer(
+                str(prompt.get("prompt_id", "")), resolved=True, skipped=True
+            )
+        if raw == "/submit":
+            if selected or text:
+                return PromptAnswer(
+                    str(prompt.get("prompt_id", "")),
+                    text=text,
+                    resolved=True,
+                    selected_values=tuple(selected),
+                )
+            console.print(Text("请选择、填写回答或 /skip 跳过", style=STYLE_ERROR))
+            continue
+        parts = raw.replace("，", ",").split(",")
+        if raw and all(part.strip().isdigit() for part in parts):
+            indexes = [int(part.strip()) for part in parts]
+            if (
+                (not multiple and len(indexes) != 1)
+                or len(set(indexes)) != len(indexes)
+                or any(i < 1 or i > len(options) for i in indexes)
+            ):
+                console.print(Text("选项编号无效，请重新选择", style=STYLE_ERROR))
+                continue
+            selected = [str(options[i - 1]["value"]) for i in indexes]
+            console.print(
+                Text(
+                    "已选：" + "、".join(str(options[i - 1]["label"]) for i in indexes)
+                )
+            )
+        elif raw:
+            text = raw
+        console.print(
+            Text("可修改选择或补充文字，/submit 提交，/skip 跳过", style=STYLE_DIM)
+        )
 
 
 def _typed(

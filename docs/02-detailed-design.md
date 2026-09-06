@@ -1342,3 +1342,12 @@ model = "gpt-5-mini"
 - 至少接入一个 mock MCP server。
 - 至少加载一个本地 Skill。
 - 核心领域逻辑测试覆盖率不低于 80%。
+
+### 询问人类的结构化卡片（2026-09-05）
+
+`ask_user` v2 每次调用对应一个问题。Web / TUI 共用 `HumanPrompt` 的
+`selection_mode`、`recommended_option_id`、`allow_skip` 和选项标题/说明；由后端
+声明决定单选或多选。回答包含 `status / selected_values / text`，跳过与取消整轮
+分开处理。运行时入队/移除通知驱动 Web 即时同步待答卡片，回答持久化成功才唤醒工具。
+参数、兼容规则与验证见 [实现记录](roadmap/mvp/2026-09-05/README.md) 和
+[ADR-0043 修订](adr/2026-09-03-0043-采用统一人机提示通道与ask-user工具.md)。

@@ -132,7 +132,11 @@ def test_a_picked_option_comes_back_as_a_readable_line() -> None:
 
     result = out[0]
     assert result.status is ToolResultStatus.OK
-    assert result.data == {"choice": "deleted_at"}
+    assert result.data == {
+        "status": "answered",
+        "selected_values": ["deleted_at"],
+        "text": "",
+    }
     assert "deleted_at 时间戳" in result.raw_output()
 
 
@@ -252,3 +256,71 @@ def test_the_tool_declares_nothing_but_asking() -> None:
     assert spec.declared_capabilities == frozenset({Capability.USER_PROMPT})
     # 没有路径字段, 且不收额外字段 —— 目标集合在机制上就是封闭的.
     assert spec.input_schema["additionalProperties"] is False
+
+
+@pytest.mark.parametrize("skipped", [False, True])
+def test_structured_multiple_answer_and_skip(skipped: bool) -> None:
+    broker = BlockingHumanPromptBroker()
+    tool = AskUserTool(broker)
+    thread, out = _ask_in_background(
+        tool,
+        _plan(
+            options=_OPTIONS,
+            selection_mode="multiple",
+            recommended_option_id="deleted_at",
+        ),
+    )
+    try:
+        _wait_until(lambda: bool(broker.list_pending()))
+        pending = broker.list_pending()[0]
+        assert pending["selection_mode"] == "multiple"
+        assert pending["recommended_option_id"] == "deleted_at"
+        assert pending["allow_skip"] is True
+        selected = () if skipped else ("deleted_at", "is_deleted")
+        assert broker.resolve(
+            "inv-1",
+            selected_values=selected,
+            text="" if skipped else "补充",
+            skipped=skipped,
+        )
+        thread.join(timeout=2)
+        assert out[0].data == {
+            "status": "skipped" if skipped else "answered",
+            "selected_values": list(selected),
+            "text": "" if skipped else "补充",
+        }
+        assert out[0].status is ToolResultStatus.OK
+        if skipped:
+            assert "不要视为同意推荐项" in out[0].raw_output()
+        else:
+            assert "deleted_at 时间戳" in out[0].raw_output()
+            assert "is_deleted 布尔" in out[0].raw_output()
+            assert "补充" in out[0].raw_output()
+    finally:
+        broker.close()
+        thread.join(timeout=2)
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"question": " "},
+        {"selection_mode": "both"},
+        {"recommended_option_id": "missing"},
+        {"recommended_option_id": ["a", "b"]},
+        {"options": [{"value": "a", "label": "A"}]},
+        {"options": [{"value": " ", "label": "A", "detail": "说明"}]},
+        {"options": [{"value": "a", "label": "A", "detail": " "}]},
+        {"options": [{"value": "a", "label": "A", "detail": "说明"}] * 2},
+    ],
+)
+def test_invalid_question_is_rejected_before_waiting(patch: dict[str, object]) -> None:
+    from forgecli.application.tools.tool import ToolInvocationRequest
+    from forgecli.domain.tool.errors import PreparationError
+
+    tool = AskUserTool(PendingHumanPromptService())
+    arguments = {"question": "选择阶段", **patch}
+    result = tool.prepare(
+        ToolInvocationRequest("p", "ask_user", arguments), _NO_CONTEXT
+    )
+    assert isinstance(result, PreparationError)

@@ -120,6 +120,8 @@ class PromptResolveRequest(BaseModel):
 
     choice: str = ""
     text: str = ""
+    selected_values: list[str] = Field(default_factory=list)
+    skipped: bool = False
 
 
 class PlanReviewRequest(BaseModel):
@@ -647,7 +649,13 @@ def create_app(
         prompt_id: str, body: PromptResolveRequest, request: Request
     ) -> dict[str, bool]:
         runtime = _runtime(request)
-        resolved = runtime.resolve_prompt(prompt_id, body.choice, body.text)
+        resolved = runtime.resolve_prompt(
+            prompt_id,
+            body.choice,
+            body.text,
+            selected_values=tuple(body.selected_values),
+            skipped=body.skipped,
+        )
         if not resolved:
             raise HTTPException(status.HTTP_409_CONFLICT, "该提示不在等待中或作答无效")
         return {"resolved": True}

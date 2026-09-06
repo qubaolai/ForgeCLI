@@ -28,6 +28,7 @@ from forgecli.domain.workspace.changes import WorkspaceChange
 __all__ = [
     "AgentRunEvent",
     "AgentRunEventKind",
+    "HumanPromptPayload",
     "ApprovalRequestedPayload",
     "ApprovalResolvedPayload",
     "ContextCompactedPayload",
@@ -83,6 +84,8 @@ class AgentRunEventKind(Enum):
     TOOL_QUEUED = "tool_queued"
     TOOL_PREPARED = "tool_prepared"
     POLICY_RESOLVED = "policy_resolved"
+    PROMPT_REQUESTED = "prompt_requested"
+    PROMPT_RESOLVED = "prompt_resolved"
     APPROVAL_REQUESTED = "approval_requested"
     APPROVAL_RESOLVED = "approval_resolved"
     TOOL_STARTED = "tool_started"
@@ -104,6 +107,11 @@ class ReasoningStatus(Enum):
 @dataclass(frozen=True)
 class RunEventPayload:
     """事件载荷的密封基类. 子类都是冻结值对象, 不允许自由 dict."""
+
+
+@dataclass(frozen=True)
+class HumanPromptPayload(RunEventPayload):
+    prompt_id: str
 
 
 @dataclass(frozen=True)
