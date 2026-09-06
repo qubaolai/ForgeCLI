@@ -11,6 +11,8 @@ src/
       cli/
         app.py
       runtime/
+        human_interaction/
+          broker.py
         llm_wiring.py
         tool_wiring.py
       web/
@@ -20,6 +22,8 @@ src/
         events.py
         approval.py
     application/
+      human_interaction/
+        service.py
       services/
         conversation_service.py
         agent_turn_service.py
@@ -32,6 +36,8 @@ src/
         agent_loop.py
         builtin_agent_loop.py
     domain/
+      human_interaction/
+        prompt.py
       config/
       conversation/
       agent/
@@ -93,6 +99,10 @@ domain -> shared
 
 配置、工具和 Agent 主循环都是一等模块，不应被简单归入 `infrastructure`。
 
+- `domain/human_interaction/prompt.py`：提示、选项、回答及作答约束；不依赖授权或工具类型。
+- `application/human_interaction/service.py`：人机提示通道端口与无人可答时的实现。
+- `interfaces/runtime/human_interaction/broker.py`：Web / TUI 共享的阻塞队列与生命周期。
+  `human_interaction` 是独立功能包；现有 `prompt` 包专门组织发给 LLM 的提示词。
 - `domain/config`：定义配置值对象和校验规则，例如模型、权限、MCP、存储、上下文预算。
 - `application/services/config_service.py`：负责配置加载、合并、查询、更新和迁移。
 - `infrastructure/config_sources`：只负责从文件、环境变量、交互式命令输入等来源读取配置。

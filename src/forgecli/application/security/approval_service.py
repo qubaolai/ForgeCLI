@@ -16,11 +16,11 @@ ASK 是阻塞状态, 不是"返回错误让主模型自己决定要不要重试"
 
 from __future__ import annotations
 
-from forgecli.application.human_prompt import (
+from forgecli.application.human_interaction.service import (
     HumanPromptService,
     PendingHumanPromptService,
 )
-from forgecli.domain.human_prompt import (
+from forgecli.domain.human_interaction.prompt import (
     HumanPrompt,
     PromptAnswer,
     PromptChoice,

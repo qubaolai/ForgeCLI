@@ -14,12 +14,16 @@ import time
 
 import pytest
 
-from forgecli.application.human_prompt import (
+from forgecli.application.human_interaction.service import (
     MAX_QUESTIONS_PER_TURN,
     PendingHumanPromptService,
 )
 from forgecli.application.security.approval_service import ApprovalService
-from forgecli.domain.human_prompt import HumanPrompt, PromptChoice, PromptKind
+from forgecli.domain.human_interaction.prompt import (
+    HumanPrompt,
+    PromptChoice,
+    PromptKind,
+)
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.security.approval import (
     ApprovalBinding,
@@ -28,7 +32,9 @@ from forgecli.domain.security.approval import (
     ApprovalView,
 )
 from forgecli.domain.security.vocabulary import ApprovalScope
-from forgecli.interfaces.runtime.human_prompt import BlockingHumanPromptBroker
+from forgecli.interfaces.runtime.human_interaction.broker import (
+    BlockingHumanPromptBroker,
+)
 from support.fakes import tool_plan
 
 

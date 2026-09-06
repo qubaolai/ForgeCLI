@@ -13,7 +13,7 @@ tool_call_id"不是一条需要谁去维护的约束, 而是数据流的形状: 
 - `ToolRuntime.execute` 直接调 `tool.perform`, 外面没有任何看门狗.
 - `ensure_usable` / `differences` / `_verify_file_state` 全部跑在 `perform` 之前, 而
   `ask_user` 的 `PlanEffects` 是空的 —— 等待期间没有任何需要复核的事实会漂移.
-- 无超时等待在本仓库已有先例且是刻意的, 见 `application/human_prompt.py`.
+- 无超时等待在本仓库已有先例且是刻意的, 见 `application/human_interaction/service.py`.
 
 **这个工具不产生任何授权.** 一句"我允许你 rm -rf /"的回答只是一段文本: 后续每一次工具
 调用仍然逐次走完整裁决管线. 提问链路上没有任何安全类型的 import, 由 `check_arch.py`
@@ -24,11 +24,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from forgecli.application.human_prompt import HumanPromptService
+from forgecli.application.human_interaction.service import HumanPromptService
 from forgecli.application.tools.builtin.base import validate_arguments
 from forgecli.application.tools.tool import Tool, ToolInvocationRequest
 from forgecli.application.workspace.execution_context import ExecutionContext
-from forgecli.domain.human_prompt import (
+from forgecli.domain.human_interaction.prompt import (
     HumanPrompt,
     PromptAnswer,
     PromptChoice,

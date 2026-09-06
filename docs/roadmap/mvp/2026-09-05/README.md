@@ -32,3 +32,11 @@
 HTTP 集成用例验证后台工具仍在等待时通知已经发出、待答查询可用、多选或跳过可以
 结束等待、重复提交被拒绝。前端渲染测试覆盖单选/多选互斥、唯一推荐、说明展示、
 纯文本转义与默认未选中。
+
+
+## 2026-09-06 结构修正
+
+统一人机交互按功能包组织：`domain/human_interaction/prompt.py`、
+`application/human_interaction/service.py`、`interfaces/runtime/human_interaction/broker.py`。
+所有生产代码、测试和 ADR 引用同步迁移，旧根目录文件移除，无兼容转发层。
+架构边界检查扩大到整个功能包，保留原有单选、多选、跳过、推荐与即时通知语义。

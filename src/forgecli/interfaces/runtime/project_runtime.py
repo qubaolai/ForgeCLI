@@ -35,7 +35,11 @@ from forgecli.application.session.resume_service import ResumeService
 from forgecli.application.session.session_service import SessionService
 from forgecli.domain.agent.run_events import AgentRunEventKind, HumanPromptPayload
 from forgecli.domain.conversation.turn import AssistantResponse, TurnPause, TurnStatus
-from forgecli.domain.human_prompt import HumanPrompt, PromptAnswer, PromptKind
+from forgecli.domain.human_interaction.prompt import (
+    HumanPrompt,
+    PromptAnswer,
+    PromptKind,
+)
 from forgecli.domain.intents import InputOrigin, SessionMode
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
@@ -62,7 +66,9 @@ from forgecli.infrastructure.workspace.snapshot_provider import (
     OsWorkspaceSnapshotProvider,
 )
 from forgecli.interfaces.runtime.event_hub import RunEventHub
-from forgecli.interfaces.runtime.human_prompt import BlockingHumanPromptBroker
+from forgecli.interfaces.runtime.human_interaction.broker import (
+    BlockingHumanPromptBroker,
+)
 from forgecli.interfaces.runtime.llm_wiring import LlmRuntime, build_llm_runtime
 from forgecli.interfaces.runtime.tool_wiring import ToolStack, build_tool_stack
 from forgecli.shared.errors import SessionStateError

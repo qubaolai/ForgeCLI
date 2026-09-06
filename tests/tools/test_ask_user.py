@@ -18,7 +18,7 @@ from typing import cast
 
 import pytest
 
-from forgecli.application.human_prompt import (
+from forgecli.application.human_interaction.service import (
     MAX_QUESTIONS_PER_TURN,
     PendingHumanPromptService,
 )
@@ -44,7 +44,9 @@ from forgecli.domain.tool.plan import (
     WorkspaceScope,
 )
 from forgecli.domain.tool.result import ToolResultStatus
-from forgecli.interfaces.runtime.human_prompt import BlockingHumanPromptBroker
+from forgecli.interfaces.runtime.human_interaction.broker import (
+    BlockingHumanPromptBroker,
+)
 from forgecli.shared.cancellation import CancelToken
 
 _MODES = (

@@ -16,7 +16,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.text import Text
 
-from forgecli.domain.human_prompt import PromptAnswer
+from forgecli.domain.human_interaction.prompt import PromptAnswer
 from forgecli.domain.intents import (
     MODE_PRESETS,
     PRESET_NAMES,

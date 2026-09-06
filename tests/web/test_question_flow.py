@@ -11,9 +11,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from forgecli.application.agent_run.events import AgentRunEventBus
-from forgecli.domain.human_prompt import HumanPrompt, PromptChoice, PromptKind
+from forgecli.domain.human_interaction.prompt import (
+    HumanPrompt,
+    PromptChoice,
+    PromptKind,
+)
 from forgecli.interfaces.runtime.event_hub import RunEventHub
-from forgecli.interfaces.runtime.human_prompt import BlockingHumanPromptBroker
+from forgecli.interfaces.runtime.human_interaction.broker import (
+    BlockingHumanPromptBroker,
+)
 from forgecli.interfaces.runtime.project_runtime import ProjectRuntime
 from forgecli.interfaces.web.app import create_app
 from forgecli.shared.observability.context import bind

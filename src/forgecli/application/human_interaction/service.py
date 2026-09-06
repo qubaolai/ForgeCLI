@@ -19,7 +19,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from forgecli.domain.human_prompt import HumanPrompt, PromptAnswer, PromptKind
+from forgecli.domain.human_interaction.prompt import (
+    HumanPrompt,
+    PromptAnswer,
+    PromptKind,
+)
 
 __all__ = [
     "MAX_QUESTIONS_PER_TURN",

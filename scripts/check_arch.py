@@ -115,22 +115,22 @@ SIBLING_BANS: tuple[tuple[str, str, str], ...] = (
     #
     # 这条边界必须是机器守得住的 —— 写在注释里的"请保持哑"挡不住任何一次顺手.
     (
-        "domain.human_prompt",
+        "domain.human_interaction",
         "domain.security",
         "人机提示通道不认识授权词汇 (ADR-0043 决策 3 纪律 1)",
     ),
     (
-        "domain.human_prompt",
+        "domain.human_interaction",
         "domain.tool",
         "人机提示通道不认识工具计划 (ADR-0043 决策 3 纪律 1)",
     ),
     (
-        "application.human_prompt",
+        "application.human_interaction",
         "domain.security",
         "人机提示通道不认识授权词汇 (ADR-0043 决策 3 纪律 1)",
     ),
     (
-        "application.human_prompt",
+        "application.human_interaction",
         "domain.tool",
         "人机提示通道不认识工具计划 (ADR-0043 决策 3 纪律 1)",
     ),

@@ -10,7 +10,7 @@
 ``ApprovalService`` 的事, 而它给出的响应还要再过
 ``ApprovalRequest.response_error`` 那道闸 (见 ``coordinator.py``).
 
-**不设等待超时**, 理由见 ``application/human_prompt.py``.
+**不设等待超时**, 理由见 ``application/human_interaction/service.py``.
 """
 
 from __future__ import annotations
@@ -19,11 +19,15 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from forgecli.application.human_prompt import (
+from forgecli.application.human_interaction.service import (
     MAX_QUESTIONS_PER_TURN,
     HumanPromptService,
 )
-from forgecli.domain.human_prompt import HumanPrompt, PromptAnswer, PromptKind
+from forgecli.domain.human_interaction.prompt import (
+    HumanPrompt,
+    PromptAnswer,
+    PromptKind,
+)
 
 __all__ = ["BlockingHumanPromptBroker"]
 

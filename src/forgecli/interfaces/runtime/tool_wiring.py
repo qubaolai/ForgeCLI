@@ -22,7 +22,7 @@ from pathlib import Path
 
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_run.tool_observer import EventBusToolRunObserver
-from forgecli.application.human_prompt import (
+from forgecli.application.human_interaction.service import (
     HumanPromptService,
     PendingHumanPromptService,
 )

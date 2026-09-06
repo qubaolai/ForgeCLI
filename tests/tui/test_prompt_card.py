@@ -300,7 +300,7 @@ def test_card_reads_the_same_payload_the_channel_sends(
 def test_structured_question_controls(
     console, screen, monkeypatch, mode, inputs, values, skipped
 ):
-    from forgecli.domain.human_prompt import PromptAnswer
+    from forgecli.domain.human_interaction.prompt import PromptAnswer
 
     _answers(monkeypatch, *inputs)
     result = ask_decision(
