@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 from collections import OrderedDict
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -57,17 +56,18 @@ class JsonlRunStore(AgentRunEventSubscriber):
     "它不是恢复真相源"这条分工允许的损失.
     """
 
-    def __init__(self, sessions_dir: Path, current_session: Callable[[], str]) -> None:
+    def __init__(self, sessions_dir: Path) -> None:
         self._root = sessions_dir
-        # 运行事件信封里没有 session_id (它按 turn 编号, 见 AgentRunEvent), 所以落盘时
-        # 现问一次. 传 callable 而不是一个值: 一个进程里会话会换, 而这个订阅者活得比
-        # 任何一个会话都长.
-        self._current_session = current_session
-        # turn_id -> 累积中的快照. OrderedDict 是为了 `_forget_stale` 能从最旧的丢起.
-        self._pending: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        # (session_id, turn_id) -> 累积中的快照 (ADR-0048 决策 2). 归属跟着事件走, 不
+        # 是落盘那一刻现问"当前会话是谁": 一轮的收尾事件可能晚于会话切换到达, 而那时
+        # 现问会把上一个会话的过程写进新会话的文件里, 从此再也分不开.
+        #
+        # OrderedDict 是为了 `_forget_stale` 能从最旧的丢起.
+        self._pending: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
 
     def on_event(self, event: AgentRunEvent) -> None:
-        entry = self._pending.get(event.turn_id)
+        key = (event.session_id, event.turn_id)
+        entry = self._pending.get(key)
         if entry is None:
             if event.kind in _TERMINAL:
                 # 这一轮已经写过了 (终态可能来两次: 循环自己发一次, 驱动抛异常时
@@ -75,8 +75,13 @@ class JsonlRunStore(AgentRunEventSubscriber):
                 # 会让读回来的那份**覆盖掉真正有内容的那一行** —— /runs 按 turn_id 去重,
                 # 后写的赢.
                 return
-            entry = {"turn_id": event.turn_id, "events": [], "outputs": {}}
-            self._pending[event.turn_id] = entry
+            entry = {
+                "session_id": event.session_id,
+                "turn_id": event.turn_id,
+                "events": [],
+                "outputs": {},
+            }
+            self._pending[key] = entry
             self._forget_stale()
         if event.kind is AgentRunEventKind.MODEL_OUTPUT_DELTA:
             self._fold_delta(entry, event)
@@ -85,7 +90,7 @@ class JsonlRunStore(AgentRunEventSubscriber):
             assert isinstance(envelope, dict)
             entry["events"].append(envelope)
         if event.kind in _TERMINAL:
-            self._flush(self._pending.pop(event.turn_id, None))
+            self._flush(event.session_id, self._pending.pop(key, None))
 
     def read(self, session_id: str) -> list[dict[str, Any]]:
         """这个会话已经落盘的过程快照, 按写入顺序.
@@ -119,8 +124,7 @@ class JsonlRunStore(AgentRunEventSubscriber):
         outputs = entry["outputs"]
         outputs[key] = f"{outputs.get(key, '')}{text}"[:MAX_STORED_OUTPUT]
 
-    def _flush(self, entry: dict[str, Any] | None) -> None:
-        session_id = self._current_session()
+    def _flush(self, session_id: str, entry: dict[str, Any] | None) -> None:
         if entry is None or not session_id:
             return
         try:

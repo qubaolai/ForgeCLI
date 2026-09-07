@@ -64,6 +64,7 @@ from forgecli.domain.conversation.message import ChatMessage, TextBlock
 from forgecli.domain.conversation.turn import (
     AssistantResponse,
     MessageRole,
+    TurnIdentity,
     TurnPause,
     TurnStatus,
 )
@@ -153,6 +154,37 @@ class AgentTurnService:
         self._max_steps = max_steps
         self._turns = 0
         self._window = Window()
+        # 正在跑的那一轮. 谁要给事件标归属就问它, 而不是去读日志上下文
+        # (ADR-0048 决策 2): 编号是这里发的, 这里就是那个事实的出处.
+        self._current_turn: TurnIdentity | None = None
+
+    def reconfigure(
+        self,
+        *,
+        context_budget: Callable[[], ContextBudget | None],
+        context: WindowManager | None = None,
+        memory: MemoryService | None = None,
+        planning: PlanningService | None = None,
+        tools: CoordinatorToolDispatcher | None = None,
+    ) -> None:
+        """换掉随模型与工具栈一起重建的协作件 (ADR-0048 决策 1).
+
+        换模型的人还在同一个会话里, 所以 ``_turns`` 与 ``_window`` 一个都不动: 轮次
+        身份和窗口是会话的状态, 不是模型的. 重建整个服务能达到同样的接线效果, 代价是
+        轮次归零、窗口清空 —— 而 ``resume()`` 也补不回来, 它从会话事件重建的窗口按
+        ``_rebuild_window`` 的说明本来就没有工具往返.
+
+        ``loop_factory`` 与 ``runtime_facts`` 不在这里: 它们是读组合根当前字段的闭包,
+        换掉 ``self.llm`` / ``self.tools`` 之后自己就指向新的了. 列在这里的五个则是在
+        装配那一刻取值的, 不换就会继续用旧网关算预算、往旧工具栈派发.
+
+        调用方必须整套传: 少传一个就会出现半旧半新的组合, 而那种组合不会报错.
+        """
+        self._context_budget = context_budget
+        self._context = context
+        self._memory = memory
+        self._planning = planning
+        self._tools = tools
 
     def resume(self, history: Iterable[SessionEvent]) -> None:
         """续写一段历史会话: 接回 turn 计数, 并从事件重建会话窗口."""
@@ -160,14 +192,24 @@ class AgentTurnService:
         self._turns = sum(1 for e in events if e.type == EventType.USER_MESSAGE)
         self._window = _rebuild_window(events)
 
+    def current_turn(self) -> TurnIdentity | None:
+        """正在跑的那一轮的身份; 没有在跑时为 None."""
+        return self._current_turn
+
     def handle_user_message(
         self, text: str, *, origin: InputOrigin = InputOrigin.PROGRAM
     ) -> AssistantResponse:
         self._turns += 1
-        turn_id = f"turn_{self._turns:04d}"
-        session_id = self._session.current().session_id
-        with bind(session_id=session_id, turn_id=turn_id):
-            return self._handle_bound(text, origin, turn_id)
+        identity = TurnIdentity(
+            session_id=self._session.current().session_id,
+            turn_id=f"turn_{self._turns:04d}",
+        )
+        self._current_turn = identity
+        try:
+            with bind(session_id=identity.session_id, turn_id=identity.turn_id):
+                return self._handle_bound(text, origin, identity.turn_id)
+        finally:
+            self._current_turn = None
 
     def _handle_bound(
         self, text: str, origin: InputOrigin, turn_id: str
@@ -486,9 +528,15 @@ class AgentTurnService:
         self, kind: AgentRunEventKind, payload: RunEventPayload, turn_id: str
     ) -> None:
         """没接总线就是没人看. 展示缺席不影响状态推进 (ADR-0016 §4.3)."""
-        if self._run_bus is None:
+        identity = self._current_turn
+        if self._run_bus is None or identity is None:
             return
-        self._run_bus.publish(kind, turn_id=turn_id, payload=payload)
+        self._run_bus.publish(
+            kind,
+            session_id=identity.session_id,
+            turn_id=turn_id,
+            payload=payload,
+        )
 
     def _run_tool(
         self,

@@ -34,7 +34,12 @@ from forgecli.application.security.workspace_grants import GrantAccess
 from forgecli.application.session.resume_service import ResumeService
 from forgecli.application.session.session_service import SessionService
 from forgecli.domain.agent.run_events import AgentRunEventKind, HumanPromptPayload
-from forgecli.domain.conversation.turn import AssistantResponse, TurnPause, TurnStatus
+from forgecli.domain.conversation.turn import (
+    AssistantResponse,
+    TurnIdentity,
+    TurnPause,
+    TurnStatus,
+)
 from forgecli.domain.human_interaction.prompt import (
     HumanPrompt,
     PromptAnswer,
@@ -72,7 +77,6 @@ from forgecli.interfaces.runtime.human_interaction.broker import (
 from forgecli.interfaces.runtime.llm_wiring import LlmRuntime, build_llm_runtime
 from forgecli.interfaces.runtime.tool_wiring import ToolStack, build_tool_stack
 from forgecli.shared.errors import SessionStateError
-from forgecli.shared.observability.context import current as current_run_context
 from forgecli.shared.observability.log import get_log
 from forgecli.shared.serialization import to_jsonable
 from forgecli.shared.utils import now_iso
@@ -96,8 +100,6 @@ class ProjectRuntime:
         project: ProjectConfig,
     ) -> None:
         self.project = project
-        # 非空表示这一轮用按脚本回话的假网关 (--mock-llm). 留着是因为 reload_llm 要用:
-        # 用户在假模型下敲 /config 改点东西, 不该把它悄悄换回真网关.
         project_home = config_dir() / "projects" / project.project_id
         sessions_dir = project_home / "sessions"
         self.lock = ProcessLock(project_home / "forge.lock")
@@ -135,12 +137,10 @@ class ProjectRuntime:
             self.event_bus.subscribe(self.events)
             # 处理过程落盘 (展示用, 不是恢复真相源). 内存缓冲只有 2048 条且随进程消失,
             # 而"回看上周那一轮到底做了什么"要的正是跨进程的那一份.
-            self.runs = JsonlRunStore(
-                sessions_dir, lambda: self.session.current().session_id
-            )
+            self.runs = JsonlRunStore(sessions_dir)
             self.event_bus.subscribe(self.runs)
             self.prompts = BlockingHumanPromptBroker(self._prompt_changed)
-            self.tools = self._build_tool_stack()
+            self.tools = self._build_tool_stack(self.llm)
             self._run_lock = threading.Lock()
             self._run: TurnRun | None = None
             self._thread: threading.Thread | None = None
@@ -150,13 +150,17 @@ class ProjectRuntime:
             self.lock.release()
             raise
 
-    def _build_tool_stack(self) -> ToolStack:
-        """主根原生可写；持久化的额外根在进程重启后保守恢复为只读。"""
+    def _build_tool_stack(self, llm: LlmRuntime) -> ToolStack:
+        """主根原生可写；持久化的额外根在进程重启后保守恢复为只读。
+
+        ``llm`` 显式传入而不是读 ``self.llm``: 重载时要先把新的一整套建出来, 建成了
+        才提交 —— 读 ``self.llm`` 就必须先把它换掉, 而中途失败就再也回不去了。
+        """
         tools = build_tool_stack(
             workspace_roots=(self.project.primary_workspace_root,),
             workspace_id=self.project.project_id,
             session=self.session,
-            gateway=self.llm.gateway,
+            gateway=llm.gateway,
             run_bus=self.event_bus,
             prompts=self.prompts,
             environment_inheritance=self.config.effective().environment_inheritance,
@@ -167,33 +171,52 @@ class ProjectRuntime:
         return tools
 
     def reload_llm(self) -> None:
-        """应用有效的模型/网关配置，同时保留会话与目录授权。"""
+        """应用有效的模型/网关配置，同时保留会话、窗口与目录授权 (ADR-0048 决策 1)。
+
+        两条约束: **整套建成了才提交**, 中途失败时旧运行配置原样可用, 不留下半新半旧
+        的组合; **会话服务只重配置, 不重建**, 换模型的人还在同一个会话里, 轮次编号与
+        窗口内容都不该因为改了一项配置而消失。
+
+        新模型窗口更小时不在这里处理: 那是 ``WindowManager`` 每轮开头按预算压缩的事
+        (ADR-0041), 清空会话既解决不了问题, 也把用户的上文一起丢了。
+        """
         if self.busy:
             raise RuntimeError("turn 运行期间不能重载模型配置")
         grants = self.tools.grants.grants
-        self.llm = build_llm_runtime(
+        llm = build_llm_runtime(
             self.config,
             self.llm_config,
             self.forge_json,
             self.thinking,
         )
-        self.tools = self._build_tool_stack()
+        tools = self._build_tool_stack(llm)
         for grant in grants:
-            self.tools.grants.grant(
-                grant.path, grant.access, granted_at=grant.granted_at
-            )
-        self._agent_turn = self._build_agent_turn()
+            tools.grants.grant(grant.path, grant.access, granted_at=grant.granted_at)
+        # 到这里两件都建成了, 一起换上. 之前的顺序是先换 self.llm 再建工具栈, 于是
+        # 工具栈建失败时进程停在"新网关 + 旧工具栈"上, 而没有任何东西会说它坏了。
+        self.llm, self.tools = llm, tools
+        self._window_manager = self._build_window_manager()
+        self._agent_turn.reconfigure(
+            context_budget=self.llm.context_budget,
+            context=self._window_manager,
+            memory=self.tools.memory,
+            planning=self.tools.planning,
+            tools=self.tools.dispatcher,
+        )
 
-    def _build_agent_turn(self) -> AgentTurnService:
+    def _build_window_manager(self) -> WindowManager:
         # 计量器与循环共用同一个 (ADR-0037): 各建一个迟早会出现两套单价.
         #
         # 不再需要 ArtifactStore: 归档只在工具产出那一刻发生 (ADR-0041 决策 6), 窗口维护
         # 这一层不再回头去问"这份内容还取不取得回来".
-        window_manager = WindowManager(
+        return WindowManager(
             max_inline_bytes=self.tools.max_inline_bytes,
             gateway=self.llm.gateway,
             meter=self.llm.usage_meter,
         )
+
+    def _build_agent_turn(self) -> AgentTurnService:
+        self._window_manager = self._build_window_manager()
 
         def new_loop() -> BuiltinAgentLoop:
             return BuiltinAgentLoop(
@@ -201,7 +224,9 @@ class ProjectRuntime:
                 self.llm.usage_meter,
                 cancel_token_factory=self.cancel_source.current,
                 event_bus=self.event_bus,
-                context=window_manager,
+                # 读字段而不是闭包住一个实例: /compact 走服务那一份, 自动压缩走循环
+                # 这一份, 换模型之后两边必须还是同一个 (ADR-0048 决策 1).
+                context=self._window_manager,
                 workspace_snapshot_provider=OsWorkspaceSnapshotProvider(
                     lambda: self.tools.context_factory().workspace_roots
                 ),
@@ -223,7 +248,7 @@ class ProjectRuntime:
             runtime_facts=runtime_facts,
             instructions=FsProjectInstructionReader(),
             context_budget=self.llm.context_budget,
-            context=window_manager,
+            context=self._window_manager,
             memory=self.tools.memory,
             planning=self.tools.planning,
             run_bus=self.event_bus,
@@ -239,6 +264,15 @@ class ProjectRuntime:
         with self._run_lock:
             return self._run
 
+    def current_turn_identity(self) -> TurnIdentity | None:
+        """正在跑的那一轮在会话里的身份 (ADR-0048 决策 2)。
+
+        与 ``TurnRun.run_id`` 是两件事, 不能互相代用: ``run_id`` 标识"这次后台执行",
+        由组合根生成, 每次 ``start_turn`` 一个新的; 这一对标识"会话里的第几轮", 由会话
+        服务生成。把它们对应关系公开出来, 调用方就不必自己拼一个。
+        """
+        return self._agent_turn.current_turn()
+
     def start_turn(self, text: str, *, origin: InputOrigin) -> TurnRun:
         """起一轮。``origin`` 没有默认值: 两条入口各自说明这句话是谁给的。"""
         message = text.strip()
@@ -249,6 +283,13 @@ class ProjectRuntime:
                 raise RuntimeError("当前项目已有正在运行的 turn")
             run = TurnRun(run_id=f"run_{uuid.uuid4().hex[:12]}", status="running")
             self._run = run
+            # 轮次生命周期在起线程之前就位 (ADR-0048 决策 3): 从这里返回到后台线程真正
+            # 跑起来之间有一段真空, 而"停止"随时可能落在那一段里. 以前这两句在后台线程
+            # 开头, 于是那一段里的取消要么取消掉上一轮的 token, 要么什么都没取消 ——
+            # 两种都会返回成功。
+            self.cancel_source.issue()
+            # 本轮的提问额度归零 (ADR-0043 决策 9), 同时解除上一轮的取消闩。
+            self.prompts.begin_turn()
             self._thread = threading.Thread(
                 target=self._execute_turn,
                 args=(run.run_id, message, origin),
@@ -259,10 +300,6 @@ class ProjectRuntime:
             return run
 
     def _execute_turn(self, run_id: str, text: str, origin: InputOrigin) -> None:
-        self.cancel_source.issue()
-        # 本轮的提问额度归零 (ADR-0043 决策 9). 与上一句同一个位置: 这里已经是"按轮
-        # 起始"该做的事所在的地方, 分开写就多了一个会忘记跟上的调用点.
-        self.prompts.begin_turn()
         _log.info(
             "turn.started",
             run_id=run_id,
@@ -303,17 +340,26 @@ class ProjectRuntime:
             self._run = completed
 
     def cancel(self) -> bool:
+        """停这一轮。判定与两处取消都在 ``_run_lock`` 内 (ADR-0048 决策 3)。
+
+        持锁到底是因为 ``start_turn`` 也在这把锁里发 token: 放开锁再取消的话, 判定与
+        取消之间可以插进另一轮的开始, 于是新起的这一轮被上一次"停止"顺手取消掉。
+        """
         with self._run_lock:
             running = self._run is not None and self._run.status == "running"
-        if running:
+            if not running:
+                return False
             _log.info("turn.cancel_requested", project_id=self.project.project_id)
             token = self.cancel_source.current()
             if token is not None:
                 token.cancel()
-            # 提示通道是无超时阻塞的: 不放开它, "停止"按不动一个正在等人回话的 turn.
-            # 审批与 ask_user 在同一条队列上, 所以这一句同时放开两者 (ADR-0043 决策 10).
-            self.prompts.release_pending("用户停止了这一轮, 未收到回答")
-        return running
+            # 顺序有意义: 先置 token 再闩提示通道。ask_user 拿到"没有回答"之后要靠
+            # token 分辨这是取消还是没人可答, 反过来就会把取消报成"无人回答"。
+            #
+            # 提示通道是无超时阻塞的: 不闩它, "停止"按不动一个正在等人回话的 turn。
+            # 审批与 ask_user 同队列, 所以这一句同时管住两者 (ADR-0043 决策 10)。
+            self.prompts.cancel_turn("用户停止了这一轮, 未收到回答")
+            return True
 
     def new_session(self) -> SessionSnapshot:
         if self.busy:
@@ -336,13 +382,22 @@ class ProjectRuntime:
         return resumed
 
     def _prompt_changed(self, prompt_id: str, kind: str) -> None:
-        context = current_run_context()
-        if context.turn_id:
-            self.event_bus.publish(
-                AgentRunEventKind(kind),
-                turn_id=context.turn_id,
-                payload=HumanPromptPayload(prompt_id=prompt_id),
-            )
+        """把"有人要回话了 / 回完了"发成运行事件。
+
+        身份问会话服务要, 不读日志上下文 (ADR-0048 决策 2)。旧写法从
+        ``current_run_context()`` 反推 turn_id, 那是排查用的线程局部量: 它今天恰好
+        对得上, 只因为通道是在跑这一轮的那个线程里阻塞的 —— 换成从别的线程放开提示,
+        事件就会带着空归属或者上一轮的归属发出去, 而没有任何东西会报错。
+        """
+        identity = self._agent_turn.current_turn()
+        if identity is None:
+            return
+        self.event_bus.publish(
+            AgentRunEventKind(kind),
+            session_id=identity.session_id,
+            turn_id=identity.turn_id,
+            payload=HumanPromptPayload(prompt_id=prompt_id),
+        )
 
     def resolve_prompt(
         self,
@@ -605,8 +660,6 @@ class ProjectRuntimeRegistry:
 
     def __init__(self, projects: ProjectService) -> None:
         self.projects = projects
-        # 假网关的脚本路径 (--mock-llm). 由进程入口一路传下来而不是各自现读: 一次启动
-        # 里所有项目运行时要么都是假的, 要么都是真的.
         self._lock = threading.Lock()
         self._active: ProjectRuntime | None = None
 

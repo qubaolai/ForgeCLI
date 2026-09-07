@@ -23,8 +23,11 @@ class ToolRunObserver(ABC):
     """一次工具调用在管线里走到哪儿了. 只读通知, 不返回控制信号."""
 
     @abstractmethod
-    def bind_turn(self, turn_id: str) -> None:
-        """认领当前轮次. 观察者跨轮复用, 不绑定就归不了属."""
+    def bind_turn(self, session_id: str, turn_id: str) -> None:
+        """认领当前轮次. 观察者跨轮复用, 不绑定就归不了属.
+
+        两个都要: turn 编号在每个会话里各自从 1 起 (ADR-0048 决策 2).
+        """
 
     @abstractmethod
     def tool_prepared(

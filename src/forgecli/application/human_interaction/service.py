@@ -61,6 +61,17 @@ class HumanPromptService(ABC):
         """一轮开始. 归零本轮的提问计数 (``MAX_QUESTIONS_PER_TURN``)."""
 
     @abstractmethod
+    def cancel_turn(self, note: str) -> None:
+        """本轮被取消: 放开还在等的提示, 并且不再接受这一轮的新提示.
+
+        与 ``release_pending`` 的区别就是后半句, 而那半句正是"停止"按钮需要的
+        (ADR-0048 决策 3): 只放开一次队列的话, 取消与入队交错时, 按钮已经返回成功,
+        后台却刚刚新增了一个永远等不到人的等待者.
+
+        取消在本轮内不可逆, 下一次 ``begin_turn`` 才解除.
+        """
+
+    @abstractmethod
     def release_pending(self, note: str) -> None:
         """放开所有还在等的提示, 按"没人回答"处理."""
 
@@ -91,6 +102,9 @@ class PendingHumanPromptService(HumanPromptService):
         )
 
     def begin_turn(self) -> None:
+        return None
+
+    def cancel_turn(self, note: str) -> None:
         return None
 
     def release_pending(self, note: str) -> None:

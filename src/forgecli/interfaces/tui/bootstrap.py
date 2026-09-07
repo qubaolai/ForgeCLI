@@ -30,8 +30,7 @@ _log = get_log(__name__)
 
 
 def run() -> int:
-    """跑一个终端会话, 返回进程退出码.
-    """
+    """跑一个终端会话, 返回进程退出码."""
     console = make_console()
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         # 审批, 菜单和计划评审都要读人的输入. 没有终端就没有人能回答, 而一个读不到

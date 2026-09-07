@@ -55,11 +55,13 @@ class AgentRunEventBus:
         event_id_factory: Callable[[], str] = _new_event_id,
     ) -> None:
         self._subscribers: list[AgentRunEventSubscriber] = []
-        # 按 turn 计数: sequence 是"这一轮里的第几件事", 跨轮重新从 1 开始 (§3).
+        # 按 (会话, 轮次) 计数: sequence 是"这一轮里的第几件事", 跨轮重新从 1 开始
+        # (§3). 只按 turn_id 计数的话, 两个会话的 turn_0001 会共用一个计数器 ——
+        # 于是新会话的第一条事件带着上一个会话攒下来的序号 (ADR-0048 决策 2).
         # 用单调时钟而不是墙钟算耗时, 系统改时间不会让某一步显示成负数毫秒.
         self._clock = clock
         self._new_event_id = event_id_factory
-        self._sequences: dict[str, int] = {}
+        self._sequences: dict[tuple[str, str], int] = {}
         self._isolated: list[_IsolatedFailure] = []
 
     def subscribe(self, subscriber: AgentRunEventSubscriber) -> None:
@@ -69,6 +71,7 @@ class AgentRunEventBus:
         self,
         kind: AgentRunEventKind,
         *,
+        session_id: str,
         turn_id: str,
         payload: RunEventPayload,
         step_index: int | None = None,
@@ -79,12 +82,18 @@ class AgentRunEventBus:
         """编号并分发一个事件, 返回它.
 
         分发失败不影响返回值: 事件"发生过"这件事与"谁看到了"无关.
+
+        ``session_id`` 由调用方显式给出, 不从日志上下文反推 (ADR-0048 决策 2): 日志
+        上下文是给排查用的, 它绑在哪个线程上是可观测性的事, 而事件归属是业务事实 ——
+        两者今天恰好一致, 明天多一个线程就不一致了, 而那时不会有任何东西报错.
         """
-        sequence = self._sequences.get(turn_id, 0) + 1
-        self._sequences[turn_id] = sequence
+        key = (session_id, turn_id)
+        sequence = self._sequences.get(key, 0) + 1
+        self._sequences[key] = sequence
         event = AgentRunEvent(
             event_id=self._new_event_id(),
             kind=kind,
+            session_id=session_id,
             turn_id=turn_id,
             sequence=sequence,
             occurred_at=self._clock(),

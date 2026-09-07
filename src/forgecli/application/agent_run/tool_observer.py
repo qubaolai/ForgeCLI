@@ -55,8 +55,10 @@ class EventBusToolRunObserver(ToolRunObserver):
     def __init__(self, bus: AgentRunEventBus) -> None:
         self._bus = bus
         self._turn_id = ""
+        self._session_id = ""
 
-    def bind_turn(self, turn_id: str) -> None:
+    def bind_turn(self, session_id: str, turn_id: str) -> None:
+        self._session_id = session_id
         self._turn_id = turn_id
 
     def tool_prepared(
@@ -192,12 +194,13 @@ class EventBusToolRunObserver(ToolRunObserver):
         *,
         invocation_id: str,
     ) -> None:
-        if not self._turn_id:
+        if not self._turn_id or not self._session_id:
             # 没绑定轮次说明这次调用不在任何 turn 里 (slash command 直接调用之类):
             # 与其发一条归属不明的事件, 不如不发.
             return
         self._bus.publish(
             kind,
+            session_id=self._session_id,
             turn_id=self._turn_id,
             payload=payload,
             invocation_id=invocation_id,

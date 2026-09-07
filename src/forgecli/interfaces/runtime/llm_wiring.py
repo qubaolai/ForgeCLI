@@ -49,7 +49,6 @@ from forgecli.infrastructure.llm.credentials import (
     EnvCredentialResolver,
     InMemoryCredentialPool,
 )
-from forgecli.infrastructure.llm.mock_gateway import MockLlmGateway
 from forgecli.infrastructure.llm.overrides_json_store import JsonModelOverridesStore
 from forgecli.infrastructure.llm.settings import LlmConfigProviderSettingsSource
 
@@ -71,15 +70,7 @@ def build_llm_runtime(
     forge_json: Path,
     thinking_state: ThinkingRuntimeState,
 ) -> LlmRuntime:
-    """装配统一 LLM 网关及其协作件.
-
-    ``mock_llm`` 非空时换成按脚本回话的假网关 (``--mock-llm``). 那一档不需要凭证, 不需要
-    api_base, 连"当前模型"都不必配 —— ``context_budget`` 解析不出来会回 None, 而那只是
-    退回接入淘汰之前的行为.
-
-    **只认这一个参数, 不认环境变量, 也不认配置项**: 一个能被配置文件悄悄打开的假模型,
-    迟早会有人在真会话里撞上它.
-    """
+    """装配统一 LLM 网关及其协作件."""
     overrides_service = ModelOverridesService(
         JsonModelOverridesStore(forge_json), llm_config_service
     )
@@ -90,15 +81,14 @@ def build_llm_runtime(
         thinking_state=thinking_state,
     )
     gateway = DefaultLlmGateway(
-                _build_provider_registry(llm_config_service),
-                resolver=resolver,
-                settings_source=LlmConfigProviderSettingsSource(llm_config_service),
-                # 凭证只支持环境变量（ADR-0011 §7 复核）：dotenv / keychain 已移除。
-                credential_pool=InMemoryCredentialPool(EnvCredentialResolver()),
-                health_registry=_build_health_registry(llm_config_service),
-                cache=_build_response_cache(llm_config_service),
-            )
-        
+        _build_provider_registry(llm_config_service),
+        resolver=resolver,
+        settings_source=LlmConfigProviderSettingsSource(llm_config_service),
+        # 凭证只支持环境变量（ADR-0011 §7 复核）：dotenv / keychain 已移除。
+        credential_pool=InMemoryCredentialPool(EnvCredentialResolver()),
+        health_registry=_build_health_registry(llm_config_service),
+        cache=_build_response_cache(llm_config_service),
+    )
 
     # CostEstimator 现读目录视图：包一层动态 catalog，价格随 /config 修改生效。
     usage_meter = UsageMeter(CostEstimator(_DynamicCatalog(llm_config_service)))

@@ -382,10 +382,15 @@ class AgentRunEvent:
     sequence 由总线统一分配, 发布者不得自填 —— 所以这个类不该被业务代码直接构造,
     走 `AgentRunEventBus.publish`. 那不是风格偏好: 谁都能填 sequence 的话, 单调递增
     这条性质就没人保证得了, 而它正是"时间线可测"的全部依据.
+
+    轮次由 ``(session_id, turn_id)`` 定位, 不是单独的 turn_id (ADR-0048 决策 2):
+    turn 编号在每个会话里各自从 1 起, 所以两个会话都会有 ``turn_0001``. 少了
+    session_id, 历史查询, 事件续传和界面都只能猜它属于谁, 而三者可以猜出不同答案.
     """
 
     event_id: str
     kind: AgentRunEventKind
+    session_id: str
     turn_id: str
     sequence: int
     occurred_at: float
@@ -396,6 +401,8 @@ class AgentRunEvent:
     invocation_id: str | None = None
 
     def __post_init__(self) -> None:
+        if not self.session_id.strip():
+            raise ValueError("AgentRunEvent.session_id 不能为空")
         if not self.turn_id.strip():
             raise ValueError("AgentRunEvent.turn_id 不能为空")
         if self.sequence < 1:

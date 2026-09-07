@@ -1,6 +1,8 @@
 export type RunEvent = {
   event_id: string;
   kind: string;
+  /** 这条事件属于哪个会话。turn_id 在每个会话里各自从 1 起, 单独用它定位不了一轮 (ADR-0048 决策 2)。 */
+  session_id: string;
   turn_id: string;
   sequence: number;
   occurred_at?: number;
@@ -13,6 +15,7 @@ export type RunEvent = {
 
 /** 后端按 turn 归档的运行事件；流式增量已折叠成每次模型调用的一段正文。 */
 export type RunSnapshot = {
+  session_id?: string;
   turn_id: string;
   events: RunEvent[];
   outputs: Record<string, string>;

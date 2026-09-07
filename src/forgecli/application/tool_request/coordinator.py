@@ -147,7 +147,7 @@ class ToolRequestCoordinator:
         policy: PolicyContext,
         cancel: CancelToken | None = None,
     ) -> ToolObservation:
-        self._observer.bind_turn(policy.turn_id)
+        self._observer.bind_turn(policy.session_id, policy.turn_id)
         # 工作区身份由协调器持有, 补进 policy 供学习规则绑定 —— workspace 范围的规则
         # 不能跨项目命中.
         policy = replace(policy, workspace_id=self._workspace_id)

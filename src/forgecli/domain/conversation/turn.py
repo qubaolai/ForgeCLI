@@ -13,7 +13,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-__all__ = ["AssistantResponse", "MessageRole", "TurnPause", "TurnStatus"]
+__all__ = [
+    "AssistantResponse",
+    "MessageRole",
+    "TurnIdentity",
+    "TurnPause",
+    "TurnStatus",
+]
 
 
 class MessageRole(Enum):
@@ -54,3 +60,24 @@ class AssistantResponse:
     status: TurnStatus
     # 本轮停下来等人做什么. None 表示不需要人参与, 那是绝大多数轮次.
     pause: TurnPause | None = None
+
+
+@dataclass(frozen=True)
+class TurnIdentity:
+    """一轮的完整身份 (ADR-0048 决策 2)。
+
+    turn 编号在每个会话里各自从 1 起, 所以 ``turn_0001`` 单独拿出来指不了任何一轮 ——
+    两个会话都有一个。凡是要跨会话存放, 传输或展示轮次的地方, 传的都该是这一对。
+
+    与后台调度的 ``run_id`` 是两件事: ``run_id`` 标识"这次后台执行", 由组合根生成;
+    这一对标识"会话里的第几轮", 由会话服务生成。互相代用会在恢复历史时对不上。
+    """
+
+    session_id: str
+    turn_id: str
+
+    def __post_init__(self) -> None:
+        if not self.session_id.strip():
+            raise ValueError("TurnIdentity.session_id 不能为空")
+        if not self.turn_id.strip():
+            raise ValueError("TurnIdentity.turn_id 不能为空")

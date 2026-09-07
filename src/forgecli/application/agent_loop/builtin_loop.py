@@ -1361,6 +1361,7 @@ class BuiltinAgentLoop:
             return
         self._bus.publish(
             kind,
+            session_id=self._session_id,
             turn_id=self._turn_id,
             payload=payload,
             step_index=step_index if step_index is not None else self._step_index,

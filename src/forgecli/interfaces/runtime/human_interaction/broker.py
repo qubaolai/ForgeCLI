@@ -35,6 +35,9 @@ __all__ = ["BlockingHumanPromptBroker"]
 @dataclass
 class _Pending:
     prompt: HumanPrompt
+    # 这条提示属于哪一轮 (ADR-0048 决策 3). 单独的 prompt_id 说不出这件事, 而"上一轮
+    # 的那张卡片还开着"与"这一轮又问了一次"在界面上长得一模一样.
+    turn: int
     ready: threading.Event = field(default_factory=threading.Event)
     answer: PromptAnswer | None = None
     release_note: str = ""
@@ -49,15 +52,22 @@ class BlockingHumanPromptBroker(HumanPromptService):
         self._pending: dict[str, _Pending] = {}
         self._questions_this_turn = 0
         self._closed = False
+        # 轮次身份与"这一轮被取消了"的闩. 两者都只在锁内读写: 取消与入队必须在同一个
+        # 同步边界上分出先后, 否则先后由调度决定 (ADR-0048 决策 3).
+        self._turn = 0
+        self._cancelled = False
+        self._cancel_note = ""
 
     # ---- 调用者一侧 ----
 
     def ask(self, prompt: HumanPrompt) -> PromptAnswer:
-        pending = _Pending(prompt)
         with self._lock:
+            # 检查与登记在同一次持锁内完成. 分成两次的话, 中间那道缝里发生的取消既
+            # 放不开这条提示 (它还没进队列), 也拦不住它 (检查已经过了).
             refusal = self._refuse(prompt)
             if refusal is not None:
                 return refusal
+            pending = _Pending(prompt, turn=self._turn)
             self._pending[prompt.prompt_id] = pending
         try:
             self._notify(prompt.prompt_id, "prompt_requested")
@@ -79,10 +89,13 @@ class BlockingHumanPromptBroker(HumanPromptService):
             self._on_change(prompt_id, kind)
 
     def _refuse(self, prompt: HumanPrompt) -> PromptAnswer | None:
-        """不必挂进队列就能答复的两种情况.
+        """不必挂进队列就能答复的三种情况.
 
-        进程正在退出时仍然挂进去, 等到的只会是 ``close`` 那一次释放 —— 中间白等一轮
-        调度, 而结果一模一样.
+        进程正在退出, 或这一轮已经被取消: 仍然挂进去的话, 等到的只会是那一次释放 ——
+        中间白等一轮调度, 而结果一模一样. 已经取消过的那一轮更是连释放都不会再有,
+        挂进去就是永远等下去.
+
+        第三种是本轮提问超额, 那一条与取消无关.
         """
         with self._lock:
             if self._closed:
@@ -90,6 +103,12 @@ class BlockingHumanPromptBroker(HumanPromptService):
                     prompt_id=prompt.prompt_id,
                     resolved=False,
                     note="Forge 正在退出, 没有人能回答",
+                )
+            if self._cancelled:
+                return PromptAnswer(
+                    prompt_id=prompt.prompt_id,
+                    resolved=False,
+                    note=self._cancel_note or "这一轮已被取消, 没有人能回答",
                 )
             if prompt.kind is PromptKind.QUESTION:
                 if self._questions_this_turn >= MAX_QUESTIONS_PER_TURN:
@@ -141,6 +160,9 @@ class BlockingHumanPromptBroker(HumanPromptService):
             pending = self._pending.get(prompt_id)
             if pending is None or pending.ready.is_set():
                 return False
+            if pending.turn != self._turn:
+                # 上一轮的卡片: 那一轮已经用别的方式收场了, 这个作答没有去处.
+                return False
             answer = PromptAnswer(
                 prompt_id=prompt_id,
                 choice=choice,
@@ -161,15 +183,36 @@ class BlockingHumanPromptBroker(HumanPromptService):
 
     def begin_turn(self) -> None:
         with self._lock:
+            self._turn += 1
+            self._cancelled = False
+            self._cancel_note = ""
             self._questions_this_turn = 0
+
+    def cancel_turn(self, note: str) -> None:
+        """闩上这一轮再放开队列. 顺序不能反 (ADR-0048 决策 3).
+
+        先放开再闩的话, 两句之间入队的那条提示既没被放开也没被拦住 —— 它会一直等到
+        进程退出, 而"停止"早就返回成功了.
+        """
+        with self._lock:
+            self._cancelled = True
+            self._cancel_note = note
+            self._release_locked(note)
 
     def release_pending(self, note: str) -> None:
         with self._lock:
-            for item in self._pending.values():
-                item.release_note = note
-                item.ready.set()
+            self._release_locked(note)
+
+    def _release_locked(self, note: str) -> None:
+        for item in self._pending.values():
+            if item.ready.is_set():
+                # 已经有终态了 (刚被人答上). 覆盖它就等于把一个真实的回答改写成
+                # "没收到回答", 而作答那侧已经按成功返回了.
+                continue
+            item.release_note = note
+            item.ready.set()
 
     def close(self) -> None:
         with self._lock:
             self._closed = True
-        self.release_pending("Forge 正在退出, 未收到回答")
+            self._release_locked("Forge 正在退出, 未收到回答")
