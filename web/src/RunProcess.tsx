@@ -16,7 +16,6 @@ import {
   summariseTools,
   terminalFailureDetail,
   toolActionLabel,
-  toolNameOf,
   wasExecuted,
 } from "./runModel";
 

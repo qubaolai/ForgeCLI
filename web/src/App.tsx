@@ -264,7 +264,7 @@ function App() {
         return;
       }
       setLocalTurns((items) => finishLocalTurn(items, turnId, run?.response?.text, run?.error));
-    } catch (reason) {
+    } catch {
       if (attempt < 2) window.setTimeout(() => syncFinishedTurn(turnId, attempt + 1), 150);
     }
   }
