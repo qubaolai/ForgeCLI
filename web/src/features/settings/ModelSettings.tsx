@@ -16,7 +16,17 @@ import {
   splitModelRef,
 } from "@/shared/lib/modelParams";
 import { thinkingEffortList, thinkingEffortText } from "@/shared/lib/modelParams";
-import type { AdminActions, AdminCatalog, Checkpoint, FieldSpec, KnownProvider, LlmRuntimeSettings, Model, Provider, ProviderProtocol } from "@/types/admin";
+import type {
+  AdminActions,
+  AdminCatalog,
+  Checkpoint,
+  FieldSpec,
+  KnownProvider,
+  LlmRuntimeSettings,
+  Model,
+  Provider,
+  ProviderProtocol,
+} from "@/types/admin";
 
 export type ModelSettingsView = "models" | "providers" | "gateway";
 

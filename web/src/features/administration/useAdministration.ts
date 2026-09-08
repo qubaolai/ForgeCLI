@@ -11,7 +11,20 @@
 import { useCallback, useState } from "react";
 import { api } from "@/shared/api/client";
 import { indexTools } from "@/shared/lib/run/tools";
-import type { Checkpoint, FieldSpec, KnownProvider, LearnedRule, LlmRuntimeSettings, ModelsResponse, Provider, ProviderProtocol, RecoveryStatus, StatusView, ThinkingView, WorkspaceRoot } from "@/types/admin";
+import type {
+  Checkpoint,
+  FieldSpec,
+  KnownProvider,
+  LearnedRule,
+  LlmRuntimeSettings,
+  ModelsResponse,
+  Provider,
+  ProviderProtocol,
+  RecoveryStatus,
+  StatusView,
+  ThinkingView,
+  WorkspaceRoot,
+} from "@/types/admin";
 import type { ToolSpec, ToolsResponse } from "@/types/tools";
 import type { ToolDirectory } from "@/shared/lib/run/tools";
 

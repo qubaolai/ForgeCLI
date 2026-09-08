@@ -7,7 +7,13 @@ import { activityOf } from "@/shared/lib/run/activity";
 import { numberValue, RunEvent, stringValue } from "@/shared/lib/run/events";
 import { metricsFor } from "@/shared/lib/run/metrics";
 import { buildTimeline } from "@/shared/lib/run/timeline";
-import { ToolDirectory, ToolGroup, summariseTools, toolActionLabel, wasExecuted } from "@/shared/lib/run/tools";
+import {
+  ToolDirectory,
+  ToolGroup,
+  summariseTools,
+  toolActionLabel,
+  wasExecuted,
+} from "@/shared/lib/run/tools";
 import { LocalTurn, terminalFailureDetail } from "@/shared/lib/run/turn";
 
 type StepState = "pending" | "running" | "done" | "failed" | "cancelled";
