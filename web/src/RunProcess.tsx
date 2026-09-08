@@ -1,6 +1,7 @@
 import { MouseEvent, ReactNode, useEffect, useState } from "react";
 import { ChevronIcon } from "./icons";
 import { Markdown } from "./Markdown";
+import { formatElapsed } from "./ui";
 import {
   activityOf,
   buildTimeline,
@@ -101,7 +102,7 @@ function NarrationBlock({ events, output, terminal }: { events: RunEvent[]; outp
 
 function RunMetrics({ metrics }: { metrics: ReturnType<typeof metricsFor> }) {
   return <span className="run-metrics">
-    <span>{formatDuration(metrics.elapsedMs)}</span>
+    <span>{formatElapsed(metrics.elapsedMs)}</span>
     <span>{metrics.modelCalls} 次模型</span>
     <span>{metrics.toolCalls} 次工具</span>
     <span title={tokenBreakdown(metrics)}>
@@ -213,7 +214,7 @@ function ToolCall({ events, turnStatus, directory }: { events: RunEvent[]; turnS
     {stateText && <span className="call-state">{stateText}</span>}
     {/* 没执行过的终态与"执行了然后失败了"是两回事。 */}
     {completed && !wasExecuted(completed) && stringValue(completed.payload.status) !== "not_run" && <span className="call-state">未执行</span>}
-    <span className="call-took">{completed ? formatDuration(numberValue(completed.payload.elapsed_ms)) : ""}</span>
+    <span className="call-took">{completed ? formatElapsed(numberValue(completed.payload.elapsed_ms)) : ""}</span>
     {summary && <p className={`call-note ${state === "failed" ? "danger" : ""}`}>{summary}</p>}
     {awaiting && <p className="call-note warn">等待人类审批</p>}
     {policy && <div className="call-note"><PolicyLine event={policy} /></div>}
@@ -232,20 +233,6 @@ function PolicyLine({ event }: { event: RunEvent }) {
     {facts.length > 0 ? ` · 风险 ${facts.join(", ")}` : ""}
     {detail ? ` · ${detail}` : ""}
   </p>;
-}
-
-/** 结构化的机制事实。摘要行是给人一眼看的, 这一行是排查时要对的数。 */
-function CompletionLine({ event }: { event: RunEvent }) {
-  const chips: string[] = [];
-  const code = stringValue(event.payload.error_code);
-  if (code) chips.push(`错误码 ${code}`);
-  if (event.payload.exit_code !== null && event.payload.exit_code !== undefined) chips.push(`退出码 ${numberValue(event.payload.exit_code)}`);
-  if (numberValue(event.payload.bytes_out) > 0) chips.push(`${numberValue(event.payload.bytes_out)} 字节`);
-  if (numberValue(event.payload.artifact_count) > 0) chips.push(`${numberValue(event.payload.artifact_count)} 个产物`);
-  if (event.payload.truncated) chips.push("输出已截断");
-  if (event.payload.side_effect_unknown) chips.push("已改动的内容未知");
-  if (!chips.length) return null;
-  return <p className="step-line muted">{chips.join(" · ")}</p>;
 }
 
 function NoteStep({ event }: { event: RunEvent }) {
@@ -335,8 +322,4 @@ function toolState(latest: RunEvent | undefined, completed: RunEvent | undefined
 function clip(value: string, limit = 480) {
   const flat = value.replaceAll("\n", "\\n");
   return flat.length > limit ? `${flat.slice(0, limit)}…` : flat;
-}
-
-function formatDuration(milliseconds: number) {
-  return milliseconds >= 1000 ? `${(milliseconds / 1000).toFixed(1)}s` : `${Math.round(milliseconds)}ms`;
 }

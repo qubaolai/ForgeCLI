@@ -375,13 +375,6 @@ export type DraftField = { key: string; label: string; value: string; choices?: 
  * 逐项保存的问题不只是点击次数: 每次保存都要重新拉一遍配置, 而重新拉配置会把同一张表单里
  * 其他还没保存的输入冲掉 —— 用户填了三格, 保存第一格, 另外两格就没了。
  */
-
-/**
- * 一组字段一起改、一次保存。
- *
- * 逐项保存的问题不只是点击次数: 每次保存都要重新拉一遍配置, 而重新拉配置会把同一张表单里
- * 其他还没保存的输入冲掉 —— 用户填了三格, 保存第一格, 另外两格就没了。
- */
 export function DraftForm({ fields, onSave, className = "runtime-settings" }: { fields: DraftField[]; onSave: (changed: Record<string, string>) => void; className?: string }) {
   const committed = useMemo(() => Object.fromEntries(fields.map((field) => [field.key, field.value])), [fields]);
   const signature = fields.map((field) => `${field.key}=${field.value}`).join("\u0001");

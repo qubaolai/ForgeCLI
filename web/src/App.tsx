@@ -20,7 +20,7 @@ import { PromptCard } from "./features/humanInteraction/PromptCards";
 import { SettingsPanel } from "./features/settings/SettingsPanel";
 import { connectionCopy, useRunEvents } from "./features/runEvents/useRunEvents";
 import { useResumePosition } from "./features/runEvents/resumePosition";
-import type { Session, Setting, TranscriptEvent, TurnRunState } from "./types";
+import type { Session, TranscriptEvent, TurnRunState } from "./types";
 
 function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -65,7 +65,7 @@ function App() {
 
   // 每个功能自己持有状态与动作 (ADR-0048 决策 5)。App 只剩外壳: 对话正文, 布局,
   // 以及把这些功能接到一起。
-  const projectsFeature = useProjects(setError);
+  const projectsFeature = useProjects();
   const { activeProjectId } = projectsFeature;
   const promptsFeature = usePrompts(setError);
   const settingsFeature = useSettings(setError);
@@ -135,8 +135,6 @@ function App() {
     }
   }, [resumePosition]);
 
-
-
   useEffect(() => {
     api<{ csrf_token: string; active_project_id: string | null }>("/bootstrap")
       .then((value) => { setCsrfToken(value.csrf_token); })
@@ -180,7 +178,7 @@ function App() {
   useEscape(showSettings, useCallback(() => setShowSettings(false), []));
 
   // 事件流自己管连接, 退避与合帧; 这里只说"到了之后干什么" (ADR-0048 决策 5)。
-  const { connection, retryDelay, discardPending, flushNow } = useRunEvents(
+  const { connection, retryDelay, discardPending } = useRunEvents(
     activeProjectId,
     resumePosition,
     {
@@ -415,77 +413,9 @@ function App() {
     } catch (reason) { setError((reason as Error).message); }
   }
 
-  /** 审批与提问同一条路: choice 是点了哪个选项, text 是自己写的那一句。 */
-  async function resolvePrompt(id: string, choice: string, text = "", selected_values: string[] = [], skipped = false) {
-    try {
-      await api(`/prompts/${id}/resolve`, {
-        method: "POST", body: JSON.stringify({ choice, text, selected_values, skipped }),
-      });
-      await loadPrompts();
-    } catch (reason) {
-      setError((reason as Error).message);
-      throw reason;
-    }
-  }
-
-  async function resolvePlan(decision: string) {
-    try {
-      await api("/plan-reviews/current/resolve", {
-        method: "POST", body: JSON.stringify({ decision, note: "" }),
-      });
-      await loadWorkspace();
-    } catch (reason) { setError((reason as Error).message); }
-  }
-
-  async function saveSetting(item: Setting, value: string) {
-    try {
-      await api(`/settings/${item.key}`, {
-        method: "PATCH", body: JSON.stringify({ value }),
-      });
-      await loadWorkspace();
-    } catch (reason) { setError((reason as Error).message); }
-  }
-
-  /** 恢复默认 = 删掉这条覆盖, 重新继承 SCHEMA 默认值 (ADR-0048 决策 6)。
-
-   不是"把当前默认值保存成一条覆盖": 那样在默认值改版之后, 用户会被钉在一个他从没
-   选过的旧值上。走的是终端"恢复默认"的同一个用例。 */
-  async function resetSetting(item: Setting) {
-    try {
-      await api(`/settings/${item.key}`, { method: "DELETE" });
-      await loadWorkspace();
-    } catch (reason) { setError((reason as Error).message); }
-  }
-
   async function openSettings() {
     setShowSettings(true);
     try { await admin.loadAll(); } catch (reason) { setError((reason as Error).message); }
-  }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  async function activatePlanDoc(planId: string) {
-    try {
-      await api(`/plans/${encodeURIComponent(planId)}/activate`, { method: "POST" });
-      await loadWorkspace();
-    } catch (reason) { setError((reason as Error).message); }
   }
 
   if (!activeProjectId) {

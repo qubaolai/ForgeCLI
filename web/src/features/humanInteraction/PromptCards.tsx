@@ -101,8 +101,6 @@ export function scriptMeta(scripts: Approval["view"]["script_snapshots"]) {
 }
 
 /** 证据分块。收的是体量, 不是事实的存在 —— 所以标题与条目数在收起时也看得见。 */
-
-/** 证据分块。收的是体量, 不是事实的存在 —— 所以标题与条目数在收起时也看得见。 */
 export function ApprovalSection({ title, meta, defaultOpen, children }: { title: string; meta: string; defaultOpen: boolean; children: ReactNode }) {
   const [open, setOpen] = useState(defaultOpen);
   return <details className="ac-sec" open={open}>

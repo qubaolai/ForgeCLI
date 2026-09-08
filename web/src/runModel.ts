@@ -341,7 +341,6 @@ export type ToolCategory = { id: string; label: string };
  */
 export type ToolSummary = { text: string; mono: boolean; count: number };
 
-
 /**
  * 把一组工具活动收成一行。
  *
@@ -634,11 +633,4 @@ function merge(items: TimelineItem[]): TimelineItem[] {
 /** 这次调用有没有真的执行过 —— 与"执行了然后失败了"是两回事。 */
 export function wasExecuted(completed: RunEvent | undefined) {
   return !completed || completed.payload.executed !== false;
-}
-
-/** 这次模型调用的正文该不该出现在处理过程里。 */
-export function showsOutput(completed: RunEvent | undefined) {
-  // 还没收尾: 正在流的正文只有处理过程能看到。
-  // 收尾且没要工具: 那段文字就是最终回答, 它在回答区, 这里不再重复。
-  return !completed || numberValue(completed.payload.tool_call_count) > 0;
 }

@@ -17,8 +17,6 @@ export function shortPath(path: string) {
 }
 
 /** 遮罩层统一的 Esc 关闭；避免每个面板各写一份 window 监听。 */
-
-/** 遮罩层统一的 Esc 关闭；避免每个面板各写一份 window 监听。 */
 export function useEscape(active: boolean, onEscape: () => void) {
   useEffect(() => {
     if (!active) return;

@@ -46,7 +46,6 @@ export type Setting = {
   effect: string;
 };
 
-
 export type Planning = {
   markdown?: string;
   plan?: {

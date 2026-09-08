@@ -15,8 +15,6 @@ export function Message({ item }: { item: TranscriptEvent }) {
 }
 
 /** 历史消息和刚发送的本地消息共用同一个操作区，避免复制能力只在刷新后才出现。 */
-
-/** 历史消息和刚发送的本地消息共用同一个操作区，避免复制能力只在刷新后才出现。 */
 export function UserMessage({ text }: { text: string }) {
   return <article className="message user"><div className="avatar">你</div><div>
     <strong>你</strong>
@@ -24,8 +22,6 @@ export function UserMessage({ text }: { text: string }) {
     <div className="message-footer"><span /><CopyButton content={text} className="message-copy-outside" /></div>
   </div></article>;
 }
-
-/** 历史轮次: 与 LocalTurnView 同一个形状, 只是数据来自落盘的过程快照。 */
 
 /** 历史轮次: 与 LocalTurnView 同一个形状, 只是数据来自落盘的过程快照。 */
 export function RestoredTurnView({ run, item, directory }: { run: LocalTurn; item: TranscriptEvent; directory: ToolDirectory }) {
@@ -77,9 +73,3 @@ export function FinalMetrics({ metrics }: { metrics: ReturnType<typeof metricsFo
     </span>
   </span>;
 }
-
-/** 输入框旁的模型与思考强度入口: 这两项调得最勤, 不该每次都进设置页。
- *
- * 强度尤其如此 —— 它是随任务变的: 读代码用低档, 设计方案用高档, 而进设置页要三次点击。
- * 模型自己的默认值仍然在模型配置里填, 这里改的是**本进程**的临时覆盖, 不落盘。
- */

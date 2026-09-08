@@ -3,7 +3,6 @@
 import { Markdown } from "../../Markdown";
 import type { PlanIndexView, Planning } from "../../types";
 
-
 export function PlanningPanel({ planning, index, onResolve, onActivate }: { planning: Planning; index: PlanIndexView | null; onResolve: (decision: string) => void; onActivate: (planId: string) => void }) {
   const plan = planning.plan;
   const todo = planning.todo;
@@ -31,5 +30,3 @@ export function PlanningPanel({ planning, index, onResolve, onActivate }: { plan
     </section>}
   </div>;
 }
-
-/** 待答队列只有一条, 卡片按 kind 分支 (ADR-0043 决策 11)。 */

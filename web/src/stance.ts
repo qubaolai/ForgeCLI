@@ -3,8 +3,6 @@
  * 轴的取值来自后端 domain/intents; 这里只有给人看的名字与一句提示。
  */
 
-
-
 /**
  * 姿态是两个独立的轴: 围栏允许什么(隔离), 以及什么时候要人点头(审批)。
  *
@@ -24,8 +22,6 @@ export const approvalOptions = [
 ];
 
 /** 常用组合的名字。选中其中一个等于同时设两个轴。 */
-
-/** 常用组合的名字。选中其中一个等于同时设两个轴。 */
 export const modePresets = [
   { sandbox: "read_only", approval: "always", label: "Plan", hint: "只出方案，先评审再动手" },
   { sandbox: "workspace_write", approval: "always", label: "Accept Edits", hint: "自动接受文件编辑" },
@@ -34,8 +30,6 @@ export const modePresets = [
 ];
 
 export type Stance = { sandbox: string; approval: string };
-
-/** 命中预设就用预设名, 否则把两个轴拼出来 —— 不编一个不存在的档位名。 */
 
 /** 命中预设就用预设名, 否则把两个轴拼出来 —— 不编一个不存在的档位名。 */
 export function stanceLabel(stance: Stance) {

@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { api } from "../../api/client";
 import type { Project } from "../../types";
 
-export function useProjects(onError: (message: string) => void) {
+export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [trustPath, setTrustPath] = useState("");
@@ -39,6 +39,5 @@ export function useProjects(onError: (message: string) => void) {
     load,
     activate,
     trust,
-    fail: useCallback((reason: unknown) => onError((reason as Error).message), [onError]),
   };
 }
