@@ -1,938 +1,1950 @@
-# 代码阅读路线
+# 代码阅读路线：主流程、分支流程与类／函数跳转
 
-给第一次通读这个代码库的人. 目标不是"读完所有文件", 而是**能独立回答"这次工具调用为什么
-被拦下来了"**这类问题.
+> 核对日期：2026-09-08。依据当前工作区源码，包括尚未提交的 Web 拆分文件。
+> 本文描述**实际调用链**；ADR 描述设计背景。遇到两者不一致，先沿本文给出的函数查源码，
+> 不把 ADR 的 Proposed／Accepted 状态、模块开头的历史注释当作实现完成证明。
 
-## 0. 这份文档怎么用
+## 0. 阅读方法与流程索引
 
-代码规模 (2026-09-03):
+这份文档面向需要通读、维护和排障的人。目标是能从一个用户操作追到实际执行的函数，
+解释它在哪个分支停止、改了什么状态、向谁返回什么结果。
 
-| 层 | 文件 | 行数 | 说明 |
-|---|---|---|---|
-| `shared` | 11 | 1058 | 取消令牌, JSON Schema 校验, 值对象序列化, 结构化日志与进程内读数 (ADR-0035) |
-| `domain` | 89 | 10205 | 纯值对象, 不读文件不起进程 |
-| `application` | 134 | 20564 | 用例编排与 ABC 端口 |
-| `infrastructure` | 50 | 5169 | 适配器 |
-| `interfaces` | 14 | 3107 | 启动入口, 本机 Web, 共享组合根 |
-| `tests` | 11 | 1931 | 127 个用例. **这个数字不是笔误**, 见下 |
-| `web/src` | 10 | 3901 | React 控制面前端 (ADR-0025) |
+图中的矩形是函数调用或明确标注的状态动作，菱形是分支判定；实线表示调用／控制流，
+虚线表示事件通知、注入或数据传递。`类名.方法名` 可以直接在编辑器中搜索；模块级函数
+用 `模块名.函数名` 区分同名入口。每张图只展开一个子流程，图上的章节编号是继续下钻的位置。
+这些图表达调用顺序，不表示所有节点都在同一个线程中。
 
-> **2026-09-02 的 ADR-0041 / ADR-0042 重排了整条请求.** 请求现在按**变更源**分六层
-> (`domain/agent/state.py::AssembledContext`), 会话窗口只追加不改写, 系统提示词收敛成
-> 一个进程编译一次的静态策略层. 落地删掉了 `application/context/` 下的 `manager.py`,
-> `dedup.py`, `downgrade.py`, `placeholders.py` 与 `transcript.rewrite`, 也删掉了
-> `PromptBlock.cacheable`, `RuntimeFacts` 在提示词里的位置与 `ToolAction` 整个枚举.
-> 任何提到"回合内去重", "占位符降级", "工具表按动作分组"或"提示词里有计划待办块"的旧
-> 材料, 都是这次之前写的. 详见 §2.2.
+| 阅读顺序 | 主流程 | 展开的分支 |
+|---|---|---|
+| §1 | 分层与组合根 | 对象生命周期、数据身份、依赖方向 |
+| §2 | 启动与项目激活 | Web／TUI、令牌握手、锁冲突、沙箱探测、退出 |
+| §3 | 一轮对话 | 消息发送、后台执行、动作驱动、异常与终态 |
+| §4 | ReAct 循环 | 多工具串行、重复调用、收工具、格式纠错、模型失败 |
+| §5 | 上下文 | 六层装配、冻结、窗口淘汰、摘要、超窗恢复、工作区变化 |
+| §6 | 工具安全管线 | 目录门、prepare、能力分析、DENY／ASK／ALLOW、授权复核 |
+| §7 | 人机交互与取消 | 审批、提问、作答校验、跳过、取消竞态、计划评审 |
+| §8 | 内置工具 | 文件读取、文本搜索、补丁四种操作、Shell、归档、计划、待办、记忆 |
+| §9 | LLM 网关 | 选模、流式／非流式、首包前重试、首包后中断、结构化输出、缓存 |
+| §10 | 工作区恢复 | NONE／TARGETED／FULL、写前保护、恢复冲突、快照恢复、崩溃候选 |
+| §11 | 事件与前端 | 总线、磁盘过程记录、快照水位、SSE 续传、作用域隔离、终态对账 |
+| §12 | 会话与配置 | 惰性持久化、续写、墓碑删除、模型重载、模式、目录授权 |
+| §13 | 排障与核验 | 日志定位、常见误读、设计与当前代码边界 |
+| 附录 A | HTTP 路由导航 | 每个路由跳到定义函数 |
+| 附录 B | TUI 命令导航 | 命令处理器及共用服务 |
 
-> **测试套件正处在重写中间态.** 1169 个用例现在只剩 127 个 —— 不是回归, 是这个项目
-> 明写的纪律: 新设计不为兼容旧用例妥协, 被推翻的设计连同它的用例一起删, 而不是留着
-> 一批测着已经不存在的形状的断言. 现存的 127 个全部是 ADR-0041 / ADR-0042 落地时新写
-> 的 (`tests/context/`, `tests/prompt/`, `tests/tools/test_result_shape.py`,
-> `tests/tool_request/test_fence_sees_raw_output.py`). **这意味着 §6 那条"测试是第二份
-> 文档"目前只在这四处成立**, 安全, 工具, 网关, Web 四大块暂时没有用例可读 —— 读它们
-> 只能靠源码与 docstring. 补齐之前, 改这几块要格外小心.
+### 0.1 本次纠正的旧口径
 
-> **2026-08-29 的 ADR-0025 决策 1 修订二删掉了整棵终端入口.** `interfaces/` 从 60 个
-> 文件 8753 行降到 15 个文件 3093 行 —— 没了 `interfaces/cli/` 全树, 人工 Shell 三层,
-> 斜杠命令注册表与 `IntentRouter`, 一共 48 个模块 6627 行. **`forge cli` 不再存在**.
-> 原先有 `tests/test_entrypoint.py` 钉着一条用例守它不复活, 那个文件随这一轮测试重写
-> 一并删了 —— 结论没变, 眼下没有机器守着. 任何提到 REPL, `/config` 这类斜杠命令或
-> `#` 人工 Shell 的旧材料, 都是那次修订之前写的.
+旧版文档里互相矛盾的历史叙述不再保留为当前行为：
 
-**不要按目录顺序读.** 四万行按字母序读完也建立不起图景. 正确的方式是**跟着一次真实请求
-走完整条链路**, 中途遇到不懂的值对象再回头翻.
+- 终端入口是 `forge --cli`，实际代码在 `interfaces/tui/`；没有 `forge cli` 子命令。
+- Web 路由在 `interfaces/web/routers/`；`app.py` 负责装配，中间件在 `security.py`。
+- 审批与 `ask_user` 已共用 `BlockingHumanPromptBroker`，不是旧 `BlockingApprovalBroker`。
+- 当前 `build_tool_stack()` 注册 12 个工具。没有注册 `fs_find`、`find_definition`、`git_read`
+  等旧工具；目录枚举和相关命令通常由 `shell_run` 承担。
+- 不再引用已不存在的 `runModel.ts`、`tool_request/audit.py`、运行指标 diagnostics 接口。
+- 本次扫描 `tests/` 与 `web/tests/` 没有测试源文件，不能继续声称“127 个用例全部通过”
+  或建议阅读不存在的测试。架构检查脚本仍在，见 §13。
+- ADR-0044 不能简单写成“已全部落地”：统一协调、授权与执行入口已经存在，但各工具
+  仍自行做 schema 校验、结果装配与部分状态复核，见 §8、§13。
+- ADR-0047 标题提到操作系统文件事件；当前实现是检查点之间的 `os.walk + lstat` 快照差异，
+  不是文件系统事件订阅，见 §5.4。
 
-路线分三段:
-
-1. **建立骨架** (约半天): 四份材料, 读完知道"东西大致在哪".
-2. **走通三条主线** (约三天): 跟着请求走完三条链路. 这是主体.
-3. **按需深入支线**: 用到哪块看哪块.
-
-每一站都给出: 读什么文件 / 配套哪份 ADR / **读完应该能回答什么问题**. 最后一项是自检 ——
-答不上来说明这一站没读透, 往下走会越来越吃力.
-
-### 0.1 让运行日志替你走一遍
-
-"跟着一次真实请求走"可以不只是比喻. 从源码起一次服务:
+### 0.2 从源码启动
 
 ```bash
-poetry install && make web-install && make web-build && poetry run forge
+poetry install
+make web-install
+make web-build
+poetry run forge
 ```
 
-`make web-build` 不能省: 前端产物自 2026-08-30 起不入库 (`interfaces/web/static/` 在
-`.gitignore` 里), 目录不存在时 `create_app` 会直接抛一句说得清的话.
+默认 Web 端口由 `interfaces/web/server.py::DEFAULT_PORT` 定义（当前为 8765），启动后
+使用终端打印的一次性链接。源码运行需要构建静态资源；`create_app()` 在静态资源目录缺失时
+直接报错。终端路径用 `poetry run forge --cli`，要求可交互的 TTY。
 
-裸 `forge` 在 `127.0.0.1:8765` 起服务并打印一次性启动链接. 打开页面后进 **设置 -> 常规**,
-把"日志级别"改成 `debug`, 重启 forge (handler 在进程启动时就装好了, 改完不重启不生效),
-然后跑一句话, 读那份日志 (ADR-0035):
+## 1. 先建立骨架：层、对象和身份
 
-```bash
-tail -f ~/.forge/logs/forge-latest.log
+源码根是 `src/forgecli/`。先读 `scripts/check_arch.py`，再看
+`docs/01-overview-design.md`、`docs/02-detailed-design.md` 和 `docs/adr/README.md`。
+架构检查约束依赖方向，组合根决定端口的实际实现。
+
+### 1.1 类之间怎么接起来
+
+```mermaid
+flowchart TD
+    Entry["interfaces.app.main / _root"] --> Web["web.server.run → create_app"]
+    Entry --> Tui["tui.bootstrap.run → SessionApp"]
+    Web --> Registry["ProjectRuntimeRegistry.activate"]
+    Tui --> Registry
+    Registry --> Runtime["ProjectRuntime：一个激活项目"]
+    Runtime --> Session["SessionService：当前会话"]
+    Runtime --> Turn["AgentTurnService：跨 turn 窗口与计数"]
+    Runtime --> Stack["build_tool_stack → ToolStack"]
+    Runtime --> Llm["build_llm_runtime → LlmRuntime"]
+    Runtime --> Bus["AgentRunEventBus + RunEventHub"]
+    Runtime --> Prompt["BlockingHumanPromptBroker"]
+    Turn --> Loop["每轮新建 BuiltinAgentLoop"]
+    Loop --> Invoker["AgentModelInvoker"]
+    Invoker --> Gateway["LlmGateway 端口"]
+    Llm -. "注入 DefaultLlmGateway" .-> Gateway
+    Turn --> Dispatcher["CoordinatorToolDispatcher.dispatch"]
+    Stack -. "注入" .-> Dispatcher
+    Dispatcher --> Coordinator["ToolRequestCoordinator.handle"]
+    Coordinator --> Auth["ToolAuthorizationService"]
+    Coordinator --> Recovery["RecoveryFlow"]
+    Coordinator --> Tools["ToolRuntime.execute → Tool.perform"]
+    Coordinator --> Approval["ApprovalService.request"]
+    Approval --> Prompt
+    Tools --> Adapters["文件系统／进程／JSON 等适配器"]
 ```
 
-一次带工具调用的对话会按发生顺序留下 `web.request` -> `web.turn.started` ->
-`turn.received` -> `context.assembled` -> `window.within_budget` -> `model.request` ->
-`model.response` -> `tool.requested` -> `pipeline.start` -> `pipeline.prepared` ->
-`pipeline.decision` -> `tool.execute.ok` -> `tool.observed` -> `loop.stop` ->
-`web.turn.finished`. 每一行的模块路径就是文件路径 (去掉 `forgecli.` 前缀), 照着 open
-即可. 带 `.start` / `.ok` / `.error` 三态与 `elapsed_ms` 的行是 `_log.span(...)` 打的,
-见 `shared/observability/log.py`.
-
-> 旧材料里的 `prompt.compiled` 与 `context.fit` 已经不存在: 提示词现在一个进程只编译
-> 一次 (ADR-0042), 没有每轮一次的事件可打; 上下文装配改打 `context.assembled` (带
-> 指纹, 块数与三层各自的字符数), 窗口那一侧改打 `window.within_budget` /
-> `window.evicted` / `window.eviction_impossible`. debug 级下另有
-> `context.system_prompt` 与 `context.state_frame` 两行, 逐字写出模型这一轮看到的
-> 是什么 —— 排"模型为什么这么干"时先看这两行.
-
-比通读快的地方在于**顺序是真的**: 文档里的链路图是作者整理过的, 日志里的是这台机器上
-刚刚实际发生的, 包括那些文档没写的分支 (重试, 降级, 被闸拦下的调用).
-
-日志的五个开关都在 **设置 -> 常规**里, 各是一条 `logging.*` 配置项: "日志同时写终端"把
-日志也打到 stderr, "日志包含 HTTP 库"把 httpx / uvicorn 的记录收进同一个文件.
-
-诊断读数走 `GET /api/v1/diagnostics` —— 日志路径, 网关按 provider/model 的调用与延迟
-分桶, 以及各阶段的计数与耗时分位数 (后者要先打开"运行指标采集"). 它**目前没有前端页面**,
-拿会话 cookie 直接 curl:
-
-```bash
-curl -s --cookie "forge_web_session=$(python3 -c 'import json,pathlib;print(json.loads(pathlib.Path.home().joinpath(".forge/web-secrets.json").read_text())["session"])')" http://127.0.0.1:8765/api/v1/diagnostics
-```
-
-## 1. 建立骨架
-
-按顺序读这四份, 不要跳:
-
-### 1.1 `scripts/check_arch.py` (286 行) 与它的三个同伴
-
-**第一个读它, 而不是任何架构文档.** 它是这个项目唯一一份**可执行的**架构说明: 四组规则
-写成断言, 违反就在 `make ci` 停下.
-
-四组规则分别回答:
-
-- `LAYER_BANS`: 谁不许 import 谁 (domain 不 import 任何内部层; application 不 import
-  infrastructure 与 interfaces; infrastructure 不 import interfaces).
-- `BANNED_THIRD_PARTY`: domain 与 application 不许碰 rich, prompt_toolkit, httpx,
-  requests, openai, anthropic —— 这条决定了"业务逻辑长什么样". (`prompt_toolkit` 已随
-  终端入口从运行时依赖里删掉, 这条禁令留着挡它回来.)
-- `SIBLING_BANS`: **9 条**同层互斥. 工具层与安全层互相不可见; `agent_loop` 与 `context`
-  只认识 `LlmGateway` 这个 ABC, 不认识 `DefaultLlmGateway`; `memory` 不认识 `security`;
-  `agent_loop` 不认识 `memory`; `tool_request` 不认识事件总线与会话写入口. 第 9 条是
-  ADR-0041 补的: `application.context` 不得 import `application.security` —— 上下文里
-  装的东西一半是模型自己写的 (记忆, 计划, 待办), 另一半是工具输出的转述, 两者都不该有
-  机会影响裁决. 它与给记忆定的那条同一个理由, 只是范围更大.
-- **无 import 环**: 模块级 import 图必须是有向无环的. 这条是 2026-08-24 补的 ——
-  `application/llm/config` 与 `application/llm/gateway` 的包门面各自藏过一个环, 都是
-  靠 import 顺序活着的.
-
-> 原先有 14 条 SIBLING_BAN. 其中六条守的是人工 Shell 这条独立信任通道 ("人工 Shell 顺便
-> 记一条 learned allow rule"看着贴心, 实际是让用户手敲的命令替 Agent 拿到授权), 随人工
-> Shell 一起删除. 还有一条 `security -> llm.gateway.default_gateway` 在 ADR-0030 删掉
-> LLM 分类器时删掉 —— 注释留在原位说明为什么它的理由不成立了.
-
-`make arch` 还跑另外三个脚本, 一起读:
-
-- `scripts/check_abstractions.py` (118 行, ADR-0028): 一个 ABC / Protocol 只在满足
-  A1 依赖倒置, A2 多实现, A3 开放扩展点三条之一时才保留. 当前 31 个抽象过关. `AgentLoop`
-  与 `ToolDispatcher` 就是按这条判据删掉的 —— 只有一个实现, 且实现与抽象同层. A3 现在
-  只剩两个: `Tool` 与 `CapabilityAnalyzer` (`ModelSelection` 随
-  `domain/model/selection.py` 一起删了).
-- `scripts/check_prompt_text.py` (119 行, ADR-0031 / ADR-0039): 送进模型上下文的参数里
-  不得出现含中文的字符串字面量. 正文一律从 `application/prompt/templates/` 渲染 ——
-  那个目录现在服务两个模块: `blocks/` 归提示词, `runtime/` 与 `state/` 归上下文
-  (ADR-0042 决策 8).
-- `scripts/check_deps.py` (151 行, ADR-0040): 依赖声明与真实 import 必须对得上, 两个
-  方向都守, 当前 17 个直接依赖全部有 src 消费者. **声明少了**会跑得好好的 —— 传递依赖
-  把包装进了环境, 直到上游哪天换掉它; `interfaces/web/app.py` 直接 import 的 `starlette`
-  与 `pydantic` 就这么靠 fastapi 蹭了很久. **声明多了**同样安静: `pathspec` 在依赖表里
-  躺着但全库零 import, 照样要走安装, 锁定, 许可证审查与 CVE 跟踪. 它也是删终端入口时
-  抓出 `prompt-toolkit` 已无消费者的那一步.
-
-**读完能回答**: 为什么 `application/tools` 里没有任何 `import ...security`?
-为什么 `AgentLoop` 这个 ABC 被删了, 而 `Tool` 这个 ABC 留着?
-
-### 1.2 `AGENTS.md` + `docs/01-overview-design.md` §5.1
-
-命名约定, 分层职责, 禁用名 (`AgentWorkflow` / `BuiltinWorkflow` / `WorkflowResult`, 见
-已废弃的 ADR-0003).
-
-### 1.3 `docs/adr/README.md`
-
-45 份 ADR (0000-0044) 的索引与状态. **不要现在全读**, 只记住有这么一批东西, 以及哪几份
-已经不作数:
-
-| ADR | 状态 |
-|---|---|
-| 0003 | Discarded, 由 ADR-0010 取代 |
-| 0009 | Discarded, `ModePolicy` 那套口径不再成立; `SessionMode` 已拆成隔离与审批两个正交轴, 四档只是预设 |
-| 0007 | Superseded by ADR-0025 (交互式会话入口与斜杠命令整体删除) |
-| 0017 | Superseded by ADR-0025 (人工 Shell 整体删除, 无替代品) |
-| 0019 | Superseded by ADR-0030 |
-| 0020 | Partially Superseded by ADR-0030 (LLM 安全分类器整体删除) |
-| 0024 | Superseded by ADR-0030 |
-| 0014 | 保留沙箱生命周期与自测条款, Provider 选型先后由 0019, 0030 取代 |
-| 0032 | 决策 2/3/4 (去重, 降级, 占位符) 被 ADR-0041 取代; 二级摘要保留, 触发点改成"撞水位" |
-| 0034 | 仍是 Proposed, 未实现. 决策 1 的分层被 ADR-0041 兑现了一部分, 检索层推迟 |
-| 0041 | Proposed, **但已落地**: 请求六层与只追加窗口 |
-| 0042 | Proposed, **但已落地**: 提示词收敛成静态策略层 |
-| 0043 | Proposed, 未实现 (`ask_user` 阻塞式内置工具) |
-| 0044 | Proposed, 未实现 (工具样板动作上收到管线) |
-
-> "Proposed 但已落地"不是笔误, 是这个库的习惯: 状态字段记的是**评审状态**, 不是实现
-> 进度. 判断一份 ADR 有没有兑现, 看代码, 不看那一行.
-
-**ADR-0030 是一次大改**: 它删掉了 LLM 安全分类器, 风险缓存与静态命令证明, 改由运行期
-围栏 (Seatbelt / bubblewrap / WSL2) 与工作区快照兜底. 读到任何提"分类器"的旧材料时,
-先确认它是不是在 0030 之前写的.
-
-**ADR-0025 有两次修订, 第二次是删代码**: 2026-08-21 的第一次修订用 `forge cli` 保下了
-整棵终端入口, 理由是开不了浏览器的远程会话与 `#` 人工 Shell 这条信任通道. 2026-08-29 的
-修订二推翻了它 —— 那两个理由本身没错, 错的是没算清它保下了多少东西: 决策 2 与决策 33
-要求斜杠命令能改的每一项配置 Web 都要有入口, 于是每一个配置面都实现了两遍, 两份实现共用
-application 服务, 但表单, 文案与校验时机各写各的, 改一处漏一处不会报错. 代价写在 ADR 里:
-SSH 场景要自己转发 8765 端口, `#` 人工 Shell 没有替代品 (受控的 `shell_run` 不受影响).
-
-**ADR-0040 是一份治理决策, 落地是分批的**: 它定了两件事 —— 通用机制优先交给成熟依赖
-(filelock, sse-starlette, Pydantic, libgit2, prompt-toolkit 已落地; 其中 prompt-toolkit
-随终端入口一起走了), 以及开放世界里的命令名 / 路径名 / 环境变量名这类穷举表**不得承担
-自动放行责任**. 它同时修订了 ADR-0011 的封闭 provider 注册表, ADR-0012 的 tokenizer /
-cache / 熔断实现方式, 以及 ADR-0035 的日志开关归属.
-
-**它的 §4 有四条是"没做", 而且四条的"没做"各不相同 —— 这一段比落地的部分更值得读**,
-因为它是这个库少见的把实测数据连同结论一起留在原位的地方:
-
-| 条目 | 结论 | 一句话理由 |
+| 区域 | 主要职责 | 阅读时要守住的边界 |
 |---|---|---|
-| 4.1 官方 OpenAI SDK | **不采用** | 评审时撤回, 传输栈保持现状 |
-| 4.6 platformdirs | **不采用** | 评审时撤回 |
-| 4.8 Tree-sitter 替代手写 Shell 解析 | **改期**, 另立 ADR | 语法可用, 但**换掉它的理由不成立** |
-| 4.9 detect-secrets 替代自有凭证检测 | **不采用** | 装了 1.5.0 实测两种配置, 都不如现状 |
+| `domain/` | 值对象、规则、枚举、哈希、纯算法 | 不访问磁盘或网络，不依赖上层 |
+| `application/agent_loop/` | 决定下一步，维护本轮窗口，调用 LLM | 不直接执行工具，不读写长期记忆 |
+| `application/agent_turn/` | 驱动动作，记录会话、用量和压缩草稿 | 工具动作经 dispatcher，不能直接调用 perform |
+| `application/tool_request/` | 串起机制、安全、审批、恢复 | 负责顺序，不把工具名字变成安全规则 |
+| `application/tools/` | 工具契约、注册、执行校验和实现 | 不 import 安全策略层；prepare 与 perform 分离 |
+| `application/security/` | 能力分析、策略、授权、学习规则 | 按 Capability 分派，不按工具名特判 |
+| `application/context/` | 组上下文、维护窗口 | 模型可写状态不能成为授权事实 |
+| `infrastructure/` | IO 适配器 | 实现 application 端口 |
+| `interfaces/runtime/` | 组合根、线程、生命周期 | 同时认识端口和实现，负责接线 |
+| `interfaces/web/`、`interfaces/tui/` | 用户输入、协议、展示 | 共用同一个 ProjectRuntime 业务入口 |
+| `web/src/` | React 控制面 | HTTP 查权威状态，SSE 展示过程 |
 
-4.8 值得单独看: 作者用九条对抗性输入实测了手写解析器的不完整之处, 结论是**每一处都失败
-向安全** —— `$'\x72\x6d' -rf /tmp/x` 解出的可执行文件在受控 PATH 上找不到, 直接 DENY;
-三条 `parse_error` 走 UNPROVEN 落到 ASK. 没有一处是绕过. 所以真实收益是**可用性**
-(三次本不必要的打断) 而不是安全性, 而这与本 ADR 给的论证和验收标准都不是一回事. 改期
-条件写了三条, 其中一条是原型暴露的两个没有文档的隐性约定: 重定向的 fd 会落进 `argv`,
-命令替换用 `\x00subN\x00` 占位.
+### 1.2 生命周期与身份不要混用
 
-> 注意别被 grep 误导: `tree-sitter-language-pack` **在依赖表里, 也确实在用** —— 但只用于
-> `application/tools/builtin/find_definition.py` 的代码定义提取. Shell 解析仍然是
-> `domain/security/shell/` 那一整套手写实现.
+| 名称 | 创建方 | 生命周期／作用 |
+|---|---|---|
+| `project_id`／工具栈中的 `workspace_id` | `ProjectService.trust()` | 项目分区；当前装配中二者指同一项目身份 |
+| `ProjectRuntime` | `ProjectRuntimeRegistry.activate()` | 项目激活到切换／关闭；持有进程锁 |
+| `session_id` | `SessionService.start()` | 一次会话，可持久化后续写 |
+| `run_id` | `ProjectRuntime.start_turn()` | 一次后台线程执行，不等于 turn_id |
+| `TurnIdentity(session_id, turn_id)` | `AgentTurnService.handle_user_message()` | 会话内轮次；turn_0001 可在不同会话重复 |
+| `request_id` | `BuiltinAgentLoop._build_request()` | 一次主循环模型请求；其他用途也可独立调用网关 |
+| `tool_call_id` | 模型协议 | assistant tool_calls 与 tool result 配对 |
+| `invocation_id`／`ToolPlan.plan_id` | `ToolRequestCoordinator.handle()` | 一次工具管线请求 |
+| `authorization_id` | `ToolAuthorizationService.issue()` | 一次性、带有效期的执行信封 |
+| `checkpoint_id` | `WorkspaceMutationCoordinator.begin()` | 一次恢复事务 |
+| `prompt_id` | 审批／提问生产方 | 一张待答卡片；broker 另绑定内部 turn 代次 |
+| `stream_id:cursor` | `RunEventHub`／`ResumePoint` | 一个事件流实例中的位置；跨实例不可直接续用 |
 
-4.9 的第一行表格是决定性的: 开熵检测器能抓到全部十种真凭证, 但**文件路径, 40 位 commit
-sha, 构建产物名, 驼峰标识符全部误报**. 记忆是静默写入 (ADR-0033 决策 2), 误报的表现是
-"它记不住东西"且没有人看得到原因 —— 一个记不住文件路径的记忆系统, 用户会在第三次的时候
-关掉它. 只开厂商 + 关键词则漏掉四种 (OpenAI, Anthropic, Google API key, npm token), 前缀
-表全认得. 那次实测仍有真实产出: 它暴露了现有实现的两个真误报, 已修 (`_TOKEN` 的字符集
-去掉 `/`, `_is_random_token` 增加"没有八个以上同类字符连排" —— 两处的理由都写在
-`domain/memory/secrets.py` 的注释里). 但 ADR 里说的配套用例文件
-`tests/memory/test_secret_shapes.py` **不存在, 也从未存在过**, 见 §8.
+`SessionService` 的会话记录、`runs.jsonl` 的过程记录、运行日志是三种数据，不能因为都包含
+turn_id 就互相替代。尤其 `runs.jsonl` 不负责重建模型上下文。
 
-**ADR-0041 与 ADR-0042 是这条分支上最大的一次改动, 而且两份要一起读**: 前者定"一次
-请求怎么排", 后者定"提示词模块还剩什么". 一句话各自的结论 ——
+## 2. 主流程：启动、激活和退出
 
-- **0041**: 请求按变更源分成六层, 顺序即层号, 每层的变更频率不高于它前面那层. 会话窗口
-  **只追加**, 撞高水位时**整体淘汰一次**, 绝不逐条滑动. 判据是前缀缓存: 改中段一处的
-  成本等于它自己加上它后面的全部内容, 而 `dedup.py` 留下的实测数是"省 4k 正文, 亏
-  79k 未命中". 详见 §2.2.
-- **0042**: `application/prompt` 只渲染内置静态策略与 `FORGE.md`, 零运行期输入. 九个块
-  收成六个, `RUNTIME_FACTS` / `PLAN_STATE` / `TODO_STATE` / `MEMORY_STATE` 四个搬去
-  `application/context`; `cacheable` 与分区校验删除 (它们从来没买到过一个字节的缓存);
-  提示词正文里**不出现任何工具名与工具分类**, `ToolAction` 枚举随之删除.
+源码入口：`interfaces/app.py`、`interfaces/web/server.py`、`interfaces/web/app.py`、
+`interfaces/tui/bootstrap.py`、`interfaces/runtime/project_runtime.py`。
 
-**ADR-0043 与 ADR-0044 目前只有文档, 没有代码.** 读它们的价值在于它们把两处现状写得比
-任何代码注释都清楚: 0043 §背景 说明了"模型缺信息时向人提问"这条路今天**根本不存在**
-(唯一能问人的是安全审批, 而它问的是"这一次已经确定的调用许不许可"); 0044 §背景 那张
-"`ToolPlan` 的六个消费方"表, 是理解"为什么工具必须写成 `prepare` / `perform` 两段"最
-直接的一份材料 —— 比 ADR-0004 正文更直白.
+### 2.1 命令入口分支
 
-### 1.4 `src/forgecli` 的目录树
-
-```text
-shared/          不属于任何一层的基础件: 取消令牌, JSON Schema, 值对象序列化, 日志与读数
-domain/          纯值对象. 认识这里的名字就认识了整个系统的词汇
-  agent/         循环动作, 循环输入 (AssembledContext 六层), 停止原因, 21 种运行事件
-  tool/          ToolSpec / ToolPlan / Capability / ExecutionAuthorization / ToolResult
-  security/      安全词汇, Hard Deny, 受保护路径, 能力预算 + Shell 解析 (shell/ 子包)
-  execution/     执行画像, 环境净化, FencePolicy (围栏边界), denial (认出"这是围栏拦的")
-  context/       上下文预算 (ADR-0032) + Window / WindowPolicy 只追加窗口 (ADR-0041)
-  memory/        记忆条目与疑似凭证识别 (ADR-0033)
-  planning/      Plan 与 TodoList (ADR-0022)
-  prompt/        PromptBlock / PromptSnapshot —— 六个块, 全静态 (ADR-0042)
-  recovery/      恢复检查点与变更集
-  conversation/  ChatMessage 与 turn
-  session/       会话事件 (14 种 EventType) 与快照
-  workspace/     工作区边界与路径归一
-  model/         LLM 请求 / 响应 / 流式
-  config/        配置键与合并结果
-  intents.py     SandboxLevel / ApprovalPolicy 两个正交轴, SessionMode 是它们的组合, InputOrigin 两档
-application/     用例编排. ABC 端口也在这里
-  agent_loop/    ReAct 循环 (BuiltinAgentLoop)
-  agent_turn/    唯一写文件, 起子进程的驱动方 + TurnCancelSource
-  agent_run/     运行事件总线与观察者 (ADR-0016)
-  tool_request/  工具请求协调器 (安全管线的编排者) + 审批流 + 恢复流 + 调度器 + 围栏提示
-  tools/         工具机制层 + builtin/ 14 个内置工具与它们的辅助模块
-  security/      安全策略层 (分析器, 策略引擎, 审批, 学习规则)
-  context/       请求组装 (六层), 只追加窗口的维护与二级摘要 (ADR-0041, ADR-0032)
-  memory/        跨会话记忆 (ADR-0033)
-  planning/      计划 / 待办服务与计划评审 (ADR-0022, ADR-0023, ADR-0038)
-  recovery/      恢复事务
-  prompt/        静态策略层: 编译一次的系统提示词 + templates/ 模型可读正文 (ADR-0042)
-  llm/           LLM 网关与模型目录
-  workspace/     ExecutionContext 与文件系统视图
-  project/       项目身份与工作区信任
-  session/       会话服务与 resume
-  config/        配置服务
-infrastructure/  适配器: 文件系统, 子进程, 沙箱 Provider, JSON, HTTP, LLM adapters
-                 第三方库的对象只到这一层为止 (ADR-0040 决策 3): libgit2 的
-                 Repository 出不了 workspace/pygit2_git_queries.py, 上面拿到的是
-                 application/tools/git_queries.py 里那几个纯数据类
-interfaces/
-  app.py         极薄 Typer 入口 (83 行). 没有子命令, 只解析 --version/--open/--port
-  exit_codes.py  进程退出码的封闭定义. 住在这里而不是某个入口的包下
-  web/           FastAPI 应用, SSE 事件流, 审批 broker, 按项目装配的 Runtime
-  runtime/       组合根: tool_wiring / llm_wiring / logging_wiring / diagnostics
+```mermaid
+flowchart TD
+    A["console script: forge → interfaces.app.main"] --> B["Typer app() 解析参数"]
+    B --> C{"--version / -V?"}
+    C -->|是| D["_version_callback → 打印版本 → typer.Exit"]
+    C -->|否| E["_root"]
+    E --> F{"cli 为真?"}
+    F -->|否| G["web.server.run(port, open_browser)"]
+    F -->|是| H{"open_browser 或 port != DEFAULT_PORT?"}
+    H -->|是| I["打印用法错误 → Exit 2"]
+    H -->|否| J["tui.bootstrap.run"]
+    J --> K{"stdin/stdout 可交互?"}
+    K -->|否| L["返回 NO_TTY"]
+    K -->|是| M["构建项目注册表 → _resolve_project → SessionApp.run"]
+    G --> N["服务运行／关闭 → 返回 ExitCode"]
+    M --> N
+    N --> O{"返回码非零?"}
+    O -->|是| P["_root → typer.Exit(code)"]
+    O -->|否| Q["正常返回"]
 ```
 
-`interfaces/` 现在只有两件事: 起进程 (`app.py` -> `web/server.py`) 和装配
-(`runtime/`). `application` 与它下面的所有层, 删掉终端入口时一行没动.
+`--version` 是 eager callback，目的在于版本查询直接结束，不继续建立服务。
+`--cli` 与端口的兼容检查实际比较的是数值：显式给默认端口仍等于默认值，不能把这段
+描述成“能识别任何显式出现的 --port 参数”。
 
-**读完能回答**: `ToolPlan` 应该在哪一层? 为什么?
+### 2.2 Web 准入、握手与路由分支
 
-## 2. 主线一: 一次对话是怎么跑完的
+源码入口：`interfaces/web/security.py::LocalControlPlaneGuard`、
+`interfaces/web/routers/handshake.py`、`interfaces/web/deps.py`。
 
-从浏览器里敲下一行字, 到页面上出现回复. 这条线最短, 先走它建立"请求在系统里怎么流动"
-的感觉.
+```mermaid
+flowchart TD
+    A["create_app → SecurityState + ProjectRuntimeRegistry"] --> B["挂 LocalControlPlaneGuard → ROUTERS → 最后挂 StaticFiles"]
+    B --> C["LocalControlPlaneGuard.__call__"]
+    C --> D{"HTTP scope?"}
+    D -->|否| E["直接交下游 ASGI app"]
+    D -->|是| F["_denial(Request)"]
+    F --> G{"Host 在本机白名单?"}
+    G -->|否| H["400 Invalid Host"]
+    G -->|是| I{"路径为 /boot 或 /api/v1/health?"}
+    I -->|否| J{"session cookie 匹配?"}
+    J -->|否| K["401：HTML 说明页或 Unauthorized"]
+    J -->|是| L{"写方法 POST/PUT/PATCH/DELETE?"}
+    I -->|是| L
+    L -->|是| M{"存在 Origin 且不匹配当前源?"}
+    M -->|是| N["403 Invalid Origin"]
+    M -->|否| O{"非 /boot 且 CSRF cookie/header 不匹配?"}
+    O -->|是| P["403 Invalid CSRF token"]
+    O -->|否| Q["进入路由"]
+    L -->|否| Q
+    Q --> R{"GET /boot?"}
+    R -->|是| S["handshake.boot → compare_digest(token)"]
+    S --> T{"启动令牌匹配?"}
+    T -->|否| U["401 启动令牌无效"]
+    T -->|是| V["清空 boot_token → 设置 session/CSRF cookies → 303 到 /"]
+    R -->|否| W["health / bootstrap / 资源路由 / 静态资源"]
+    W --> X["send_hardened：安全响应头、缓存头、请求日志"]
+    V --> X
+```
 
-两条路径共用同一个组合根 —— 裸 `forge` 起本机 Web 服务, 业务交互进浏览器 (ADR-0025
-决策 1); `forge --cli` 进终端交互式会话 (ADR-0045). 下面这条线走的是 Web, 终端那一条
-从第 5 行往下完全一样.
+`/health` 不要求激活项目；`/bootstrap` 需要有效会话 cookie，返回版本、激活项目及 CSRF。
+资源路由经 `active_runtime()` 取当前项目，需要空闲时再经 `idle_runtime()` 拦住在途 turn。
+ASGI 中间件不缓冲 SSE 响应体。静态资源挂载必须在 API router 后，否则会截获 API 路径。
 
-| # | 文件 | 看什么 | 读完能回答 |
+### 2.3 项目查找、信任与激活
+
+```mermaid
+flowchart TD
+    A["启动目录 / Web 项目选择 / TUI 项目菜单"] --> B["ProjectService.find_trusted(cwd)"]
+    B --> C["canonical_path → 索引中已信任且包含 cwd 的主根"]
+    C --> D{"有匹配?"}
+    D -->|是| E["取最长根 → 读取 ProjectConfig"]
+    D -->|否| F["界面显示项目中心／请求目录信任"]
+    F --> G["ProjectService.normalize_workspace_dir → trust"]
+    G --> H["写项目配置 → index.upsert"]
+    E --> I["ProjectRuntimeRegistry.activate(project_id)"]
+    H --> I
+    I --> J{"ProjectService.get 返回项目?"}
+    J -->|否| K["KeyError → 界面错误"]
+    J -->|是| L{"已经激活同一项目?"}
+    L -->|是| M["复用当前 runtime"]
+    L -->|否| N{"当前 runtime.busy?"}
+    N -->|是| O["RuntimeError：拒绝切项目"]
+    N -->|否| P["清空 active → 关闭旧 runtime"]
+    P --> Q["ProjectRuntime(project) → ProcessLock.acquire"]
+    Q --> R{"锁与初始化成功?"}
+    R -->|否| S["释放已取得的锁／报告锁冲突或初始化异常"]
+    R -->|是| T["registry._active = 新 runtime"]
+```
+
+额外工作区根不参与项目身份匹配；同一 cwd 匹配多个主根时选最深项目。切项目先关闭旧 runtime，
+再建立新 runtime；新项目初始化失败时不会自动恢复已经关闭的旧 runtime。
+
+### 2.4 组合根装配和沙箱探测
+
+```mermaid
+flowchart TD
+    A["ProjectRuntime.__init__"] --> B["ProcessLock.acquire"]
+    B --> C["会话存储 + ResumeService + ConfigService + LlmConfigService"]
+    C --> D["build_llm_runtime → gateway / meter / context_budget"]
+    D --> E["SessionService + TurnCancelSource"]
+    E --> F["AgentRunEventBus.subscribe(RunEventHub, JsonlRunStore)"]
+    F --> G["BlockingHumanPromptBroker → _build_tool_stack"]
+    G --> H["build_tool_stack：resolve 工作区根 → protected paths → WorkspaceGrants"]
+    H --> I["probe_execution_profile → build_execution_environment"]
+    I --> J["select_provider"]
+    J --> K{"platform.system"}
+    K -->|Darwin| L["SeatbeltProvider"]
+    K -->|Linux| M["BubblewrapProvider"]
+    K -->|Windows| N["Wsl2Provider"]
+    K -->|其他| O["NoSandboxProvider"]
+    L --> P{"available 且 self_test.confined?"}
+    M --> P
+    N --> P
+    O --> P
+    P -->|否| Q["NoSandboxProvider + UNCONFINED 报告"]
+    P -->|是| R["选中 Provider + HOST_CONFINED"]
+    Q --> S["结论写入 ExecutionProfile；构建 context_factory / fence_factory"]
+    R --> S
+    S --> T["ResourceGovernor + ArtifactStore + SandboxedCommandExecutor"]
+    T --> U["PlanningService + MemoryService + 注册 12 个 Tool"]
+    U --> V["LearnedRuleService + 能力分析器 + PolicyEngine + AuthorizationService"]
+    V --> W["探测快照后端 → WorkspaceMutationCoordinator + RecoveryService"]
+    W --> X["ToolRequestCoordinator + ToolRuntime + Dispatcher → ToolStack"]
+    X --> Y["额外根恢复为 READ → SessionService.start"]
+    Y --> Z["_build_agent_turn → _sweep_tombstones"]
+```
+
+这里的沙箱降级是**启动探测结论**，之后审批和执行都绑定这个结论；不是拿到有沙箱的授权后，
+执行中临时换成无沙箱继续运行。主根可写，额外根重启后保守恢复只读。
+
+### 2.5 TUI 输入与退出
+
+```mermaid
+flowchart TD
+    A["SessionApp.run → _bind_active → ForgePrompt.read"] --> B{"输入结果"}
+    B -->|空输入| A
+    B -->|SessionExit / EOFError| Z["结束 SessionApp → bootstrap finally 关闭注册表"]
+    B -->|文本| C{"以 / 开头?"}
+    C -->|是| D["commands.registry.dispatch(context, text)"]
+    D --> E{"命令存在且参数可解析?"}
+    E -->|否| F["显示帮助／错误 → 下一次输入"]
+    E -->|是| G["cmd_* → 共用 runtime / application service"]
+    G --> A
+    C -->|否| H["SessionApp._turn → runtime.start_turn(origin=CLI_USER)"]
+    H --> I["_drive：RunEventCollector.drain → TerminalRunView.handle"]
+    I --> J{"有 pending prompt?"}
+    J -->|是| K["_resolve_prompt → render_card → ask_decision"]
+    K --> L{"用户作答还是 Ctrl-C?"}
+    L -->|作答| M["runtime.resolve_prompt"]
+    L -->|Ctrl-C| N["runtime.cancel"]
+    M --> I
+    N --> I
+    J -->|否| O{"current_run.status 为 running?"}
+    O -->|是| I
+    O -->|否| P["_settle"]
+    P --> Q{"waiting_plan_review?"}
+    Q -->|否| A
+    Q -->|是| R["plan_review.review → runtime.resolve_plan_review"]
+    R --> S{"自动起了 follow-up turn?"}
+    S -->|是| I
+    S -->|否| A
+```
+
+普通文本即使以 `#` 开头也走 `_turn()`，当前不存在独立人工 Shell 分支。
+运行期第一次 Ctrl-C 请求取消；第二次 Ctrl-C 只结束 `_drive()` 的等待，源码明确提醒已发出的
+命令可能还在运行。输入框退出、取消菜单、取消当前 turn 是不同作用域。
+
+Web 关闭路径是 `web.server` 设置 stopping → SSE 发停止帧／退出 → FastAPI lifespan
+调用 `registry.close()` → `ProjectRuntime.close()` 调用 cancel、prompts.close、events.close、
+最多等待 Agent 线程 2 秒并释放项目锁。这不是“无限等待所有子进程退出”的保证。
+
+## 3. 主流程：一条用户消息到一轮最终响应
+
+源码入口：`web/src/features/conversation/useConversation.ts`、
+`interfaces/web/routers/turns.py`、`interfaces/runtime/project_runtime.py`、
+`application/agent_turn/agent_turn_service.py`。
+
+### 3.1 Web 发送、线程启动和前端对账
+
+```mermaid
+flowchart TD
+    A["Composer → useConversation.send"] --> B{"message.trim 非空且不 busy?"}
+    B -->|否| C["直接返回"]
+    B -->|是| D["newLocalTurn → busy=true → 追加本地轮次 → 清空输入"]
+    D --> E["api POST /turns → routers.turns.start_turn"]
+    E --> F["active_runtime → ProjectRuntime.start_turn"]
+    F --> G{"消息有效且锁内没有 running?"}
+    G -->|否| H["ValueError/RuntimeError → HTTP 409"]
+    H --> I["send.catch → failUnboundTurn + 错误横幅"]
+    G -->|是| J["_run_lock 内创建 TurnRun(status=running)"]
+    J --> K["cancel_source.issue → prompts.begin_turn"]
+    K --> L["创建 daemon Thread(target=_execute_turn) 并 start"]
+    L --> M["HTTP 202 返回 TurnRun；不等待模型"]
+    L -. "后台线程" .-> N["_execute_turn → AgentTurnService.handle_user_message"]
+    N --> O["过程事件经 SSE 到前端，见 §11"]
+    N --> P["AssistantResponse / 异常 → 更新 TurnRun"]
+    O --> Q["收到终态 → syncFinishedTurn"]
+    Q --> R["GET /turns/current；若仍 running 则有界延迟重查"]
+    R --> S["finishLocalTurn：对齐最终文本／error"]
+```
+
+HTTP 202 只说明后台任务已启动；SSE 的 turn 终态可能先于 `_execute_turn()` 最后一次赋值，
+所以 `syncFinishedTurn()` 要查询权威的 `current_run()`，不能用 202 当完成证明。
+
+### 3.2 AgentTurnService：动作驱动与持久化
+
+```mermaid
+flowchart TD
+    A["handle_user_message(text, origin)"] --> B["增加 _turns → TurnIdentity → _current_turn"]
+    B --> C["bind(session_id, turn_id) → _handle_bound"]
+    C --> D["SessionService.record_user_message；首次消息可能先生成标题，见 §12.1"]
+    D --> E["MemoryService.begin_turn → 从 session.current 取 mode"]
+    E --> F["_obtain_outcome → _run_loop"]
+    F --> G["loop_factory → 新 BuiltinAgentLoop"]
+    G --> H["dispatcher.catalog_for(mode) + _assemble_context"]
+    H --> I["旧窗口尾部追加本次 USER → loop.start(LoopInput)"]
+    I --> J{"step 类型"}
+    J -->|AnswerAction| K["保存 answer → loop.observe(answer_delivered)"]
+    K --> J
+    J -->|ToolRequestAction| L["_run_tool_and_watch_planning"]
+    L --> M["读计划 revision → _run_tool → dispatcher.dispatch"]
+    M --> N["_emit_planning_changes → observation.to_loop_observation"]
+    N --> O["loop.observe(observation)"]
+    O --> J
+    J -->|None| P["loop.observe(noop)"]
+    P --> J
+    J -->|LoopStop| Q["_outcome_from_stop"]
+    J -->|未知动作／驱动步数耗尽| R["构建 FAILED _TurnOutcome"]
+    F -->|驱动异常| S["_obtain_outcome.catch → 日志 traceback + TURN_FAILED"]
+    S --> R
+    Q --> T["record_assistant_message(status, stop_reason, diagnostic)"]
+    R --> T
+    T --> U["逐项 record_usage → 逐项 record_compaction"]
+    U --> V["_remember_turn 接收 loop.window；缺尾部文本时补写"]
+    V --> W["返回 AssistantResponse"]
+    W --> X["handle_user_message.finally 清 _current_turn"]
+```
+
+`_run_tool_and_watch_planning()` 比较 `(id, revision)`，不是比较工具名。新建一份计划与
+修改原计划都可以触发变化；计划／待办事件里保存摘要和引用，正文由 PlanningService 读取。
+
+`_obtain_outcome()` 隔离的是 `_run_loop()` 内异常。其前后的会话落盘失败不受这层 catch
+保护，会继续到 `_execute_turn()` 的后台边界。因此“任何故障都能完整记录一对消息”不是
+当前代码可保证的不变量，磁盘写失败尤其如此。
+
+### 3.3 终态映射与异常边界
+
+```mermaid
+flowchart TD
+    A["LoopStop → AgentTurnService._outcome_from_stop"] --> B{"stop.reason"}
+    B -->|FINAL_ANSWER| C{"已有 AnswerAction.text?"}
+    C -->|是| D["TurnStatus.COMPLETED"]
+    C -->|否| E["FAILED：没有回答"]
+    B -->|WAIT_PLAN_REVIEW| F["COMPLETED + pause=PLAN_REVIEW"]
+    B -->|USER_CANCELLED| G["FAILED：partial_answer + 取消通知"]
+    B -->|其他停止原因| H["FAILED：stop.message 或失败通知"]
+    D --> I["ProjectRuntime._execute_turn 检查 response"]
+    E --> I
+    F --> I
+    G --> I
+    H --> I
+    I --> J{"response.pause == PLAN_REVIEW?"}
+    J -->|是| K["TurnRun.status = waiting_plan_review"]
+    J -->|否| L{"response.status == FAILED?"}
+    L -->|是| M["TurnRun.status = failed"]
+    L -->|否| N["TurnRun.status = completed"]
+    I -->|外层异常| O["记录 turn.failed + TurnRun.error，status=failed"]
+    K --> P["finally cancel_source.clear → 锁内替换 _run"]
+    M --> P
+    N --> P
+    O --> P
+```
+
+`LoopStopReason.classification` 是语义分类，`TurnStatus` 是消息持久化终态，`TurnRun.status`
+是控制面的后台状态，三者不能逐字互换。例如 `CONTEXT_COMPACTION_REQUIRED` 分类为
+`RESUMABLE_PAUSE`，但目前 `_outcome_from_stop()` 仍把它映射为 FAILED；只有计划评审得到
+专门的 `pause=PLAN_REVIEW`。
+
+## 4. 主流程：BuiltinAgentLoop 的 ReAct 状态机
+
+源码入口：`application/agent_loop/builtin_loop.py`、`model_invoker.py`、`progress.py`、
+`transcript.py`、`domain/agent/actions.py`、`domain/agent/stop.py`。
+
+### 4.1 start → 模型请求 → 动作
+
+```mermaid
+flowchart TD
+    A["BuiltinAgentLoop.start(LoopInput)"] --> B{"已经 start?"}
+    B -->|是| C["RuntimeError：每 turn 一个实例"]
+    B -->|否| D["设置身份、窗口、AssembledContext、预算、工具 schemas"]
+    D --> E["WorkspaceChangeMonitor.start → events.start_turn"]
+    E --> F["_advance"]
+    F --> G["_check_workspace_changes(EXTERNAL) → _publish_workspace_notice"]
+    G --> H["_check_model_budget"]
+    H -->|耗尽| I["_stop(BUDGET_EXHAUSTED)"]
+    H -->|可继续| J["_fit_window，见 §5.2"]
+    J -->|仍超 allowance| K["_stop(CONTEXT_COMPACTION_REQUIRED)"]
+    J -->|可继续| L["_build_request → ModelTransportPolicy.resolve"]
+    L --> M["AgentModelInvoker.invoke，见 §9"]
+    M -->|LoopStop| N["补 _turn_finished → 返回 stop"]
+    M -->|正常 ModelOutcome| O["再次检查 EXTERNAL 变化"]
+    O --> P{"有变化且没有 tool_calls?"}
+    P -->|是| Q["追加变化通知 → 重新 _advance"]
+    Q --> F
+    P -->|否| R{"outcome.empty?"}
+    R -->|是| S["_stop(MODEL_ERROR_BLOCKING)"]
+    R -->|否| T["逐调用 protocol_markup_in 检查"]
+    T -->|有协议标记污染| U["_retry_malformed，见 §4.4"]
+    T -->|正常| V{"工具已关闭但模型仍请求工具?"}
+    V -->|是且无回答文本| W["_stop(POLICY_DENIED)"]
+    V -->|是且有文本| X["丢弃未执行调用，只保留文本"]
+    V -->|否| Y["_remember_assistant"]
+    X --> Y
+    Y --> Z{"有 tool_calls?"}
+    Z -->|是| AA["保存 _pending_calls → tool_batch 事件 → _dispatch_next"]
+    Z -->|否| AB["AnswerAction(text) → 驱动确认 → observe → FINAL_ANSWER"]
+```
+
+`outcome.text` 与 `outcome.tool_calls` 可以同时存在。带工具的 assistant 消息必须先写入窗口，
+再追加对应 tool result；格式损坏的调用在写入窗口前拒绝，否则会留下永远配不齐的协议记录。
+
+### 4.2 同一批多个工具：严格串行
+
+```mermaid
+flowchart TD
+    A["_pending_calls = 模型返回的调用序列"] --> B["_dispatch_next：检查 EXTERNAL 变化 → pop(0)"]
+    B --> C["ProgressGuard.is_repeat(call)"]
+    C --> D{"相同签名是否已超过 2 次?"}
+    D -->|是| E["_reject_repeat：补失败 ToolResultBlock + tool_rejected"]
+    E --> F{"队列还有调用?"}
+    F -->|是| B
+    F -->|否| G["_advance 再问模型"]
+    D -->|否| H["设置 _dispatched → ToolRequestAction"]
+    H --> I["AgentTurnService._run_tool → 安全管线 → LoopObservation"]
+    I --> J["loop.observe → _observe_tool"]
+    J --> K["清 _dispatched → 检查 AGENT 变化 → 追加带 call_id 的 ToolResultBlock"]
+    K --> L["ProgressGuard.track(observation)"]
+    L --> M{"disposition == AWAIT_USER_DECISION?"}
+    M -->|是| N["_abandon_pending 补未执行结果 → WAIT_PLAN_REVIEW"]
+    M -->|否| O["ProgressGuard.should_close_tools"]
+    O -->|要收工具| P["_close_tools，见 §4.3"]
+    O -->|可继续| Q{"队列还有调用?"}
+    Q -->|是| B
+    Q -->|否| R["barren_nudge：必要时追加提醒"]
+    R --> G
+```
+
+批量意图事件表示“模型请求了哪些工具”，不是执行事实。审批仍一次次发生；第一个调用
+可能改工作区，第二个调用会重新构造执行上下文和安全事实。重复调用的判定包含工具名与
+规范化参数；改变参数不会命中同一签名，所以还需要“连续无新信息”的提醒。
+
+### 4.3 人拒绝、策略拒绝与无进展
+
+```mermaid
+flowchart TD
+    A["ProgressGuard.should_close_tools(observation)"] --> B{"disposition == HALT?"}
+    B -->|是| C["返回立即收工具的通知"]
+    B -->|否| D{"disposition == BLOCKED?"}
+    D -->|是| E["累计 blocked_calls + 1"]
+    E --> F{"累计达到 3 次?"}
+    F -->|是| C
+    F -->|否| G["继续循环"]
+    D -->|否| G
+    C --> H["BuiltinAgentLoop._close_tools"]
+    H --> I["_abandon_pending：每个未执行调用都有配对结果"]
+    I --> J["清 schemas / pending / dispatched → tools_closed=true"]
+    J --> K["追加 USER 收尾通知 → _advance 请求解释／最终回答"]
+    K --> L{"模型还请求工具?"}
+    L -->|有文本| M["只接受文本，不派发"]
+    L -->|无文本| N["POLICY_DENIED 停止"]
+    L -->|否| O["正常 AnswerAction"]
+    P["ProgressGuard.track：成功观察的 content + handle"] --> Q{"空内容或与前次相同?"}
+    Q -->|是| R["累加 barren_streak"]
+    Q -->|否| S["清零 streak"]
+    R --> T["整批结束调用 barren_nudge"]
+    T --> U{"达到 3 次?"}
+    U -->|是| V["只提醒换思路；清零计数；不收工具"]
+    U -->|否| G
+```
+
+`ToolObservation.to_loop_observation()` 决定 disposition。普通工具失败的 `is_error=true`
+不自动等于 HALT；人拒绝／无人能审批与一次可修正的输入错误需要不同处置。
+`blocked_calls` 是累计值，插入一次成功读取不能重置它；barren 计数只观察成功结果。
+
+### 4.4 模型错误与格式纠错
+
+```mermaid
+flowchart TD
+    A["_advance 调 AgentModelInvoker.invoke"] --> B{"异常类型"}
+    B -->|ModelCancelledError| C["_stop(USER_CANCELLED)"]
+    B -->|MalformedToolCallError| D["_retry_malformed(detail)"]
+    B -->|ModelContextOverflowError| E["_recover_from_overflow，见 §5.3"]
+    B -->|ModelResponseParseError| F["记录 parse_failed → MODEL_ERROR_BLOCKING"]
+    B -->|其他 ModelGatewayError| G["actionable_message → MODEL_ERROR_BLOCKING"]
+    B -->|非网关异常| H["抛至 AgentTurnService._obtain_outcome 隔离"]
+    I["protocol_markup_in 检出参数里混入协议标记"] --> D
+    D --> J["_malformed_responses + 1"]
+    J --> K{"超过 _MAX_MALFORMED_RESPONSES?"}
+    K -->|是| L["MODEL_ERROR_BLOCKING"]
+    K -->|否| M["追加 USER 格式错误说明；保留工具目录"]
+    M --> N["_advance：由模型重新产生参数"]
+```
+
+纠错不猜参数，不修补模型产生的半截 JSON。网关传输重试见 §9.3，那条路通常重发同一请求；
+这里是改变上下文、让模型重新回答，二者不能合并计数。
+
+## 5. 主流程：上下文组装、压缩与工作区变化
+
+源码入口：`application/context/assembler.py`、`window_manager.py`、`summarize.py`、
+`domain/agent/state.py`、`domain/context/window.py`、`application/workspace/monitor.py`。
+
+### 5.1 六层上下文与冻结点
+
+| 层 | 内容 | 实际来源／目的字段 | 更新时机 |
 |---|---|---|---|
-| 1 | `interfaces/app.py` (99 行) | Typer 根回调. `invoke_without_command=True`, 无子命令, 入口分叉是 `--cli` 这个参数 | 为什么 `--version` 要写成 eager callback, 而不是回调体里的一个 `if`? 为什么 `--cli` 是参数而不是子命令? |
-| 2 | `interfaces/web/server.py` (188 行) | 项目锁, 一次性启动令牌, 信号接管, SSE 优雅收尾 | `capture_signals` 为什么是个空的 contextmanager? 服务停止时为什么要先置 `stopping` 再走 uvicorn 的等待流程? |
-| 3 | `interfaces/exit_codes.py` (35 行) | 进程退出码的封闭定义 | 为什么它不住在 web 包里? |
-| 4 | `interfaces/web/app.py::LocalControlPlaneGuard` (1198 行, **先只读中间件与路由表**) | Host / 会话 cookie / CSRF 三道校验, 50 条路由的形状 | 为什么它必须是纯 ASGI 中间件, 不能用 `BaseHTTPMiddleware`? |
-| 5 | `interfaces/runtime/project_runtime.py::ProjectRuntime` (546 行) | **按项目装配一次**的组合根; `start_turn` 起后台线程, `_execute_turn` 是那个线程的最外层 | 一个项目同时只能跑一轮, 这条由谁保证? 后台线程里的异常为什么必须先 `_log.exception` 再压成状态串? |
-| 6 | `interfaces/runtime/tool_wiring.py::build_tool_stack` (495 行) | 从受保护路径到协调器的完整装配顺序 | 装配顺序里哪几步是安全约束, 换顺序会怎样? |
-| 7 | `domain/intents.py` | `SandboxLevel` x `ApprovalPolicy`, `SessionMode` 是两者的组合, `InputOrigin` 三档 | 为什么隔离与审批要拆成两个轴, 而四档预设只是常用组合? `MODE_PRESETS` 为什么显式写出而不是复用声明顺序? `InputOrigin` 的默认值为什么是 `PROGRAM` 而不是 `WEB_USER`? `CLI_USER` 为什么不带任何权限? |
-| 8 | `application/agent_turn/agent_turn_service.py` (674 行) | `handle_user_message` -> `_run_loop` -> `_outcome_from_stop` | 为什么说写文件与起子进程只经它一处发生? |
-| 9 | `application/context/assembler.py` (58 行) + `domain/agent/state.py::AssembledContext` | **本轮上下文的六层怎么取材**, 以及顺序为什么就是层号 | 运行事实每轮都可能变, 为什么反而放进缓存前缀, 而计划待办只能待在最末尾? |
-| 10 | `application/agent_loop/builtin_loop.py` (1298 行) | ReAct 主体, 分两次读 | 模型一次要三个工具时会发生什么? |
-| 11 | `application/tool_request/dispatcher.py` (98 行) | 循环与安全管线之间的唯一通道 | `PolicyContext` 为什么每次调用重新构造, 而不是一轮开始时算一次? |
-| 12 | `domain/agent/actions.py` (127 行) | `LoopAction` / `LoopObservation` / `ObservationDisposition` | `is_error` 与 `disposition` 为什么是两个字段? |
-| 13 | `domain/agent/stop.py` (61 行) | `LoopStopReason` 与 `StopClassification` | 文件末尾那个 `assert` 挡住了什么? |
-| 14 | `domain/agent/run_events.py` (382 行) | **21 种**运行事件与它们的 payload | 为什么每种事件一个 frozen 类而不是自由 dict? |
-| 15 | `application/agent_run/events.py` (105 行) | 进程内事件总线 | 订阅者抛异常时为什么不能让它冒泡? |
-| 16 | `interfaces/runtime/event_hub.py` (146 行) | `RunEventHub`: 把进程内事件变成可重连的有限缓冲 (2048 条) | 事件由 Agent 线程产生, 唤醒为什么必须回到 SSE 自己的事件循环? |
-| 17 | `interfaces/web/app.py` 的 `GET /api/v1/events` | 断线重连补发, `resync_required`, `server_stopping` | 首次连接为什么**不**补发历史? 缓冲被挤掉之后页面怎么恢复? |
-| 18 | `web/src/runModel.ts` (653 行) + `RunProcess.tsx` (351 行) | 前端把事件流重建成一轮的时间线 | 刷新页面为什么不会丢掉正在跑的那一轮? |
+| 1 | 工具目录 | `dispatcher.catalog_for → ToolCatalog.to_model_schemas → ModelRequest.tools` | turn 开始；收工具时清空 |
+| 2 | 五个内置策略块 | `SystemPromptBuilder._static_blocks` 模块函数 | 进程内 lru_cache |
+| 3 | 工作区指令 | `FsProjectInstructionReader.read → SystemPromptBuilder.build` | 每个 turn 读取一次 |
+| 4 | 平台、工作区、模式能力事实 | `RuntimeFacts.from_profile → render_runtime_context` | 每个 turn 读取一次 |
+| 5 | 会话窗口 | `Window.messages` | 每次模型／工具往返只追加；压缩时整段淘汰 |
+| 6 | 计划、待办、记忆状态帧 | `render_state_frame → to_request_messages` | turn 开始冻结，每次请求置于窗口末尾 |
 
-`shared/serialization.py` (42 行) 值得顺手看一眼: 它只展开值对象, 枚举和基础容器,
-认不出的类型直接抛 —— 而不是调 `__dict__` 或 `model_dump()`. 那份 docstring 解释了
-为什么"图省事"的那条路会让嵌在里面的 dataclass 绕过白名单. (它原先住在
-`interfaces/web/`, 后来第二个消费方出现在落盘那一侧, 于是搬进 `shared/`.)
-
-**配套 ADR**: 0010 (循环架构), 0016 (运行事件流), **0025 (本机 Web 控制面, 含两次修订)**,
-0028 (结构收敛), **0041 (请求六层)**.
-
-**这一段的核心不变量**: `BuiltinAgentLoop` 只产出 `LoopAction` / `LoopStop` 这些值对象.
-它不写文件, 不删文件, 不起子进程 —— 拿不到 `ToolRegistry`, 也拿不到 `ToolRuntime`,
-唯一的对外通道是 `CoordinatorToolDispatcher`. 读第 10 站时刻意验证这一点.
-
-> ADR-0028 之后 `AgentLoop` 与 `ToolDispatcher` 两个 ABC 已删除: 各自只有一个实现,
-> 且实现与抽象同层同文件, 不承担依赖倒置. "唯一通道"这条约束改由 `check_arch.py` 的
-> `SIBLING_BANS` 守着. 旧材料里提到 `application/agent_loop/loop.py` 的, 那个文件已经
-> 不在了.
-
-### 2.1 取消与审批: 两处阻塞点
-
-这两件事在终端时代靠 Ctrl-C 与阻塞式 TTY 提问实现, 现在都变成了 HTTP 上的一次请求, 但
-application 侧的形状**一个字没改** —— 这正是删掉终端入口没有动到业务的原因.
-
-- **取消**: `POST /api/v1/turns/current/cancel` -> `ProjectRuntime.cancel()` ->
-  `TurnCancelSource`. application 只依赖 `shared/cancellation.py` 的 `CancelToken`,
-  不感知信号也不感知 HTTP. 循环工厂经 `current()` 把当前 token 挂到 `ModelRequest` 上.
-- **审批**: `interfaces/runtime/approval.py` 的 `BlockingApprovalBroker` (106 行) 实现
-  `ApprovalService`, 阻塞的是**工具线程**, 由页面上的 `POST /api/v1/approvals/{id}/resolve`
-  或终端里的一次按键解开. 它的 docstring 值得读: **不设等待超时**. 挂钟到点就判成"没批准", 等于让用户去泡
-  杯咖啡的功夫决定这次调用的命运, 而模型收到的是"未获授权"随后整轮停摆 —— 用户回来时
-  既看不到审批卡片, 也没有补救入口. 正确的终止条件只有三个: 用户决定, 用户停止这一轮,
-  服务退出.
-
-### 2.2 一次请求长什么样: 六层与只追加窗口 (ADR-0041 / ADR-0042)
-
-这一段是 2026-09-02 之后新增的, 也是"为什么这一轮变贵了"唯一说得清的地方. 先读
-`domain/agent/state.py::AssembledContext` 的 docstring, 那里有这张表:
-
-```text
-[1] 工具目录        模式级      ModelRequest.tools
-[2] 内置静态策略    包版本级  ┐
-[3] 工作区指令      会话级快照├ ModelRequest.system_prompt
-[4] 运行上下文      模式级    ┘
-[5] 会话窗口        只追加    ┐ ModelRequest.messages
-[6] 当前状态帧      每轮重建  ┘
+```mermaid
+flowchart TD
+    A["AgentTurnService._assemble_context(mode)"] --> B["runtime_facts → ExecutionContext → RuntimeFacts.from_profile"]
+    A --> C["ProjectInstructionReader.read(workspace_roots)"]
+    A --> D["PlanningService.load + MemoryService.load"]
+    A --> E["context_budget() + dispatcher.fence_for(mode)"]
+    B --> F["ContextAssembler.assemble"]
+    C --> F
+    D --> F
+    E --> F
+    F --> G["SystemPromptBuilder.build(instructions)"]
+    G --> H["_static_blocks：五块模板、静态预算校验、进程缓存"]
+    H --> I{"有工作区指令?"}
+    I -->|是| J["_workspace_instructions → _wrap_instruction → escape_sentinels"]
+    I -->|否| K["不生成空工作区块"]
+    J --> L["PromptSnapshot"]
+    K --> L
+    F --> M["render_runtime_context + render_state_frame"]
+    L --> N["AssembledContext：冻结本 turn 材料"]
+    M --> N
+    N --> O["BuiltinAgentLoop._build_request"]
+    O --> P["system_prompt = policy.text + runtime_context"]
+    O --> Q["to_request_messages(当前窗口)"]
+    Q --> R{"state_frame 非空?"}
+    R -->|是| S["返回 window + USER 状态帧；不写回 Window"]
+    R -->|否| T["直接返回 window"]
 ```
 
-**分层的判据只有一个: 变更频率.** 每一层的变更频率不高于它前面那一层, 于是 [1]-[4] 同属
-缓存前缀, 一起命中或一起失效; [5] 只在尾部长; [6] 每轮重建, 但它是整条请求的最后一个
-内容块, 后面没有东西会被它作废.
+状态帧不是工具调用后实时重读的。某轮执行 `todo_set_status` 后，这次工具结果立即进入窗口，
+但新的完整待办状态帧到下一 turn 才重建。FORGE.md 同样是下一 turn 生效。
+静态策略五块加可选工作区块，不能描述成“无条件六块”。前缀缓存是否命中由供应商决定，
+六层组织只是在尽量保持前缀稳定，不是本地命中保证。
 
-两处反直觉, 而它们正是这套设计的要害:
+### 5.2 窗口高水位、合法切点和摘要
 
-- **[4] 运行上下文每轮都可能变, 却放进前缀.** 理由在 `application/context/runtime_view.py`:
-  它的变化源只有换档与加工作区根 (`POST /api/v1/workspace-roots`; 那两份 docstring 沿用
-  终端时代的叫法写成 `/add-dir`), 而两者都会同时改掉工具目录 —— [1] 一变, 后面本来就
-  全部作废. 它的变化是 [1] 变化的**子集**, 进前缀的额外成本恰好为零. 一个例外要守住:
-  每轮都变的时间戳绝不能进这一层.
-- **[6] 计划 / 待办 / 记忆每轮重建, 却不进窗口.** 它们原先是系统提示词尾部的三个块, 而
-  整个 system prompt 排在 messages 之前 —— 一次 `todo_write` 就让前面几十轮全部退出缓存.
-  搬到请求末尾之后, 变的只有它自己那几百 token. 而它**不进窗口**: 进了窗口, 下一轮的
-  历史里就躺着一份过时的状态.
+```mermaid
+flowchart TD
+    A["BuiltinAgentLoop._fit_window → WindowManager.fit"] --> B{"budget 为 None?"}
+    B -->|是| C["原样返回，不猜窗口大小"]
+    B -->|否| D["估算 system_prompt + tools + Window.messages"]
+    D --> E{"非 force 且未超过 request_high_water?"}
+    E -->|是| F["window.within_budget → 原样返回"]
+    E -->|否| G["_policy_for 扣除前缀 → _warn_if_too_tight"]
+    G --> H["_evict → transcript.safe_split_points"]
+    H --> I["Window.plan_eviction：保留尾部、选择合法切点、提取用户原话"]
+    I --> J{"plan.empty?"}
+    J -->|是| K["不淘汰；按 before > allowance 设置 over_allowance"]
+    J -->|否| L{"装配了 gateway?"}
+    L -->|否| M["直接采用 plan.kept；没有摘要调用"]
+    L -->|是| N["summarize(plan) → _flatten(dropped) → gateway.complete(COMPACT)"]
+    N --> O{"response.content 非空?"}
+    O -->|是| P["_summary_block：交接说明 + 逐字用户片段"]
+    O -->|否| Q["_verbatim_block：保留用户片段的兜底"]
+    P --> R["摘要块 + plan.kept"]
+    Q --> R
+    M --> S["新 Window；累计 evicted_count"]
+    R --> S
+    S --> T["重新估算 → CompactionDraft + UsageRecordDraft"]
+    T --> U["WindowFitResult → loop 更新窗口并累计草稿"]
+    U --> V{"over_allowance?"}
+    V -->|是| W["CONTEXT_COMPACTION_REQUIRED"]
+    V -->|否| X["继续模型请求"]
+```
 
-**用户输入不是独立一层** —— 它是 [5] 里的一条普通消息. 多步回合里最后一条往往是 tool
-result 而不是用户那句话.
+合法切点不能把 assistant tool_calls 与尚未补齐的结果拆开。这里是一次批量淘汰，
+不是每条消息都“滑动删除最旧一条”。`_warn_if_too_tight()` 捕获水位校验错误并记录日志，
+不直接抛错终止 turn。
 
-| 文件 | 行数 | 看什么 |
+需要精确区分三种失败：摘要返回空文本有 `_verbatim_block()` 兜底；摘要网关抛异常不会
+被 `summarize()` 吞掉，会沿调用栈上抛；未装配 gateway 时只保留 `plan.kept`，不能宣称
+该分支也生成了完整的用户原话交接块。正常组合根装配了 gateway。
+
+### 5.3 供应商报告超窗：额外一次强制压缩
+
+```mermaid
+flowchart TD
+    A["ModelContextOverflowError"] --> B["BuiltinAgentLoop._recover_from_overflow"]
+    B --> C{"无 context／无 budget／已强压过一次?"}
+    C -->|是| D["CONTEXT_COMPACTION_REQUIRED"]
+    C -->|否| E["_overflow_compactions + 1"]
+    E --> F["WindowManager.fit(force=True)"]
+    F --> G["更新窗口、压缩草稿、usage 草稿、compaction 事件"]
+    G --> H{"产生了压缩 draft?"}
+    H -->|否| D
+    H -->|是| I["_advance：再次执行常规预算检查并请求模型"]
+    I -->|再次超窗| D
+```
+
+强制压缩复用同一套切点逻辑，避免降级路径破坏消息配对。`WindowManager.fit()` 的估算输入
+不显式加入末尾状态帧；网关 `_pre_call_checks()` 看到的是完整请求，因此两处预算结果
+仍可能不同，供应商自己的分词也可能不同。
+
+### 5.4 文件变化：检查点扫描、归因和重新思考
+
+```mermaid
+flowchart TD
+    A["BuiltinAgentLoop.start"] --> B["WorkspaceChangeMonitor.start"]
+    B --> C["OsWorkspaceSnapshotProvider.snapshot"]
+    C --> D["遍历 roots → ignore_predicate → os.walk(followlinks=False)"]
+    D --> E["lstat：size / mtime_ns / file_identity / mode"]
+    E --> F["保存 _last WorkspaceSnapshot"]
+    G["_advance 前后／_dispatch_next 前／_observe_tool 后"] --> H["_check_workspace_changes(source)"]
+    H --> I["WorkspaceChangeMonitor.checkpoint → snapshot"]
+    I --> J["diff_workspace_snapshots(old, new, source)"]
+    J --> K{"路径状态"}
+    K -->|只在新快照| L["CREATED"]
+    K -->|只在旧快照| M["DELETED"]
+    K -->|两边不同| N["MODIFIED"]
+    K -->|相同| O["不产出变化"]
+    L --> P["更新 _last；变化累积到 loop._workspace_changes"]
+    M --> P
+    N --> P
+    P --> Q["_publish_workspace_notice：追加 USER 通知 + workspace_changed 事件"]
+    Q --> R{"模型刚准备直接回答且发现外部变化?"}
+    R -->|是| S["丢弃该次候选最终回答 → 再 _advance"]
+    R -->|否| T["工具结果配齐后继续正常请求"]
+```
+
+这里没有常驻 OS watcher。`source=AGENT` 表示变化发生在“派发工具到收到 observation”之间，
+不是基于进程身份证明文件由 Agent 修改；同时发生的外部修改也可能被归入这段。
+扫描使用元数据，不是对所有文件做内容哈希。工作区变化通知只提供上下文，不能替代工具
+执行前的授权和文件状态校验。
+
+## 6. 主流程：工具安全管线
+
+先读值对象：`domain/tool/spec.py` → `plan.py` → `authorization.py` → `result.py`。
+再读 `application/tool_request/coordinator.py`、`application/security/authorization_service.py`、
+`policy_engine.py`、`application/tools/runtime.py`。
+
+| 对象 | 表达什么 | 不表达什么 |
 |---|---|---|
-| `domain/agent/state.py` | 109 | `AssembledContext` 六层与 `to_request_messages` |
-| `application/context/assembler.py` | 58 | 取材: 哪一层从哪儿读, 什么时候读 |
-| `application/context/runtime_facts.py` | 74 | `from_profile` 的投影规则. **`ExecutionProfile` 的 trusted_path 与 protected_roots_hash 绝不能进这一层** |
-| `application/context/runtime_view.py` | 53 | [4] 的渲染, 以及"为什么进前缀"那段 docstring |
-| `application/context/state_view.py` | 120 | [6] 的渲染. 注意帧内正文要转义 —— 记忆是模型写的且静默写入 |
-| `application/prompt/sentinels.py` | 45 | 两处分隔行与它们的转义器. 与 FORGE.md 共用同一道防线 |
-| `domain/context/window.py` | 166 | `Window` / `WindowPolicy` / `EvictionPlan`: 只追加, 批量淘汰 |
-| `application/context/window_manager.py` | 231 | 估一下, 超了就淘汰. 替代了原先的 `ContextManager` |
-| `application/context/transcript.py` | 39 | 只剩 `safe_split_points` 一个函数 |
-| `application/context/summarize.py` | 255 | 二级摘要. 触发点从"快溢出"改成"撞水位" |
-| `application/prompt/system_prompt_builder.py` | 131 | [2][3] 的编译. `lru_cache(maxsize=1)`, 一个进程一次 |
-| `domain/prompt/blocks.py` | 92 | 六个块的定义, 以及 `cacheable` 为什么被删 |
+| `ToolSpec` | 能力上界、schema、目标声明能力、输出倾向 | 一次调用已获准 |
+| `ToolPlan` | 规范化参数、目标、effects、上下文引用、状态绑定 | 人已经批准 |
+| `AnalysisFindings` | 对计划的收缩、风险、不可执行原因、ASK／DENY 事实 | 可以越过恢复层直接执行 |
+| `AuthorizationDecision` | ALLOW／ASK／DENY 以及有效计划 | 一次性执行凭证 |
+| `ExecutionAuthorization` | 已裁决计划、画像、有效期、恢复绑定 | 任意新参数也能执行 |
+| `ToolResult` | 真实执行结果、summary/data/body、metrics | 本次调用的全部安全决策 |
+| `ToolObservation` | 给循环的统一结果／拒绝说明和处置 | 界面展示的全部过程事件 |
 
-**这一段的核心不变量**: 窗口只追加. `transcript.rewrite` 被删掉不是顺手清理 ——
-`window.py` 的 docstring 把理由写死了: 留着机制入口就等于留着退回去的路, 而"回头整理
-一下历史"永远是看起来合理的. 在前缀缓存下, 改中段一处的成本等于它自己加上它后面的全部
-内容; `dedup.py` 留下的实测是"省一份 4k 正文, 亏 79k 未命中".
+### 6.1 Dispatcher 与 Coordinator 全链路
 
-推广成通则, 也是这份 ADR 最值得带走的一句: **不得不作废前缀时, 要罕见且大块, 绝不能
-连续小步.** "保留最近 N 条"每轮从头部丢一条, 而头部就是前缀的开头 —— 每一轮都在付整段
-重算的钱.
-
-**读完能回答**:
-- 一个回合内连续两次模型调用, 哪几层必须逐字节相同? 为什么这条能写成用例?
-- 淘汰点为什么必须落在 `safe_split_points` 上? 落错了会怎样?
-- 水位为什么是从 `ContextBudget` **导出**的, 而不是配置里的一个常量?
-- `WindowPolicy.assert_fits` 为什么只记不抛, 而且不能做成构建期检查?
-
-## 3. 主线二: 一次工具调用是怎么被裁决的
-
-**这是整个项目最核心的部分**, 也是最难的. 预留最多时间.
-
-先读值对象, 再读管线, 最后读工具实现.
-
-### 3.1 值对象层 (`domain/tool/`)
-
-按这个顺序:
-
-1. `capability.py` (83 行) —— 17 个能力的闭集. 整套解耦的基础.
-2. `spec.py` (150 行) —— `ToolSpec`: 能力**上界**, 不是放行证明. 注意它**没有**
-   `requires_authorization`, **没有** `risk_level`, 也**没有** `action` —— 三条口径的
-   理由都写在 docstring 里. (第四条是新的: `ToolAction` 枚举的唯一消费方是提示词里那张
-   按动作分组的工具表, ADR-0042 删掉那张表之后它的消费方归零, 于是整个枚举一起删.)
-   顺带看 `TargetDeclarationAbility` 三档 (STATIC / EXPANDABLE / OPAQUE) 与它的
-   `permits`, 以及新增的 `body_in_window` —— 这个工具的正文进不进窗口, 逐工具声明
-   (ADR-0041 决策 6).
-3. `plan.py` (243 行) —— `ToolPlan`: 工具与安全之间**唯一**的事实载体. 这是全项目最
-   重要的一个值对象, 值得读两遍. 注意 `TargetResolution` 与 `DeclarationConfidence`
-   的区别, 以及 `FileStateBinding` (ADR-0027 的执行前复核锚点).
-4. `authorization.py` (135 行) —— `ExecutionAuthorization`: 不透明, 单次使用. 看
-   `validate_narrowing` —— 安全模块只能**收缩**计划, 不能放宽.
-5. `hashing.py` (75 行) —— 为什么不能用 `dataclasses.asdict`, 以及 `compare=False`
-   的字段为什么一律不进哈希. 这份 docstring 是理解 §9 那条"缓存"误解的钥匙.
-6. `result.py` (292 行) —— `ToolResult` 现在分三段: `summary` 无条件进窗口,
-   `data` 是结构化结论, `body` 按 `ToolSpec.body_in_window` 与两条阈值决定进窗口还是
-   换成 `artifact_read` 句柄 (ADR-0041 决策 6 / 决策 9). 两个常量的取值理由写在文件
-   开头, 都是从真实日志里算出来的 —— `MAX_SUMMARY_CHARS = 200` 防的是模型自己写的
-   命令串把摘要撑爆, `_INLINE_ALWAYS_BELOW_CHARS = 6000` 是"换成句柄划不划算"的盈亏
-   平衡点. 顺带看 `render_for_model(include_body=...)`: 声明只是**倾向**, 不是命令.
-7. `errors.py` / `catalog.py` / `tool_call.py` —— 快速过一遍.
-
-**读完能回答**: 为什么"新增工具不需要修改安全模块"? 这句话靠什么机制成立?
-
-### 3.2 管线 (`application/tool_request/` + `application/security/`)
-
-`application/tool_request/coordinator.py` 是整条管线的主干 (739 行). **先只读
-`handle` 与 `_resolve` 两个方法**, 把它们调用的每个私有方法当黑盒, 建立顺序感:
-
-```text
-handle: bind_turn -> 补 workspace_id -> 绑 invocation_id 到日志上下文
-_resolve:
-  catalog_for(mode) -> _check_availability -> _prepare
-    -> ToolAuthorizationService.evaluate
-    -> DENY / ASK / ALLOW 三条分支
-    -> (ASK 时) 阻塞审批 -> _revalidate 重新 prepare + 重新裁决 + 比对 ApprovalBinding
-    -> _execute: 恢复事务 -> authorization.issue -> 写前审计 -> ToolRuntime.execute
+```mermaid
+flowchart TD
+    A["AgentTurnService._run_tool"] --> B["CoordinatorToolDispatcher.dispatch"]
+    B --> C["fence_factory(mode) + 新 context_factory()"]
+    C --> D["PolicyContext：mode / session / turn / profile / fence / confined"]
+    D --> E["ToolRequestCoordinator.handle：bind_turn、workspace_id、invocation_id"]
+    E --> F["_handle_bound → _resolve"]
+    F --> G["catalog_for → _check_availability"]
+    G --> H{"工具在本模式目录?"}
+    H -->|否且未注册| I["TOOL_UNAVAILABLE"]
+    H -->|否但已注册| J["TOOL_UNAVAILABLE_IN_MODE"]
+    H -->|是| K["_prepare → registry.get → Tool.prepare"]
+    K --> L{"PreparationError?"}
+    L -->|是| M["PREPARATION_FAILED，通常 can_retry=true"]
+    L -->|否| N["_check_declaration：spec ability.permits(plan resolution)"]
+    N -->|违约| O["PREPARATION_FAILED，can_retry=false"]
+    N -->|一致| P["observer.tool_prepared → authorization.evaluate"]
+    P --> Q["observer.policy_resolved"]
+    Q --> R{"decision"}
+    R -->|DENY| S["_denied：区分 COMMAND_UNRUNNABLE / POLICY_DENIED"]
+    R -->|ASK| T["_seek_approval → §6.4"]
+    R -->|ALLOW| U["_execute → §6.5"]
+    T -->|审批通过并重验通过| U
+    T -->|拒绝／无人作答／绑定变化| V["ToolObservation 拒绝或可重试说明"]
+    U --> W["ToolObservation 执行结果"]
+    I --> X["_handle_bound：非执行结果发布 tool_rejected"]
+    J --> X
+    M --> X
+    O --> X
+    S --> X
+    V --> X
+    X --> Y["to_loop_observation → loop.observe"]
+    W --> Y
 ```
 
-然后逐个展开:
+目录过滤不是唯一防线：模型即使编造了未展示工具名，协调器也会再查。`prepare()` 只读，
+参数错误无需进入策略引擎。执行只消费 `effective_plan`，不会重新解析原始 request.arguments。
 
-| 文件 | 行数 | 职责 |
+### 6.2 能力分析与 Shell 子流程
+
+```mermaid
+flowchart TD
+    A["ToolAuthorizationService.evaluate"] --> B["CapabilityAnalyzerRegistry.analyze"]
+    B --> C["按声明 capabilities 选择 DERIVE 分析器，按枚举序去重"]
+    C --> D["ShellCapabilityAnalyzer.analyze"]
+    D --> E{"analysis_subject 是 ShellSubject?"}
+    E -->|否| F["PARSE_INCOMPLETE ASK 事实"]
+    E -->|是| G["parse_command：方言来自真实 shell_launch"]
+    G --> H{"解析完整?"}
+    H -->|否| I["_handle_incomplete → prefilter_raw"]
+    I -->|命中红线| J["findings.denied"]
+    I -->|未命中| F
+    H -->|是| K["inspect_command：结构化 Hard Deny"]
+    K -->|命中| J
+    K -->|未命中| L["expand_targets → effects_of → _capabilities_of → _narrow"]
+    L --> M["bind_executables：解析与绑定可执行文件／脚本事实"]
+    M --> N["_check_irreversible → _check_target_closure"]
+    N --> O{"目标不封闭／执行效果无法证明?"}
+    O -->|有真围栏| P["记录风险事实；不因这一点直接追加 ASK"]
+    O -->|无真围栏| Q["记录风险并追加 ASK 原因"]
+    O -->|目标明确| R["保留收缩后的计划"]
+    F --> S["按收缩后 capabilities 选择 CHECK 分析器"]
+    J --> S
+    P --> S
+    Q --> S
+    R --> S
+    S --> T["工作区／网络／未知能力等检查器继续处理 findings"]
+    T --> U["validate_narrowing(original, findings.plan)"]
+    U --> V["PolicyEngine.decide → _apply_learned_rule"]
+```
+
+DERIVE 先把不透明命令变为事实，CHECK 再按实际能力检查，不能反过来对 Shell 的最宽能力
+声明直接报警。可执行文件绑定、脚本读取的细节继续读 `analyzers/executable_binding.py`、
+`script_binding.py`、`executable_resolver.py`。工具层和安全层之间传递的是计划，不是工具实例。
+
+### 6.3 策略分支：以 _verdict 的真实顺序为准
+
+```mermaid
+flowchart TD
+    A["PolicyEngine.decide → _verdict"] --> B{"findings.hard_deny?"}
+    B -->|是| C["DENY：不可被批准／学习规则覆盖"]
+    B -->|否| D{"findings.unrunnable?"}
+    D -->|是| E["DENY：命令当前接不起来；允许换可执行方案"]
+    D -->|否| F["_only_hard_deny = fence.unrestricted 且 confined"]
+    F --> G{"mandatory_ask 且不是 unrestricted?"}
+    G -->|是| H["ASK，mandatory=true"]
+    G -->|否| I["_reliable_capabilities：有围栏且目标不封闭时移除不可靠越界推导"]
+    I --> J{"非 unrestricted 且触及 _NEVER_AUTO?"}
+    J -->|是| H
+    J -->|否| K["capabilities_requiring_approval(capabilities, fence, confined, targets_closed)"]
+    K --> L{"还有预算外能力?"}
+    L -->|是| M["ASK；优先使用分析器的具体原因"]
+    L -->|否| N{"requires_ask 且非 unrestricted?"}
+    N -->|是| O["ASK：分析不足以自动放行"]
+    N -->|否| P["ALLOW + _allow_reason"]
+    H --> Q["ToolAuthorizationService._apply_learned_rule"]
+    M --> Q
+    O --> Q
+    P --> Q
+    C --> Q
+    E --> Q
+    Q --> R{"普通 ASK、非 mandatory、存在 learned service?"}
+    R -->|否| S["原裁决返回"]
+    R -->|是| T["LearnedRuleService.find"]
+    T -->|未命中| S
+    T -->|命中| U["改为 ALLOW / LEARNED_ALLOW"]
+```
+
+这里纠正旧文档的“最后默认 DENY”：当前 `_verdict()` 在所有禁止／需批准条件排除后
+返回 ALLOW。保守性由前置事实、能力预算和授权校验共同构成，不能凭旧模块注释画一个不存在的
+最终 DENY 分支。
+
+`domain/security/budget.py::fence_allowed_capabilities()` 的关键分支：
+
+```mermaid
+flowchart TD
+    A["fence_allowed_capabilities"] --> B["先加入 _ALWAYS：计划、归档、记忆、提问、工作区读、进程能力"]
+    B --> C{"没有 fence?"}
+    C -->|是| D["返回基线能力"]
+    C -->|否| E{"unrestricted 且 confined?"}
+    E -->|是| F["全部 Capability；Hard Deny 仍由上游保留"]
+    E -->|否| G{"fence 非只读?"}
+    G -->|是| H["加入工作区写／删除／移动"]
+    G -->|否| I{"confined?"}
+    H --> I
+    I -->|否| J["扣除 _NEVER_AUTO 后返回"]
+    I -->|是| K["加入 MODEL_CALL"]
+    K --> L{"automatic_opaque_execution?"}
+    L -->|是| M["加入 Shell／脚本／网络能力"]
+    L -->|否| N{"automatic_shell 且 targets_closed?"}
+    N -->|是| O["只加入透明 Shell 能力"]
+    N -->|否| J
+    M --> J
+    O --> J
+```
+
+accept_edits 的透明 Shell 自动批准依赖**真围栏和目标封闭**；auto 允许围栏内不透明执行。
+“允许 NETWORK_ACCESS”不等于实际网络畅通，最终由 `FencePolicy.network_allowed` 约束。
+批准一次调用也不会修改 fence。
+
+### 6.4 审批、学习与批准后重新校验
+
+```mermaid
+flowchart TD
+    A["_seek_approval(decision)"] --> B["build_view + scopes_for + learn_block_reason"]
+    B --> C["build_binding(plan, catalog, policy, view_hash)"]
+    C --> D["ApprovalRequest → observer.approval_requested"]
+    D --> E["ApprovalService.request → HumanPromptService.ask，见 §7"]
+    E --> F["observer.approval_resolved → ApprovalRequest.response_error"]
+    F --> G{"响应契约有效?"}
+    G -->|否| H["APPROVAL_UNAVAILABLE：invalid response"]
+    G -->|是| I{"response.approved?"}
+    I -->|否，明确拒绝| J["APPROVAL_DENIED"]
+    I -->|否，未解决／无人可答| K["APPROVAL_UNAVAILABLE"]
+    I -->|是| L["_revalidate"]
+    L --> M["重新 catalog_for → _prepare → authorization.evaluate"]
+    M --> N{"准备失败或新裁决 DENY?"}
+    N -->|是| O["返回对应拒绝；批准不能覆盖新事实"]
+    N -->|否| P["重建 view 与 binding → approved_binding.differences(current)"]
+    P --> Q{"存在差异?"}
+    Q -->|是| R["APPROVAL_REQUIRED，can_retry=true，旧批准作废"]
+    Q -->|否| S["绑定 approval_view_hash"]
+    S --> T{"批准 scope 要学习且 learned service 存在?"}
+    T -->|是| U["LearnedRuleService.record"]
+    T -->|否| V["替换裁决为 ALLOW / APPROVAL_GRANTED"]
+    U --> V
+    V --> W["进入 _execute"]
+```
+
+重验失败不会在同一次 `_seek_approval()` 中自动再次弹卡，而是把可重试 observation 交回模型。
+学习发生在重验通过后，避免一个已失效批准留下永久规则。`_revalidate()` 使用传入的 context
+再次读取事实，并非调用新的 context_factory；运行期仍有下一道状态复核。
+
+### 6.5 恢复屏障、授权信封与执行
+
+```mermaid
+flowchart TD
+    A["ToolRequestCoordinator._execute"] --> B["RecoveryFlow.begin，见 §10"]
+    B -->|RecoveryUnavailableError| C["RECOVERY_UNAVAILABLE；不签发、不执行"]
+    B -->|建立保障或无需事务| D["ToolAuthorizationService.issue(ALLOW)"]
+    D --> E["ExecutionAuthorization：有效计划、画像、TTL、恢复绑定、审批视图哈希"]
+    E --> F["observer.tool_started → ToolRuntime.execute"]
+    F --> G["_require_envelope → _resolve_tool"]
+    G --> H{"计划能力未超 spec 且 spec_hash 一致?"}
+    H -->|否| X["AuthorizationError"]
+    H -->|是| I["envelope.ensure_usable：有效期／撤销／画像"]
+    I -->|失败| X
+    I -->|通过| J{"single_use 且已消费?"}
+    J -->|是| X
+    J -->|否| K["首次尝试即登记 consumed"]
+    K --> L["context.differences(plan.execution_context)"]
+    L -->|有变化| X
+    L -->|无变化| M["_verify_file_state：realpath、身份、元数据、内容哈希"]
+    M -->|变化| X
+    M -->|一致| N{"传入 cancel 且已取消?"}
+    N -->|是| O["返回 CANCELLED ToolResult"]
+    N -->|否| P["Tool.perform(effective_plan, context, cancel)"]
+    P -->|抛普通异常| Q["记录 traceback → TOOL_ERROR / tool_exception"]
+    P -->|返回| R["必要时补 duration"]
+    O --> S["RecoveryFlow.finish"]
+    Q --> S
+    R --> S
+    S --> T["observer.tool_completed → fence_hint(raw_output)"]
+    T --> U["_completed → ToolObservation → render → LoopObservation"]
+    X --> V["_authorization_refused → RecoveryFlow.abort"]
+    V --> W["tool_cancelled(side_effect_unknown=false) → 拒绝 observation"]
+```
+
+一次性授权在文件复核前消费，即使随后状态漂移也必须重新 prepare／裁决。
+`FileStateBinding` 的通用复核与各工具自己的 `path_state_token()` 校验并存。二者都不能被
+描述成“完全消除了任何外部进程在最后一瞬修改文件的可能”。
+
+## 7. 分支流程：人机提示、取消与计划评审
+
+源码入口：`interfaces/runtime/human_interaction/broker.py`、
+`application/human_interaction/service.py`、`application/security/approval_service.py`、
+`application/tools/builtin/ask_user.py`、`application/planning/plan_review.py`。
+
+### 7.1 提问与审批共用队列，返回语义不同
+
+```mermaid
+flowchart TD
+    A["审批 _seek_approval"] --> B["ApprovalService.request：审批视图转 HumanPrompt"]
+    C["AskUserTool.perform"] --> D["_prompt：问题转 HumanPrompt(kind=QUESTION)"]
+    B --> E["BlockingHumanPromptBroker.ask"]
+    D --> E
+    E --> F["锁内 _refuse"]
+    F --> G{"closed／本 turn cancelled／问题次数超额?"}
+    G -->|是| H["PromptAnswer(resolved=false, note)"]
+    G -->|否| I["登记 _Pending(prompt, turn代次) → prompt_requested"]
+    I --> J["pending.ready.wait：无超时等待"]
+    J --> K["Web /prompts 或 TUI list_pending 显示卡片"]
+    K --> L["ProjectRuntime.resolve_prompt → broker.resolve"]
+    L --> M{"存在、未解决、代次一致、accepts_answer?"}
+    M -->|否| N["返回 false；不唤醒等待方"]
+    M -->|是| O["before_resolve → _record_prompt_answer"]
+    O --> P["问题回答先写 USER_QUESTION_ANSWERED"]
+    P --> Q["设置 pending.answer → ready.set"]
+    Q --> R["ask.finally 删除 pending + prompt_resolved"]
+    R --> S{"调用者"}
+    S -->|ApprovalService| T["映射 ApprovalResponse → 协调器继续重验／拒绝"]
+    S -->|AskUserTool| U["answered／skipped ToolResult → 同一 turn 继续"]
+    H --> V{"调用者"}
+    V -->|审批| W["未获授权 → 不执行，HALT 处置"]
+    V -->|提问| X["_unanswered → no_answer；让模型按已有信息继续"]
+```
+
+只对 QUESTION 计提问额度，审批不占这个额度。跳过问题不是同意推荐选项；自由文本、单选／多选
+和可跳过规则由 `HumanPrompt.accepts_answer()` 校验。问题答案先持久化再唤醒工具，避免下一次
+模型请求先于不可重建的人类回答落盘。
+
+### 7.2 取消：同步边界和当前接线限制
+
+```mermaid
+flowchart TD
+    A["POST /turns/current/cancel 或 TUI Ctrl-C"] --> B["ProjectRuntime.cancel"]
+    B --> C["持有 _run_lock"]
+    C --> D{"当前状态 running?"}
+    D -->|否| E["返回 false"]
+    D -->|是| F["cancel_source.current → token.cancel"]
+    F --> G["prompts.cancel_turn：锁内先置 cancelled 闩"]
+    G --> H["_release_locked：唤醒所有未解决 pending"]
+    H --> I["以后在同一代次 ask → _refuse 直接返回未解决"]
+    H --> J["已经等待的 ask → resolved=false 返回"]
+    F --> K["主模型 ModelRequest.cancel_token 可观察取消"]
+    K --> L["网关／Invoker 归一中断 → USER_CANCELLED"]
+    J --> M["审批返回不可用／问题返回无回答；随后模型调用看到 token"]
+    N["下一次 start_turn"] --> O["同一 _run_lock 内 issue 新 token + begin_turn 新代次"]
+    O --> P["之后才启动后台线程"]
+```
+
+必须按源码区分“具备取消参数”和“生产调用确实传了 token”：当前
+`AgentTurnService._run_tool()` 调 `dispatcher.dispatch()` 没传 `cancel`，因此正常 Agent 工具链
+默认收到 None。`ToolRuntime`、`ShellRunTool`、`LocalCommandExecutor` 虽支持 CancelToken，
+不能据此声称点击停止会立即终止正在执行的 Shell。broker 的取消释放与主模型 token 仍生效。
+标题／压缩等另建的模型请求也没有自动继承主请求 token，阅读取消延迟时要逐段查。
+
+### 7.3 计划评审：结束本 turn，再决定是否新起一轮
+
+```mermaid
+flowchart TD
+    A["PlanWriteTool.perform"] --> B["ToolResult.turn_disposition = AWAIT_USER_DECISION"]
+    B --> C["Coordinator._completed → PLAN_REVIEW_REQUIRED"]
+    C --> D["loop._observe_tool → 补齐未执行结果 → WAIT_PLAN_REVIEW"]
+    D --> E["AgentTurnService：COMPLETED + PLAN_REVIEW pause"]
+    E --> F["ProjectRuntime：waiting_plan_review"]
+    F --> G["Web /plan/review 或 TUI review → resolve_plan_review"]
+    G --> H{"当前确实等待且有 active plan?"}
+    H -->|否| I["返回 None"]
+    H -->|是| J["PlanReviewService.decide"]
+    J --> K{"choice"}
+    K -->|REJECT| L["set_plan_status(REJECTED)，无 follow_up"]
+    K -->|AMEND| M["SUPERSEDED + 补充意见 follow_up"]
+    K -->|APPROVE| N["APPROVED + seed_from_plan，暂不运行"]
+    K -->|APPROVE_AND_RUN| O["APPROVED + seed_from_plan + _upgraded_mode"]
+    O --> P{"mode.sandbox == READ_ONLY?"}
+    P -->|是| Q["返回 SessionMode.AUTO"]
+    P -->|否| R["不改变 mode"]
+    Q --> S["返回执行 follow_up"]
+    R --> S
+    L --> T["runtime 记录 PLAN_REVIEWED；必要时 session.set_mode"]
+    M --> T
+    N --> T
+    S --> T
+    T --> U["旧 TurnRun 标 completed"]
+    U --> V{"outcome.follow_up 非空?"}
+    V -->|是| W["start_turn(follow_up, origin=PROGRAM)"]
+    V -->|否| X["等待用户下一条输入"]
+```
+
+实际升档条件是 `mode.sandbox is READ_ONLY`，不只是与某个 PLAN 预设对象相等。
+批准计划不产生执行授权，不写 learned rule；新 turn 的每个工具仍完整经过 §6。
+
+## 8. 分支流程：12 个内置工具如何真正执行
+
+注册清单以 `interfaces/runtime/tool_wiring.py::build_tool_stack()` 为准。下列每个 perform
+入口之前，都有 §6 的统一管线；图中“授权后”不表示工具可以自己绕过管线。
+
+| 工具名 | 实现类 | 主要协作对象 |
 |---|---|---|
-| `tool_request/catalog_predicates.py` | 44 | mode 能力门. 只有 plan 档收窄目录, 其余三档差别在裁决 |
-| `tool_request/approval_flow.py` | 107 | 审批视图与 `ApprovalBinding` 怎么拼 (从协调器分出去的"拼什么") |
-| `tool_request/recovery_flow.py` | 104 | 恢复事务的登记与收尾 (分出去的"记什么") |
-| `tool_request/observations.py` | 278 | 回给模型的 `ToolObservation` 与它的 `reason_code` |
-| `tool_request/audit.py` / `run_observer.py` | 103 / 81 | 审计与展示两条独立出口, 都是 ABC |
-| `security/authorization_service.py` | 160 | 按能力分派分析器, 校验收缩, 交给策略引擎 |
-| `security/analyzers/registry.py` | 111 | 分析器注册表. 按 `Capability` 分派, **不认识工具名** |
-| `security/policy_engine.py` | 211 | 最终裁决. `Hard Deny > Mandatory Ask > 围栏边界 > 分析器 Ask > Allow`, 兜底 DENY |
-| `domain/security/budget.py` | 138 | 哪些能力可以不问人. **顶替了原先的 `modes.py` 能力预算表** |
-| `domain/security/hard_deny.py` | 289 | 结构化判定 + 原始串预扫描两层, 分工而不叠加 |
-| `domain/security/protected_paths.py` | 133 | Hard Deny 的路径判据. 只看 realpath |
-| `security/learned_rules.py` | 193 | `always` 规则. 注意它落盘, 且按项目分区 |
-| `tool_request/fence_hint.py` | 54 | 把"疑似被围栏拦下"翻成模型看得懂的下一步. 配套 `domain/execution/denial.py` |
-| `tools/runtime.py::ToolRuntime.execute` | 202 | 唯一执行入口. 授权为空即拒, 且执行前复核 `FileStateBinding` |
+| `fs_read` | `ReadFileTool` | FileSystemView、ResourceGovernor、ArtifactStore |
+| `search_text` | `SearchTextTool` | glob、regex、文件状态令牌、输出归档 |
+| `fs_apply_patch` | `ApplyPatchTool` | patch_envelope、patch_apply、text_edit、注入的写函数 |
+| `shell_run` | `ShellRunTool` | CommandExecutor、SandboxProvider、输出归档 |
+| `artifact_read` | `ArtifactReadTool` | ArtifactStore |
+| `ask_user` | `AskUserTool` | HumanPromptService，流程见 §7.1 |
+| `plan_read` | `PlanReadTool` | PlanningService.read_plan |
+| `plan_write` | `PlanWriteTool` | PlanningService.write_plan、计划评审 |
+| `todo_write` | `TodoWriteTool` | PlanningService.write_todo |
+| `todo_set_status` | `TodoSetStatusTool` | PlanningService.update_status |
+| `memory_write` | `MemoryWriteTool` | MemoryService.remember |
+| `memory_forget` | `MemoryForgetTool` | MemoryService.forget |
 
-`domain/security/budget.py` 值得单独看一眼 —— 它是 ADR-0030 改动的落点:
+这些实现位于 `application/tools/builtin/`。共用 `base.py` 提供 `validate_arguments()`、
+`resolve_target()`、`path_state_token()`、`emit_text()` 等函数；当前仍由具体工具调用，
+不是 ToolRuntime 自动对所有工具运行一套 schema／输出模板。
 
-```text
-旧 (modes.py):  这次调用请求了哪些 Capability, 该模式的表里有没有
-新 (budget.py): 这次调用要触达的东西, 围栏兜不兜得住
+### 8.1 fs_read：解析目标、执行前复核与读取窗口
+
+```mermaid
+flowchart TD
+    A["ReadFileTool.prepare"] --> B["validate_arguments → resolve_target"]
+    B --> C{"存在且最终目标是普通文件?"}
+    C -->|否| D["PreparationError：不存在／不可读／非法入参"]
+    C -->|是| E["facts(realpath) → scope_of → read_capability"]
+    E --> F["ToolPlan：realpath、source_size、source_state、offset、limit、max_bytes"]
+    F --> G["经 §6 裁决授权 → ReadFileTool.perform"]
+    G --> H["重新 facts → path_state_token"]
+    H --> I{"与 source_state 一致?"}
+    I -->|否| J["TOOL_ERROR / target_changed / retryable=true"]
+    I -->|是| K["limits_for → max_bytes 与归档上限取小值"]
+    K --> L["filesystem.read_text → _slice(offset, limit)"]
+    L --> M["_slice 产生正文及范围／不完整说明"]
+    M --> N["emit_text：内联和归档，见 §8.7"]
+    N --> O["ToolResult：summary、data、content_parts、metrics、provenance"]
 ```
 
-两者形状相似 (都是"表外一律 ASK"), 差别在判据的来源: 前者要靠分析器从命令串里推导出
-一个准确的能力集合才成立, 后者不需要 —— 围栏在系统调用那一刻说了算.
+路径归属按最终 realpath 判断，不能凭输入路径看起来位于项目内就算工作区读取。
+读取字节上限、行窗口和输出内联上限是三个不同限制；`truncated` 不能单独代表“读过整个文件”。
+位置说明作为额外 ContentPart，避免混入模型下一次准备精确匹配的文件正文。
 
-`policy_engine.py` 里的 `_NEVER_AUTO` 与 `budget._NEVER_AUTO` 同源却各留一份, 原因写在
-注释里: 引擎这一支要置 `mandatory`, 那是 budget 表达不了的.
+### 8.2 search_text：冻结搜索范围与不完整结果
 
-> **2026-08-30 的审计出口收窄**: `ToolAuditSink` 原先有两个"通用出口" (`approval_event`
-> 与 `recovery_event`), 都收一个事件名字符串, 共用 `SessionToolAudit` 里一张 `_EVENT_NAMES`
-> 表翻成 `EventType`, 查不到就 `return`. 查下来 `approval_event` **零个生产调用点**
-> (审批照样有审计: 走 `policy_decision` 写 `POLICY_DECISION`), 表里 7 行只有 2 行可达.
-> 而 `if event_type is None: return` 是一个静默丢弃 —— 名字拼错那条审计就凭空消失, 没有
-> 任何东西报错, 而审计的全部价值就是事后能回答"这件事发生没发生". 现在 `recovery_event`
-> 直接收 `EventType`, 类型检查接管了原来靠字符串对齐的部分.
-
-`fence_hint.py` 与 `domain/execution/denial.py` 是新加的一对, 值得一起读, 因为它们是
-这个库里少见的**把一条启发式的方向讲清楚**的例子. 围栏在子进程那一侧没有干净的信号:
-Seatbelt 把拒绝写进系统日志, 子进程只拿到 EPERM; bubblewrap 干脆让路径不存在. 命令报出
-来的就是一句 `Permission denied`, 与"这个文件本来就只读"长得一模一样. 认错的代价是
-"多一句没用的提示", 认漏的代价是"回到今天的样子" —— 两个方向都不通往越界, 这才是这条
-启发式可以接受的前提. 它只丰富一条提议, 不放行任何东西.
-
-**配套 ADR**: 0004 (工具系统), 0013 (分层 Shell 安全), **0021 (失败向安全的默认值)**,
-0027 (单一安全事实链与执行前复核), **0030 (运行期围栏)**, 0028 (结构收敛).
-0021 记录了一轮审计发现的系统性缺陷, 读它能理解这套设计在防什么.
-**ADR-0044 未实现, 但它的 §背景 那张"`ToolPlan` 的六个消费方"表是这一节最好的索引** ——
-它逐条写出 prepare 产出的计划到底被谁读, 读去做什么.
-
-**读完能回答**:
-- 人类批准之后为什么还要重新 prepare 一遍?
-- `ApprovalBinding` 只有 6 个字段, 为什么够? (提示: 看它的 docstring 说 tool_name,
-  spec_hash, target_set_hash 去哪了)
-- `plan_hash` 里为什么不含 `filesystem_view_version`?
-- plan 档下模型硬要调 `shell_run` 会发生什么? 有几道防线?
-
-### 3.3 工具实现 (`application/tools/`)
-
-先读 `tool.py` (72 行, `Tool` ABC) 和 `builtin/base.py` (229 行, 共享助手), 然后按
-**从简到繁**:
-
-```text
-planning_tools.py  最简单. 五个工具共用一个 prepare, PLAN_ONLY, 空 PlanEffects
-memory_tools.py    同上. 顺带看 domain/memory/secrets.py 怎么挡住疑似凭证
-artifact_read.py   入参是内容哈希不是路径 —— 目标集合"机制上封闭"的最小例子
-fs_read.py         看它怎么按调用现场决定是 WORKSPACE_READ 还是 EXTERNAL_READ
-fs_find.py         看 EXPANDABLE: 在 prepare 里把 glob 展开成封闭集合; 输出形态跟着
-                   pattern 走 (tree_view.py 是它不带 pattern 时的渲染)
-search_text.py     看它为什么不 shell out 到 grep/rg; 正则由 `regex` 的 timeout 兜底,
-                   不再按语法拒绝
-find_definition.py 看它与 search_text 的分工: 语法树只出定义, 不出 import 与调用点
-git_read.py        看它为什么一个进程都不起. 查询走 libgit2 (application/tools/
-                   git_queries.py 是端口, infrastructure/workspace/
-                   pygit2_git_queries.py 是实现), 于是 SPAWN_PROCESS 也不用声明
-fs_apply_patch.py  最长的写入口 (600 行). 一段补丁 = 一次审批 = 一个恢复点.
-                   配套 patch_envelope.py (补丁语法), patch_apply.py (施加),
-                   text_edit.py (FIND 段的容差对齐)
-shell_run.py       能力上界最宽的一个. OPAQUE + 12 个能力
+```mermaid
+flowchart TD
+    A["SearchTextTool.prepare"] --> B["validate_arguments；query 非空；regex.compile 校验"]
+    B -->|无效| C["INVALID_INPUT"]
+    B -->|有效| D["resolve_target(path 或 primary_root)"]
+    D --> E{"目标类型"}
+    E -->|普通单文件| F{"符号链接?"}
+    F -->|是| G["UNSUPPORTED_REQUEST"]
+    F -->|否| H["files = 单个 realpath"]
+    E -->|目录| I["expand_glob(in_files, skip_ignored)；限制候选数"]
+    E -->|其他| J["TARGET_UNREADABLE"]
+    I --> K["过滤符号链接／非普通文件 → _rank 排序 → 限制文件数"]
+    K --> L["_plan_for：冻结 files、file_states、截断事实"]
+    H --> L
+    L --> M["授权后 perform：_matcher 构造匹配器"]
+    M --> N{"还有文件且未达命中上限?"}
+    N -->|否| Y["汇总 incomplete_notes"]
+    N -->|是| O{"cancel 已设置?"}
+    O -->|是| P["记录 cancelled，停止扫描"]
+    P --> Y
+    O -->|否| Q{"当前 path_state_token 与计划一致?"}
+    Q -->|否| R["target_changed → 返回可重试错误"]
+    Q -->|是| S["read_text_if_text(max_bytes)"]
+    S --> T{"二进制?"}
+    T -->|是| U["计 skipped_binary → 下一文件"]
+    U --> N
+    T -->|否| V["逐行匹配；正则超长行先截断"]
+    V --> W["_render_hits：路径分组、行号、上下文行"]
+    W --> N
+    Y --> Z["标明 glob／文件／字节／符号链接／二进制／命中／长行／取消限制"]
+    Z --> AA["emit_text → ToolResult(data.complete, matches, files)"]
 ```
 
-> ADR-0029 按"动作"重组过这批模块: `fs_scan_tree` + `fs_list_files` 合并成 `fs_find`;
-> `fs_create_file` / `fs_edit_file` / `fs_delete` / `fs_create_directory` / `fs_move`
-> 五个入口合并成 `fs_apply_patch`. ADR-0036 又把工具名从点号分段 (`fs.read`) 改成
-> 下划线分段 (`fs_read`). 旧材料里的工具名基本都要换算一遍.
+零命中且 `complete=false` 只能说明扫描过的范围没有匹配，不能解释成整个项目不存在该文本。
+忽略规则在遍历阶段剪枝，排序在截断文件列表之前；否则构建产物可能耗尽额度，让源码未被扫描。
+取消分支要求调用者传入 token，正常 Agent 链的接线限制见 §7.2。
 
-当前注册的 14 个工具 (见 `interfaces/runtime/tool_wiring.py` 的 `register_all`):
-`plan_read`, `plan_write`, `todo_write`, `todo_set_status`,
-`artifact_read`, `memory_write`, `memory_forget`, `fs_find`, `fs_read`, `search_text`,
-`find_definition`, `git_read`, `fs_apply_patch`, `shell_run`.
-没有 `todo_read`: 待办全文每轮由状态帧 (请求的第 [6] 层, `application/context/state_view.py`)
-带进去.
+### 8.3 fs_apply_patch：四类操作的 prepare 分支
 
-**提示词里一个工具名都不出现** (ADR-0042 决策 5). 模型选工具的全部依据是 tool schema 的
-name / description / parameters, 而"这个工具怎么用"住在它自己的 `ToolSpec.description`
-里 —— 只在该工具进了本轮目录时才付费, 且模型正好是在考虑调用它的时候读到. 所以**改一个
-工具的用法说明, 改的是它的 spec, 不是提示词模板**. `tests/prompt/` 里有用例断言渲染结果
-中不出现任何 `ToolSpec.name`.
+```mermaid
+flowchart TD
+    A["ApplyPatchTool.prepare"] --> B["validate_arguments → patch 非空"]
+    B --> C["patch_envelope.parse_envelope"]
+    C -->|PatchSyntaxError| D["PreparationError，包含 described 位置"]
+    C -->|成功| E["逐 section 调 _plan_section"]
+    E --> F{"section 类型"}
+    F -->|NewFile| G["_plan_new：解析目标／检查已有对象／计算缺失父目录"]
+    F -->|UpdateFile| H["_plan_update：读取现有正文 → apply_replacements"]
+    F -->|DeleteFile| I["_plan_delete：解析删除目标与展开集合"]
+    F -->|MoveFile| J["_plan_move：绑定源与目的路径事实"]
+    H --> K["text_edit.locate：定位 FIND；容差只用于明确定位"]
+    K -->|无法可靠定位| L["返回 PreparationError；提供未命中／歧义说明"]
+    K -->|定位成功| M["计算最终正文、对齐说明与 content_preview"]
+    G --> N{"当前 section 计划有效?"}
+    I --> N
+    J --> N
+    M --> N
+    N -->|否| O["立即返回失败；全部 prepare 都不写文件"]
+    N -->|是| P{"还有 section?"}
+    P -->|是| E
+    P -->|否| Q["汇总 write/delete/move targets → scope_for_write_all → _capabilities_of"]
+    Q --> R["ToolPlan：operations 保存最终内容及状态令牌"]
+    R --> S["STATIC 或 FORGE_EXPANDED → 进入统一授权管线"]
+```
 
-每个工具还要声明 `body_in_window` (ADR-0041 决策 6): 这次结果的正文进不进会话窗口.
-声明只是倾向 —— 小于 6000 字符的正文一律直接进, 因为换成句柄要多一次 `artifact_read`
-往返, 而那一次往返要把当前整个上下文重发一遍.
+补丁是项目自己的信封格式，具体标记与转义看 `patch_envelope.py`，不是把任意 unified diff
+直接丢给系统 patch。更新内容在 prepare 阶段算完，因此批准绑定的是“文件将变成什么”，
+不是在 perform 时根据旧 FIND 重新猜一次结果。
 
-**读完能回答**: 同样是读文件, 为什么 `fs_read` 在 plan 档可见而 `shell_run` 不可见?
-`git_read` 曾经要靠一张 git CLI 参数白名单才敢进 plan 档目录 (挡 `--ext-diff` /
-`--textconv` 跑外部程序, `--output=` 写文件, `-c core.pager=` 指定任意命令), 换成
-libgit2 之后那张表整个删了 —— 为什么删得掉?
+### 8.4 fs_apply_patch：实际写入与部分失败
 
-## 4. 主线三: 一条 Shell 命令是怎么被处理的
+```mermaid
+flowchart TD
+    A["授权后 ApplyPatchTool.perform"] --> B["读取 plan.normalized_input.operations"]
+    B --> C["每项操作先 _stale_target"]
+    C --> D{"源／目标状态一致?"}
+    D -->|否| E["_stale_result：报告已应用部分和 mutation 状态"]
+    D -->|是| F["_apply(raw)"]
+    F --> G{"kind"}
+    G -->|create| H["先 _mkdir 缺失目录 → 注入 _create_file"]
+    G -->|update| I["注入 _replace_file"]
+    G -->|delete| J["倒序遍历冻结 targets → _delete_file"]
+    G -->|move| K["注入 _move_file"]
+    H --> L{"发生 OSError?"}
+    I --> L
+    J --> L
+    K --> L
+    L -->|是| M["_failed_result：保留已执行项，不伪装全成功"]
+    L -->|否| N["记录 applied / mutated / 对齐 notes"]
+    N --> O{"还有操作?"}
+    O -->|是| C
+    O -->|否| P["OK + paths / changes + workspace_mutated=true"]
+    E --> Q["Coordinator → RecoveryFlow.finish，恢复点保留"]
+    M --> Q
+    P --> Q
+```
 
-这条线可以晚一点走, 但不能不走 —— 它是 `shell_run` 能存在的全部理由.
+多个文件不是一个文件系统原子事务，中途失败可能留下已应用部分。单文件发布由组合根注入：
+`_replace_file()` 写同目录临时文件、flush/fsync、os.replace；`_create_file()` 用硬链接
+发布且拒绝覆盖竞争出现的目标；`_move_file()` 使用 no-replace 语义，链接目标后删除源。
+恢复能力来自执行前的恢复事务，不是 perform 自动回滚整批。
 
-ADR-0030 之后这条线分成两半, 而且**承重的是后一半**: 解析与分析回答"这条命令看起来会
-做什么", 围栏回答"它实际能碰到什么". 前者用于展示, 审批与学习规则; 后者用于兜底.
+### 8.5 shell_run：执行链、围栏、超时与退出码
 
-### 4.1 解析 (`domain/security/shell/`)
+```mermaid
+flowchart TD
+    A["ShellRunTool.prepare"] --> B["validate_arguments → command.strip"]
+    B --> C{"命令非空且 shell_kind 与 profile 一致?"}
+    C -->|否| D["INVALID_INPUT"]
+    C -->|是| E["ToolPlan：ShellSubject + UNKNOWN targets + OPAQUE confidence"]
+    E --> F["ShellCapabilityAnalyzer 收缩 → 审批／恢复／授权，见 §6"]
+    F --> G["ShellRunTool.perform → ResourceGovernor.limits_for"]
+    G --> H["_argv_of：shell_launch.program + args + 已批准 command"]
+    H --> I["SandboxedCommandExecutor.run(CommandRequest)"]
+    I --> J{"request.fence 缺失?"}
+    J -->|是| K["CommandOutcome.failure；拒绝执行"]
+    J -->|否| L["SandboxProvider.wrap(argv, fence)"]
+    L -->|OSError| M["围栏创建失败，不启动内层进程"]
+    L -->|成功| N["LocalCommandExecutor.run"]
+    N --> O["启动进程 → _BoundedReader 分别读取 stdout/stderr"]
+    O --> P{"执行结局"}
+    P -->|自然结束| Q["记录 exit_code，包括非零"]
+    P -->|超时或收到 cancel| R["_terminate / _signal_group / _reap → 记录状态"]
+    P -->|启动失败| S["返回 failure"]
+    Q --> T["ShellRunTool._render → emit_text"]
+    R --> T
+    S --> T
+    K --> T
+    M --> T
+    T --> U{"_completed(outcome)?"}
+    U -->|是| V["ToolResult.OK；data 保留真实 exit_code"]
+    U -->|否| W["_status_of → 超时／取消／工具错误"]
+```
 
-| # | 文件 | 行数 | 看什么 |
-|---|---|---|---|
-| 1 | `tokens.py` | 426 | 分词 |
-| 2 | `parser.py` | 223 | 按方言分派 |
-| 3 | `posix.py` / `cmd.py` / `powershell.py` | 231 / 213 / 218 | 三种方言的语法模型 |
-| 4 | `command_plan.py` | 281 | 解析结果: `CommandPlan` |
-| 5 | `commands.py` | 600 | **一条命令一条记录**: 影响形态 + 参数结构 + 能否证明只读. ADR-0028 把原先散在三处的命令知识合到这里 |
-| 6 | `effects.py` | 72 | 查 `commands.py` 的表, 再处理两类查不出来的情形. **表外默认值是"可能写"** |
-| 7 | `arguments.py` | 128 | 一个单元的 argv 里哪几个是路径候选. 错了会**凭空造出目标** |
-| 8 | `expansion.py` | 152 | 受控目标展开: STATIC / FORGE_EXPANDED / DYNAMIC 的判据 |
-| 9 | `builtins.py` | 185 | 各方言的内建命令. 不认识它们, `export FOO=1` 会被判成"找不到可执行文件" |
-| 10 | `wrappers.py` | 730 | 全项目最烧脑的一份. 剥 `sudo` / `env` / `xargs` / `bash -c` 直到真实命令 |
+Shell 正常退出但 exit_code=1 仍可能是工具 OK，例如无匹配的 grep。工具状态表示执行机制
+是否完成，命令业务是否成功由输出和 exit_code 判断。围栏根据模式编译，批准按钮本身不会
+把网络或目录范围放宽。`fence_hint()` 只是给模型的失败解释，不会重新授权。
 
-### 4.2 分析器 (`application/security/analyzers/`)
+### 8.6 计划和待办四条分支
 
-| 文件 | 行数 | 职责 |
+```mermaid
+flowchart TD
+    A["_PlanningTool.prepare"] --> B["validate_arguments + 子类 _validate_semantics"]
+    B -->|非法 plan_id／修订不存在计划| C["PreparationError"]
+    B -->|成功| D["PLAN_ONLY、空工作区 effects 的 ToolPlan → 授权后 perform"]
+    D --> E{"具体工具"}
+    E -->|PlanReadTool| F["PlanningService.read_plan(plan_id)"]
+    F --> G{"有正文?"}
+    G -->|是| H["_ok：返回正文"]
+    G -->|否| I["_ok：当前没有计划，不算 IO 错误"]
+    E -->|PlanWriteTool| J["构造 PlanStep → PlanningService.write_plan"]
+    J --> K["再 read_plan → _ok(disposition=AWAIT_USER_DECISION)"]
+    K --> L["进入 §7.3 计划评审"]
+    E -->|TodoWriteTool| M["提取 titles/name → PlanningService.write_todo"]
+    M --> N["整表重写、状态重置 → todo.render → _ok"]
+    E -->|TodoSetStatusTool| O["构造 StatusUpdate → PlanningService.update_status"]
+    O -->|ValueError| P["TOOL_ERROR：序号越界／多个 in_progress 等"]
+    O -->|None| Q["_ok：没有待办，请先创建"]
+    O -->|成功| R["todo.render → _ok"]
+    H --> S["AgentTurnService 比较前后 id/revision → 发计划／待办变化事件"]
+    I --> S
+    N --> S
+    P --> S
+    Q --> S
+    R --> S
+```
+
+计划和待办文件按当前会话分区，由 `FsPlanStore` 的延迟路径函数定位。待办可以独立于计划
+存在；只有方向确实要人裁决时才提交计划。状态切换约束继续读 `domain/planning/todo.py`，
+文档名称、版本和活动索引更新继续读 `application/planning/planning_service.py`。
+
+### 8.7 输出归档与 artifact_read 回读
+
+```mermaid
+flowchart TD
+    A["工具调用 base.emit_text(text)"] --> B["UTF-8 编码计总 bytes_out"]
+    B --> C{"超过 max_inline_bytes?"}
+    C -->|是| D["截取可解码前缀，标 truncated"]
+    C -->|否| E["内联保留正文"]
+    D --> F{"配置了 ArtifactStore?"}
+    E --> F
+    F -->|否| G["返回内联内容；无归档句柄"]
+    F -->|是| H["ResourceGovernor.clamp(max_artifact_bytes) → artifacts.write"]
+    H --> I["保存 provenance.artifact_id；内联截断时加入 artifacts 列表"]
+    I --> J["ToolResult → ToolObservation.render"]
+    G --> J
+    J --> K["ToolResult.render_for_model(include_body=spec.body_in_window)"]
+    K --> L["依据句柄、正文规模和 include_body 决定正文还是引用"]
+    L --> M["summary + data + 正文／artifact 句柄进入窗口"]
+    M --> N["模型请求 artifact_read"]
+    N --> O["ArtifactReadTool.prepare 校验 id 与窗口参数 → 统一授权"]
+    O --> P["ArtifactReadTool.perform → artifacts.read(id, offset, limit)"]
+    P -->|ArtifactMissing| Q["TOOL_ERROR / artifact_expired / retryable=false"]
+    P -->|成功| R["按 max_inline_bytes clamp"]
+    R --> S{"仍过长?"}
+    S -->|是| T["附带继续分段读取说明"]
+    S -->|否| U["直接返回"]
+    T --> V["沿用原 artifact_id；不再次 emit_text 归档"]
+    U --> V
+```
+
+没有句柄时必须保留正文，否则模型无法找回内容。正文短时也可能直接内联，
+`body_in_window=false` 不是无条件删正文。`bytes_out` 是工具产出规模，`artifacts` 是展示用
+溢出列表，`provenance.artifact_id` 是内容来源引用，三者不能混用。
+
+`max_artifact_bytes` 本身也会截断归档；`raw_output()` 拼的是结果中已有 content_parts
+和 error，并不会读取归档补回原进程全部输出。因此围栏提示检查覆盖的范围受结果保留范围限制。
+
+### 8.8 记忆写入、覆盖、拒绝与遗忘
+
+```mermaid
+flowchart TD
+    A["_MemoryTool.prepare：schema + scope → MEMORY_WRITE 计划"] --> B["统一授权后 perform"]
+    B --> C{"工具类型"}
+    C -->|MemoryWriteTool| D["MemoryService.remember(scope, key, value, derived_from)"]
+    D --> E{"scope store 存在?"}
+    E -->|否| F["SCOPE_FULL 拒绝"]
+    E -->|是| G["_reject：key 格式、非空、字节数、looks_like_secret"]
+    G -->|不合格| H["MemoryRejection → _refused"]
+    G -->|合格| I["load 旧条目 → 找同 key → 去掉旧值"]
+    I --> J{"新增且 scope 容量已满?"}
+    J -->|是| F
+    J -->|否| K["保存新 MemoryEntry + begin_turn 提供的 provenance"]
+    K --> L{"覆盖了旧值?"}
+    L -->|是| M["_ok：说明被覆盖的旧内容"]
+    L -->|否| N["_ok：已写入"]
+    C -->|MemoryForgetTool| O["MemoryService.forget(scope, key)"]
+    O --> P{"存在 store 和该 key?"}
+    P -->|否| Q["返回 false → _ok：原本不存在"]
+    P -->|是| R["过滤条目 → store.save → _ok：已遗忘"]
+    K --> S["下一 turn MemoryService.load：项目在前、用户在后、各自按 key 排序"]
+    S --> T["render_state_frame；不进入安全裁决"]
+```
+
+记忆是模型可写的上下文材料，作用是提供事实／偏好，不能改变授权范围。凭证样式检查是
+记忆写入自身的拒绝条件，不是 LLM 安全分类器。删除会话不会清除项目或用户记忆。
+
+## 9. 主流程：LLM 网关与协议适配
+
+源码入口：`application/agent_loop/model_invoker.py`、
+`application/llm/gateway/default_gateway.py`、`retry.py`、`streaming.py`、
+`application/llm/selection.py`、`infrastructure/llm/adapters/openai_compatible.py`。
+
+### 9.1 选择模型、调用形态与正常结果
+
+```mermaid
+flowchart TD
+    A["BuiltinAgentLoop._build_request"] --> B["AgentModelInvoker.invoke(request, transport)"]
+    B --> C{"ModelTransportMode.COMPLETE?"}
+    C -->|是| D["_complete → gateway.complete"]
+    C -->|否| E["_stream → gateway.stream"]
+    D --> F["DefaultLlmGateway._resolve_selection"]
+    E --> F
+    F --> G["ConfigBackedSelectionResolver.resolve → resolve_selection"]
+    G --> H["_select_ref：用途覆盖／默认选择 → _validate 目录与可用性"]
+    H --> I["_resolve_thinking：origin 是否需要 thinking"]
+    I --> J["_check_tool_capability：provider 与 model 都须支持工具"]
+    J --> K{"调用通道"}
+    K -->|complete| L["_complete_resolved，见 §9.2"]
+    K -->|stream| M["检查 streaming 支持 → _pre_call_checks → _stream_with_retries"]
+    M -->|调用 stream 当场抛 ModelBadRequestError| N["Invoker 回退 _complete；不换模型"]
+    N --> D
+    L --> O["ModelResponse → UsageMeter.build_draft → model_delta → _finished"]
+    M --> P["StreamAccumulator.add；delta 外送；收尾处理见 §9.4"]
+    O --> Q["ModelOutcome(text, tool_calls) → 主循环"]
+    P --> Q
+```
+
+origin 是用途，不是自动换模型指令；只有显式配置用途覆盖才会选择其他模型。
+工具能力不支持直接报错，不偷偷清空工具目录继续回答。Invoker 的流式回退捕获范围是
+调用 `gateway.stream()` 当场抛出的错误，不是任意流式中途错误都能转非流式重跑。
+
+### 9.2 非流式调用、响应缓存和预检
+
+```mermaid
+flowchart TD
+    A["DefaultLlmGateway._complete_resolved"] --> B["raise_if_cancelled"]
+    B --> C{"use_cache 且 cache.lookup 命中?"}
+    C -->|是| D["直接返回缓存 ModelResponse"]
+    C -->|否| E["_pre_call_checks"]
+    E --> F["SlidingWindowHealthRegistry.check(ref)"]
+    F --> G["ApproximateTokenEstimator.estimate_input：messages/system/tools"]
+    G --> H{"estimated_input + expected_output 超 context_window?"}
+    H -->|是| I["ModelContextOverflowError → 主循环强压分支"]
+    H -->|否| J["_settings + ProviderRegistry.get"]
+    J --> K["_invoke_with_retries → CredentialRetryLoop.run"]
+    K --> L["_provider_request → ModelProvider.complete → HTTP adapter"]
+    L -->|失败| M["按类型重试或上抛，见 §9.3"]
+    L -->|成功| N["有供应商 usage 则采用；否则 _estimate_usage"]
+    N --> O["构造 ModelResponse：内容、tool_calls、latency、重试元数据"]
+    O --> P["health.record_success → 允许时 cache.store"]
+    P --> Q["返回给 AgentModelInvoker"]
+```
+
+本地 `InMemoryResponseCache` 是完整响应缓存，与供应商的输入前缀缓存不同。前者可以避免
+发送 HTTP，后者仍会有真实模型调用并在 usage 中体现 cached input tokens。流式通道没有
+复用这条完整响应缓存路径。
+
+### 9.3 首包前／非流式共用的凭证重试
+
+```mermaid
+flowchart TD
+    A["CredentialRetryLoop.run(attempt)"] --> B["至多 max_retries + 1 次：先 raise_if_cancelled"]
+    B --> C["credential_for：keyless 为 None，否则 CredentialPool.get_credential"]
+    C -->|凭证耗尽| D["有 last_error 则抛它，否则抛认证错误"]
+    C -->|取得凭证| E["attempt(credential)"]
+    E -->|成功| F["按 mark_success 记录凭证成功 → 返回"]
+    E -->|ModelCancelledError| G["立即抛出；不重试"]
+    E -->|ModelRateLimitError| H{"retry_after 存在且不超过阈值?"}
+    H -->|是| I["sleeper 等待 → wait 计数 → 下一次尝试"]
+    H -->|否| J{"有可冷却凭证?"}
+    J -->|是| K["mark_failed 冷却 → credential 计数 → 换可用凭证"]
+    J -->|否| L["keyless：直接上抛"]
+    E -->|ModelAuthError| J
+    E -->|Timeout / Unavailable| M["health.record_failure → transport 计数 → 有界重试"]
+    E -->|其他 ModelGatewayError| N["不重试，上抛"]
+    E -->|其他异常| O["归一 ModelProviderInternalError，上抛"]
+    I --> P{"还有尝试次数?"}
+    K --> P
+    M --> P
+    P -->|是| B
+    P -->|否| Q["抛最后一次错误"]
+```
+
+重试不切换 provider/model。短限流等待与传输重试不主动冷却当前凭证；认证错误和较长限流
+可冷却凭证再取下一把。凭证日志使用引用和哈希指纹，不记录密钥值。
+
+### 9.4 流式：首包是重试边界
+
+```mermaid
+flowchart TD
+    A["_stream_with_retries"] --> B["_open_stream：retry.run(mark_success=false)"]
+    B --> C["provider.stream → next(iterator, None) 取首包"]
+    C -->|首包前故障| D["走 §9.3；取消则生成 interrupt chunk"]
+    C -->|取得迭代器和首包| E["_stream_body"]
+    E --> F["normalize 首包 → yield"]
+    F --> G{"cancelled(request)?"}
+    G -->|是| H["关闭 iterator → _interrupt_chunk → return"]
+    G -->|否| I["next(provider_iter)"]
+    I -->|正常块| J["累积 text/usage/finish → normalize → yield"]
+    J --> G
+    I -->|StopIteration| K["补 usage 和 finish_reason 收尾块 → 标成功"]
+    I -->|取消异常| H
+    I -->|网关／普通异常| L["health 失败 → _error_chunk；不重试、不重放"]
+    H --> M["Invoker._stream：StreamAccumulator.add"]
+    J --> M
+    K --> M
+    L --> M
+    M --> N["保存 partial_answer → _record_stream_draft"]
+    N --> O{"tail.interrupted?"}
+    O -->|是| P["_interrupted：USER_CANCELLED 或 MODEL_ERROR_BLOCKING"]
+    O -->|否| Q{"has_partial_tool_calls?"}
+    Q -->|是| R["_failed → MalformedToolCallError → 主循环纠错"]
+    Q -->|否| S["accumulator.tool_calls → _finished → ModelOutcome"]
+```
+
+首包后不能自动重新请求并把第二段输出接在第一段后面。流式中断记录已经收到的部分文本与
+用量；不完整工具参数绝不执行。具体 SSE 字节解码、HTTP 错误到 ModelGatewayError 的映射
+继续沿 `OpenAICompatibleProvider` 的 complete／stream 和同模块解析函数阅读。
+
+### 9.5 结构化输出：原生 schema 与指令降级
+
+```mermaid
+flowchart TD
+    A["DefaultLlmGateway.complete_structured"] --> B["解析模型、thinking、工具能力"]
+    B --> C{"provider 和 model 都支持 structured output?"}
+    C -->|是| D["_structured_native"]
+    D --> E["schema 摘要参与 cache.lookup → structured.parse 校验"]
+    E -->|有效命中| F["使用缓存结果"]
+    E -->|未命中／校验失败| G["_complete_resolved(response_schema, use_cache=false)"]
+    G --> H["structured.parse：JSON + schema"]
+    H -->|有效| I["写入带 schema 指纹的缓存"]
+    H -->|无效| J["保留 validation errors"]
+    C -->|否| K["_structured_degraded → structured.with_instruction"]
+    K --> L["先查缓存并校验；否则有界调用 _complete_resolved"]
+    L --> M["structured.parse"]
+    M -->|成功| N["缓存有效响应 → 结束重试"]
+    M -->|失败且有次数| L
+    M -->|失败且耗尽| J
+    F --> O{"有 errors 且 strict?"}
+    I --> O
+    N --> O
+    J --> O
+    O -->|是| P["抛 ModelResponseParseError"]
+    O -->|否| Q["StructuredModelResponse(data, validation_errors, usage)"]
+```
+
+原生路径不是无限重新要求 JSON；降级路径有独立次数上限且不换模型。会话首次标题生成
+使用这个入口，并有标题失败后从原始输入截取的回退，见 §12.1。
+
+## 10. 主流程：写前保护、恢复与撤销
+
+源码入口：`application/tool_request/recovery_flow.py`、`application/recovery/coordinator.py`、
+`recovery_service.py`、`infrastructure/recovery/cow_snapshot_backend.py`、
+`interfaces/web/routers/recovery.py`。
+
+### 10.1 恢复策略选择：不修改、精确目标与全工作区
+
+```mermaid
+flowchart TD
+    A["RecoveryFlow.begin(plan, context, policy)"] --> B{"装配了 WorkspaceMutationCoordinator?"}
+    B -->|否| C{"plan.mutates_workspace?"}
+    C -->|是| D["RecoveryUnavailableError：不允许无保障写入"]
+    C -->|否| E["返回 None，无事务"]
+    B -->|是| F["WorkspaceMutationCoordinator.begin → strategy_for"]
+    F --> G{"plan.mutates_workspace?"}
+    G -->|否| E
+    G -->|是| H{"targets closed 且 mutating_targets 非空?"}
+    H -->|否| I["FULL"]
+    H -->|是| J{"_touches_directory?"}
+    J -->|是| I
+    J -->|否| K["TARGETED"]
+    I --> L{"策略允许 FULL?"}
+    L -->|否| D
+    L -->|是| M["_capture_snapshot：尝试整树 COW 快照"]
+    M -->|成功| N["保存 snapshot_ref/backend"]
+    M -->|不可用或 OSError| O["_planned_targets → _walk_files 主工作区"]
+    K --> P["_planned_targets = 精确 mutating_targets"]
+    O --> Q["_estimate → RecoveryPolicy.within_budget"]
+    P --> Q
+    Q -->|超预算| D
+    Q -->|通过| R["构造 PREPARING checkpoint + MutationTransaction"]
+    N --> R
+    R --> S["transaction.arm：ARMED manifest 落盘"]
+    S --> T{"FULL 且没有 COW snapshot?"}
+    T -->|是| U["逐文件 record_write(OVERWRITE) 保存 preimage"]
+    T -->|否| V["返回 transaction"]
+    U --> V
+    V --> W["RecoveryFlow 登记 write/delete/move 的 preimage"]
+    W --> X["恢复保障建立后才允许签发授权"]
+```
+
+目录即使目标封闭也采用 FULL，避免“只存目录元数据、恢复为空目录”冒充完整恢复。
+FULL 的逐文件回退扫描主根，COW 也对 `context.primary_root` 建快照；不能仅凭 FULL 名称
+推断额外授权根或任意外部路径都受整树保护。具体可恢复范围还需看 checkpoint 的实际内容。
+
+### 10.2 事务登记、执行结果与收尾
+
+```mermaid
+flowchart TD
+    A["MutationTransaction.record_write(path, operation)"] --> B{"checkpoint 已 armed?"}
+    B -->|否| C["RecoveryUnavailableError"]
+    B -->|是| D["_relative → 检查已有 MutationEntry"]
+    D -->|已登记| E["复用最早 preimage；不覆盖最初状态"]
+    D -->|未登记| F["filesystem.facts → existed/regenerable/object_type"]
+    F --> G{"破坏性操作且非可再生内容?"}
+    G -->|是| H["_store_preimage → RecoveryStore.put_blob"]
+    G -->|否| I["记录创建／可再生对象事实"]
+    H --> J["_append → manifest 更新落盘"]
+    I --> J
+    J --> K["ToolRuntime 执行"]
+    K -->|授权校验失败| L["RecoveryFlow.abort → complete(failed=true)"]
+    K -->|返回 ToolResult| M["RecoveryFlow.finish"]
+    M --> N{"workspace_mutated is False?"}
+    N -->|是| L
+    N -->|否，包括未知 None| O["按计划目标 record_result：postimage / 删除 / 移动两端"]
+    O --> P{"ToolResult.status == OK?"}
+    P -->|是| Q["complete → COMPLETED"]
+    P -->|否| R["complete(failed=true) → FAILED"]
+```
+
+`workspace_mutated=None` 是不知道，不是没有修改；Shell 超时可能已经产生部分副作用。
+manifest 的 ARMED 状态表示保护准备已就位；崩溃候选应以
+`TransactionState.may_have_partial_changes` 实际判定，不从“日志里没看到完成”反推零修改。
+
+### 10.3 HTTP／TUI 撤销：逐文件与整树恢复分开
+
+```mermaid
+flowchart TD
+    A["restore_checkpoint / undo_latest / TUI _restore"] --> B["确认空闲 → 查 checkpoint → context_factory"]
+    B -->|不存在| C["404／界面无可撤销提示"]
+    B -->|存在| D["RecoveryService.restore"]
+    D --> E{"checkpoint.snapshot_ref 非空?"}
+    E -->|是| F["_restore_snapshot"]
+    F --> G{"快照 backend 可用?"}
+    G -->|否| H["RecoveryUnavailableError"]
+    G -->|是| I["SnapshotHandle → snapshots.restore(primary_root)"]
+    I -->|OSError| H
+    I -->|成功| J["manifest=RESTORED；返回主根已恢复"]
+    E -->|否| K["preview → 每项 _plan_item"]
+    K --> L["比较当前 hash 与 postimage_content_hash"]
+    L --> M{"每项 applicable 或 force_conflicts?"}
+    M -->|否| N["加入 skipped，不覆盖后续修改"]
+    M -->|是| O{"existed_before?"}
+    O -->|否| P["删除该次创建的对象"]
+    O -->|是，目录| Q["_restore_directory：目录和权限"]
+    O -->|是，文件| R["_restore_content → get_blob → writer → mode_setter"]
+    N --> S["处理下一项"]
+    P --> S
+    Q --> S
+    R --> S
+    S --> T{"全部结束且无 skipped?"}
+    T -->|是| U["manifest=RESTORED"]
+    T -->|否| V["manifest=CONFLICTED"]
+    U --> W["RestoreOutcome(restored, skipped, new_checkpoint_id=None)"]
+    V --> W
+```
+
+整树快照恢复不逐文件跳过冲突，语义是回到快照时刻；`force_conflicts` 只参与逐文件路径。
+`preview()` 遍历 manifest.mutations，不等于完整快照差异预览。当前 Web restore／undo
+直接调用 `RecoveryService.restore()`，没有先为撤销自身建立新恢复点，不能承诺“撤销也可再次撤销”。
+
+`crash_recovery_candidates()` 只列出可能部分修改的 checkpoint，让用户决定处理；它不是启动时
+自动回滚所有未完成操作。恢复点清理与会话删除分别看 `prune_expired()`、`discard_session()`，
+后者接入墓碑后台清理，见 §12.3。
+
+## 11. 主流程：运行事件、快照和前端重建
+
+源码入口：`application/agent_run/events.py`、`application/agent_loop/run_events.py`、
+`application/tool_request/run_observer.py`、`interfaces/runtime/event_hub.py`、
+`interfaces/web/routers/run_events.py`、`infrastructure/session/jsonl_run_store.py`、
+`web/src/features/runEvents/`、`web/src/app/useRunEventWiring.ts`。
+
+### 11.1 事件发布：同一事实有多个展示订阅者
+
+```mermaid
+flowchart TD
+    A["BuiltinAgentLoop → LoopEventPublisher"] --> D["AgentRunEventBus.publish"]
+    B["ToolRequestCoordinator → EventBusToolRunObserver"] --> D
+    C["AgentTurnService／ProjectRuntime._prompt_changed"] --> D
+    D --> E["构造 AgentRunEvent：session / turn / sequence / payload"]
+    E --> F["_dispatch → 每个 subscriber.on_event"]
+    F --> G["RunEventHub.on_event"]
+    F --> H["JsonlRunStore.on_event"]
+    F --> I["TUI RunEventCollector.on_event"]
+    F -->|订阅者异常| J["隔离并记录，不让展示失败穿透执行链"]
+    G --> K["锁内 cursor + 1 → deque(maxlen=2048)"]
+    K --> L["_StreamWaiter.wake → loop.call_soon_threadsafe"]
+    L --> M["SSE 协程读取并发送"]
+    H --> N["按 session/turn 累积过程；_fold_delta 折叠模型正文"]
+    N --> O["终态 _flush → runs.jsonl"]
+    I --> P["SessionApp._drive → drain → TerminalRunView.handle"]
+```
+
+总线隔离订阅者异常意味着过程记录可能缺失而执行继续。因此 `runs.jsonl` 不应被当成强制
+写前审计屏障。当前协调器通过 observer 发布执行事实，不持有旧版 `ToolAuditSink`。
+
+### 11.2 /runs 快照：先取水位，再读内容
+
+```mermaid
+flowchart TD
+    A["GET /runs → routers.run_events.runs"] --> B["取当前 session_id"]
+    B --> C["先 RunEventHub.resume_point → watermark"]
+    C --> D["JsonlRunStore.read(session_id)"]
+    D --> E["_turn_snapshots(hub, session_id)"]
+    E --> F["过滤会话；按 turn 归档；delta 折叠进 outputs"]
+    F --> G["先装 stored，再用 live 覆盖相同 turn"]
+    G --> H["返回 items + session_id + resume token"]
+    H --> I["useConversation.loadTranscript"]
+    I --> J{"请求代次仍有效且响应 session_id 匹配?"}
+    J -->|否| K["忽略过期响应"]
+    J -->|是| L["restoreTurn → setRestoredRuns"]
+    L --> M["resumePosition.adopt(resume)"]
+    M --> N{"同 stream 且当前 cursor 已更大?"}
+    N -->|是| O["保留较新位置"]
+    N -->|否| P["采纳快照水位"]
+```
+
+先读内容再取水位会产生遗漏窗口：两次操作之间的事件既不在快照里，也被后续游标跳过。
+先取水位允许少量重叠，再由前端的事件身份／归并逻辑处理。水位表示事件流位置，
+不是会话事件文件中的 `evt_0001`。
+
+### 11.3 SSE 续传、缓冲过期与服务关闭
+
+```mermaid
+flowchart TD
+    A["GET /events → events(request, after, Last-Event-ID)"] --> B["after 优先 → ResumePoint.parse"]
+    B --> C{"能解析实例和 cursor?"}
+    C -->|否／首次连接| D["从 hub.resume_point 开始，不重放旧缓冲"]
+    C -->|是| E["沿传入位置续传"]
+    D --> F["stream while stopping 未设置"]
+    E --> F
+    F --> G["RunEventHub.after(position)"]
+    G --> H{"实例不匹配／cursor 超前／缓冲已过期?"}
+    H -->|是| I["位置改当前水位 → 发 resync_required"]
+    I --> F
+    H -->|否| J{"有 pending events?"}
+    J -->|是| K["按 cursor 排序 → _frame → 批量 bytes yield"]
+    K --> F
+    J -->|否| L{"hub.closed?"}
+    L -->|是| M["结束此流；项目可能已切换"]
+    L -->|否| N["await hub.wait(cursor, timeout, stop)"]
+    N --> F
+    F -->|stopping 已设置| O["发 server_stopping → 收尾"]
+    P["EventSourceResponse"] -. "心跳／http.disconnect" .-> F
+```
+
+客户端断线检测和心跳交给 sse-starlette；后台线程唤醒等待者必须通过其 asyncio loop，
+不能跨线程直接操作异步 Event。旧版裸数字游标缺少实例身份，按无有效续传位置处理。
+
+### 11.4 前端连接、合批、作用域与最终文本
+
+```mermaid
+flowchart TD
+    A["App → useRunEventWiring → useRunEvents"] --> B{"projectId 改变?"}
+    B -->|是| C["position.reset + 清 pending + 关闭旧连接"]
+    B -->|否| D["connect：EventSource 带 position.read 的 after"]
+    C --> D
+    D --> E{"接收事件／连接状态"}
+    E -->|run_event| F["consume：先 advance(lastEventId)，再 JSON.parse"]
+    F --> G["handlers.accepts：sessionScopeRef 过滤会话"]
+    G -->|不接受| H["丢弃内容，但位置已推进"]
+    G -->|接受| I["onEvent 即时反应 → pending.push → 33ms flushEvents"]
+    I --> J["onBatch → appendRunEvent → localTurns"]
+    I --> K{"prompt／计划／终态等事件?"}
+    K -->|prompt| L["reloadPrompts"]
+    K -->|计划／审批／待办| M["refreshWorkspace"]
+    K -->|终态| N["flush → busy=false → 延后 syncFinishedTurn"]
+    N --> O["GET /turns/current → finishLocalTurn"]
+    J --> P["ConversationTimeline／TurnView／RunProcess 渲染"]
+    O --> P
+    E -->|resync_required| Q["reset 位置、清 pending → loadTranscript + refreshWorkspace"]
+    E -->|onopen| R["live、重置退避；重连后刷新项目与状态"]
+    E -->|server_stopping| S["关闭连接 → 从初始退避重新连接"]
+    E -->|onerror| T["关闭 EventSource → fetch /bootstrap 探测会话"]
+    T -->|401| U["STALE_SESSION 提示"]
+    T --> V["scheduleRetry：1 秒起翻倍"]
+    U --> V
+    V --> W{"下一间隔超过一小时?"}
+    W -->|是| X["connection=stopped，等待用户重新加载"]
+    W -->|否| D
+    S --> V
+```
+
+`useRunEvents` 只管连接与合批；`useRunEventWiring` 决定事件影响会话、提示卡片或工作区。
+合批用 setTimeout，后台标签页仍能缓慢排空。切会话调用 `discardPending()`，否则旧会话
+尚未渲染的事件会在清屏后重新出现。前端源码仍在重构时，应先查当前 App 的 import，
+不要沿旧组件文件名寻找入口。
+
+## 12. 分支流程：会话、模型配置、模式与目录授权
+
+### 12.1 会话首次落盘、标题生成与事件顺序
+
+源码入口：`application/session/session_service.py`、`infrastructure/session/jsonl_event_store.py`、
+`infrastructure/session/json_state_store.py`。
+
+```mermaid
+flowchart TD
+    A["SessionService.start"] --> B["新 session_id、默认 ACCEPT_EDITS、_persisted=false；不落盘"]
+    B --> C["record_user_message / record_tool_event / 其他 record_* → _append"]
+    C --> D{"首条 USER_MESSAGE、未落盘且无标题?"}
+    D -->|是| E["_title_from → gateway.complete_structured(origin=TITLE)"]
+    E --> F{"JSON 中 title 是有效非空字符串?"}
+    F -->|是| G["规范空白并按长度裁剪"]
+    F -->|否或任意异常| H["从原输入规范空白并截取标题"]
+    G --> I["_ensure_persisted"]
+    H --> I
+    D -->|否| I
+    I --> J{"已经 persisted?"}
+    J -->|否| K["置 persisted=true → _emit(SESSION_CREATED)"]
+    J -->|是| L["_emit(当前事件)"]
+    K --> L
+    L --> M["递增 evt 序号 → EventStore.append(event)"]
+    M --> N["更新内存 last_event_id → StateStore.write(snapshot)"]
+    N --> O["返回 SessionEvent"]
+    M -->|OSError| P["session.write_failed 日志 → 上抛"]
+    N -->|OSError| P
+```
+
+标题调用发生在主循环启动之前，所以首次消息可能先等待一次 TITLE 请求。标题失败不会
+阻断输入，落盘失败则会上抛。先写事件再写快照保证快照引用已存在事件，不等于这两次写入
+是跨文件原子事务。只进入会话且不产生可记录动作，不创建会话文件。
+
+### 12.2 新会话、恢复历史与模型窗口重建
+
+```mermaid
+flowchart TD
+    A["useSessionActions.create / resume 或 TUI 命令"] --> B{"新建还是恢复?"}
+    B -->|新建| C["ProjectRuntime.new_session：拒绝 busy"]
+    C --> D["SessionService.start → _build_agent_turn → 清 _run"]
+    B -->|恢复| E["ProjectRuntime.resume：拒绝 busy"]
+    E --> F["ResumeService.load_full(session_id)"]
+    F --> G{"StateStore 有快照?"}
+    G -->|否| H["SessionStateError"]
+    G -->|是| I["读取全部 EventStore 事件 → SessionService.resume(snapshot, history)"]
+    I --> J["接续 evt 序号 → _build_agent_turn → AgentTurnService.resume"]
+    J --> K["USER_MESSAGE 数量重建 turn 计数 → _rebuild_window"]
+    K --> L{"逐历史事件"}
+    L -->|USER/ASSISTANT_MESSAGE| M["按角色追加正文"]
+    L -->|USER_QUESTION_ANSWERED| N["answer_replay：转成 USER 消息保留回答"]
+    L -->|有非空 SUMMARY 的 CONTEXT_COMPACTED| O["用交接摘要替换此前累积窗口"]
+    L -->|其他事件| P["不生成模型窗口消息"]
+    M --> Q["继续下一事件 → 最终 Window"]
+    N --> Q
+    O --> Q
+    P --> Q
+    Q --> R["runtime 清 _run → 返回快照"]
+    D --> S["前端 enterSession：同步 state 与 sessionScopeRef"]
+    R --> S
+    S --> T["清本地旧过程 + discardPending → loadTranscript → 刷新相关状态"]
+```
+
+恢复后的模型窗口不包含上个进程全部工具请求／结果细节；人类问题答案单独保留。
+`runs.jsonl` 可以让界面显示历史工具过程，但这不表示这些过程也被送回模型。
+模式是运行期状态，不写入会话快照文件；从磁盘恢复时不会静默继承过去的 full_access。
+
+### 12.3 删除会话：快速摘除、后台清理、启动补扫
+
+```mermaid
+flowchart TD
+    A["useSessionActions.remove / TUI 删除确认"] --> B["ProjectRuntime.delete_session"]
+    B --> C{"busy?"}
+    C -->|是| D["拒绝删除"]
+    C -->|否| E{"删当前会话且尚未落盘?"}
+    E -->|是| F["直接 new_session；无需删磁盘目录"]
+    E -->|否| G["_deletion_service → SessionDeletionService.begin"]
+    G --> H["读取快照 → SessionCatalog.begin_delete：目录改名为墓碑"]
+    H --> I["返回 DeletedSession + Tombstone"]
+    I --> J["_purge_in_background 启动 daemon 清理线程"]
+    I --> K{"删的是当前会话?"}
+    K -->|是| L["new_session → 保持有当前会话"]
+    K -->|否| M["保持当前会话"]
+    L --> N["HTTP 返回列表已摘除；前端采纳 current_session_id"]
+    M --> N
+    J --> O["SessionDeletionService.purge"]
+    O --> P["WorkspaceMutationCoordinator.discard_session：恢复点／快照／孤立 blob"]
+    P --> Q["SessionCatalog.purge：删除墓碑目录"]
+    P -->|异常| R["记录 purge_failed；保留墓碑供下次清理"]
+    Q -->|异常| R
+    S["下次 ProjectRuntime 初始化"] --> T["_sweep_tombstones → pending → _purge_in_background"]
+    T --> O
+```
+
+删除会话带走正文、状态、过程记录、计划待办和该会话恢复点；不会撤销工作区改动，
+不会删除项目／用户记忆、学习规则或全局内容寻址归档。前端成功返回只代表会话已从列表摘除，
+不代表全部磁盘空间已经回收。先清恢复点再删墓碑，确保中断后仍能找到待清理对象。
+
+### 12.4 配置读取、修改与 LLM 重载
+
+源码入口：`application/config/config_service.py`、`application/llm/config/llm_config_service.py`、
+`interfaces/runtime/llm_wiring.py`、`interfaces/runtime/project_runtime.py`。
+
+```mermaid
+flowchart TD
+    A["Web settings/models 路由或 TUI cmd_config/cmd_model"] --> B{"配置类别"}
+    B -->|普通配置键| C["ConfigService.set → config_keys.require_known"]
+    C --> D["按 ConfigKey.level 选 APP / PROJECT store"]
+    D --> E["validate(value) → store.save"]
+    C -->|未知键／值非法／缺 store| F["ConfigValidationError 等异常"]
+    B -->|provider/model 参数| G["LlmConfigService 对应 setter → 解析／验证 → LlmConfigStore"]
+    B -->|默认模型| H["ProjectRuntime.set_current_model：确认模型声明存在"]
+    H --> I["写 model.provider + model.name → reload_llm"]
+    G --> J["需要生效的调用方触发 reload_llm"]
+    I --> K["ProjectRuntime.reload_llm"]
+    J --> K
+    K --> L{"runtime.busy?"}
+    L -->|是| M["RuntimeError：不重载"]
+    L -->|否| N["保存现有 grants → build_llm_runtime"]
+    N --> O["_build_tool_stack(new llm) → 复制 grants"]
+    O -->|构建失败| P["不提交新 self.llm/self.tools；旧运行对象保留"]
+    O -->|构建成功| Q["一起替换 self.llm / self.tools"]
+    Q --> R["_build_window_manager → AgentTurnService.reconfigure"]
+    R --> S["更换预算／context／memory／planning／dispatcher；保留窗口和 turn 计数"]
+    B -->|thinking 运行期覆盖| T["update_thinking → ThinkingRuntimeState.update"]
+    T --> U["不写磁盘；按当前模型校验选项"]
+```
+
+`reload_llm()` 保留现有 `AgentTurnService`，避免换模型导致对话窗口清空。闭包读取当前
+runtime.llm/tools，下一 turn 的 loop 使用新对象。配置落盘与运行对象替换不是同一个事务，
+构建失败不表示配置文件也自动回滚；默认模型的两个 ConfigService.set 也是顺序写入。
+另外 SessionService 持有创建时的 gateway，当前 reconfigure 不更新它，不能据此宣称所有
+历史持有者都已统一换到新网关。
+
+### 12.5 模式切换和额外工作区授权
+
+```mermaid
+flowchart TD
+    A["模式 UI → POST /mode / TUI cmd_mode"] --> B["合并 sandbox / approval 两个轴"]
+    B --> C["ProjectRuntime.set_mode：拒绝 busy"]
+    C --> D["SessionService.set_mode：只改内存 snapshot"]
+    D --> E["下一 turn catalog_for / fence_for 使用新 mode"]
+    F["POST /workspace-roots"] --> G["idle_runtime → 检查 access=read/write"]
+    G --> H["ProjectService.normalize_workspace_dir"]
+    H --> I{"是主根?"}
+    I -->|否| J["ProjectRuntime.grant_workspace → WorkspaceGrants.grant"]
+    J --> K["检查受保护路径 → 记录 DIR_GRANT_CHANGED"]
+    I -->|是| L["不重复授权主根"]
+    K --> M["ProjectService.add_workspace_dir → 保存项目根列表"]
+    L --> M
+    M --> N["runtime.project = updated"]
+    O["DELETE /workspace-roots"] --> P["idle_runtime → normalize_workspace_dir"]
+    P --> Q["ProjectService.remove_workspace_dir"]
+    Q -->|主根| R["WorkspaceError：不可移除身份根"]
+    Q -->|额外根| S["保存根列表 → runtime.revoke_workspace → 更新 project"]
+    N --> T["之后 context_factory / fence_factory 读取 grants"]
+    S --> T
+```
+
+持久化根列表与本进程授权是两份不同信息：前者回答项目包含哪些目录，后者回答当前可读还是
+可写。修改链按图中顺序执行，不是跨两份状态的原子提交。进程重启时额外根回到 READ，
+不能把昨天授予的写权限当成今天无条件继承的事实。
+
+## 13. 排障路线、实现边界与文档维护
+
+### 13.1 用一次真实请求建立调用链
+
+运行日志入口在 `interfaces/runtime/logging_wiring.py`，基础能力在
+`shared/observability/configure.py`、`log.py`、`context.py`。以实际配置的日志路径为准；
+默认环境可查看 `~/.forge/logs/forge-latest.log`。需要正文时启用 debug，日志 handler 的
+初始化配置通常需要重启才能生效。
+
+```mermaid
+flowchart TD
+    A["用户报告：某轮没成功"] --> B["先查 current_run / AssistantResponse 的 status、stop_reason、error"]
+    B --> C{"失败范围"}
+    C -->|入口不可达| D["web.server → LocalControlPlaneGuard → active_runtime"]
+    C -->|没进入模型| E["turn.received → 标题／持久化 → context.assembled"]
+    C -->|模型失败| F["model.request → llm.* → model.response / model.failed"]
+    C -->|工具没执行| G["tool.requested → pipeline.prepared → pipeline.decision"]
+    C -->|工具执行失败| H["authorization_issued → tool.execute → ToolResult.error"]
+    C -->|界面未收尾| I["turn 终态 → RunEventHub 水位 → useRunEventWiring → syncFinishedTurn"]
+    G --> J["按 invocation_id 追审批、恢复屏障、授权复核"]
+    H --> K["按 checkpoint_id 查 manifest；按 artifact_id 查输出"]
+    E --> L["按 session_id + turn_id 对照 events.jsonl"]
+    F --> L
+    I --> M["对照 runs.jsonl 与 /runs；不把它们当模型历史"]
+```
+
+| 要回答的问题 | 第一站 | 下一站／观察字段 |
 |---|---|---|
-| `shell_analyzer.py` | 315 | 把解析结果变成能力集合 |
-| `shell_effects.py` | 275 | 把解析结果变成 `PlanEffects` (碰哪些路径, 怎么碰) |
-| `executable_binding.py` | 186 | 这条命令实际跑哪个文件 + 它裁决后有没有被换掉 |
-| `script_binding.py` | 154 | 读脚本正文. **它不分析脚本做了什么** —— 只记住读到的是哪一份 |
-| `workspace_analyzer.py` | 109 | 不经 Shell 的工具 (如 `fs_apply_patch`) 的路径检查 |
-| `network_analyzer.py` | 44 | 网络能力 |
-| `unknown_analyzer.py` | 46 | 无法自证的能力走最保守路径 |
+| 页面返回 401／403 | `LocalControlPlaneGuard._denial` | session、Origin、CSRF；不要先查 LLM |
+| 首次输入迟迟没主模型输出 | `SessionService._append → _title_from` | TITLE 请求可能在主循环前 |
+| 模型看不到某个工具 | `catalog_query_for_mode → ToolRegistry.list` | 当前 mode、declared_capabilities |
+| 工具出现但被拒 | `ToolRequestCoordinator._resolve` | observation.kind、reason_code、risk_facts |
+| 批准后仍未执行 | `_revalidate`、`ToolRuntime.execute` | binding.differences、画像、文件状态 |
+| Shell 非零退出是否算工具失败 | `ShellRunTool._completed` | timed_out、cancelled、failure、exit_code |
+| 自动批准后网络仍失败 | `SandboxedCommandExecutor.run` | fence.network_allowed；审批不改 fence |
+| 搜索零结果是否可信 | `SearchTextTool.perform` | data.complete、incomplete_notes |
+| 改文件只改了一部分 | `ApplyPatchTool.perform` | applied、mutated、_failed_result、checkpoint |
+| token 费用突然增大 | `_assemble_context`、`WindowManager.fit` | prompt 指纹、窗口淘汰、cached_input_tokens |
+| 点停止后仍等待 | `ProjectRuntime.cancel` | 模型 token、broker 释放、工具 cancel 接线 |
+| 换会话后旧消息回来 | `useSessionActions`、`useRunEvents` | sessionScopeRef、discardPending、请求代次 |
+| 重启后过程不连续 | `RunEventHub.after`、`/runs` | stream_id、cursor、快照 resume |
+| 删除成功但磁盘未立即下降 | `SessionDeletionService.purge` | 墓碑、后台日志、下一次启动补扫 |
+| 撤销抹掉后续修改 | `RecoveryService.restore` | snapshot_ref 与逐文件冲突分支不同 |
 
-`script_binding.py` 的前身 `ScriptExecutionAnalyzer` 有 384 行, 其中绝大部分是风险模式
-匹配, LLM 分类器调用与从正文推导能力. ADR-0030 全删了 —— 脚本跑在围栏里, 越界的访问由
-内核拒绝, 不必读它的正文找危险. 剩下的三件事围栏替代不了: 审批界面逐字展示, 学习规则绑
-内容哈希, 审计记录被拦的是哪段代码.
+### 13.2 当前实现不能被文档扩大成承诺
 
-### 4.3 围栏 (`domain/execution/` + `infrastructure/execution/sandbox/`)
+以下是阅读边界，不是本次文档修改顺带完成的功能修复：
 
-| 文件 | 行数 | 看什么 |
-|---|---|---|
-| `domain/execution/fence.py` | 100 | `FencePolicy`: 写 allowlist, 读 denylist, 网络开关. **这里没有任何命令知识** |
-| `domain/execution/profile.py` | 82 | `IsolationLevel` 只有两档, 由启动时的**行为自测**填, 不由平台名填 |
-| `domain/execution/environment.py` | 137 | 交给子进程的环境变量净化 |
-| `domain/execution/denial.py` | 78 | 从命令输出里认出"这次失败是围栏拦的". 启发式, 只丰富提议, 不放行任何东西 |
-| `infrastructure/execution/sandbox/selection.py` | 55 | 按平台唯一确定候选, 自测不过就如实降级为 UNCONFINED, **不换一个能跑起来的接着试** |
-| `infrastructure/execution/sandbox/` | 152 / 158 / 234 / 36 | `bubblewrap.py` (Linux), `seatbelt.py` (macOS), `wsl2.py` (Windows), `none.py` |
+1. **取消不等于已杀死 Shell**：正常 `_run_tool()` 未向 dispatcher 传 cancel；关闭最多等待
+   Agent 线程 2 秒。看见可选 CancelToken 参数不能推出生产接线完整。
+2. **上下文冻结是 turn 级**：计划／待办／记忆状态帧和 FORGE.md 在轮内不重新编译。
+3. **文件变化不是 OS 事件订阅**：当前扫描快照的检查点归因不能证明实际修改者。
+4. **恢复不是全局时间机器**：FULL 以主根为边界；snapshot 恢复会全量替换，逐文件恢复才
+   默认跳过冲突；当前 Web 撤销不自动创建“撤销的恢复点”。
+5. **历史展示不等于模型历史**：resume 不重建全部工具往返，runs.jsonl 主要用于界面。
+6. **过程总线不是强审计事务**：订阅者异常被隔离；不能画出已删除 ToolAuditSink 的调用链。
+7. **通用工具管线尚未替代所有工具样板**：schema、部分状态复核、输出组装仍分布在工具里。
+8. **配置修改不是跨文件原子事务**：新运行对象建成前保留旧对象，不代表所有已落盘配置会回滚。
+9. **失败隔离有范围**：驱动异常可转失败响应，磁盘写失败仍会穿透；不能保证故障时每份记录齐全。
+10. **源码中的历史注释也可能过时**：例如描述已删除的分类器、去重或旧命令名的注释，必须与
+    实际函数体、装配点和消费方交叉核对。
 
-`fence.py` 的 docstring 记了一件实测出来的事: 读与写两条边界的形态不对称. 写可以用
-allowlist, 读**只能**用 denylist —— Seatbelt 下 `(deny default)` 会让子进程连 `/bin/sh`
-都起不来. 这意味着受保护路径仍然要逐条列举, 漏一条就是凭证暴露, 而这条风险只在 Linux
-上由 bubblewrap 的 mount namespace 解决.
+### 13.3 可执行检查与阅读自检
 
-**配套 ADR**: 0013 §3 / §6 / §7 (解析), **0030 (围栏, 决策 1-7)**, 0027 (执行前复核),
-0028 规则 D (命令知识收拢).
+`Makefile` 的 `arch` 依次调用四个脚本：
 
-**读完能回答**:
-- `bash -lc 'rm -rf /'` 为什么不会被判成"只是跑了个 bash"?
-- 围栏自测不过时会怎样? 为什么不能退回"用静态分析补偿"?
-- 一台装了 bwrap 但 userns 被关掉的机器上, `select_provider` 返回什么? 调用方该看哪个
-  字段?
-- `execution_profile_hash` 里为什么必须含围栏自测结论?
+- `scripts/check_arch.py`：层依赖、同层边界、import 环等架构约束。
+- `scripts/check_abstractions.py`：抽象保留条件，区分端口与无必要的同层包装。
+- `scripts/check_prompt_text.py`：模型可读文案的归属约束。
+- `scripts/check_deps.py`：直接依赖声明与源码消费关系。
 
-## 5. 支线: 按需深入
+这些是检查入口，不表示当前工作区已经全部通过。本次是文档更新，不运行真实工具去改工作区，
+也不调用真实 LLM 验证流程。当前测试目录没有测试源文件，`make test` 不能被当作已有完整
+回归覆盖的证明。后续添加测试应优先覆盖下面这些行为分叉：
 
-主线走完之后, 这几块可以独立读, 互不依赖:
-
-| 支线 | 入口 | 配套 ADR | 什么时候读 |
-|---|---|---|---|
-| 窗口维护与压缩 | `application/context/window_manager.py` (231 行) + `summarize.py` (255 行) | 0041, 0032, 0037 | 想理解"历史怎么塞进窗口", 以及什么时候淘汰 |
-| 跨会话记忆 | `application/memory/memory_service.py` (178 行) | 0033 | 想理解模型为什么记得上一轮的事 |
-| 计划与待办 | `application/planning/planning_service.py` (363 行) | 0022 | 想理解 `plan_write` 与计划面板 |
-| 计划评审 | `application/planning/plan_review.py` (144 行) | 0023, 0038 | 想理解 plan 档"同意并执行"为什么能升到 auto |
-| 工作区恢复 | `application/recovery/coordinator.py` (515 行) | 0015 | 想理解撤销与"首次破坏性写入屏障" |
-| 系统提示词 | `application/prompt/system_prompt_builder.py` (131 行) + `template_renderer.py` (203 行) + `templates/` | 0018, 0031, 0039, **0042** | 想改模型行为 |
-| 处理过程落盘 | `infrastructure/session/jsonl_run_store.py` (142 行) | 0016 | 想理解历史轮次的处理过程为什么展得开 |
-| 共用组合根 | `interfaces/runtime/project_runtime.py` (546 行), `approval.py`, `event_hub.py` | 0025, 0045 | 要改一轮怎么起, 怎么停, 怎么等审批 |
-| Web 后端 | `interfaces/web/app.py` (1198 行), `server.py` (188 行) | 0025 | 要加接口或改启动行为 |
-| 终端入口 | `interfaces/tui/session_app.py` + `run_view.py` + `commands/` | 0045, 0016 | 要改终端交互或加一条斜杠命令 |
-| 终端输入面 | `interfaces/tui/prompt.py` (输入框与斜杠菜单), `tty.py` (逐键读取), `select.py` (↑↓ 单选) | 0045, 0040 | 要改按键, 菜单或提示行 |
-| Web 前端 | `web/src/App.tsx` (1833 行), `runModel.ts` (653 行), `RunProcess.tsx` (351 行) | 0025 | 要改界面 |
-| 可观测性 | `shared/observability/` + `interfaces/runtime/logging_wiring.py` + `diagnostics.py` | 0035 | 要排查线上行为 |
-| LLM 网关 | `application/llm/gateway/default_gateway.py` (1161 行) | 0011, 0012 | 要接新供应商 |
-| 会话存储 | `application/session/session_service.py` (298 行) | 0001, 0008, 0026 | 想理解 resume |
-| 项目身份与锁 | `application/project/project_service.py` (153 行) | 0008, 0025 | 想理解为什么同一项目只能起一个 forge |
-| 配置系统 | `domain/config/config_keys.py` (222 行) + `application/config/config_service.py` (82 行) | 0005, 0008 | 要加配置项 |
-| 依赖与穷举治理 | `scripts/check_deps.py` + `application/tools/git_queries.py` | 0040 | 想知道什么该交给依赖, 什么表不能承重 |
-
-`runs.jsonl` 那一行值得单独说清分工, 因为它很容易被当成第二份会话记录: 它**不是恢复
-真相源**. 会话正文由 `events.jsonl` 提供, 那一份才是审计与重放的事实; `runs.jsonl` 存的
-是给人看的过程 —— 模型每一步说了什么, 调了哪些工具, 各花了多久. 这条分工决定了失败时
-怎么办: 它损坏, 丢失或根本没写成, 后果只是历史轮次的处理过程展不开, 会话本身完好. 所以
-写入路径上的任何异常都吞掉, 只留一行 `run_store.write_failed`.
-
-**配置项是一份封闭登记, 不是散落各处的字符串**: `domain/config/config_keys.py` 的
-`SCHEMA` 是唯一权威 —— 键名, 类型, 默认值, 允许取值, 属于应用级还是项目级, 以及**给人
-看的中文名与一句说明**, 全在那一条 `ConfigKey` 上. 加配置项 = 加一条, `GET /api/v1/settings`
-直接从它派生, 页面不自己写一份文案. 终端入口回来之后 (ADR-0045) 这条纪律更值钱了:
-`/config` 与设置页读的是同一条 `ConfigKey`, 两边一行文案都不是手写的 —— 否则同一个开关
-在终端里和网页上会叫不同的名字, 而两边都不会报错.
-
-这条纪律是有代价换来的: 日志的五个开关原先是 `FORGE_LOG_*` 环境变量, 在设置面板里看不见
-也改不了, 而 `FORGE_LOG_LEVEL` 还压在 `logging.level` 配置项上 —— "面板显示 info, 实际
-按 debug 在写"这种状态没有任何界面能解释. 现在它们各是一条 `logging.*` 配置项.
-
-**只有一条路径了, 但分层没变**: 删掉终端入口时, `application` 及以下**一行没动**. 这不是
-巧合 —— CLI 与 Web 一直共用 `interfaces/runtime/` 下的组合根与同一套 application, 差别
-只在适配器. 能整棵砍掉一个入口而业务层无感, 正是分层在这次改动上兑现的那一次.
-
-## 6. 这个代码库的阅读技巧
-
-**docstring 承载"为什么", 不是"是什么".** 这是这个项目最重要的阅读入口. 大部分模块与
-关键方法的 docstring 记录的是**当初为什么这么选, 以及不这么选会怎样**. 例如
-`text_edit.py` 里"容忍不携带信息的差异, 不容忍携带信息的差异"那段, 或者 `hashing.py`
-里为什么不能用 `dataclasses.asdict`. **看到长 docstring 不要跳过, 那里面是设计决策.**
-
-**注释里带"曾经" / "早先" / "原来" / "原先"的地方是踩过的坑.** 全项目搜这几个词, 能捞出
-一批真实事故的记录. 例如 `plan.py` 里 `filesystem_view_version` 为什么标 `compare=False`,
-或者 `approval.py` 里那四个字段为什么从 `ApprovalBinding` 删掉.
-
-**删掉的东西会留下墓碑.** 这个库的习惯是删代码时在原位或替代者的 docstring 里写清
-"删的是什么, 为什么它的理由不成立了". `domain/security/budget.py` 开头那段"顶替了原先的
-`modes.py`", `check_arch.py` 里那条被删的 SIBLING_BAN 的注释, `domain/intents.py` 里
-`InputOrigin.TTY_USER` 那段, `interfaces/exit_codes.py` 里"早先它在 cli 包下"那段, 都是
-这种. 顺着墓碑读比读 git log 快.
-
-**不变量集中在四处**: 值对象的 `__post_init__`, 模块级 `assert` (如 `stop.py` 末尾),
-`scripts/check_arch.py`, 以及 `scripts/check_abstractions.py`. 想知道"什么是不能违反的",
-看这四处.
-
-**`__all__` 是模块的对外边界.** 没进 `__all__` 的名字是内部实现.
-
-**测试是第二份文档 —— 但目前只剩四处.** 测试函数名是完整的英文句子, 读测试名就知道
-系统承诺了什么. 现存 127 例:
-
-```text
-tests/prompt/        60 例. test_static_prompt (32) 编译与指纹快照;
-                     test_prompt_text (19) 模板正文纪律; test_rule_provenance (8)
-                     每条规则都要能指认一个具体的错误动作
-tests/context/       40 例. test_layering (13) 六层的位置; test_window (14) 只追加
-                     与批量淘汰; test_window_manager (13) 水位导出与摘要触发
-tests/tools/         23 例. test_result_shape: summary / data / body 三段的形状
-tests/tool_request/   5 例. test_fence_sees_raw_output: 围栏提示读的是原始输出
-tests/support/       共享替身与循环夹具
-```
-
-**其余的用例暂时不存在.** 安全裁决, 工具行为, LLM 网关, Web API, 记忆, 围栏, 计划待办
-这七块原先合计一千余例, 随 ADR-0041 / ADR-0042 推翻的形状一起删了 —— 这个项目明写的
-纪律是新设计不为兼容旧用例妥协, 被推翻的设计连同它的用例一起走, 而不是留着一批测着
-已经不存在的形状的断言. 代价要说清楚: **这七块现在只有源码与 docstring 可读, 改它们
-没有回归网兜着.** `tests/test_entrypoint.py` 那条钉住 `forge cli` 不复活的用例也在这
-批里 —— 它守的那件事本身没变, 只是暂时没有机器守着了.
-
-> 现存这四组反过来提示了**下一批用例该长什么样**: 每一组的文件级 docstring 都先写清
-> "这一组查的是什么, 以及查漏了会怎样". `test_layering.py` 开头那句尤其值得抄 ——
-> "这一组查的是位置, 不是内容. 位置错了不会报错, 也不会让任何输出变难看, 它只是让每
-> 一轮都变贵" —— 说得出这句话的用例才值得写.
-
-## 7. 用改动验证理解
-
-读懂的标准不是"看完了", 是"能预测改动的后果". 建议按顺序做这几个练习:
-
-1. **跑起来**: `make ci`, 然后 `poetry run forge`, 在浏览器里走一次真实对话. 注意
-   `make ci` 里除了 lint / format / mypy / 四个架构守卫与 127 个 Python 用例, 还有
-   `web-type` / `web-test` / `web-build` 三步前端检查 (前端侧另有三份 `.test.mjs`).
-2. **加一个最小工具**: 照 `planning_tools.py` 里 `PlanReadTool` 的形状写一个
-   `echo_text`, 注册进 `interfaces/runtime/tool_wiring.py`. 验证: 它自动出现在
-   `GET /api/v1/tools` 里, 且在各隔离档下的可见性符合你的预期.
-3. **故意违反分层**: 在 `domain/tool/plan.py` 里 `import rich`, 跑 `make arch`. 看它
-   怎么拦你. 再试着在 `application/tools/` 里 import 一次 `application/security/`.
-4. **故意破坏分层的位置**: 把 `AssembledContext.to_request_messages` 里状态帧的位置
-   从末尾挪到窗口之前, 跑 `tests/context/test_layering.py`. 这类缺陷不会让任何输出变
-   难看 —— 它只是让每一轮都变贵, 所以只有用例挡得住. 再试着让 `window_manager` 逐条
-   丢弃而不是批量淘汰, 跑 `tests/context/test_window.py`.
-5. **改内置提示词**: 改 `application/prompt/templates/blocks/` 下任一份模板的一个字,
-   跑 `tests/prompt/`. 看指纹用例怎么逼你升 `PROMPT_TEXT_VERSION`. 再往模板里加一行
-   规则但**不写 `{# why: … #}`**, 看 `test_rule_provenance.py` 怎么问你"删掉这一句,
-   哪个具体的错误动作会变得可能". 最后试着在某个 Python 文件里直接写一句中文进
-   `PromptBlock(body=...)`, 跑 `make arch`.
-6. **读一条完整审计**: 跑一次带工具的对话, 然后看
-   `~/.forge/projects/<project_id>/sessions/<session_id>/events.jsonl`. 把事件序列和你
-   读的代码对上. 同时对着 `~/.forge/logs/forge-latest.log` 看同一次调用的日志侧.
-7. **看围栏真的立起来没有**: 自测结论没有任何界面, 直接问那个函数 ——
-
-   ```bash
-   poetry run python -c "from forgecli.infrastructure.execution.sandbox.selection import select_provider; p, r = select_provider(); print(p.name, r.confined, r.failures)"
-   ```
-
-   `confined` 为 False 时 `failures` 里就是原因. 这一步能让 §4.3 从概念变成这台机器上
-   的事实.
-8. **数一次未命中**: 连着跑三轮带工具的对话, 从日志里把每轮的 `model.request` 与
-   `llm.cache_hit` 挑出来对比. ADR-0041 的全部收益都落在这一个数上 —— 每轮未命中的
-   input 应该只有本轮新增的内容, 而不是整段历史. 这一步能让 §2.2 从概念变成这台机器上
-   的事实.
-
-> 原先这里还有一条"试着把终端入口加回来, 跑 `tests/test_entrypoint.py`". 那个文件已随
-> 这一轮测试重写删除, 练习暂时做不了 —— 它守的那件事本身没变, 只是眼下没有机器守着.
-
-## 8. 当前已知的缺口
-
-**这些地方不要浪费时间困惑** —— 它们是有意为之或尚未落地, 不是你读漏了:
-
-| 现象 | 状态 |
+| 场景 | 应核对的行为 |
 |---|---|
-| 代码里搜不到 `LoopHook` / `LoopState`, 只在 docstring 里被提到 | ADR-0010 预留的扩展点, 从未落地. 事件总线明写"需要改变循环方向的能力必须实现 LoopHook", 而那个类目前不存在 |
-| 没有 mid-turn resume | 同上. `LoopStopReason` 里的 `RESUMABLE_PAUSE` 一档目前靠重新起一轮实现 |
-| ADR-0034 (分层上下文组装与混合语义检索) 只兑现了一半 | 状态仍是 Proposed. 决策 1 的"必须保留层"被 ADR-0041 的六层吸收了, **检索层仍然没有** —— 没有向量库, 没有 BM25, 没有任何按相关性取材的代码 |
-| ADR-0043 (`ask_user`) 与 ADR-0044 (工具样板上收) 只有文档 | 两份都是 2026-09-03 写的, 一行代码没有. 尤其注意 0043: **模型缺信息时今天没有任何向人提问的入口**, 它只能把问题写成最终回答, 于是这一轮结束, 用户的回答变成一条与任何 `tool_call` 都不相干的新消息 |
-| 测试套件处在重写中间态 | 1169 例现存 127 例, 只覆盖上下文分层, 提示词与工具结果形状三块. 安全, 工具行为, 网关, Web, 记忆, 围栏, 计划待办七块暂时没有用例 (§6) |
-| 没有 MCP 接入 | 设计文档里有, 代码里没有. `Capability` 与 `ToolSpec` 的 docstring 里为它留了位置 |
-| 没有 Sub-Agent | 同上 |
-| `SessionMode` 不落盘 | 刻意的: `state.json` 必须能从 `events.jsonl` 重建, 而 mode 没有对应事件. 见 `session_service.py::set_mode` 的 docstring |
-| `ExitCode` 只剩三个码位, 中间是空的 | `OK` (0), `PROJECT_LOCKED` (6), `PORT_BUSY` (7). 1-3 各有约定 (1 未预期错误, 2 Click/Typer 用法错误, 3 未分配), 4 与 5 空着 —— 那是删掉的 `NO_TTY` 与 `UNTRUSTED` 留下的洞, 刻意不回收, 免得码位漂移 |
-| `GET /api/v1/diagnostics` 没有前端页面 | 只能 curl (§0.1). ADR-0035 的读数本身完整 |
-| 围栏自测结论 (`IsolationLevel`) 不出现在任何**接口**里 | 它现在进得了两处: 请求的第 [4] 层 (`runtime_view.py` 把 `isolation_level` 与一句人话摘要渲染给模型), 以及 debug 级下的 `context.system_prompt` 日志行. 但 `GET /api/v1/status` 与 `/diagnostics` 都不带它, 装配时也一行没记 —— 想拿准确结论仍然只能自己调 `select_provider()` (练习 7) |
-| `EventType.SLASH_COMMAND` 已删, 但它自己的注释说不该删 | **这一条是真的不一致, 不是文档漂移.** `domain/session/events.py` 里那段注释仍写着"删这三个安全, 删 SLASH_COMMAND 不安全, 区别只在有没有真的写进过 events.jsonl", 而枚举里已经没有它了. `from_dict` 用 `EventType(str(...))` 还原, 遇到终端入口时代留下的 `"slash_command"` 行会直接抛 `ValueError`. 同批删掉的 `APPROVAL_REQUESTED` / `APPROVAL_RESOLVED` / `CLASSIFIER_INVOKED` / `RECOVERY_PERFORMED` 确实安全 —— 它们只在一张名字表里出现过, 从未被写进过文件 |
-| `domain/memory/secrets.py` 一条单元测试都没有 | ADR-0040 §4.9 说"配套用例见 `tests/memory/test_secret_shapes.py`, 两个方向各钉一半", 那个文件不存在且全 git 历史里从未存在. 原先仅有的一条端到端断言在 `tests/memory/test_memory_prompt_and_tools.py`, 随这一轮测试重写一并删除 —— 现在是**零覆盖**. 2026-08-28 修的两个误报 (`_TOKEN` 去掉 `/`, `_is_random_token` 的连排规则) 因此完全没有回归用例守着 |
-| 一批 docstring 还在说 REPL / 终端 / 斜杠命令 | 文档漂移. `agent_turn/agent_turn_service.py`, `agent_turn/cancellation.py`, `application/agent_run/` 几处都有 (`application/project/project.py` 那处已随文件删除). 代码行为以实现为准 |
-| `docs/02-detailed-design.md:148` 的 `LoopAction` 取值表列了五项 | 实现只有两种: `AnswerAction` 与 `ToolRequestAction`. `ask_user` / `request_approval` / `request_compaction` 三项从来没有被构造过 —— 后两者早已分别由 `ApprovalService` 与 `WindowManager` 在循环之外承担, 前者是 ADR-0043 打算落成工具的那一件. 三条读起来像是已经接好的路 |
-| `docs/02-detailed-design.md` §3.5 列了六种模式与一个 `ModePolicy` 类 | 文档漂移. 以四档 (`PLAN`/`ACCEPT_EDITS`/`AUTO`/`FULL_ACCESS`) 为准, `ModePolicy` 已随 ADR-0009 废弃删除 |
-| `docs/01-overview-design.md` §5.1 提到 MCP SDK 与 `ModePolicy` | 同上 |
-| `docs/使用相关.md` 的日志表还写着 `/config` 与 `/diagnostics` | 文档漂移, 配置项本身没变, 入口改成了设置页 |
+| 模型一次请求三个工具，第二个被人拒绝 | 第三个不执行，补齐配对结果，收工具后解释 |
+| 审批期间目标被替换 | 绑定重验或执行前状态复核拒绝旧批准 |
+| 第一包之前 429，与第一包之后连接断开 | 前者有界重试，后者不重放输出 |
+| 窗口超水位与真实供应商超窗 | 合法切点、草稿计量、额外强压次数受限 |
+| 停止请求先于提问入队 | 取消闩使稍后的 ask 立即返回，不永久阻塞 |
+| /runs 查询期间恰好产生新事件 | 水位不制造遗漏，跨会话和跨实例不混流 |
+| 快速切换会话 A → B，A 的请求晚到 | 过期响应不覆盖 B 的正文与过程 |
+| 补丁中途写入失败 | 如实报告部分变化，保留可用恢复记录 |
+| 删除会话清理过程中退出 | 墓碑保留，下次启动可接着清理 |
 
-已经补上或已经删掉, 旧材料里仍写着别的说法的 (看到别再当缺口):
-
-| 曾经的说法 | 现状 |
-|---|---|
-| `forge cli` 进终端 REPL, `#` 开人工 Shell | 子命令与人工 Shell 都不存在. 终端会话本身回来了, 但入口是 `forge --cli` (ADR-0045), 且不带 `#` 那条信任通道 |
-| 斜杠命令住在 `application/slash_commands/`, 由 `IntentRouter` 解析文本意图 | 那两处已删且不回来. ADR-0045 的斜杠命令住在 `interfaces/tui/commands/`, 只是一张名字到处理函数的表: 不解析意图, 也不进 application |
-| `ManualMutationBarrier` (ADR-0017 §10) | 已删. 唯一 trip 方是人工 Shell 服务; 人工 Shell 没了, 它就是一个永远为假的标志位 —— 不会响的安全阀比没有安全阀更糟 |
-| `InputOrigin.TTY_USER` | 已删且不回来: 它承载的是人工 Shell 的特权. ADR-0045 新增的 `CLI_USER` 只标这句话是在终端说的, 不带任何权限 |
-| `interfaces/web/static/` 在库里 | 已出库. `make package` 依赖 `make web-build`, 打包前现生成 (2026-08-30). 装 wheel 的用户不受影响, 产物仍在包里 |
-| plan 档没有计划评审 | 已实现. `application/planning/plan_review.py`, ADR-0023 + ADR-0038 |
-| 没有 `plan_read` / `todo_write` 等工具 | 已实现. `application/tools/builtin/planning_tools.py`, 五个 |
-| 沙箱恒为 `NO_SANDBOX` | 已实现. Seatbelt / bubblewrap / WSL2 三个 Provider + 启动自测, ADR-0030 |
-| 没有上下文压缩 | 已实现. ADR-0032 + ADR-0037 |
-| 没有跨会话记忆 | 已实现. ADR-0033 |
-| 没有结构化日志 | 已实现. ADR-0035 |
-| `git_read` 靠一张 git CLI 参数白名单保证只读 | 已换成 libgit2 进程内调用, 白名单删除, 不再声明 SPAWN_PROCESS. ADR-0040 决策 4.4 |
-| 日志开关是 `FORGE_LOG_*` 环境变量 (ADR-0035 决策 3 原文) | 已改成 `logging.*` 配置项, 见 ADR-0035 的 2026-08-28 修订段 |
-| `telemetry.enabled` 没有任何消费者 | 已接上: 它现在控制 `shared/observability/metrics.py` 的采集, 默认关 |
-| `ToolAuditSink.approval_event` | 已删 (2026-08-30). 零个生产调用点; 审批的审计走 `policy_decision` |
-| 系统提示词里有工具表, 运行事实块, 计划 / 待办 / 记忆三个状态块 | 全部搬走 (ADR-0042). 提示词只剩六个静态块, 一个进程编译一次; 运行事实成了请求的第 [4] 层, 三个状态块合成第 [6] 层的状态帧 |
-| `PromptBlock.cacheable` 与分区校验 | 已删. 请求是 `[tools][system][messages]`, 整个 system prompt 都排在 messages 之前, 块内部怎么分区都换不来一个字节的缓存 |
-| `ToolAction` 枚举 | 已删. 唯一消费方是提示词里按动作分组的工具表, 那张表没了它就没了消费方 |
-| 上下文有"回合内去重"与"占位符降级"两条通路 | 已删 (ADR-0041 决策 4). 两条都是中段改写, 在前缀缓存下净亏五到十倍. `transcript.rewrite` 一并删除, 连机制入口都不留 |
-| `application/context/manager.py` (`ContextManager`) | 已拆: 组装归 `assembler.py`, 窗口维护归 `window_manager.py`, 二级摘要归 `summarize.py` |
-| `RuntimeFacts` 住在 `application/prompt` | 已搬到 `application/context`. 它每轮都可能变, 而提示词只依赖包版本与 `FORGE.md` |
-| `interfaces/web/serialization.py` | 已搬到 `shared/serialization.py`: 落盘那一侧出现了第二个消费方 |
-| 会话事件有 15 种 | 现在 14 种. `SLASH_COMMAND` 删了 (见上表那一行) |
-| 运行事件有 23 种 | 现在 21 种 |
-
-**冲突时的裁定顺序**: 已接受的 ADR > 最新日期的 roadmap > `02-detailed-design.md`.
-见 `docs/05-acceptance-standards.md` §9. 同一主题有多份 ADR 时以编号大的为准; 同一份 ADR
-有多次修订时以最后一次为准 (ADR-0025 的两次修订是这条的现成例子), 并注意 §1.3 那张替代
-关系表.
-
-## 9. 常见误解
-
-**"提示词能约束模型行为"** —— 不能. 提示词只降低无效请求. 真实边界是 Tool Catalog,
-PolicyEngine, ApprovalService, ToolRuntime 与围栏. 读 ADR-0018 §9.1.
-
-**"审批通过就是授权"** —— 不是. 批准之后必须重新 prepare, 重新裁决, 逐项比对
-`ApprovalBinding` 的 6 个字段 (其中 `plan_hash` 覆盖了工具名, spec_hash, 目标集合与能力
-词汇版本), 才能签发 `ExecutionAuthorization`. 读 ADR-0004 §6.1 与
-`domain/security/approval.py`.
-
-**"签发了授权就一定会执行"** —— 不一定. `ToolRuntime.execute` 在起进程之前还要复核
-`FileStateBinding`: 裁决时读到的可执行文件与脚本正文, 到这一刻有没有被换掉. 读 ADR-0027.
-
-**"有个 LLM 分类器在判断命令危不危险"** —— **没有了**. ADR-0030 删掉了它, 连同风险缓存
-与静态命令证明. 现在的判据是围栏边界: 命令能不能跑由内核在系统调用那一刻说. 静态分析
-留下来的部分只用于展示, 审批与学习规则绑定, 不承担兜底.
-
-**"围栏立起来了就不用管受保护路径了"** —— 不对. 读边界只能用 denylist (见
-`fence.py` 的 docstring), 所以受保护路径仍然要逐条列举, 漏一条就是凭证暴露. 只有 Linux
-上的 bubblewrap 靠 mount namespace 绕开了这条.
-
-**"批准一份计划等于批准计划里的命令"** —— 不是. `plan_review.py` 明写它不产生
-`ExecutionAuthorization`, 不写 learned rules. "同意并执行"只是把 PLAN 升到 AUTO, 与在
-模式菜单里手选 auto 完全等价; 升档之后每一步仍然逐次走完整条管线.
-
-**"能力声明可以证明工具安全"** —— 不能. `declared_capabilities` 是**上界**, 只用于目录
-过滤和一致性校验. 声明只能缩小信任, 不能证明安全. 读 ADR-0004 §3.
-
-**"记忆是模型说了算的, 那它能影响裁决吗"** —— 不能, 而且这条边界是机器守的.
-`check_arch.py` 有一条 `application.memory` 不得 import `application.security` 的
-SIBLING_BAN —— 记忆之所以敢做静默写入, 全部承重就在这一条上. 读 ADR-0033 决策 3.
-
-**"Web 只是给终端套了个壳", 或者反过来** —— 都不是. 两条入口是**同一个组合根的两张脸**:
-`interfaces/runtime/project_runtime.py` 装配一次, 一次 turn 跑在它起的后台线程里, 页面靠
-SSE 看进度, 终端靠主线程轮询同一条事件流; 审批阻塞在同一个 `BlockingApprovalBroker` 上,
-由页面上的一次 POST 或终端里的一次按键解开. 两边都不放业务判断.
-
-**"SSH 上要转发端口才能用"** —— 现在不用了. `forge --cli` 就是为这个场景回来的
-(ADR-0045). 转发端口 (`ssh -L 8765:127.0.0.1:8765`) 仍然可行, 想要图形界面时用它.
-而 `#` 人工 Shell 确实没有替代品 —— 要在工作区里亲手敲命令, 自己开一个终端.
-
-**"历史太长了, 回头整理一下"** —— 这条听起来永远合理, 而它永远是负收益. 在前缀缓存下,
-改中段一处的成本等于它自己**加上它后面的全部内容**: 一次 `fs_apply_patch` 之后改写中段,
-17,154 输入里 7,298 未命中; 改文件密集的那一轮三次改写合计 79,321, 占 57% —— 换来的不过
-是把一份 4k 正文压成 40 token 的占位. 所以 ADR-0041 不只是删掉了去重与降级两条通路,
-还删掉了 `transcript.rewrite` 这个机制入口: 留着入口就等于留着退回去的路. 要省窗口, 省
-在**写入那一刻** (收 body 上限, `fs_read` 默认读行段), 不是回头改.
-
-**"提示词里得有张工具表, 不然模型不知道有哪些工具"** —— tool schema 已经把 name,
-description 与 parameters 发过去了, 那就是模型选工具的全部依据. 再在提示词里叠一层 Forge
-自造的分类, 等于要求模型先学会我们的词汇表才能用我们的工具, 而且那段文字每一轮都要付钱.
-单个工具怎么用住在它自己的 `ToolSpec.description` 里 —— 只在它进了本轮目录时才付费, 且
-模型正好是在考虑调用它的时候读到. 读 ADR-0042 决策 5.
-
-**"模型缺信息的时候会问我"** —— **不会, 今天没有这条路.** 它唯一能做的是把问题写成最终
-回答, 那等于结束本轮; 你的回答是新一轮里一条与任何 `tool_call` 都不相干的新消息. 能问人
-的只有安全审批, 而它问的是"这一次已经确定下来的调用许不许可", 发起者是 `PolicyEngine`
-不是模型. ADR-0043 打算把它做成一个阻塞式内置工具, 但那份 ADR 目前一行代码都没有.
-
-## 10. 一份两周的日程建议
-
-| 天 | 内容 |
-|---|---|
-| 1 | 第 1 节建立骨架 + 跑起来 (练习 1) |
-| 2 | 主线一 (对话链路, 含 §2.1 取消与审批) |
-| 3 | §2.2 请求六层与只追加窗口 + 练习 8. **这是这条分支上最新的一块** |
-| 4-6 | 主线二 3.1 值对象 + 3.2 管线. **慢一点, 这是核心** |
-| 7 | 主线二 3.3 工具实现 + 练习 2 |
-| 8-9 | 主线三 4.1 解析 + 4.2 分析器 |
-| 10 | 主线三 4.3 围栏 + 练习 7 |
-| 11 | 练习 3-6, 把不变量摸一遍 |
-| 12-14 | 按当前任务挑支线深入 |
-
-## 关联文档
-
-- `docs/01-overview-design.md` —— 概要设计与分层职责 (注意 §5.1 提到的 MCP 与
-  `ModePolicy` 尚未 / 不再存在)
-- `docs/02-detailed-design.md` —— 领域模型与事件 schema (注意 §3.5 与 §148 的
-  `LoopAction` 取值表都已漂移)
-- `docs/04-engineering-standards.md` —— 命名, 提交, 测试规范
-- `docs/05-acceptance-standards.md` —— 验收标准与文档一致性要求
-- `docs/adr/README.md` —— 45 份架构决策记录
-- `docs/adr/2026-08-19-0025-采用本地Web控制面替代终端交互.md` —— **两次修订都要读**,
-  尤其是修订二的"为什么推翻上一次修订"
-- `docs/adr/2026-09-02-0041-采用按变更源分层的请求组装与只追加窗口.md` 与
-  `docs/adr/2026-09-02-0042-提示词模块收敛为静态策略层.md` —— **这两份要一起读**,
-  它们定了今天一次请求的形状 (§2.2)
-- `docs/SYNC-TO-MAIN.md` —— 副本到主仓的回流记录
-- `AGENTS.md` —— 命名约定与禁用名
-- `README.md` —— 从源码跑起来的四步 (`make web-build` 不能省)
-- `src/forgecli/application/prompt/templates/README.md` —— 模型可读正文的组织与改动纪律
+读完应能不看目录树就解释：谁产生动作、谁执行动作、谁裁决、谁签发、谁记录、谁展示，以及
+每个失败分支交还哪个值对象。遇到新功能，先在对应主流程插入真实入口和出口，再扩展图，
+不要只在目录表增加一个文件名。
