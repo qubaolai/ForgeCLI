@@ -1,7 +1,7 @@
 /** 计划与待办栏, 含回合边界的计划评审决议。 */
 
 import { Markdown } from "@/shared/ui/Markdown";
-import type { PlanIndexView, Planning } from "@/types";
+import type { PlanIndexView, Planning } from "@/types/session";
 
 export function PlanningPanel({
   planning,

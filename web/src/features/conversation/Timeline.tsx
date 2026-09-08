@@ -4,9 +4,11 @@ import { formatElapsed } from "@/shared/format";
 import { CopyButton } from "@/shared/ui/CopyButton";
 import { Markdown } from "@/shared/ui/Markdown";
 import { RunProcess } from "@/features/runProcess/RunProcess";
-import { formatTokens, metricsFor } from "@/shared/lib/run";
-import type { LocalTurn, ToolDirectory } from "@/shared/lib/run";
-import type { TranscriptEvent } from "@/types";
+import { formatTokens } from "@/shared/format";
+import { metricsFor } from "@/shared/lib/run/metrics";
+import type { ToolDirectory } from "@/shared/lib/run/tools";
+import type { LocalTurn } from "@/shared/lib/run/turn";
+import type { TranscriptEvent } from "@/types/session";
 
 export function Message({ item }: { item: TranscriptEvent }) {
   const user = item.payload.role === "user";

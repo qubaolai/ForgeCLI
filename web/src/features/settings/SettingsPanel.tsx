@@ -5,19 +5,8 @@
  */
 
 import { useEffect, useState } from "react";
-import type {
-  AdminActions,
-  AdminCatalog,
-  Checkpoint,
-  FieldSpec,
-  KnownProvider,
-  LearnedRule,
-  LlmRuntimeSettings,
-  Provider,
-  ProviderProtocol,
-  Setting,
-  WorkspaceRoot,
-} from "@/types";
+import type { AdminActions, AdminCatalog, Checkpoint, FieldSpec, KnownProvider, LearnedRule, LlmRuntimeSettings, Provider, ProviderProtocol, WorkspaceRoot } from "@/types/admin";
+import type { Setting } from "@/types/session";
 import { CheckpointRow, ModelSettings } from "./ModelSettings";
 
 export type SettingsTab = "general" | "models" | "security" | "recovery" | "status";

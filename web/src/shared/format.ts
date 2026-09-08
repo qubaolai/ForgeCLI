@@ -18,3 +18,15 @@ export function shortPath(path: string) {
 export function formatElapsed(milliseconds: number) {
   return milliseconds >= 1000 ? `${(milliseconds / 1000).toFixed(1)}s` : `${Math.round(milliseconds)}ms`;
 }
+
+/**
+ * token 数的显示口径: 不足 1000 给整数, 到了 1000 换成 k。
+ *
+ * 一位小数就够: 这个数字是拿来判断量级的 (这轮烧得多不多), 不是拿来对账的 ——
+ * 要对账得看供应商账单, 而那里的口径本来就与本地估算不同。
+ * 尾随的 .0 去掉: `1.0k` 看起来像是精确到百位, 其实不是。
+ */
+export function formatTokens(value: number) {
+  if (value < 1000) return String(Math.round(value));
+  return `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+}

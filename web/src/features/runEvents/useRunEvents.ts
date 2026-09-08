@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { STALE_SESSION } from "@/shared/api/client";
-import type { RunEvent } from "@/shared/lib/run";
+import type { RunEvent } from "@/shared/lib/run/events";
 import type { ResumePosition } from "./resumePosition";
 
 export type ConnectionState = "connecting" | "live" | "retrying" | "stopped";

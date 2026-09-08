@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { api } from "@/shared/api/client";
-import type { PlanIndexView, Planning } from "@/types";
+import type { PlanIndexView, Planning } from "@/types/session";
 
 export function usePlanning(onError: (message: string) => void) {
   const [planning, setPlanning] = useState<Planning>({});

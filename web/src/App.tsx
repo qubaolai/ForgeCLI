@@ -9,18 +9,9 @@ import {
   useState,
 } from "react";
 import { ChevronIcon, GearIcon, PlanIcon } from "@/shared/ui/icons";
-import {
-  appendRunEvent,
-  failUnboundTurn,
-  finishLocalTurn,
-  isTerminalEvent,
-  LocalTurn,
-  newLocalTurn,
-  restoreTurn,
-  RunSnapshot,
-  shouldAutoFollow,
-  shouldSendOnEnter,
-} from "@/shared/lib/run";
+import { shouldAutoFollow, shouldSendOnEnter } from "@/features/conversation/interaction";
+import { isTerminalEvent, RunSnapshot } from "@/shared/lib/run/events";
+import { appendRunEvent, failUnboundTurn, finishLocalTurn, LocalTurn, newLocalTurn, restoreTurn } from "@/shared/lib/run/turn";
 import { api, setCsrfToken, SLOW_REQUEST_MS } from "@/shared/api/client";
 import { useRequestActivity } from "@/features/requests/useRequestActivity";
 import { ConfirmDialog } from "@/features/chrome/ConfirmDialog";
@@ -41,7 +32,7 @@ import { PromptCard } from "@/features/humanInteraction/PromptCards";
 import { SettingsPanel } from "@/features/settings/SettingsPanel";
 import { connectionCopy, useRunEvents } from "@/features/runEvents/useRunEvents";
 import { useResumePosition } from "@/features/runEvents/resumePosition";
-import type { Session, TranscriptEvent, TurnRunState } from "./types";
+import type { Session, TranscriptEvent, TurnRunState } from "@/types/session";
 
 function App() {
   const [sessions, setSessions] = useState<Session[]>([]);

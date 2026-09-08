@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { api } from "@/shared/api/client";
-import type { Project } from "@/types";
+import type { Project } from "@/types/session";
 
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);

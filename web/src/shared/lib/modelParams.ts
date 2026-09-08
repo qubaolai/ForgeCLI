@@ -72,3 +72,20 @@ function boundedFloat(raw: string, label: string, low: number, high: number): nu
   }
   return value;
 }
+
+/**
+ * Thinking 强度在新接口中是字符串；兼容旧服务端曾经返回的 `{value: string}`
+ * 值对象，避免设置页把对象直接交给 input 后显示成 `[object Object]`。
+ */
+export function thinkingEffortText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && "value" in value) {
+    return thinkingEffortText((value as { value?: unknown }).value);
+  }
+  return "";
+}
+
+export function thinkingEffortList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(thinkingEffortText).filter(Boolean);
+}
