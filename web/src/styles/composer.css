@@ -1,0 +1,133 @@
+/* 消息脚注与用量, 输入框 */
+
+.message-footer {
+  min-height: 30px;
+  margin-top: 7px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.message-copy-outside {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.final-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.metric i {
+  font-style: normal;
+  opacity: 0.68;
+}
+.metric.total {
+  color: var(--text);
+  font-weight: 600;
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.pulse {
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.4s infinite;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+    box-shadow: 0 0 0 6px #62d6ad25;
+  }
+}
+.conversation-footer {
+  position: relative;
+}
+.composer {
+  position: relative;
+  margin: 0 clamp(18px, 5vw, 68px) 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  background: var(--surface-2);
+  border-radius: 13px;
+  box-shadow: 0 16px 45px #0007;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+  box-shadow:
+    0 16px 45px #0007,
+    0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 88px;
+  max-height: 240px;
+  overflow-y: auto;
+  resize: none;
+  border: 0;
+  outline: 0;
+  padding: 15px 16px;
+  background: transparent;
+  color: var(--text);
+  line-height: 1.5;
+}
+.composer textarea:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+.composer.offline {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+.composer-hint {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+}
+.composer-bar > button,
+.plan-actions button,
+.approval-card footer button {
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  border-radius: 7px;
+  padding: 7px 13px;
+  cursor: pointer;
+}
+.composer-bar > button[type="submit"],
+button.primary {
+  border-color: #54cfa4;
+  background: var(--accent);
+  color: #092017;
+  font-weight: 700;
+}
+.composer-bar > button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.composer-bar .stop {
+  color: var(--danger);
+}

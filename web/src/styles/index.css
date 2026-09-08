@@ -1,0 +1,23 @@
+/* 样式按功能分块, 但**顺序不能重排**。
+ *
+ * 类名全是全局的, 而这张表里有靠层叠顺序生效的地方 (比如 .modal-backdrop 与
+ * .modal-backdrop.confirm-layer)。换了顺序不会报错, 只会让某个遮罩层换个样子。
+ * 下面这串 @import 的次序就是原来单文件里的次序, 拼回去逐字节相同。
+ */
+
+@import "./base.css";
+@import "./shell.css";
+@import "./workspace.css";
+@import "./conversation.css";
+@import "./markdown.css";
+@import "./composer.css";
+@import "./menus.css";
+@import "./planning.css";
+@import "./runSteps.css";
+@import "./approval.css";
+@import "./project.css";
+@import "./settings.css";
+@import "./models.css";
+@import "./responsive.css";
+@import "./runFlow.css";
+@import "./question.css";

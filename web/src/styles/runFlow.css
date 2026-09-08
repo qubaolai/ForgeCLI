@@ -1,0 +1,218 @@
+/* 处理过程: 叙述块, 工具行, 调用行 */
+
+.run-flow {
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  gap: 10px;
+}
+.run-flow-text {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 14px;
+  line-height: 1.75;
+}
+.run-flow-text > :first-child {
+  margin-top: 0;
+}
+.run-flow-text > :last-child {
+  margin-bottom: 0;
+}
+.run-flow-waiting,
+.run-flow-pending {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.run-flow-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
+}
+.run-flow-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}
+/* 工具块比叙述矮一档: 它是"顺带发生的事", 不该和模型说的话抢注意力. */
+.run-flow .run-step {
+  font-size: 12px;
+}
+
+/* 工具活动收成一行浅色文字 (方案 A).
+   原先每组是一张带标题的卡, 占三到五行, 而标题重复了下面每一条已经写着的东西 ——
+   一轮跑十几次工具时, 叙述被卡片推得很散. 现在它退到背景里, 点开才展开详情. */
+.tool-line {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+}
+.tool-line > summary {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.tool-line > summary::-webkit-details-marker {
+  display: none;
+}
+.tool-line > summary:hover {
+  color: var(--text-soft);
+}
+.tool-line > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.tool-caret {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: var(--border);
+  transform: rotate(-90deg);
+  transition: transform 0.15s;
+  align-self: center;
+}
+.tool-line[open] > summary .tool-caret {
+  transform: rotate(0deg);
+}
+.tool-what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-what.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.tool-count {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.tool-took {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.tool-flag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+.tool-line.failed > summary,
+.tool-line.failed .tool-flag {
+  color: var(--danger);
+}
+.tool-line.cancelled > summary {
+  color: var(--muted);
+}
+/* 待处理与运行中都能展开；组默认收起，由用户决定是否查看逐项状态。 */
+.tool-line.pending > summary,
+.tool-line.running > summary {
+  color: var(--text-soft);
+}
+.tool-line.running > summary .tool-running-verb,
+.tool-line.running > summary .tool-what,
+.call-row.running .call-tool {
+  animation: running-text 1.4s ease-in-out infinite;
+}
+@keyframes running-text {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool-line.running > summary .tool-running-verb,
+  .tool-line.running > summary .tool-what,
+  .call-row.running .call-tool {
+    animation: none;
+  }
+}
+.tool-line-body {
+  min-width: 0;
+  max-width: calc(100% - 18px);
+  margin: 6px 0 2px 18px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--border);
+  display: grid;
+  gap: 6px;
+}
+.tool-running-verb {
+  flex: 0 0 auto;
+}
+.tool-line-kind {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* 展开层: 一次调用一行. 原先是三层嵌套把摘要行说过的话说三遍, 一次读文件占半屏. */
+.call-row {
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.call-tool {
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+.call-subject {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.call-state {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--muted);
+}
+.call-took {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.call-row.failed .call-tool,
+.call-row.failed .call-state {
+  color: var(--danger);
+}
+.call-note {
+  grid-column: 1 / -1;
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.call-note.danger {
+  color: var(--danger);
+}
+.call-note.warn {
+  color: var(--warning);
+}

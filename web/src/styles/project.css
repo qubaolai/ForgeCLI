@@ -1,0 +1,173 @@
+/* 项目落地页与选择器, 错误横幅 */
+
+.project-switcher-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  overflow: auto;
+  background: var(--bg);
+}
+.project-switcher {
+  position: relative;
+  min-height: 100vh;
+}
+.project-switcher-close {
+  position: absolute;
+  top: 24px;
+  right: clamp(24px, 5vw, 72px);
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 23px;
+}
+.project-switcher-close:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+.project-card.active {
+  border-color: #42695c;
+}
+.project-card:disabled {
+  cursor: default;
+  opacity: 0.72;
+  transform: none;
+}
+.escape-hint {
+  margin-top: 24px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.project-center {
+  min-height: 100vh;
+  padding: 64px clamp(24px, 8vw, 120px);
+  background: radial-gradient(circle at 15% 0, #183329 0, transparent 30%), var(--bg);
+}
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 44px;
+}
+.brand-lockup h1 {
+  margin: 0;
+  font-size: 26px;
+}
+.brand-lockup p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  max-width: 1050px;
+}
+.project-card {
+  min-height: 180px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: linear-gradient(145deg, #171b22, #11141a);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 14px 35px #0004;
+}
+.project-card:hover {
+  border-color: #4f675f;
+  transform: translateY(-1px);
+}
+.project-card strong {
+  font-size: 17px;
+  margin-top: 8px;
+}
+.project-card small {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-card > span:last-child {
+  margin-top: auto;
+  color: var(--accent);
+  font-size: 12px;
+}
+.project-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-3);
+  border-radius: 9px;
+  color: var(--accent);
+}
+.project-card.add-project {
+  cursor: default;
+}
+.project-card.add-project input {
+  width: 100%;
+  margin-top: auto;
+  border: 1px solid var(--border);
+  background: #0d1015;
+  color: var(--text);
+  border-radius: 7px;
+  padding: 9px;
+}
+.project-card.add-project button {
+  border: 0;
+  background: var(--accent);
+  color: #082018;
+  border-radius: 7px;
+  padding: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.error-banner {
+  max-width: 1050px;
+  margin: 0 0 18px;
+  padding: 10px 13px;
+  border: 1px solid #7d3b40;
+  background: #361b20;
+  border-radius: 8px;
+  color: #ffadb2;
+  font-size: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.error-banner > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.error-banner button {
+  flex: 0 0 auto;
+  margin: -3px -4px 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.error-banner button:hover {
+  opacity: 1;
+}
+.workspace-error {
+  position: fixed;
+  z-index: 30;
+  top: 59px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(720px, calc(100vw - 32px));
+  box-shadow: 0 12px 32px #0006;
+}

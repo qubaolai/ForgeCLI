@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QuestionCard } from "./src/features/humanInteraction/QuestionCard";
-import "./src/styles.css";
+import "./src/styles/index.css";
 function Check() {
   const [mode, setMode] = useState<"single" | "multiple">("multiple");
   const [output, setOutput] = useState("");

@@ -1,0 +1,55 @@
+/* 颜色变量, 全局重置, 图标 */
+
+:root {
+  font-family:
+    Inter,
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  color: #e7e9ee;
+  background: #0d0f13;
+  font-synthesis: none;
+  --bg: #0d0f13;
+  --surface: #13161c;
+  --surface-2: #191d25;
+  --surface-3: #202530;
+  --border: #282e39;
+  --muted: #9198a7;
+  --text: #e7e9ee;
+  --text-soft: #d5d9e2;
+  --accent: #62d6ad;
+  --accent-dim: #173d33;
+  --warning: #f4bd61;
+  --danger: #ef7a81;
+}
+
+* {
+  box-sizing: border-box;
+}
+.icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button {
+  color: inherit;
+}

@@ -1,0 +1,131 @@
+/* 问题卡 */
+
+.question-card {
+  padding: 20px;
+  margin: 0 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  min-width: 0;
+}
+.question-card header,
+.question-card footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.question-card header {
+  justify-content: space-between;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.question-card header [role="status"],
+.question-card footer > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.question-card h2 {
+  font-size: 18px;
+  font-weight: 500;
+  margin: 20px 0 8px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.question-description {
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.question-option:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.question-option input {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin: 4px 0 0;
+  accent-color: var(--accent);
+}
+.question-option > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.question-option-title {
+  font-weight: 500;
+}
+.question-option em {
+  font-size: 12px;
+  font-style: normal;
+  color: var(--accent);
+  margin-left: 8px;
+}
+.question-option small {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+.question-note {
+  display: block;
+  margin-top: 20px;
+  font-size: 13px;
+}
+.question-note textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px;
+  margin: 8px 0 20px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+.question-card footer > span {
+  margin-right: auto;
+}
+.question-card button {
+  padding: 9px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.question-card button.primary {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.question-card button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.question-card [role="alert"] {
+  color: var(--danger);
+}
+@media (max-width: 480px) {
+  .question-card {
+    padding: 14px;
+  }
+  .question-card footer > span {
+    width: 100%;
+  }
+  .question-note textarea {
+    font-size: 16px;
+  }
+}

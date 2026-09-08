@@ -1,0 +1,379 @@
+/* 设置面板外壳与常规页 */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: #050609cc;
+  backdrop-filter: blur(5px);
+  padding: 24px;
+}
+.settings-panel h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.settings-panel header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-panel {
+  position: relative;
+  width: min(1040px, 96vw);
+  height: min(720px, 92vh);
+  display: grid;
+  grid-template-rows: 70px 1fr;
+  background: #151820;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  overflow: hidden;
+}
+.settings-panel > header {
+  padding: 15px 20px;
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+.settings-panel > header button {
+  border: 0;
+  background: transparent;
+  font-size: 24px;
+  cursor: pointer;
+}
+.settings-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 180px 1fr;
+}
+.settings-body nav {
+  padding: 12px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-body nav button {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 9px 10px;
+  color: var(--muted);
+  border-radius: 7px;
+}
+.settings-body nav button.active {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.settings-fields {
+  padding: 22px;
+  overflow: auto;
+}
+.setting-field {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.setting-field > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.setting-field > select,
+.setting-field > div {
+  flex: 0 0 auto;
+}
+.setting-help {
+  max-width: 52ch;
+  line-height: 1.6;
+}
+.setting-field small {
+  color: var(--muted);
+}
+.setting-field input,
+.setting-field select {
+  border: 1px solid var(--border);
+  background: #0d1015;
+  color: var(--text);
+  border-radius: 7px;
+  padding: 8px;
+}
+.setting-field > div {
+  display: flex;
+  gap: 6px;
+}
+.setting-field button {
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  border-radius: 7px;
+  cursor: pointer;
+}
+/* 恢复默认在左列名字底下, 与控件分开: 它不是"另一种保存", 放在控件旁边会被当成一个值。 */
+.setting-reset {
+  justify-self: start;
+  padding: 3px 9px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-fields h3 {
+  margin: 8px 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.settings-fields h4 {
+  margin: 16px 0 8px;
+  font-size: 12px;
+}
+.admin-row > .row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.admin-row select {
+  min-width: 0;
+  max-width: 220px;
+  border: 1px solid var(--border);
+  background: #0d1015;
+  color: var(--text);
+  border-radius: 7px;
+  padding: 7px;
+}
+.availability {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--surface-3);
+}
+.availability.ready {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.warning-row {
+  border-left: 2px solid var(--warning);
+  padding-left: 10px;
+}
+.prune-row {
+  grid-template-columns: 1fr;
+}
+.tool-entry summary small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.checkpoint-row .row-actions {
+  align-self: flex-start;
+}
+.checkpoint-preview {
+  margin: 8px 0 0;
+  padding: 10px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 85%, var(--bg));
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.status-grid {
+  display: grid;
+  gap: 2px;
+}
+.status-grid > div {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.status-grid span {
+  color: var(--muted);
+}
+.status-grid code {
+  overflow-wrap: anywhere;
+  font:
+    11px/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.settings-fields h3:not(:first-child) {
+  margin-top: 28px;
+}
+.admin-row {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.admin-row > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.admin-row strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.admin-row small {
+  color: var(--muted);
+}
+.admin-row button,
+.add-root button {
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  border-radius: 7px;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.add-root {
+  display: grid;
+  grid-template-columns: 1fr 90px auto;
+  gap: 7px;
+  margin-top: 12px;
+}
+.add-root input,
+.add-root select {
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: #0d1015;
+  color: var(--text);
+  border-radius: 7px;
+  padding: 8px;
+}
+.model-add {
+  grid-template-columns: 150px 1fr auto;
+}
+.field-help {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 8px 0 0;
+}
+.provider-editor {
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.provider-heading {
+  padding: 12px 14px;
+  background: var(--surface-3);
+}
+.provider-heading > div {
+  display: grid;
+  gap: 4px;
+}
+.provider-heading small {
+  color: var(--muted);
+}
+.provider-fields,
+.model-fields,
+.runtime-settings {
+  padding: 6px 14px 12px;
+  display: grid;
+  gap: 2px;
+}
+.draft-form {
+  display: grid;
+  gap: 2px;
+}
+.draft-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 4px;
+}
+.draft-actions span {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+.draft-actions button {
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.draft-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.draft-actions button.primary {
+  border-color: #54cfa4;
+  background: var(--accent);
+  color: #092017;
+  font-weight: 700;
+}
+.editable-value.dirty > span::after {
+  content: "·";
+  margin-left: 6px;
+  color: var(--accent);
+  font-weight: 900;
+}
+.editable-value {
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(220px, 1.2fr);
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.editable-value input,
+.editable-value select {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: #0d1015;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px;
+}
+.editable-value button,
+.model-editor button {
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+.model-editor {
+  border-top: 1px solid var(--border);
+}
+.model-editor summary {
+  list-style: none;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+}
+.model-editor summary::-webkit-details-marker {
+  display: none;
+}
+.model-editor summary span {
+  display: grid;
+  gap: 3px;
+}
+.model-editor summary small {
+  color: var(--muted);
+}
