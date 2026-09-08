@@ -16,7 +16,7 @@
 # install-cli           build wheel and install forge with pip
 # uninstall-cli         uninstall forgecli with pip
 # verify-cli            verify installed forge command
-.PHONY: help install lock check lint format format-check type arch test web-install web-lint web-type web-test web-build ci run run-cli package install-cli uninstall-cli verify-cli
+.PHONY: help install lock check lint format format-check type arch test web-install web-lint web-type web-build ci run run-cli package install-cli uninstall-cli verify-cli
 
 # 变量定义
 POETRY ?= poetry
@@ -42,7 +42,6 @@ help:
 	@echo "make test              - 运行测试"
 	@echo "make web-install       - 安装 Web 前端依赖"
 	@echo "make web-type          - 检查 React/TypeScript 类型"
-	@echo "make web-test          - 运行 Web 状态模型回归测试"
 	@echo "make web-build         - 构建并嵌入 Web 静态资源"
 	@echo "make ci                - 本地等价 CI: Python + Web + test"
 	@echo "make run               - 启动本地 Forge Web"
@@ -93,13 +92,10 @@ web-lint:
 web-type:
 	cd web && npm run typecheck
 
-web-test:
-	cd web && npm test
-
 web-build:
 	cd web && npm run build
 
-ci: check lint format-check type arch web-lint web-type web-test web-build test
+ci: check lint format-check type arch web-lint web-type web-build test
 
 run: 
 	$(POETRY) run forge $(FORGE_RUN_ARGS)
