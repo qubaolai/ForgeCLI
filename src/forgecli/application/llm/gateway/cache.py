@@ -37,7 +37,7 @@ from forgecli.domain.model.request import ModelRequest
 from forgecli.domain.model.response import ModelResponse, ModelUsage
 
 # 响应缓存永远不适用的 origin（§14：主 Agent 对话不走响应缓存）。
-_NEVER_CACHED_ORIGINS = frozenset({RequestOrigin.CHAT, RequestOrigin.ACT})
+_NEVER_CACHED_ORIGINS = frozenset({RequestOrigin.CHAT, RequestOrigin.TOOL_CALL})
 
 
 def structured_schema_digest(schema_name: str, schema: Mapping[str, object]) -> str:

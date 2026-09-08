@@ -123,6 +123,14 @@ COMMANDS: tuple[Command, ...] = (
         keywords=("恢复",),
     ),
     Command(
+        "/delete-session",
+        "删除会话及其计划、处理过程与恢复点",
+        session.cmd_delete_session,
+        usage="/delete-session [会话 id]",
+        category="会话",
+        keywords=("删除", "清理"),
+    ),
+    Command(
         "/mode",
         "隔离档与审批档",
         mode.cmd_mode,

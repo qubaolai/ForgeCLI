@@ -12,15 +12,23 @@ SessionService 只依赖两个存储抽象与领域值对象，不碰 Rich/Typer
 
 from __future__ import annotations
 
+import json
 import secrets
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 
+from forgecli.application.llm.gateway.errors import ModelResponseParseError
+from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.session.event_store import EventStore
 from forgecli.application.session.state_store import StateStore
+from forgecli.domain.conversation.message import ChatMessage, TextBlock
 from forgecli.domain.conversation.turn import MessageRole, TurnStatus
 from forgecli.domain.intents import InputOrigin, SessionMode
+from forgecli.domain.model.origin import RequestOrigin
+from forgecli.domain.model.params import ModelParams
+from forgecli.domain.model.request import ModelRequest, StructuredModelRequest
+from forgecli.domain.schema.schemas import StructuredSchema
 from forgecli.domain.session.events import EventType, SessionEvent
 from forgecli.domain.session.snapshot import SessionSnapshot
 from forgecli.shared.errors import SessionStateError
@@ -37,12 +45,49 @@ def _new_session_id() -> str:
     return f"{stamp}-{secrets.token_hex(4)}"
 
 
-_TITLE_MAX_LEN = 8
+_TITLE_MAX_LEN = 15
 
 
-def _title_from(text: str) -> str:
+def _title_from(text: str, gateway: LlmGateway) -> str:
     """从首条输入派生会话摘要名称：取前 ``_TITLE_MAX_LEN`` 字符，超长缀 ``…``。"""
-    cleaned = " ".join(text.split())
+    cleaned: str = ""
+    try:
+        schema = StructuredSchema.TITLE_CREATE
+        request = StructuredModelRequest(
+            model_request=ModelRequest(
+                request_id="0",
+                session_id="0",
+                turn_id="0",
+                origin=RequestOrigin.TITLE,
+                messages=(
+                    ChatMessage(
+                        MessageRole.USER,
+                        content=(TextBlock(text=text),),
+                        tool_calls=()
+                    ),
+                ),
+                params=ModelParams(),
+                system_prompt="将这段内容总结成一个对话的标题已json返回, 最大长度不能超过15个字",
+            ),
+            schema=schema.schema,
+            schema_name=schema.name
+        )
+        response = gateway.complete_structured(request=request)
+        data = response.data
+        if not isinstance(data, dict):
+            raise ModelResponseParseError("标题输出必须是 JSON 对象")
+
+        title = data.get("title")
+        if not isinstance(title, str):
+            raise ModelResponseParseError("标题字段必须是字符串")
+
+        cleaned = " ".join(title.split())
+        if not cleaned:
+            raise ModelResponseParseError("标题不能为空")
+
+    except Exception:
+        cleaned = " ".join(text.split())
+
     if len(cleaned) <= _TITLE_MAX_LEN:
         return cleaned
     return cleaned[:_TITLE_MAX_LEN] + "…"
@@ -69,6 +114,7 @@ class SessionService:
         event_store: EventStore,
         state_store: StateStore,
         workspace_root: str,
+        gateway: LlmGateway,
         *,
         clock: Callable[[], str] = now_iso,
         id_factory: Callable[[], str] = _new_session_id,
@@ -76,6 +122,7 @@ class SessionService:
         self._events = event_store
         self._states = state_store
         self._root = workspace_root
+        self._gateway = gateway
         self._clock = clock
         self._new_id = id_factory
         self._current: SessionSnapshot | None = None
@@ -237,7 +284,7 @@ class SessionService:
             and event_type == EventType.USER_MESSAGE
             and not self._current.title
         ):
-            title = _title_from(str(payload.get("text", "")))
+            title = _title_from(str(payload.get("text", "")), self._gateway)
             if title:
                 self._current = replace(self._current, title=title)
         self._ensure_persisted()

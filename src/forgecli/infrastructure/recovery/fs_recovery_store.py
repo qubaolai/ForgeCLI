@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -94,6 +95,34 @@ class FsRecoveryStore(RecoveryStore):
             return False
         target.unlink()
         return True
+
+    def prune_orphan_blobs(self, workspace_id: str) -> int:
+        """标记-清除: 先收集还活着的清单引用了哪些内容, 再删其余的 blob。
+
+        只有 ``preimage_content_hash`` 会成为 blob —— postimage 的哈希是拿工作区现状
+        算出来的, 从来没有落过盘 (见 coordinator 的 ``put_blob`` 唯一调用点)。
+        """
+        blobs_root = self._workspace_dir(workspace_id) / "blobs"
+        if not blobs_root.is_dir():
+            return 0
+        alive = {
+            entry.preimage_content_hash.split(":", 1)[-1]
+            for checkpoint in self.list_checkpoints(workspace_id)
+            for entry in checkpoint.mutations.entries
+            if entry.preimage_content_hash
+        }
+        removed = 0
+        for shard in blobs_root.iterdir():
+            if not shard.is_dir():
+                continue
+            for blob in shard.iterdir():
+                if blob.is_file() and blob.name not in alive:
+                    blob.unlink()
+                    removed += 1
+            # 空分片目录留着只会让下次扫描多走一圈; 非空时 rmdir 自己会拒绝.
+            with contextlib.suppress(OSError):
+                shard.rmdir()
+        return removed
 
     # ---- 路径 ----
 

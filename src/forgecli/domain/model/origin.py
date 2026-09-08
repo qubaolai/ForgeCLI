@@ -24,7 +24,7 @@ class RequestOrigin(Enum):
     """模型调用用途。新增用途必须先扩这个封闭枚举（ADR-0011 §3.3）。"""
 
     CHAT = "chat"
-    ACT = "act"
+    TOOL_CALL = "tool_call"
     TITLE = "title"
     SUMMARY = "summary"
     COMPACT = "compact"
@@ -49,7 +49,7 @@ _THINKING_BY_ORIGIN: dict[RequestOrigin, bool] = {}
 def _register_thinking_defaults() -> None:
     thinks = {
         RequestOrigin.CHAT,
-        RequestOrigin.ACT,
+        RequestOrigin.TOOL_CALL,
     }
     mechanical = {
         RequestOrigin.TITLE,

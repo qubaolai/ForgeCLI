@@ -23,6 +23,16 @@ usage 草稿经只读属性 usage_drafts 交回驱动方; 流式增量经运行�
 运行事件按 ADR-0016 发布到 AgentRunEventBus. 分工: 循环拥有 turn 生命周期, 步骤切换,
 模型调用和"模型请求了哪个工具" (TOOL_QUEUED); 工具真正被裁决与执行之后的事件由
 ToolRequestCoordinator 发布 —— 循环看不见裁决与执行, 编不出那些事实.
+
+**这个模块只剩控制流** (ADR-0048 决策 5). 三件与"下一步做什么"无关的事各自成模块:
+
+- ``run_events.LoopEventPublisher`` 把发生的事翻译成事件, 并持有步骤序号.
+- ``model_call.ModelCaller`` 发一次调用, 把流式与非流式归一成一个结果.
+- ``progress.ProgressGuard`` 判断这一轮有没有在原地打转.
+- ``transcript`` 是几个纯函数: 一次调用怎么写成模型读得懂的文字.
+
+读这个文件应该只需要跟着 start -> _advance -> _dispatch_next -> _observe_tool -> _stop
+这条线走; 上面四个模块各自带着自己的判据与理由, 不必同时读.
 """
 
 from __future__ import annotations
@@ -30,23 +40,32 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
 
+from forgecli.application.agent_loop.model_invoker import (
+    AgentModelInvoker,
+    ModelOutcome,
+)
+from forgecli.application.agent_loop.progress import ProgressGuard
+from forgecli.application.agent_loop.run_events import LoopEventPublisher
+from forgecli.application.agent_loop.transcript import (
+    labelled,
+    protocol_markup_in,
+    render_call,
+    transcript_view,
+)
 from forgecli.application.agent_run.events import AgentRunEventBus
-from forgecli.application.agent_run.scrubbing import scrub_arguments
-from forgecli.application.context.window_manager import WindowFitResult, WindowManager
+from forgecli.application.context.window_manager import WindowManager
 from forgecli.application.llm.error_hints import actionable_message
 from forgecli.application.llm.gateway.errors import (
     MalformedToolCallError,
-    ModelBadRequestError,
     ModelCancelledError,
     ModelContextOverflowError,
     ModelGatewayError,
     ModelResponseParseError,
 )
 from forgecli.application.llm.gateway.gateway import LlmGateway
-from forgecli.application.llm.gateway.streaming import StreamAccumulator
 from forgecli.application.llm.metering import UsageMeter
+from forgecli.application.llm.transport_policy import ModelTransportPolicy
 from forgecli.application.prompt.template_renderer import render_notice
 from forgecli.application.workspace.monitor import (
     WorkspaceChangeMonitor,
@@ -62,25 +81,8 @@ from forgecli.domain.agent.actions import (
     ToolRequest,
     ToolRequestAction,
 )
-from forgecli.domain.agent.run_events import (
-    AgentRunEventKind,
-    ContextCompactedPayload,
-    DecisionSummaryPayload,
-    ModelCompletedPayload,
-    ModelFailedPayload,
-    ModelStartedPayload,
-    ModelUsagePayload,
-    ReasoningStatus,
-    ReasoningStatusPayload,
-    RunEventPayload,
-    TextDeltaPayload,
-    ToolCompletedPayload,
-    ToolQueuedPayload,
-    TurnFinishedPayload,
-    WorkspaceChangedPayload,
-)
 from forgecli.domain.agent.state import AssembledContext, LoopInput
-from forgecli.domain.agent.stop import LoopStopReason, StopClassification
+from forgecli.domain.agent.stop import LoopStopReason
 from forgecli.domain.context.budget import ContextBudget
 from forgecli.domain.context.compaction import CompactionDraft
 from forgecli.domain.context.window import Window
@@ -93,12 +95,6 @@ from forgecli.domain.conversation.turn import MessageRole
 from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.params import ModelParams
 from forgecli.domain.model.request import ModelRequest
-from forgecli.domain.model.response import (
-    FinishReason,
-    ModelResponse,
-    ModelUsage,
-)
-from forgecli.domain.model.streaming import ModelStreamChunk
 from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.tool.catalog import ToolCatalog
 from forgecli.domain.tool.tool_call import ToolCall, ToolSchema
@@ -112,29 +108,6 @@ _log = get_log(__name__)
 # 单轮内模型调用的兜底上限, 防止模型与工具互相喂招停不下来. 工具调用本身不设总数上限.
 _DEFAULT_MAX_MODEL_CALLS = 9999
 
-# 同一个工具 + 同一份参数在一轮里允许重复几次.
-#
-# 这道闸是给"模型卡住"准备的, 与总预算是两回事: 总预算拦的是"活干得多", 它拦的是
-# "同一件事重复做". 见过 fs_find 用相同参数被连着调上百次 —— 每次结果都一样,
-# 模型却读不出该换个做法, 总预算再大也只是让它多转几百圈.
-#
-# 允许 2 次而不是 1 次: 中间穿插过写操作时, 重列一次目录是合理的.
-#
-# 2026-08-19 重新评估过降到 1, 结论是不降. 上面那条"写完再列一次"是真实场景, 而循环判断
-# 不了"中间那次调用改没改工作区" —— 那是安全层的知识, 拿进来等于让循环认识工具语义.
-# 真正的漏网之鱼是**参数每次都变**的原地打转 (8 个 grep 变体各不相同), 它按签名判身份
-# 本来就拦不住, 该由 _MAX_BARREN_OBSERVATIONS 接手.
-_MAX_IDENTICAL_CALLS = 2
-
-# 本轮累计被安全策略拒绝多少次之后就不再派工具.
-#
-# 数**累计**不数连续: 连续计数会被一次成功的 fs_read_file 重置, 模型只要在两次被拒之间
-# 插一个无害读取, 计数器就永远回不到上限.
-#
-# 与 _MAX_IDENTICAL_CALLS 不重叠: 那道闸拦"同一工具同一参数", 而 `rm -rf build/` 换成
-# `find build -delete` 是两个签名不同的调用, 它放行. 这里拦的正是这种换着花样撞墙.
-_MAX_BLOCKED_CALLS = 3
-
 # 本轮累计收到多少次不可用的工具调用之后放弃.
 #
 # "不可用"指模型自己的输出坏了: 参数不是完整 JSON, 或参数里混进了工具调用 markup.
@@ -142,130 +115,18 @@ _MAX_BLOCKED_CALLS = 3
 # 从此再没碰过这个工具, 全程改用 shell_run —— 一次静默的格式失败足以让一个工具从模型
 # 的选项里永久消失.
 #
-# 与另外两道闸的分工: _MAX_IDENTICAL_CALLS 拦"同一件事重复做", _MAX_BLOCKED_CALLS 拦
-# "换着花样撞安全策略", 这一道拦的是"话都说不利索". 前两道的输入是合法调用, 这一道的
-# 输入根本不是.
+# 与 progress.py 那三道闸的分工: 那边拦"同一件事重复做", "换着花样撞安全策略", 以及
+# "调用没带回新信息"; 这一道拦的是"话都说不利索". 那三道的输入是合法调用, 这一道的
+# 输入根本不是 —— 所以它留在循环里: 走到这里连一个可派发的调用都没有.
 #
-# 数**累计**不数连续, 理由同 _MAX_BLOCKED_CALLS: 中间夹一次成功调用就重置的话, 一个
+# 数**累计**不数连续, 理由同 progress.MAX_BLOCKED_CALLS: 中间夹一次成功调用就重置,
+# 一个
 # 每隔一步坏一次的模型能把整轮预算烧光而永远撞不到上限.
 _MAX_MALFORMED_RESPONSES = 2
-
-# 连续多少次工具调用没带回新信息之后提醒一次.
-#
-# 这道闸补的是 _MAX_IDENTICAL_CALLS 的盲区: 那道闸按**入参**判身份, 而一次真实任务里
-# 8 个 grep 变体的参数各不相同 (加个 --include, 加个 | head, 换个转义), 全部放行, 返回
-# 的却都是同一个空结果. 真正的浪费信号不是"参数一样", 是"结果没告诉我新东西".
-#
-# 只提醒, 不收工具: 空结果不是错误, 模型该做的是换个思路或者直接报告"没找到", 而这两件
-# 事都还需要工具. 收掉目录等于因为没找到就罚它闭嘴.
-_MAX_BARREN_OBSERVATIONS = 3
 
 
 def _new_request_id() -> str:
     return f"req_{uuid.uuid4().hex[:12]}"
-
-
-# 模型侧工具调用 markup. 它出现在**参数值或工具名**里, 说明供应商没能把模型的工具调用
-# 解析干净, 把标记连同内容一起塞进了参数.
-#
-# 这类调用不能当正常参数派发下去: 它会一路走到安全裁决, 拿回 executable_not_found 之类
-# 的结论, 而那个结论会把模型引向"我命令写错了" —— 真正坏掉的是它的输出格式, 照着错误
-# 的结论改只会一直错下去.
-_PROTOCOL_MARKUP = (
-    "<tool_call>",
-    "</tool_call>",
-    "<arg_key>",
-    "<arg_value>",
-    "<think>",
-    "</think>",
-)
-
-
-def _protocol_markup_in(call: ToolCall) -> str | None:
-    """调用里混进的第一个 markup 标记; 干净则返回 None.
-
-    只看工具名与**字符串**参数值: 结构化的嵌套值不会承载这类泄漏, 而把整个参数字典
-    序列化去搜会把正常的代码内容误判成 markup —— 模型完全可能在写一段含 `<think>`
-    的 HTML.
-    """
-    for marker in _PROTOCOL_MARKUP:
-        if marker in call.name:
-            return marker
-        for value in call.arguments.values():
-            if isinstance(value, str) and marker in value:
-                return marker
-    return None
-
-
-def _labelled(call: ToolCall, content: str) -> str:
-    """给回填内容加一行调用标签.
-
-    协议层靠 tool_call_id 关联, 但模型是**读**上下文的. 一段几百行的裸文件列表和另一段
-    长得一模一样, 模型认不出哪段对应哪次调用, 于是"再列一次看看" —— 这是重复调用最主要
-    的来源. 标签让每段结果自带身份.
-    """
-    return f"{_render_call(call)} ->\n{content}"
-
-
-def _render_call(call: ToolCall) -> str:
-    arguments = ", ".join(
-        f"{name}={value!r}" for name, value in sorted(call.arguments.items())
-    )
-    return f"{call.name}({arguments})"
-
-
-def _transcript_view(messages: tuple[ChatMessage, ...]) -> list[dict[str, object]]:
-    """把 transcript 摊平成可以直接读的形状, 供 debug 级日志写出整段上下文.
-
-    排查"模型为什么突然这么答"时, 真正要看的就是那一刻发给它的完整消息序列 —— 事件
-    日志里只有落盘的成对 user / assistant, 轮内的 tool result 回填与压缩改写不在那里.
-    只在 DEBUG 下调用, info 级别不会为它拼这个字符串.
-    """
-    view: list[dict[str, object]] = []
-    for message in messages:
-        item: dict[str, object] = {"role": message.role.value}
-        texts = [
-            block.text for block in message.content if isinstance(block, TextBlock)
-        ]
-        if texts:
-            item["text"] = "\n".join(texts)
-        results = [
-            {
-                "tool_call_id": block.tool_call_id,
-                "is_error": block.is_error,
-                "content": block.content,
-            }
-            for block in message.content
-            if isinstance(block, ToolResultBlock)
-        ]
-        if results:
-            item["tool_results"] = results
-        if message.tool_calls:
-            item["tool_calls"] = [
-                {"id": call.tool_call_id, "name": call.name, "args": call.arguments}
-                for call in message.tool_calls
-            ]
-        view.append(item)
-    return view
-
-
-def _signature_of(call: ToolCall) -> str:
-    """一次调用的身份: 工具名 + 规范化参数. 参数顺序不同不算不同的调用."""
-    return repr(
-        (call.name, sorted((str(k), repr(v)) for k, v in call.arguments.items()))
-    )
-
-
-@dataclass(frozen=True)
-class _ModelOutcome:
-    """一次模型调用的归一化产出: 文本与工具调用可以同时存在."""
-
-    text: str
-    tool_calls: tuple[ToolCall, ...] = ()
-
-    @property
-    def empty(self) -> bool:
-        return not self.text.strip() and not self.tool_calls
 
 
 class BuiltinAgentLoop:
@@ -277,26 +138,36 @@ class BuiltinAgentLoop:
         usage_meter: UsageMeter,
         *,
         request_id_factory: Callable[[], str] = _new_request_id,
+        model_transport_policy: ModelTransportPolicy,
         cancel_token_factory: Callable[[], CancelToken | None] = lambda: None,
         event_bus: AgentRunEventBus | None = None,
         timer: Callable[[], float] = time.monotonic,
         context: WindowManager | None = None,
         workspace_snapshot_provider: WorkspaceSnapshotProvider | None = None,
     ) -> None:
-        self._gateway = gateway
-        self._meter = usage_meter
         self._new_request_id = request_id_factory
         self._new_cancel_token = cancel_token_factory
-        self._bus = event_bus
         self._timer = timer
+        # 三个协作者, 三种它们各自负责的事: 把发生的事翻译成运行事件, 发一次模型调用,
+        # 判断这一轮有没有在原地打转。控制流留在这个类里。
+        self._events = LoopEventPublisher(event_bus, timer=timer)
+        self._progress = ProgressGuard()
+        self._caller = AgentModelInvoker(
+            gateway,
+            usage_meter,
+            self._events,
+            # 压缩产生的草稿也进同一个列表 (ADR-0037): 分成两份迟早会出现两套单价。
+            on_usage=self._usage_drafts_sink,
+            timer=timer,
+        )
         self._started = False
         self._finished = False
+        self._transport_policy = model_transport_policy
         self._turn_id: str | None = None
         self._usage_drafts: list[UsageRecordDraft] = []
         # 压缩记录 (ADR-0032 决策 1). 循环攒着, AgentTurnService 落盘 —— 与
         # usage_drafts 同一条分工: 循环可以调模型, 但不写事件 (ADR-0010).
         self._compaction_drafts: list[CompactionDraft] = []
-        self._partial_answer: str | None = None
         # 本轮的会话窗口: 每次模型调用都基于它, 工具结果按 §10 写回这里.
         #
         # 存 Window 而不是裸元组, 是因为 `evicted_count` 必须跨调用累计 —— 淘汰要靠它
@@ -319,22 +190,16 @@ class BuiltinAgentLoop:
         # 模型一次要了多个工具时的等待队列, 以及正在等 observation 的那一个.
         self._pending_calls: list[ToolCall] = []
         self._dispatched: ToolCall | None = None
-        # (工具名 + 参数) -> 本轮已派发次数, 用于挡住原地打转.
-        self._call_counts: dict[str, int] = {}
-        self._blocked_calls = 0
         self._malformed_responses = 0
         # 供应商说上下文太长之后强压过几次. 估算与真实分词永远有偏差, 这条路是
         # _fit_context 的下界而不是它的备份.
         self._overflow_compactions = 0
-        # 连续几次工具调用没带回新信息, 以及上一次带回的是什么.
-        self._barren_streak = 0
-        self._last_observation: tuple[str, str] | None = None
         self._tools_closed = False
         self._model_calls = 0
         self._tool_calls = 0
-        # 步骤序号: 每次"调模型 / 派工具 / 出回答"算一步, 进事件信封供终端分块.
-        self._step_index = 0
-        self._turn_started_at = 0.0
+
+    def _usage_drafts_sink(self, draft: UsageRecordDraft) -> None:
+        self._usage_drafts.append(draft)
 
     # ---- AgentLoop 端口 ----
 
@@ -352,7 +217,7 @@ class BuiltinAgentLoop:
         self._tools = _schemas_of(loop_input.tool_catalog)
         if self._workspace_monitor is not None:
             self._workspace_monitor.start()
-        self._turn_started_at = self._timer()
+        self._events.start_turn(session_id=self._session_id, turn_id=self._turn_id)
         # 本轮的标识就位, 上一轮的清零. `update` 没有还原点, 所以由每一轮自己把
         # step / req / tool 归零 —— 否则 loop.start 那一行会带着上一轮的步号.
         update_run_context(
@@ -432,7 +297,7 @@ class BuiltinAgentLoop:
     @property
     def partial_answer(self) -> str | None:
         """流式中断时已累积的部分回答文本 (无则为 None)."""
-        return self._partial_answer
+        return self._caller.partial_answer
 
     # ---- 循环推进 ----
 
@@ -448,41 +313,34 @@ class BuiltinAgentLoop:
         if too_long is not None:
             return too_long
 
-        self._step_index += 1
         # 顺带把 tool 清掉: 这一步是在想, 不在跑工具. 不清的话上一次调用的工具名会
         # 一直挂在后面每一行上, 读日志的人会以为那几行也属于它.
-        update_run_context(step=self._step_index, tool="")
+        update_run_context(step=self._events.next_step(), tool="")
         request = self._build_request()
         update_run_context(request_id=request.request_id)
+
+        transport = self._transport_policy.resolve(request.origin)
+
         _log.info(
             "model.request",
             call_index=self._model_calls,
             origin=request.origin.value,
             messages=len(request.messages),
             tools=len(self._tools),
-            streaming=self._bus is not None,
+            transport=transport.value,
         )
         if _log.enabled_for_debug():
             # 先问再拼: _transcript_view 要走一遍整段 transcript, 而 DEBUG 关掉时
             # 那份结果会被原样丢掉 —— 参数是在调用之前求值的, 级别检查拦不住它.
             _log.debug(
-                "model.request.messages", messages=_transcript_view(self._messages)
+                "model.request.messages", messages=transcript_view(self._messages)
             )
-        self._publish(
-            AgentRunEventKind.MODEL_STARTED,
-            ModelStartedPayload(call_index=self._model_calls),
-            request_id=request.request_id,
-        )
-        # thinking 是否有可展示内容由供应商决定; 这里只如实报"开始想了".
-        # 不可用时终端显示状态即可, 绝不从回答或 token 数倒推思维链 (ADR-0016 §6).
-        self._publish(
-            AgentRunEventKind.MODEL_REASONING_STATUS,
-            ReasoningStatusPayload(status=ReasoningStatus.STARTED),
-            request_id=request.request_id,
+        self._events.model_started(
+            request_id=request.request_id, call_index=self._model_calls
         )
         try:
             _log.info("llm.context", message=str(request.messages))
-            outcome = self._call_model(request)
+            outcome = self._caller.invoke(request, transport)
         except ModelCancelledError as exc:
             _log.warning("model.cancelled", message=str(exc))
             return self._stop(LoopStopReason.USER_CANCELLED, actionable_message(exc))
@@ -509,8 +367,8 @@ class BuiltinAgentLoop:
                 LoopStopReason.MODEL_ERROR_BLOCKING, actionable_message(exc)
             )
         if isinstance(outcome, LoopStop):
-            # _call_stream 已经自己收过尾 (中断 / 取消), 这里只补 turn 终态.
-            self._publish_turn_finished(outcome.reason)
+            # ModelCaller 已经自己收过尾 (中断 / 取消), 这里只补 turn 终态.
+            self._turn_finished(outcome.reason)
             return outcome
         # 模型生成期间也可能有人改了工作区. 如果这次本来要直接回答, 不能把一个基于旧
         # 文件状态的答案当成最终答案; 追加事实后重新请求一次让模型重新判断.
@@ -529,7 +387,7 @@ class BuiltinAgentLoop:
         # tool_calls 的 assistant 消息写进 transcript 就欠下一堆永远等不到的
         # tool result, 下一次请求会因此残缺 (§10).
         for call in outcome.tool_calls:
-            marker = _protocol_markup_in(call)
+            marker = protocol_markup_in(call)
             if marker is not None:
                 _log.warning(
                     "model.protocol_markup",
@@ -556,7 +414,7 @@ class BuiltinAgentLoop:
                 return self._stop(
                     LoopStopReason.POLICY_DENIED, render_notice("stop.halt")
                 )
-            outcome = _ModelOutcome(text=outcome.text)
+            outcome = ModelOutcome(text=outcome.text)
 
         self._remember_assistant(outcome)
         if outcome.tool_calls:
@@ -564,13 +422,13 @@ class BuiltinAgentLoop:
             # 模型这一轮请求的调用已经全部确定。先把整批意图发给观察端，再派发第一个，
             # 页面才能在任何工具真正启动之前画出完整队列。裁决与执行事实仍由协调器发布，
             # 这里不会把“模型请求了”说成“必然会执行”。
-            self._publish_tool_batch(outcome.tool_calls)
+            self._events.tool_batch(outcome.tool_calls)
             # 不发决策摘要: "模型请求 N 个工具调用"只是把界面上已经画着的东西再说一遍,
             # 而它会占掉展开层里最显眼的那一行, 把真正的摘要 (连续无新信息, 格式损坏
             # 重试) 挤成同一种东西。派发本身不是一次需要解释的决策。
             return self._dispatch_next(reason="")
         self._dispatched = None
-        self._step_index += 1
+        self._events.next_step()
         return self._decision("模型已产出最终回答", AnswerAction(text=outcome.text))
 
     def _dispatch_next(self, *, reason: str) -> LoopStepResult:
@@ -579,14 +437,11 @@ class BuiltinAgentLoop:
         # 在运行, 因此这里发现的变化明确归为 external.
         self._check_workspace_changes(WorkspaceChangeSource.EXTERNAL)
         call = self._pending_calls.pop(0)
-        signature = _signature_of(call)
-        self._call_counts[signature] = self._call_counts.get(signature, 0) + 1
-        if self._call_counts[signature] > _MAX_IDENTICAL_CALLS:
+        if self._progress.is_repeat(call):
             return self._reject_repeat(call)
         self._dispatched = call
         self._tool_calls += 1
-        self._step_index += 1
-        update_run_context(step=self._step_index, tool=call.name)
+        update_run_context(step=self._events.next_step(), tool=call.name)
         # 入参**原样**写进日志, 与发给终端的 scrub_arguments 是两条路: 屏幕上要防的是
         # 一屏 base64 把过程刷没, 而排查一次"工具为什么这么干"必须看到它真正收到了什么.
         _log.info(
@@ -608,40 +463,13 @@ class BuiltinAgentLoop:
             ),
         )
 
-    def _publish_tool_batch(self, calls: tuple[ToolCall, ...]) -> None:
-        """在首个调用派发前发布模型请求的完整批次。"""
-        total = len(calls)
-        for index, call in enumerate(calls):
-            self._publish(
-                AgentRunEventKind.TOOL_QUEUED,
-                ToolQueuedPayload(
-                    tool_name=call.name,
-                    # 这是该调用之后还有几个同批调用；最后一条恒为 0，前端据此把整批
-                    # 事件一次刷新出来，而不是为 N 个调用渲染 N 次。
-                    queue_position=total - index - 1,
-                    # 连 prepare 都走不到的调用 (工具名不存在, schema 不合法) 只有排队与
-                    # 终态两条事件. 入参不在这里发出去, 它在整条时间线上一次都不会出现.
-                    arguments=scrub_arguments(call.arguments),
-                ),
-                tool_call_id=call.tool_call_id,
-            )
-
     def _reject_repeat(self, call: ToolCall) -> LoopStepResult:
         """同样的调用已经做过了: 不再执行, 直接把这个事实回填给模型.
 
         回填而不是静默跳过, 也不是直接停止本轮: 模型必须知道"你在重复", 否则它只会
         原样再要一次. 这条消息进 transcript, 下一次模型调用就看得到.
         """
-        _log.warning(
-            "loop.repeat_call_rejected",
-            tool=call.name,
-            arguments=call.arguments,
-            limit=_MAX_IDENTICAL_CALLS,
-            seen=self._call_counts[_signature_of(call)],
-        )
-        notice = render_notice(
-            "loop.repeat_call", call=_render_call(call), limit=_MAX_IDENTICAL_CALLS
-        )
+        notice = self._progress.repeat_notice(render_call(call))
         self._append(
             ChatMessage(
                 role=MessageRole.TOOL,
@@ -654,18 +482,7 @@ class BuiltinAgentLoop:
                 ),
             ),
         )
-        # 整批请求已经提前可见，重复调用即使没进入协调器，也必须拥有明确的未执行终态。
-        self._publish(
-            AgentRunEventKind.TOOL_COMPLETED,
-            ToolCompletedPayload(
-                tool_name=call.name,
-                status="rejected",
-                error_summary=notice,
-                error_code="repeated_call",
-                executed=False,
-            ),
-            tool_call_id=call.tool_call_id,
-        )
+        self._events.tool_rejected(call, notice=notice, code="repeated_call")
         self._dispatched = None
         if self._pending_calls:
             return self._dispatch_next(reason="跳过重复调用, 派发下一个")
@@ -694,7 +511,7 @@ class BuiltinAgentLoop:
         # 而日志文件是每一轮都在写的. 协调器那边早就是这个写法.
         if _log.enabled_for_debug():
             _log.debug("tool.observed.content", content=observation.content)
-        content = _labelled(call, observation.content)
+        content = labelled(call, observation.content)
         self._append(
             ChatMessage(
                 role=MessageRole.TOOL,
@@ -711,7 +528,7 @@ class BuiltinAgentLoop:
         # 这里不发 TOOL_COMPLETED: 执行结果的权威事实在协调器那边 (状态, 耗时, 退出码,
         # 是否产生了副作用). 循环只拿到一段回填文本, 用它冒充执行结论会让终端显示的
         # "完成"与真正发生的事脱节.
-        self._track_progress(observation)
+        self._progress.track(observation)
         if observation.disposition is ObservationDisposition.AWAIT_USER_DECISION:
             # 工具交出了需要人裁决的东西, 本轮到此为止 (ADR-0023 决策 1).
             #
@@ -725,77 +542,21 @@ class BuiltinAgentLoop:
             self._abandon_pending(render_notice("loop.review_abandon"))
             self._pending_calls = []
             return self._stop(LoopStopReason.WAIT_PLAN_REVIEW, None)
-        halt = self._weigh(observation)
+        halt = self._progress.should_close_tools(observation)
         if halt is not None:
             return self._close_tools(halt)
         if self._pending_calls:
             return self._dispatch_next(reason="继续派发同一批中的下一个工具调用")
         # 提醒只在整批工具结果都回填完之后追加. 插在两条 tool result 中间会打断
         # "assistant 的 tool_calls -> 配对的 tool result"这段连续区, 供应商会拒.
-        nudge = self._barren_nudge()
+        nudge = self._progress.barren_nudge()
         if nudge is not None:
+            notice, summary = nudge
             self._append(
-                ChatMessage(role=MessageRole.USER, content=(TextBlock(nudge),)),
+                ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)),
             )
+            self._events.decision(summary)
         return self._advance()
-
-    def _track_progress(self, observation: LoopObservation) -> None:
-        """记一次调用有没有带回新信息.
-
-        判据两条, 满足其一就算没有: 内容为空, 或与上一次的**摘要加句柄**完全相同.
-
-        比的是 `(content, handle)` 而不是只比 content: ADR-0041 把正文移出窗口之后
-        content 短了很多, 两次不同的调用更容易撞出同一段文字 —— 而句柄是内容寻址的,
-        正文不一样句柄就不一样. 没有句柄的结果 (计划, 记忆一类) 退回只比 content,
-        它们本来也不归档.
-
-        失败的观察不参与计数 —— 它们有专门的闸 (_MAX_BLOCKED_CALLS 与 HALT). 两个计数器
-        数同一件事, 事后就说不清到底是哪条规则停的.
-        """
-        if observation.is_error:
-            return
-        content = observation.content.strip()
-        fingerprint = (content, observation.handle)
-        if not content or fingerprint == self._last_observation:
-            self._barren_streak += 1
-        else:
-            self._barren_streak = 0
-        self._last_observation = fingerprint
-
-    def _barren_nudge(self) -> str | None:
-        """到了连续次数就给一句提醒, 并把计数清零 —— 否则之后每一步都会再提醒一次."""
-        if self._barren_streak < _MAX_BARREN_OBSERVATIONS:
-            return None
-        count = self._barren_streak
-        self._barren_streak = 0
-        notice = render_notice("loop.barren", count=count)
-        _log.warning("loop.barren_streak", count=count)
-        self._publish(
-            AgentRunEventKind.DECISION_SUMMARY,
-            DecisionSummaryPayload(reason_summary=f"连续 {count} 次调用没有新信息"),
-        )
-        return notice
-
-    def _weigh(self, observation: LoopObservation) -> str | None:
-        """按观察的处置意见决定要不要收掉本轮的工具. 返回收摊理由, None 表示继续.
-
-        人类拒绝立即收: 他拒绝的是**意图**, 不是那一条命令. 允许换个说法重试, 等于让
-        模型绕过人刚做的决定 —— 足够执着的模型总能绕过去, 而用户还以为自己有否决权.
-        这是本轮收, 不是永久禁: 下一句话该由人说, 他可以纠正也可以换个要求.
-        """
-        if observation.disposition is ObservationDisposition.HALT:
-            _log.warning("loop.halt", reason="user_refused")
-            return render_notice("loop.halt")
-        if observation.disposition is ObservationDisposition.BLOCKED:
-            self._blocked_calls += 1
-            _log.warning(
-                "loop.blocked_call",
-                blocked=self._blocked_calls,
-                limit=_MAX_BLOCKED_CALLS,
-            )
-            if self._blocked_calls >= _MAX_BLOCKED_CALLS:
-                return render_notice("loop.blocked", count=self._blocked_calls)
-        return None
 
     def _close_tools(self, notice: str) -> LoopStepResult:
         """收掉本轮的工具目录, 逼模型给出最终回答.
@@ -816,10 +577,7 @@ class BuiltinAgentLoop:
         self._append(
             ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)),
         )
-        self._publish(
-            AgentRunEventKind.DECISION_SUMMARY,
-            DecisionSummaryPayload(reason_summary=notice),
-        )
+        self._events.decision(notice)
         return self._advance()
 
     def _recover_from_overflow(self, exc: ModelGatewayError) -> LoopStepResult:
@@ -862,7 +620,7 @@ class BuiltinAgentLoop:
         self._window = result.window
         self._compaction_drafts.extend(result.drafts)
         self._usage_drafts.extend(result.usage_drafts)
-        self._publish_compaction(result)
+        self._events.compaction(result)
         if not result.drafts:
             _log.error("window.overflow_uncompactable", message=str(exc))
             return self._stop(
@@ -903,10 +661,7 @@ class BuiltinAgentLoop:
         self._append(
             ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)),
         )
-        self._publish(
-            AgentRunEventKind.DECISION_SUMMARY,
-            DecisionSummaryPayload(reason_summary=f"工具调用格式损坏, 重试: {detail}"),
-        )
+        self._events.decision(f"工具调用格式损坏, 重试: {detail}")
         return self._advance()
 
     def _abandon_pending(self, notice: str) -> None:
@@ -929,17 +684,7 @@ class BuiltinAgentLoop:
                     ),
                 ),
             )
-            self._publish(
-                AgentRunEventKind.TOOL_CANCELLED,
-                ToolCompletedPayload(
-                    tool_name=call.name,
-                    status="not_run",
-                    error_summary=detail,
-                    error_code="abandoned",
-                    executed=False,
-                ),
-                tool_call_id=call.tool_call_id,
-            )
+            self._events.tool_abandoned(call, notice=detail)
 
     # ---- 预算 ----
 
@@ -955,10 +700,7 @@ class BuiltinAgentLoop:
         self._workspace_changes.clear()
         notice = render_notice("loop.workspace_changed", changes=changes)
         self._append(ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)))
-        self._publish(
-            AgentRunEventKind.WORKSPACE_CHANGED,
-            WorkspaceChangedPayload(changes=changes),
-        )
+        self._events.workspace_changed(changes)
         _log.info(
             "workspace.changed",
             changes=[
@@ -1008,7 +750,7 @@ class BuiltinAgentLoop:
         # _usage_drafts 交给 AgentTurnService 落盘, 同时发一条 MODEL_USAGE 让终端
         # 与页面把它算进本轮合计.
         self._usage_drafts.extend(result.usage_drafts)
-        self._publish_compaction(result)
+        self._events.compaction(result)
         if result.drafts:
             _log.info(
                 "window.fit",
@@ -1025,36 +767,9 @@ class BuiltinAgentLoop:
             )
         return None
 
-    def _publish_compaction(self, result: WindowFitResult) -> None:
-        """把压缩这件事报出去 (ADR-0037).
-
-        以前它在界面上完全不可见: 用户看到的是"卡了几秒", 而实际发生的是一次额外的
-        模型调用把一段历史换掉了. 两类事件都发 —— 淘汰本身 (省下多少) 与它的用量
-        (花掉多少) 是方向相反的两个数, 只报一个都会读错.
-        """
-        for draft in result.drafts:
-            self._publish(
-                AgentRunEventKind.CONTEXT_COMPACTED,
-                ContextCompactedPayload(
-                    level=draft.level.value,
-                    tokens_before=draft.tokens_before,
-                    tokens_after=draft.tokens_after,
-                    tokens_saved=draft.tokens_saved,
-                    messages_replaced=draft.messages_replaced,
-                    provider=draft.provider,
-                    model=draft.model,
-                ),
-            )
-        for usage in result.usage_drafts:
-            self._publish(
-                AgentRunEventKind.MODEL_USAGE,
-                ModelUsagePayload.from_draft(usage),
-                request_id=usage.request_id,
-            )
-
     # ---- transcript ----
 
-    def _remember_assistant(self, outcome: _ModelOutcome) -> None:
+    def _remember_assistant(self, outcome: ModelOutcome) -> None:
         """把模型这一步写进 transcript.
 
         带 tool_calls 的 assistant 消息即使没有文本也必须留下: 后面的 tool result 要靠
@@ -1069,7 +784,7 @@ class BuiltinAgentLoop:
             ),
         )
 
-    # ---- 模型调用 ----
+    # ---- 组请求与收尾 ----
 
     def _build_request(self) -> ModelRequest:
         self._model_calls += 1
@@ -1079,7 +794,7 @@ class BuiltinAgentLoop:
             turn_id=self._turn_id or "",
             origin=(
                 # 带工具目录的调用属于 act 阶段; 纯对话仍记 chat (ADR-0011 §3.3).
-                RequestOrigin.ACT if self._tools else RequestOrigin.CHAT
+                RequestOrigin.TOOL_CALL if self._tools else RequestOrigin.CHAT
             ),
             # [5] 窗口 + [6] 状态帧. 顺序在 AssembledContext 里定, 这里不自己拼.
             messages=(
@@ -1097,123 +812,6 @@ class BuiltinAgentLoop:
             cancel_token=self._new_cancel_token(),
         )
 
-    def _call_model(self, request: ModelRequest) -> _ModelOutcome | LoopStop:
-        """有人在看就走流式.
-
-        判据是有没有事件总线: 增量只经运行事件外送 (ADR-0016 §5). 没有消费方时流式
-        没有意义, 直接走非流式少一次协议开销.
-        """
-        if self._bus is None:
-            return self._call_complete(request)
-        return self._call_stream(request)
-
-    def _call_complete(self, request: ModelRequest) -> _ModelOutcome:
-        started = self._timer()
-        response = self._gateway.complete(request)
-        self._usage_drafts.append(self._meter.build_draft(request, response))
-        # 非流式: 整段文本一次性交出, 仍然走 delta 通道, 免得终端为两种形态各写一套.
-        if response.content:
-            self._publish(
-                AgentRunEventKind.MODEL_OUTPUT_DELTA,
-                TextDeltaPayload(text=response.content),
-                request_id=request.request_id,
-            )
-        self._finish_model_call(
-            request,
-            finish_reason=response.finish_reason,
-            text_chars=len(response.content),
-            tool_call_count=len(response.tool_calls),
-            elapsed_ms=(self._timer() - started) * 1000.0,
-            usage=response.usage,
-        )
-        _log.debug("model.response.text", text=response.content)
-        return _ModelOutcome(text=response.content, tool_calls=response.tool_calls)
-
-    def _call_stream(self, request: ModelRequest) -> _ModelOutcome | LoopStop:
-        started = self._timer()
-        try:
-            chunks = self._gateway.stream(request)
-        except ModelBadRequestError:
-            # provider 不具备流式能力 (gateway 在产出首块前即拒绝): 回退非流式.
-            return self._call_complete(request)
-        accumulator = StreamAccumulator()
-        tail: ModelStreamChunk | None = None
-        for chunk in chunks:
-            accumulator.add(chunk)
-            if chunk.delta_text:
-                self._publish(
-                    AgentRunEventKind.MODEL_OUTPUT_DELTA,
-                    TextDeltaPayload(text=chunk.delta_text),
-                    request_id=request.request_id,
-                )
-            tail = chunk
-        elapsed_ms = (self._timer() - started) * 1000.0
-        self._partial_answer = accumulator.text or None
-        self._record_stream_draft(request, tail, accumulator, elapsed_ms)
-        if tail is not None and tail.interrupted:
-            # 中断也要收尾这次调用: 终端得知道当前这个 request 块已经关掉了, 否则活动区
-            # 会停在"正在思考"上等一个永远不来的结束事件 (ADR-0016 §5).
-            if tail.finish_reason is FinishReason.USER_CANCELLED:
-                self._fail_model_call(
-                    request,
-                    "user_cancelled",
-                    render_notice("stop.cancelled"),
-                    retryable=True,
-                )
-                return LoopStop(
-                    LoopStopReason.USER_CANCELLED,
-                    message=render_notice("stop.cancelled"),
-                )
-            self._fail_model_call(
-                request, "stream_interrupted", render_notice("stop.stream_interrupted")
-            )
-            return LoopStop(
-                LoopStopReason.MODEL_ERROR_BLOCKING,
-                message=render_notice("stop.stream_interrupted"),
-            )
-        if accumulator.has_partial_tool_calls():
-            # 半截的 tool call delta: 流没断但参数不完整, 补全它等于替模型编参数.
-            #
-            # 这次模型调用确实失败了, 所以照常 _fail_model_call 收尾; 但本轮不一定要
-            # 结束, 所以抛而不是 return —— 由 _advance 的统一处理决定重试还是中止,
-            # 与非流式路径走同一条判断.
-            self._fail_model_call(
-                request, "partial_tool_call", render_notice("stop.partial_tool_call")
-            )
-            raise MalformedToolCallError(render_notice("stop.partial_tool_call"))
-        tool_calls = accumulator.tool_calls()
-        self._finish_model_call(
-            request,
-            finish_reason=accumulator.finish_reason or FinishReason.STOP,
-            text_chars=len(accumulator.text),
-            tool_call_count=len(tool_calls),
-            elapsed_ms=elapsed_ms,
-            usage=accumulator.usage,
-        )
-        _log.debug("model.response.text", text=accumulator.text)
-        return _ModelOutcome(text=accumulator.text, tool_calls=tool_calls)
-
-    def _record_stream_draft(
-        self,
-        request: ModelRequest,
-        tail: ModelStreamChunk | None,
-        accumulator: StreamAccumulator,
-        elapsed_ms: float,
-    ) -> None:
-        """由流式收尾块合成 ModelResponse 复用计量; 取消/中断也记录估算用量 (§9)."""
-        if tail is None or accumulator.usage is None:
-            return
-        response = ModelResponse(
-            request_id=request.request_id,
-            provider=tail.provider,
-            model=tail.model,
-            content=accumulator.text,
-            finish_reason=accumulator.finish_reason or FinishReason.STOP,
-            usage=accumulator.usage,
-            latency_ms=elapsed_ms,
-        )
-        self._usage_drafts.append(self._meter.build_draft(request, response))
-
     def _stop(self, reason: LoopStopReason, message: str | None) -> LoopStop:
         # 停下来之后的行不该还挂着本轮最后一步的标识. session / turn 由外层
         # AgentTurnService 的 bind 负责还原, 这里只清自己写进去的那几个.
@@ -1224,150 +822,25 @@ class BuiltinAgentLoop:
             message=message,
             model_calls=self._model_calls,
             tool_calls=self._tool_calls,
-            steps=self._step_index,
-            elapsed_ms=(self._timer() - self._turn_started_at) * 1000.0,
+            steps=self._events.step,
+            elapsed_ms=self._events.elapsed_ms(),
         )
         self._finished = True
-        self._publish_turn_finished(reason, detail=message or "")
+        self._turn_finished(reason, detail=message or "")
         return LoopStop(reason, message=message)
 
-    # ---- 运行事件 ----
+    def _turn_finished(self, reason: LoopStopReason, *, detail: str = "") -> None:
+        self._events.turn_finished(
+            reason,
+            detail=detail,
+            model_calls=self._model_calls,
+            tool_calls=self._tool_calls,
+        )
 
     def _decision(self, reason_summary: str, action: LoopAction) -> LoopAction:
-        """产出决策的同时把它的理由摘要发出去.
-
-        DECISION_SUMMARY 是 ForgeCLI 自己能解释的行动摘要, 与供应商 reasoning 分开命名:
-        混成一栏, 用户会以为看到的是模型在想什么 (ADR-0016 §6).
-
-        空摘要不发事件: 大多数派发没有需要解释的理由, 而发一条内容等于"我要调这个工具"
-        的摘要, 只会把真正的摘要 (连续无新信息, 格式损坏重试) 挤成同一种东西.
-        """
-        if reason_summary:
-            self._publish(
-                AgentRunEventKind.DECISION_SUMMARY,
-                DecisionSummaryPayload(reason_summary=reason_summary),
-                step_index=self._step_index,
-            )
+        """产出一个动作, 同时把它的理由摘要发出去 (空摘要不发事件, 见发布器)."""
+        self._events.decision(reason_summary)
         return action
-
-    def _finish_model_call(
-        self,
-        request: ModelRequest,
-        *,
-        finish_reason: FinishReason,
-        text_chars: int,
-        tool_call_count: int,
-        elapsed_ms: float,
-        usage: ModelUsage | None,
-    ) -> None:
-        _log.info(
-            "model.response",
-            finish_reason=finish_reason.value,
-            text_chars=text_chars,
-            tool_calls=tool_call_count,
-            elapsed_ms=elapsed_ms,
-            input_tokens=None if usage is None else usage.input_tokens,
-            output_tokens=None if usage is None else usage.output_tokens,
-            cached_tokens=None if usage is None else usage.cached_input_tokens,
-            reasoning_tokens=None if usage is None else usage.reasoning_tokens,
-            estimated=None if usage is None else usage.estimated,
-        )
-        self._publish(
-            AgentRunEventKind.MODEL_REASONING_STATUS,
-            ReasoningStatusPayload(status=ReasoningStatus.COMPLETED),
-            request_id=request.request_id,
-        )
-        self._publish(
-            AgentRunEventKind.MODEL_COMPLETED,
-            ModelCompletedPayload(
-                finish_reason=finish_reason.value,
-                text_chars=text_chars,
-                tool_call_count=tool_call_count,
-                elapsed_ms=elapsed_ms,
-            ),
-            request_id=request.request_id,
-        )
-        if usage is not None:
-            self._publish(
-                AgentRunEventKind.MODEL_USAGE,
-                ModelUsagePayload(
-                    origin=request.origin.value,
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    reasoning_tokens=usage.reasoning_tokens or 0,
-                    cached_tokens=usage.cached_input_tokens or 0,
-                    total_tokens=usage.total_tokens or 0,
-                    estimated=usage.estimated,
-                ),
-                request_id=request.request_id,
-            )
-
-    def _fail_model_call(
-        self,
-        request: ModelRequest,
-        error_kind: str,
-        message: str,
-        *,
-        retryable: bool = False,
-    ) -> None:
-        _log.error(
-            "model.failed",
-            error_kind=error_kind,
-            message=message,
-            retryable=retryable,
-        )
-        self._publish(
-            AgentRunEventKind.MODEL_FAILED,
-            ModelFailedPayload(
-                error_kind=error_kind, message=message, retryable=retryable
-            ),
-            request_id=request.request_id,
-        )
-
-    def _publish_turn_finished(
-        self, reason: LoopStopReason, *, detail: str = ""
-    ) -> None:
-        # 只有 BLOCKING 算失败. 可恢复暂停 (等审批 / 等输入) 也是"这一轮结束了",
-        # 页面要收掉活动区; 它与失败的区别由 TurnFinishedPayload.status 表达.
-        kind = (
-            AgentRunEventKind.TURN_FAILED
-            if reason.classification is StopClassification.BLOCKING
-            else AgentRunEventKind.TURN_COMPLETED
-        )
-        if reason is LoopStopReason.USER_CANCELLED:
-            # USER_CANCELLED 归类是 BLOCKING, 但对用户来说它是"我按了 Ctrl-C", 不是故障.
-            kind = AgentRunEventKind.TURN_CANCELLED
-        self._publish(
-            kind,
-            TurnFinishedPayload(
-                status=reason.value,
-                elapsed_ms=(self._timer() - self._turn_started_at) * 1000.0,
-                model_calls=self._model_calls,
-                tool_calls=self._tool_calls,
-                detail=detail,
-            ),
-        )
-
-    def _publish(
-        self,
-        kind: AgentRunEventKind,
-        payload: RunEventPayload,
-        *,
-        step_index: int | None = None,
-        request_id: str | None = None,
-        tool_call_id: str | None = None,
-    ) -> None:
-        if self._bus is None or self._turn_id is None:
-            return
-        self._bus.publish(
-            kind,
-            session_id=self._session_id,
-            turn_id=self._turn_id,
-            payload=payload,
-            step_index=step_index if step_index is not None else self._step_index,
-            request_id=request_id,
-            tool_call_id=tool_call_id,
-        )
 
 
 def _schemas_of(catalog: ToolCatalog | None) -> tuple[ToolSchema, ...]:

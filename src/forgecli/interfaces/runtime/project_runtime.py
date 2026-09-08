@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from forgecli.application.llm.availability import EnvProviderAvailability
 from forgecli.application.llm.catalog_builder import build_catalog
 from forgecli.application.llm.config.llm_config_service import LlmConfigService
 from forgecli.application.llm.thinking_runtime import ThinkingRuntimeState
+from forgecli.application.llm.transport_policy import ModelTransportPolicy
 from forgecli.application.planning.plan_review import (
     PlanReviewChoice,
     PlanReviewOutcome,
@@ -31,7 +33,12 @@ from forgecli.application.planning.plan_review import (
 from forgecli.application.project.project_service import ProjectService
 from forgecli.application.prompt.system_prompt_builder import SystemPromptBuilder
 from forgecli.application.security.workspace_grants import GrantAccess
+from forgecli.application.session.deletion_service import (
+    DeletedSession,
+    SessionDeletionService,
+)
 from forgecli.application.session.resume_service import ResumeService
+from forgecli.application.session.session_catalog import Tombstone
 from forgecli.application.session.session_service import SessionService
 from forgecli.domain.agent.run_events import AgentRunEventKind, HumanPromptPayload
 from forgecli.domain.conversation.turn import (
@@ -105,14 +112,12 @@ class ProjectRuntime:
         self.lock = ProcessLock(project_home / "forge.lock")
         self.lock.acquire()
         try:
-            self.session = SessionService(
-                JsonlEventStore(sessions_dir),
-                JsonStateStore(sessions_dir),
-                workspace_root=project.primary_workspace_root,
-            )
+            # 目录枚举与快照读取留一份引用: 恢复与删除都要用, 而它们无状态。
+            self._session_catalog = FsSessionCatalog(sessions_dir)
+            self._session_states = JsonStateStore(sessions_dir)
             self.resume_service = ResumeService(
-                FsSessionCatalog(sessions_dir),
-                JsonStateStore(sessions_dir),
+                self._session_catalog,
+                self._session_states,
                 JsonlEventStore(sessions_dir),
             )
             self.forge_json = project_home / "forge.json"
@@ -131,6 +136,12 @@ class ProjectRuntime:
                 self.forge_json,
                 self.thinking,
             )
+            self.session = SessionService(
+                JsonlEventStore(sessions_dir),
+                JsonStateStore(sessions_dir),
+                workspace_root=project.primary_workspace_root,
+                gateway=self.llm.gateway,
+            )
             self.cancel_source = TurnCancelSource()
             self.event_bus = AgentRunEventBus()
             self.events = RunEventHub()
@@ -146,6 +157,7 @@ class ProjectRuntime:
             self._thread: threading.Thread | None = None
             self.session.start()
             self._agent_turn = self._build_agent_turn()
+            self._sweep_tombstones()
         except BaseException:
             self.lock.release()
             raise
@@ -223,6 +235,7 @@ class ProjectRuntime:
                 self.llm.gateway,
                 self.llm.usage_meter,
                 cancel_token_factory=self.cancel_source.current,
+                model_transport_policy=ModelTransportPolicy(),
                 event_bus=self.event_bus,
                 # 读字段而不是闭包住一个实例: /compact 走服务那一份, 自动压缩走循环
                 # 这一份, 换模型之后两边必须还是同一个 (ADR-0048 决策 1).
@@ -369,6 +382,66 @@ class ProjectRuntime:
         with self._run_lock:
             self._run = None
         return snapshot
+
+    def delete_session(self, session_id: str) -> tuple[DeletedSession, SessionSnapshot]:
+        """删掉一个会话, 返回 (删了什么, 删完之后的当前会话)。
+
+        删的正好是当前会话时, 紧接着开一个新的: 运行时必须始终有一个当前会话 ——
+        让它悬空的话, 下一条消息会往一个已经不在磁盘上的会话里落盘, 而那不会报错。
+
+        **只等到会话从列表消失为止。** 真正删文件 (释放写时复制快照, 回收 blob,
+        rmtree 会话目录) 交给后台 —— 那部分的耗时随项目大小走, 没有上界, 留在请求里
+        迟早超时。
+        """
+        if self.busy:
+            raise RuntimeError("turn 运行期间不能删除会话")
+        deleting_current = session_id == self.session.current().session_id
+        if deleting_current and self._session_states.read(session_id) is None:
+            # 会话要到第一条可记录事件才落盘 (SessionService._ensure_persisted), 所以
+            # 一个还没说过话的当前会话在磁盘上什么都没有。"删掉它"这件事仍然成立 ——
+            # 换一个新的就是了, 而不是报一句"未找到会话"让人以为出了错。
+            snapshot = self.session.current()
+            return (
+                DeletedSession(session_id=session_id, title=snapshot.title),
+                self.new_session(),
+            )
+        service = self._deletion_service()
+        report, tombstone = service.begin(session_id)
+        self._purge_in_background(service, (tombstone,))
+        if deleting_current:
+            return report, self.new_session()
+        return report, self.session.current()
+
+    def _purge_in_background(
+        self, service: SessionDeletionService, tombstones: Sequence[Tombstone]
+    ) -> None:
+        """后台清墓碑。
+
+        daemon 线程且不 join: 清理没清完就退出进程不会丢东西 —— 墓碑还在, 下次启动
+        的扫描接着清。反过来为它卡住退出, 换来的只是一个关不掉的窗口。
+        """
+        if not tombstones:
+            return
+        threading.Thread(
+            target=lambda: [service.purge(item) for item in tombstones],
+            name=f"forge-purge-{self.project.project_id}",
+            daemon=True,
+        ).start()
+
+    def _sweep_tombstones(self) -> None:
+        """启动时把上一次没清完的墓碑接着清掉。"""
+        service = self._deletion_service()
+        self._purge_in_background(service, service.pending())
+
+    def _deletion_service(self) -> SessionDeletionService:
+        """现建而不是存一份: 恢复点协作件随工具栈一起重建 (见 ``reload_llm``),
+        存下来的那份会在换过模型之后指向一个没人再用的实例。"""
+        return SessionDeletionService(
+            self._session_catalog,
+            self._session_states,
+            workspace_id=self.tools.workspace_id,
+            recovery=self.tools.mutations,
+        )
 
     def resume(self, session_id: str) -> SessionSnapshot:
         if self.busy:

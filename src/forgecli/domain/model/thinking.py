@@ -19,6 +19,12 @@ class ThinkingMode(Enum):
     ON = "on"
     OFF = "off"
 
+class SupportsStructuredOutput(Enum):
+    """结构化输出开关"""
+
+    ON = "on"
+    OFF = "off"
+
 
 @dataclass(frozen=True, order=True)
 class ThinkingEffortName:

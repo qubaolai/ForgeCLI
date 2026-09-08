@@ -26,32 +26,38 @@ mark_failed（401/429 冷却）或引用本身消失（配置/解析层面）时
 边界：网关不直接写 events / state / usage 文件；usage 随 ModelResponse 返回，
 由 AgentTurnService 经 UsageMeter 转草稿后落盘（§11.1）。resolver 为必备协作件
 （ADR-0012 §10：06-30 的无 resolver 兼容路径与 validate_model 参数已清理）。
+
+**这个模块负责编排**，几件自成一套判据的事各自成模块（ADR-0048 决策 5）：
+
+- ``retry.CredentialRetryLoop`` 错误分类与凭证轮换。complete 与 stream 首包前
+  **共用同一份**——它原先是两份一模一样的抄写。
+- ``structured`` schema 指令注入、围栏剥离与校验（纯函数）。
+- ``cache`` / ``governance`` / ``streaming`` / ``token_estimator`` 各自的老本行。
+
+网关仍是统一调用入口：三个公开方法都从这里进，治理管线的顺序也只写在这里一处。
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, replace
 
+from forgecli.application.llm.gateway import structured
 from forgecli.application.llm.gateway.cache import (
     InMemoryResponseCache,
     structured_schema_digest,
 )
 from forgecli.application.llm.gateway.credentials import CredentialPool
 from forgecli.application.llm.gateway.errors import (
-    ModelAuthError,
     ModelBadRequestError,
     ModelCancelledError,
+    ModelCapabilityError,
     ModelContextOverflowError,
     ModelGatewayError,
-    ModelProviderInternalError,
-    ModelRateLimitError,
     ModelResponseParseError,
-    ModelTimeoutError,
-    ModelUnavailableError,
+    cancelled,
+    raise_if_cancelled,
+    with_context,
 )
 from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.llm.gateway.governance import SlidingWindowHealthRegistry
@@ -65,13 +71,16 @@ from forgecli.application.llm.gateway.provider_settings import (
     ProviderRuntimeSettings,
     ProviderSettingsSource,
 )
+from forgecli.application.llm.gateway.retry import (
+    CredentialRetryLoop,
+    RetryCounts,
+)
 from forgecli.application.llm.gateway.token_estimator import (
     ApproximateTokenEstimator,
 )
 from forgecli.application.llm.selection import (
     ConfigBackedSelectionResolver,
 )
-from forgecli.application.prompt.template_renderer import render_notice
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.credentials import Credential
 from forgecli.domain.model.model_ref import ModelRef
@@ -89,7 +98,6 @@ from forgecli.domain.model.response import (
 )
 from forgecli.domain.model.streaming import ModelStreamChunk, ProviderStreamChunk
 from forgecli.domain.model.thinking import ThinkingMode
-from forgecli.shared.json_schema import validate_json_schema
 from forgecli.shared.observability.log import get_log
 
 _log = get_log(__name__)
@@ -97,37 +105,6 @@ _log = get_log(__name__)
 # settings_source 未注入时的 provider 默认（与配置切片默认一致）。
 _FALLBACK_TIMEOUT_SECONDS = 60.0
 _FALLBACK_MAX_RETRIES = 2
-
-
-def _credential_fields(credential: Credential | None) -> dict[str, object]:
-    """凭证在日志里的身份: 引用名 + 值的哈希前缀, 不含值本身.
-
-    排查"用的是哪一把 key"要的是身份而不是那串字符; 而日志文件是最容易被整份贴进
-    issue 的东西. 指纹取 sha256 前 8 位而不是"头 4 位 + 尾 4 位": 后者泄漏真实字符.
-    """
-    if credential is None:
-        return {"credential": "keyless"}
-    digest = hashlib.sha256(credential.value.encode("utf-8")).hexdigest()[:8]
-    return {"credential": credential.ref, "credential_fingerprint": digest}
-
-
-@dataclass
-class _RetryCounts:
-    """一次调用内的重试计数（ADR-0012 §2）；进入 raw_metadata 与观测样本。"""
-
-    credential: int = 0
-    transport: int = 0
-    wait: int = 0
-
-    def summary(self) -> dict[str, str]:
-        out: dict[str, str] = {}
-        if self.credential:
-            out["credential_retries"] = str(self.credential)
-        if self.transport:
-            out["transport_retries"] = str(self.transport)
-        if self.wait:
-            out["wait_retries"] = str(self.wait)
-        return out
 
 
 class DefaultLlmGateway(LlmGateway):
@@ -154,12 +131,14 @@ class DefaultLlmGateway(LlmGateway):
         # 注入计时器：让 latency_ms 在测试中可钉死。
         self._timer = timer
         # 注入 sleeper（ADR-0012 §2）：429 短等重试经它完成，测试钉死不真实 sleep。
-        self._sleeper = sleeper
         self._estimator = token_estimator or ApproximateTokenEstimator()
         # 精确分词器接入点（ADR-0012 §6）：按已解析 ref 选估算器，无映射回落近似。
         self._settings_source = settings_source
-        self._credential_pool = credential_pool
         self._health = health_registry or SlidingWindowHealthRegistry(enabled=False)
+        # 两条主路径 (complete / stream 首包前) 共用它 —— 那张错误分类表只该有一份。
+        self._retry = CredentialRetryLoop(
+            credential_pool, self._health, sleeper=sleeper
+        )
         self._cache = cache or InMemoryResponseCache()
         self._structured_retry_limit = structured_retry_limit
 
@@ -168,6 +147,7 @@ class DefaultLlmGateway(LlmGateway):
     def complete(self, request: ModelRequest) -> ModelResponse:
         ref, entry = self._resolve_selection(request)
         thinking = self._resolve_thinking(request, ref, entry)
+        self._check_tool_capability(request, ref, entry)
         _log.info(
             "llm.complete",
             provider=ref.provider,
@@ -189,7 +169,9 @@ class DefaultLlmGateway(LlmGateway):
         base = request.model_request
         ref, entry = self._resolve_selection(base)
         thinking = self._resolve_thinking(base, ref, entry)
-        if entry.supports_structured_output:
+        self._check_tool_capability(base, ref, entry)
+        capabilities = self._registry.get(ref.provider).capabilities()
+        if capabilities.supports_structured_output and entry.supports_structured_output:
             response, data, errors = self._structured_native(
                 base, ref, entry, base.params, thinking, request
             )
@@ -220,6 +202,7 @@ class DefaultLlmGateway(LlmGateway):
     def stream(self, request: ModelRequest) -> Iterator[ModelStreamChunk]:
         ref, entry = self._resolve_selection(request)
         thinking = self._resolve_thinking(request, ref, entry)
+        self._check_tool_capability(request, ref, entry)
         params = request.params
         provider = self._registry.get(ref.provider)
         if not provider.capabilities().supports_streaming:
@@ -231,7 +214,7 @@ class DefaultLlmGateway(LlmGateway):
             )
         estimated_input = self._pre_call_checks(request, ref, entry, params)
         settings = self._settings(ref.provider)
-        self._raise_if_cancelled(request, ref)
+        raise_if_cancelled(request, ref)
         _log.info(
             "llm.stream",
             provider=ref.provider,
@@ -272,7 +255,7 @@ class DefaultLlmGateway(LlmGateway):
         schema_name: str | None = None,
         strict_schema: bool = True,
     ) -> ModelResponse:
-        self._raise_if_cancelled(request, ref)
+        raise_if_cancelled(request, ref)
         if use_cache:
             cached = self._cache.lookup(
                 request, ref, thinking=thinking, schema_digest=cache_digest
@@ -280,7 +263,7 @@ class DefaultLlmGateway(LlmGateway):
             if cached is not None:
                 _log.info("llm.cache_hit", provider=ref.provider, model=ref.model)
                 return cached
-        counts = _RetryCounts()
+        counts = RetryCounts()
         start = self._timer()
         try:
             estimated_input = self._pre_call_checks(request, ref, entry, params)
@@ -361,113 +344,33 @@ class DefaultLlmGateway(LlmGateway):
         params: ModelParams,
         thinking: ThinkingConfig,
         settings: ProviderRuntimeSettings,
-        counts: _RetryCounts,
+        counts: RetryCounts,
         *,
         response_schema: Mapping[str, object] | None,
         schema_name: str | None,
         strict_schema: bool,
     ) -> ProviderResponse:
-        """凭证获取 + 有界重试环（§7 / §12 / ADR-0012 §2）。绝不切换 provider/model。"""
-        last_error: ModelGatewayError | None = None
-        for _attempt in range(settings.max_retries + 1):
-            self._raise_if_cancelled(request, ref)
-            try:
-                credential = self._get_credential(request, ref, settings)
-            except ModelAuthError:
-                if last_error is not None:
-                    # 凭证池耗尽（全部冷却 / 失败）：上抛最后一次 provider 错误。
-                    raise last_error from None
-                raise
-            provider_request = self._provider_request(
-                request,
-                ref,
-                entry,
-                params,
-                thinking,
-                settings,
-                credential,
-                response_schema=response_schema,
-                schema_name=schema_name,
-                strict_schema=strict_schema,
+        """一次非流式 provider 调用, 错误分类与重试见 retry.CredentialRetryLoop。"""
+
+        def attempt(credential: Credential | None) -> ProviderResponse:
+            return provider.complete(
+                self._provider_request(
+                    request,
+                    ref,
+                    entry,
+                    params,
+                    thinking,
+                    settings,
+                    credential,
+                    response_schema=response_schema,
+                    schema_name=schema_name,
+                    strict_schema=strict_schema,
+                )
             )
-            try:
-                response = provider.complete(provider_request)
-            except ModelCancelledError:
-                raise
-            except ModelRateLimitError as exc:
-                last_error = self._with_context(exc, ref, request)
-                _log.warning(
-                    "llm.rate_limited",
-                    provider=ref.provider,
-                    model=ref.model,
-                    retry_after=exc.retry_after,
-                    message=str(exc),
-                    **_credential_fields(credential),
-                )
-                if self._should_wait_retry(exc, settings):
-                    # 429 短等重试（ADR-0012 §2）：本地等待后同一凭证重试；
-                    # 等待经注入 sleeper，计入 latency，不计 provider 计费。
-                    counts.wait += 1
-                    assert exc.retry_after is not None
-                    self._sleeper(exc.retry_after)
-                    continue
-                if credential is None:
-                    raise last_error from exc  # keyless：无凭证可换
-                self._mark_failed(credential, type(exc).__name__, exc.retry_after)
-                counts.credential += 1
-                continue
-            except ModelAuthError as exc:
-                # 凭证级重试：同 provider/model 换下一个 credential（§12）。
-                last_error = self._with_context(exc, ref, request)
-                _log.warning(
-                    "llm.auth_failed",
-                    provider=ref.provider,
-                    model=ref.model,
-                    message=str(exc),
-                    **_credential_fields(credential),
-                )
-                if credential is None:
-                    raise last_error from exc
-                self._mark_failed(credential, type(exc).__name__, None)
-                counts.credential += 1
-                continue
-            except (ModelTimeoutError, ModelUnavailableError) as exc:
-                # 连接 / 超时：同凭证有限重试（§12 处理表）。
-                self._health.record_failure(ref)
-                last_error = self._with_context(exc, ref, request)
-                counts.transport += 1
-                _log.warning(
-                    "llm.transport_retry",
-                    provider=ref.provider,
-                    model=ref.model,
-                    attempt=counts.transport,
-                    max_retries=settings.max_retries,
-                    error=type(exc).__name__,
-                    message=str(exc),
-                )
-                continue
-            except ModelGatewayError:
-                raise
-            except Exception as exc:  # 契约兜底：任何非网关异常归一化为网关错误。
-                self._health.record_failure(ref)
-                _log.exception(
-                    "llm.provider_internal_error",
-                    provider=ref.provider,
-                    model=ref.model,
-                    error=type(exc).__name__,
-                    message=str(exc),
-                )
-                raise ModelProviderInternalError(
-                    f"provider {ref.provider!r} 调用失败: {exc}",
-                    provider=ref.provider,
-                    model=ref.model,
-                    request_id=request.request_id,
-                ) from exc
-            else:
-                self._mark_succeeded(credential)
-                return response
-        assert last_error is not None
-        raise last_error
+
+        return self._retry.run(
+            attempt, request=request, ref=ref, settings=settings, counts=counts
+        )
 
     # ---- 流式主路径（ADR-0012 §2：首包前共用重试环）----
 
@@ -482,7 +385,7 @@ class DefaultLlmGateway(LlmGateway):
         settings: ProviderRuntimeSettings,
         estimated_input: int,
     ) -> Iterator[ModelStreamChunk]:
-        counts = _RetryCounts()
+        counts = RetryCounts()
         start = self._timer()
         try:
             provider_iter, first_chunk, credential = self._open_stream(
@@ -514,76 +417,41 @@ class DefaultLlmGateway(LlmGateway):
         params: ModelParams,
         thinking: ThinkingConfig,
         settings: ProviderRuntimeSettings,
-        counts: _RetryCounts,
+        counts: RetryCounts,
     ) -> tuple[
         Iterator[ProviderStreamChunk],
         ProviderStreamChunk | None,
         Credential | None,
     ]:
-        """首包前的凭证级重试环：与 complete 同分类；拿到首个 chunk 即视为成功。"""
-        last_error: ModelGatewayError | None = None
-        for _attempt in range(settings.max_retries + 1):
-            self._raise_if_cancelled(request, ref)
-            try:
-                credential = self._get_credential(request, ref, settings)
-            except ModelAuthError:
-                if last_error is not None:
-                    raise last_error from None
-                raise
-            provider_request = self._provider_request(
-                request, ref, entry, params, thinking, settings, credential
-            )
-            try:
-                provider_iter = provider.stream(provider_request)
-                first_chunk = next(provider_iter, None)
-            except ModelCancelledError:
-                raise
-            except ModelRateLimitError as exc:
-                last_error = self._with_context(exc, ref, request)
-                _log.warning(
-                    "llm.rate_limited",
-                    provider=ref.provider,
-                    model=ref.model,
-                    retry_after=exc.retry_after,
-                    message=str(exc),
-                    **_credential_fields(credential),
+        """首包前的凭证级重试环：与 complete 同一份分类表；拿到首个 chunk 即返回。
+
+        ``mark_success=False``: 首包不等于这条流会走完, 凭证的成功在 ``_stream_body``
+        的收尾处记 —— 首包之后中断的流不该把一把有问题的凭证标成好用。
+        """
+
+        def attempt(
+            credential: Credential | None,
+        ) -> tuple[
+            Iterator[ProviderStreamChunk],
+            ProviderStreamChunk | None,
+            Credential | None,
+        ]:
+            provider_iter = provider.stream(
+                self._provider_request(
+                    request, ref, entry, params, thinking, settings, credential
                 )
-                if self._should_wait_retry(exc, settings):
-                    counts.wait += 1
-                    assert exc.retry_after is not None
-                    self._sleeper(exc.retry_after)
-                    continue
-                if credential is None:
-                    raise last_error from exc
-                self._mark_failed(credential, type(exc).__name__, exc.retry_after)
-                counts.credential += 1
-                continue
-            except ModelAuthError as exc:
-                last_error = self._with_context(exc, ref, request)
-                if credential is None:
-                    raise last_error from exc
-                self._mark_failed(credential, type(exc).__name__, None)
-                counts.credential += 1
-                continue
-            except (ModelTimeoutError, ModelUnavailableError) as exc:
-                self._health.record_failure(ref)
-                last_error = self._with_context(exc, ref, request)
-                counts.transport += 1
-                continue
-            except ModelGatewayError:
-                raise
-            except Exception as exc:
-                self._health.record_failure(ref)
-                raise ModelProviderInternalError(
-                    f"provider {ref.provider!r} 流式调用失败: {exc}",
-                    provider=ref.provider,
-                    model=ref.model,
-                    request_id=request.request_id,
-                ) from exc
-            else:
-                return provider_iter, first_chunk, credential
-        assert last_error is not None
-        raise last_error
+            )
+            return provider_iter, next(provider_iter, None), credential
+
+        return self._retry.run(
+            attempt,
+            request=request,
+            ref=ref,
+            settings=settings,
+            counts=counts,
+            what="流式调用",
+            mark_success=False,
+        )
 
     def _stream_body(
         self,
@@ -593,7 +461,7 @@ class DefaultLlmGateway(LlmGateway):
         first_chunk: ProviderStreamChunk | None,
         estimated_input: int,
         credential: Credential | None,
-        counts: _RetryCounts,
+        counts: RetryCounts,
         start: float,
     ) -> Iterator[ModelStreamChunk]:
         """首包之后：归一化 chunk；错误 / 取消只做中断收尾（§9），不重试。"""
@@ -625,7 +493,7 @@ class DefaultLlmGateway(LlmGateway):
             yield normalize(first_chunk)
             sequence += 1
         while True:
-            if self._cancelled(request):
+            if cancelled(request):
                 _close_iterator(provider_iter)
                 yield self._interrupt_chunk(
                     request, ref, sequence, estimated_input, received_text
@@ -643,7 +511,7 @@ class DefaultLlmGateway(LlmGateway):
             except ModelGatewayError as exc:
                 # 首包之后（ADR-0012 §2）：不重试、不重放，按中断收尾。
                 self._health.record_failure(ref)
-                self._with_context(exc, ref, request)
+                with_context(exc, ref, request)
                 yield self._error_chunk(
                     request, ref, sequence, estimated_input, received_text
                 )
@@ -668,7 +536,7 @@ class DefaultLlmGateway(LlmGateway):
             usage_delta=usage,
             finish_reason=last_finish or FinishReason.STOP,
         )
-        self._mark_succeeded(credential)
+        self._retry.mark_succeeded(credential)
         self._health.record_success(ref)
 
     def _interrupt_chunk(
@@ -726,7 +594,7 @@ class DefaultLlmGateway(LlmGateway):
         digest = structured_schema_digest(request.schema_name, request.schema)
         cached = self._cache.lookup(base, ref, thinking=thinking, schema_digest=digest)
         if cached is not None:
-            data, errors = self._parse_structured(cached.content, request)
+            data, errors = structured.parse(cached.content, request)
             if not errors:
                 return cached, data, errors
         response = self._complete_resolved(
@@ -740,7 +608,7 @@ class DefaultLlmGateway(LlmGateway):
             schema_name=request.schema_name,
             strict_schema=request.strict,
         )
-        data, errors = self._parse_structured(response.content, request)
+        data, errors = structured.parse(response.content, request)
         if not errors:
             # 只缓存通过 schema 校验的响应，避免缓存放大一次坏输出。
             self._cache.store(
@@ -761,10 +629,10 @@ class DefaultLlmGateway(LlmGateway):
         thinking: ThinkingConfig,
         request: StructuredModelRequest,
     ) -> tuple[ModelResponse, object | None, list[str]]:
-        prompted = self._with_schema_instruction(base, request)
+        prompted = structured.with_instruction(base, request)
         cached = self._cache.lookup(prompted, ref, thinking=thinking)
         if cached is not None:
-            cached_data, cached_errors = self._parse_structured(cached.content, request)
+            cached_data, cached_errors = structured.parse(cached.content, request)
             if not cached_errors:
                 return cached, cached_data, cached_errors
         response: ModelResponse | None = None
@@ -774,37 +642,12 @@ class DefaultLlmGateway(LlmGateway):
             response = self._complete_resolved(
                 prompted, ref, entry, params, thinking, use_cache=False
             )
-            data, errors = self._parse_structured(response.content, request)
+            data, errors = structured.parse(response.content, request)
             if not errors:
                 self._cache.store(prompted, ref, response, thinking=thinking)
                 break
         assert response is not None
         return response, data, errors
-
-    def _with_schema_instruction(
-        self, base: ModelRequest, request: StructuredModelRequest
-    ) -> ModelRequest:
-        schema_text = json.dumps(
-            dict(request.schema), ensure_ascii=False, sort_keys=True
-        )
-        instruction = render_notice(
-            "prompt.schema_instruction", name=request.schema_name, schema=schema_text
-        )
-        system_prompt = (
-            f"{base.system_prompt}\n\n{instruction}"
-            if base.system_prompt
-            else instruction
-        )
-        return replace(base, system_prompt=system_prompt)
-
-    def _parse_structured(
-        self, content: str, request: StructuredModelRequest
-    ) -> tuple[object | None, list[str]]:
-        try:
-            data: object = json.loads(_strip_code_fence(content))
-        except json.JSONDecodeError as exc:
-            return None, [f"输出不是合法 JSON: {exc}"]
-        return data, validate_json_schema(data, request.schema)
 
     # ---- 选择解析与参数合并 ----
 
@@ -835,6 +678,28 @@ class DefaultLlmGateway(LlmGateway):
         return ThinkingConfig(
             enabled=enabled,
             effort=(entry.effective_thinking_effort if enabled else None),
+        )
+
+    def _check_tool_capability(
+        self,
+        request: ModelRequest,
+        ref: ModelRef,
+        entry: ModelCatalogEntry,
+    ) -> None:
+        if not request.tools:
+            return
+        capabilities = self._registry.get(ref.provider).capabilities()
+        if not capabilities.supports_tools:
+            message = "当前供应商不支持工具调用"
+        elif not entry.supports_tool_calling:
+            message = "当前模型未声明支持工具调用"
+        else:
+            return
+        raise ModelCapabilityError(
+            message,
+            provider=ref.provider,
+            model=ref.model,
+            request_id=request.request_id,
         )
 
     # ---- 治理管线 ----
@@ -882,26 +747,6 @@ class DefaultLlmGateway(LlmGateway):
             )
         return self._settings_source.settings_for(provider_id)
 
-    def _get_credential(
-        self,
-        request: ModelRequest,
-        ref: ModelRef,
-        settings: ProviderRuntimeSettings,
-    ) -> Credential | None:
-        """获取本次调用凭证；keyless（无 refs）或未接凭证池时为 None。
-
-        未配置凭证时在此抛 ModelAuthError——**不发起任何网络请求**（§7 / §19）。
-        凭证不被独占：并发调用可拿到同一凭证，网关不做凭证维度并发限制。
-        """
-        if self._credential_pool is None or not settings.credential_refs:
-            return None
-        try:
-            return self._credential_pool.get_credential(
-                ref.provider, settings.credential_refs
-            )
-        except ModelGatewayError as exc:
-            raise self._with_context(exc, ref, request) from exc
-
     def _provider_request(
         self,
         request: ModelRequest,
@@ -935,16 +780,6 @@ class DefaultLlmGateway(LlmGateway):
 
     # ---- 小工具 ----
 
-    @staticmethod
-    def _should_wait_retry(
-        exc: ModelRateLimitError, settings: ProviderRuntimeSettings
-    ) -> bool:
-        """429 短等判定（ADR-0012 §2）：retry_after 存在且不超过配置阈值。"""
-        return (
-            exc.retry_after is not None
-            and exc.retry_after <= settings.wait_threshold_seconds
-        )
-
     def _estimator_for(self, ref: ModelRef) -> ApproximateTokenEstimator:
         """取估算器。
 
@@ -965,54 +800,6 @@ class DefaultLlmGateway(LlmGateway):
             total_tokens=estimated_input + output,
             estimated=True,
         )
-
-    def _cancelled(self, request: ModelRequest) -> bool:
-        token = request.cancel_token
-        return token is not None and token.cancelled
-
-    def _raise_if_cancelled(self, request: ModelRequest, ref: ModelRef | None) -> None:
-        if self._cancelled(request):
-            raise ModelCancelledError(
-                "调用已被取消，未发起 provider 请求",
-                provider=ref.provider if ref is not None else None,
-                model=ref.model if ref is not None else None,
-                request_id=request.request_id,
-            )
-
-    def _with_context(
-        self, exc: ModelGatewayError, ref: ModelRef, request: ModelRequest
-    ) -> ModelGatewayError:
-        """补全错误的安全上下文（provider/model/request_id），不改错误类型。"""
-        if exc.provider is None:
-            exc.provider = ref.provider
-        if exc.model is None:
-            exc.model = ref.model
-        if exc.request_id is None:
-            exc.request_id = request.request_id
-        return exc
-
-    def _mark_failed(
-        self, credential: Credential, error_type: str, retry_after: float | None
-    ) -> None:
-        if self._credential_pool is not None:
-            self._credential_pool.mark_failed(credential.ref, error_type, retry_after)
-
-    def _mark_succeeded(self, credential: Credential | None) -> None:
-        if credential is not None and self._credential_pool is not None:
-            self._credential_pool.mark_succeeded(credential.ref)
-
-
-def _strip_code_fence(content: str) -> str:
-    """容错剥离 ```json 代码块围栏（受控降级下模型偶发包裹）。"""
-    text = content.strip()
-    if not text.startswith("```"):
-        return text
-    lines = text.splitlines()
-    if lines and lines[0].startswith("```"):
-        lines = lines[1:]
-    if lines and lines[-1].strip() == "```":
-        lines = lines[:-1]
-    return "\n".join(lines).strip()
 
 
 def _close_iterator(iterator: Iterator[object]) -> None:

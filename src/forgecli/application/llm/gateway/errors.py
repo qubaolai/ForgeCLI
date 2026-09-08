@@ -11,6 +11,8 @@ prompt/response；message 也只放安全摘要，可直接展示或入日志（
 
 from __future__ import annotations
 
+from forgecli.domain.model.model_ref import ModelRef
+from forgecli.domain.model.request import ModelRequest
 from forgecli.shared.errors import ForgeError
 
 
@@ -92,3 +94,36 @@ class MalformedToolCallError(ModelResponseParseError):
 
 class ModelCancelledError(ModelGatewayError):
     """调用被取消（用户 Ctrl-C / 上层中止 / 超时取消）。"""
+
+class ModelCapabilityError(ModelGatewayError):
+    """模型能力不支持"""
+
+
+def with_context(
+    exc: ModelGatewayError, ref: ModelRef, request: ModelRequest
+) -> ModelGatewayError:
+    """补全错误的安全上下文（provider/model/request_id），不改错误类型。"""
+    if exc.provider is None:
+        exc.provider = ref.provider
+    if exc.model is None:
+        exc.model = ref.model
+    if exc.request_id is None:
+        exc.request_id = request.request_id
+    return exc
+
+
+def cancelled(request: ModelRequest) -> bool:
+    token = request.cancel_token
+    return token is not None and token.cancelled
+
+
+def raise_if_cancelled(request: ModelRequest, ref: ModelRef | None) -> None:
+    """取消预检（§8 第一步）：已取消就抛，**不发起任何 provider 请求**。"""
+    if not cancelled(request):
+        return
+    raise ModelCancelledError(
+        "调用已被取消，未发起 provider 请求",
+        provider=ref.provider if ref is not None else None,
+        model=ref.model if ref is not None else None,
+        request_id=request.request_id,
+    )

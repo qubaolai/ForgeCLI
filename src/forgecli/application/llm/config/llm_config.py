@@ -40,6 +40,7 @@ from forgecli.domain.model.provider_spec import ProviderProtocol
 from forgecli.domain.model.thinking import (
     ModelThinkingCapabilities,
     ModelThinkingSettings,
+    SupportsStructuredOutput,
     ThinkingEffortName,
     ThinkingMode,
 )
@@ -93,7 +94,9 @@ def _menu_kind(annotation: object) -> type:
         return float
     if "str" in text:
         return str
-    raise TypeError(f"菜单字段只支持 int / float / str, 收到: {annotation!r}")
+    if "bool" in text:
+        return bool
+    raise TypeError(f"菜单字段只支持 int / float / bool / str, 收到: {annotation!r}")
 
 
 def _menu_fields(model: type[BaseModel]) -> tuple[StandardField, ...]:
@@ -218,6 +221,12 @@ class ModelParams(BaseModel):
     # 模型声明过的列表里, 而菜单的通用 coercion 做不到这一层.
     thinking_mode: ThinkingMode | None = Field(default=None, strict=False)
     thinking_effort: EffortName | None = None
+    supports_structured_output: bool = Field(
+        default=True, json_schema_extra=_menu("支持原生结构化输出"),
+    )
+    supports_tool_calling: bool = Field(
+        default=True, json_schema_extra=_menu("支持工具调用"),
+    )
 
     extra: Mapping[str, object] = Field(default_factory=dict)
 
@@ -276,7 +285,7 @@ class ModelParams(BaseModel):
 STANDARD_FIELDS: tuple[StandardField, ...] = _menu_fields(ModelParams)
 
 
-def coerce_field(name: str, raw: str) -> int | float | str:
+def coerce_field(name: str, raw: str) -> int | float | str | bool:
     """把菜单文本输入转成字段的原生类型；不能解析时抛 ConfigValidationError。
 
     只做类型转换，范围校验仍由 ModelParams.parse 统一负责。
@@ -290,6 +299,12 @@ def coerce_field(name: str, raw: str) -> int | float | str:
             allowed = " / ".join(field.choices)
             raise ConfigValidationError(f"{name} 只能是 [{allowed}]，收到: {raw!r}")
         return text
+    if field.kind is bool:
+        # 先处理布尔值特殊转换
+        if text.lower() == "true":
+            return True
+        if text.lower() == "false":
+            return False
     try:
         return int(text) if field.kind is int else float(text)
     except ValueError:

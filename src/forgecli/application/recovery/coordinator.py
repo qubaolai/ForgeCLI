@@ -295,18 +295,46 @@ class WorkspaceMutationCoordinator:
         for checkpoint in self._store.list_checkpoints(workspace_id):
             if _created_epoch(checkpoint.created_at) > deadline:
                 continue
-            if checkpoint.snapshot_ref is not None and self._snapshots is not None:
-                self._snapshots.discard(
-                    SnapshotHandle(
-                        snapshot_id=checkpoint.checkpoint_id,
-                        backend=checkpoint.snapshot_backend or self._snapshots.name,
-                        location=checkpoint.snapshot_ref,
-                        root="",
-                    )
-                )
+            self._discard_snapshot(checkpoint)
             if self._store.delete_checkpoint(workspace_id, checkpoint.checkpoint_id):
                 removed += 1
+        if removed:
+            self._store.prune_orphan_blobs(workspace_id)
         return removed
+
+    def discard_session(self, workspace_id: str, session_id: str) -> int:
+        """丢掉某个会话留下的全部恢复点, 返回清理条数 (删除会话时用)。
+
+        与 ``prune_expired`` 同一套收尾动作 —— 先释放快照, 再删清单, 最后回收没人引用
+        的 blob。区别只在选哪些: 那边按保留期, 这边按会话归属。
+
+        **这会失去对那个会话所做改动的撤销能力**, 而工作区里的改动本身还在。删会话是
+        用户主动做的事, 所以由界面在删之前说清楚, 而不是在这里偷偷留着一批再也没有
+        入口能看到的恢复点。
+        """
+        removed = 0
+        for checkpoint in self._store.list_checkpoints(workspace_id):
+            if checkpoint.session_id != session_id:
+                continue
+            self._discard_snapshot(checkpoint)
+            if self._store.delete_checkpoint(workspace_id, checkpoint.checkpoint_id):
+                removed += 1
+        if removed:
+            self._store.prune_orphan_blobs(workspace_id)
+        return removed
+
+    def _discard_snapshot(self, checkpoint: RecoveryCheckpoint) -> None:
+        """释放写时复制快照。复制式恢复点没有快照, 这里什么都不做。"""
+        if checkpoint.snapshot_ref is None or self._snapshots is None:
+            return
+        self._snapshots.discard(
+            SnapshotHandle(
+                snapshot_id=checkpoint.checkpoint_id,
+                backend=checkpoint.snapshot_backend or self._snapshots.name,
+                location=checkpoint.snapshot_ref,
+                root="",
+            )
+        )
 
     def strategy_for(
         self, plan: ToolPlan, context: ExecutionContext | None = None

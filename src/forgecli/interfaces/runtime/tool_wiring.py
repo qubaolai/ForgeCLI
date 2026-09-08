@@ -115,6 +115,9 @@ class ToolStack:
     registry: ToolRegistry
     dispatcher: CoordinatorToolDispatcher
     recovery: RecoveryService
+    # 恢复点的开启与清理。删会话要按会话丢弃恢复点, 而那和保留期清理是同一套收尾动作,
+    # 所以走同一个协作件而不是让删除那条路自己去碰 store。
+    mutations: WorkspaceMutationCoordinator
     grants: WorkspaceGrants
     learned: LearnedRuleService
     profile: ExecutionProfile
@@ -315,6 +318,7 @@ def build_tool_stack(
             coordinator, context_factory, fence_factory, confined=fence_report.confined
         ),
         recovery=recovery,
+        mutations=mutations,
         grants=grants,
         learned=learned,
         profile=profile,

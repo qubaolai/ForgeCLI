@@ -115,7 +115,7 @@ def _budget_reader(
 
     def _current() -> ContextBudget | None:
         try:
-            resolved = resolver.resolve(origin=RequestOrigin.ACT)
+            resolved = resolver.resolve(origin=RequestOrigin.TOOL_CALL)
         except (ModelGatewayError, ConfigError):
             # 模型没配, 目录里没有它, 或者配置读不了. 都不是这一轮该失败的理由.
             return None

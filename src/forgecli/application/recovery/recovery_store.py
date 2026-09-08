@@ -49,5 +49,15 @@ class RecoveryStore(ABC):
         """按创建时间倒序列出."""
 
     @abstractmethod
+    @abstractmethod
+    def prune_orphan_blobs(self, workspace_id: str) -> int:
+        """删掉不再被任何 manifest 引用的 blob, 返回删除条数。
+
+        blob 是内容寻址的, 一份内容被多个 checkpoint 共用 —— 所以删 checkpoint 的时候
+        不能顺手删它引用的 blob, 只能在清完之后整体扫一遍还剩谁被引用。少了这一步,
+        删除恢复点几乎不释放空间: 清单是几 KB 的 JSON, 文件旧内容才是大头。
+        """
+
+    @abstractmethod
     def delete_checkpoint(self, workspace_id: str, checkpoint_id: str) -> bool:
         """只能由受控的恢复服务调用, Agent Shell 不得直接删除恢复数据."""

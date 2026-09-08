@@ -1,7 +1,9 @@
 import { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronIcon, GearIcon, PlanIcon } from "./icons";
 import { appendRunEvent, failUnboundTurn, finishLocalTurn, isTerminalEvent, LocalTurn, newLocalTurn, restoreTurn, RunSnapshot, shouldAutoFollow, shouldSendOnEnter } from "./runModel";
-import { api, setCsrfToken } from "./api/client";
+import { api, setCsrfToken, SLOW_REQUEST_MS } from "./api/client";
+import { useRequestActivity } from "./features/requests/useRequestActivity";
+import { ConfirmDialog } from "./features/chrome/ConfirmDialog";
 import { useAdministration } from "./features/administration/useAdministration";
 import { useProjects } from "./features/projects/useProjects";
 import { usePrompts } from "./features/humanInteraction/usePrompts";
@@ -36,6 +38,11 @@ function App() {
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [stopping, setStopping] = useState(false);
+  // 正在等待确认的那个会话 id。删除不可撤销, 所以走一个必须显式按下的对话框。
+  const [confirmDelete, setConfirmDelete] = useState("");
+  // 在途请求由客户端统一记账 (api/client), 这里只订阅结果。
+  const requests = useRequestActivity();
+  const [deletingSession, setDeletingSession] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const autoFollowRef = useRef(true);
@@ -373,6 +380,33 @@ function App() {
     } catch (reason) { setError((reason as Error).message); }
   }
 
+  /** 删掉一个会话及其计划、处理过程与恢复点。不可撤销, 所以入口是两步确认。 */
+  async function deleteSession(sessionId: string) {
+    try {
+      setDeletingSession(true);
+      // 后端只保证"已经从列表消失"就返回, 文件在它那边后台清 —— 所以这里拿不到
+      // 也不该等一个"清了几个恢复点"的数字。
+      const result = await api<{ current_session_id: string; cleanup: string }>(
+        `/sessions/${sessionId}`, { method: "DELETE" },
+      );
+      setConfirmDelete("");
+      // 删的是当前会话时后端已经开了一个新的, 切过去 —— 不自己猜停在哪。
+      if (result.current_session_id !== currentSessionId) {
+        setCurrentSessionId(result.current_session_id);
+        sessionScopeRef.current = result.current_session_id;
+        setTranscript([]);
+        setLocalTurns([]);
+        discardPending();
+        await loadTranscript(result.current_session_id);
+      }
+      await loadWorkspace();
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setDeletingSession(false);
+    }
+  }
+
   /** 只送要改的那一个轴; 另一个由后端保持不变。 */
   async function changeStance(patch: Partial<Stance>) {
     try {
@@ -493,15 +527,24 @@ function App() {
         <button className="icon-button" onClick={openSettings} aria-label="设置"><GearIcon /></button>
       </header>
       {showProjectPicker && <ProjectPicker projects={projectsFeature.projects} activeProjectId={activeProjectId} busy={busy} trustPath={projectsFeature.trustPath} onTrustPath={projectsFeature.setTrustPath} onTrust={trust} onActivate={activate} onCancel={() => setShowProjectPicker(false)} />}
+      {requests.busy && <div className="request-bar" role="progressbar" aria-label="正在请求" />}
+      {requests.slow.length > 0 && (
+        <div className="slow-banner" role="status">
+          接口响应已超过 {Math.round(SLOW_REQUEST_MS / 1000)} 秒，仍在等待：{requests.slow.join("、")}
+        </div>
+      )}
       {error && <div className="error-banner workspace-error" role="alert"><span>{error}</span><button onClick={() => setError("")} aria-label="关闭提示">×</button></div>}
       <div className={`workspace-grid ${showPlan ? "with-plan" : ""}`} style={{ "--context-width": `${planWidth}px` } as CSSProperties}>
         <aside className="sidebar">
           <div className="sidebar-title"><span>会话</span><button onClick={createSession}>＋</button></div>
           <nav className="session-list">
             {sessions.map((session) => (
-              <button className={session.session_id === currentSessionId ? "active" : ""} key={session.session_id} onClick={() => resumeSession(session.session_id)} disabled={busy && session.session_id !== currentSessionId}>
-                <strong title={session.title || "未命名会话"}>{session.title || "未命名会话"}</strong><small>{session.updated_at?.slice(0, 16).replace("T", " ")}</small>
-              </button>
+              <div className={`session-row ${session.session_id === currentSessionId ? "active" : ""}`} key={session.session_id}>
+                <button className="session-open" onClick={() => resumeSession(session.session_id)} disabled={busy && session.session_id !== currentSessionId}>
+                  <strong title={session.title || "未命名会话"}>{session.title || "未命名会话"}</strong><small>{session.updated_at?.slice(0, 16).replace("T", " ")}</small>
+                </button>
+                <button className="session-delete" title="删除会话" aria-label={`删除会话 ${session.title || session.session_id}`} disabled={busy} onClick={() => setConfirmDelete(session.session_id)}>×</button>
+              </div>
             ))}
             {!sessions.length && <p className="empty-copy">发送第一条消息后，会话会出现在这里。</p>}
           </nav>
@@ -550,6 +593,14 @@ function App() {
 
         {showPlan && <><div className="context-resizer" onPointerDown={beginPlanResize} title="拖动调整计划栏宽度" /><aside className="context-panel"><div className="panel-heading"><strong>计划</strong><div><button onClick={() => window.open("/api/v1/planning/markdown", "_blank", "noopener,noreferrer")} disabled={!planningFeature.planning.plan}>打开 Markdown</button><button onClick={() => setShowPlan(false)} aria-label="隐藏计划">×</button></div></div><PlanningPanel planning={planningFeature.planning} index={planningFeature.index} onResolve={planningFeature.resolveReview} onActivate={planningFeature.activatePlan} /></aside></>}
       </div>
+
+      {confirmDelete && <ConfirmDialog
+        title="删除这个会话？"
+        body={`「${sessions.find((item) => item.session_id === confirmDelete)?.title || "未命名会话"}」的计划、待办、处理过程与恢复点会一起删掉，这个会话做过的改动将无法撤销。工作区里的文件不受影响。`}
+        confirmLabel="删除"
+        busy={deletingSession}
+        onConfirm={() => deleteSession(confirmDelete)}
+        onCancel={() => setConfirmDelete("")} />}
 
       {showSettings && <SettingsPanel
         items={settingsFeature.settings} roots={admin.workspaceRoots} rules={admin.rules} checkpoints={admin.checkpoints}

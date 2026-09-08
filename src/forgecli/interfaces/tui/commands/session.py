@@ -1,4 +1,4 @@
-"""会话相关的斜杠命令: 状态, 新开, 列出与恢复."""
+"""会话相关的斜杠命令: 状态, 新开, 列出, 恢复与删除."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 from forgecli.domain.session.events import EventType
-from forgecli.interfaces.tui.chooser import Option, choose
+from forgecli.interfaces.tui.chooser import Option, choose, confirm
 from forgecli.interfaces.tui.commands.context import CommandContext
 from forgecli.interfaces.tui.console import (
     STYLE_ACCENT,
@@ -105,6 +105,60 @@ def cmd_sessions(context: CommandContext, argument: str) -> None:
     )
     if picked is not None:
         _resume(context, picked.key)
+
+
+def cmd_delete_session(context: CommandContext, argument: str) -> None:
+    """删掉一个会话及其全部会话级数据. 不给 id 就从列表里挑一条."""
+    session_id = argument.strip()
+    if not session_id:
+        sessions = context.runtime.list_sessions()
+        if not sessions:
+            context.console.print(Text("还没有历史会话", style=STYLE_DIM))
+            return
+        picked = choose(
+            context.console,
+            [
+                Option(item.session_id, item.session_id, truncate(item.title, 40))
+                for item in sessions
+            ],
+            current=context.runtime.session.current().session_id,
+        )
+        if picked is None:
+            return
+        session_id = picked.key
+    _delete(context, session_id)
+
+
+def _delete(context: CommandContext, session_id: str) -> None:
+    if not context.require_idle():
+        return
+    runtime = context.runtime
+    # 代价写在问句上面, 不是问完再说: 恢复点一起走意味着那个会话做过的改动撤不回来了.
+    context.console.print()
+    context.console.print(
+        Text(
+            "计划、待办、处理过程与恢复点会一起删掉；这个会话做过的工作区改动将无法撤销。"
+            "\n工作区里的文件本身不受影响。",
+            style=STYLE_DIM,
+        )
+    )
+    if not confirm(context.console, f"删除会话 {session_id}?"):
+        return
+    try:
+        report, current = runtime.delete_session(session_id)
+    except SessionStateError as exc:
+        error(context.console, exc.message)
+        return
+    except RuntimeError as exc:
+        error(context.console, str(exc))
+        return
+    detail = f"已删除会话 {report.session_id}"
+    if current.session_id != session_id:
+        detail += f"  ·  当前会话 {current.session_id}"
+    ok(context.console, detail)
+    # 会话已经不在列表里了, 但文件还在后台删。说一句, 免得有人看着磁盘占用没降就以为
+    # 没删干净。
+    context.console.print(Text("  计划、恢复点与快照正在后台清理。", style=STYLE_DIM))
 
 
 def cmd_resume(context: CommandContext, argument: str) -> None:

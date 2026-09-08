@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 
 from forgecli.domain.intents import ApprovalPolicy, SandboxLevel, SessionMode
-from forgecli.interfaces.web.deps import active_runtime
+from forgecli.interfaces.web.deps import active_runtime, idle_runtime
 from forgecli.shared.errors import SessionStateError
 from forgecli.shared.serialization import to_jsonable
 
@@ -77,6 +77,31 @@ async def resume_session(session_id: str, request: Request) -> object:
         raise HTTPException(status.HTTP_404_NOT_FOUND, exc.message) from exc
     except RuntimeError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str, request: Request) -> dict[str, object]:
+    """删掉一个会话及其全部会话级数据。
+
+    **立刻返回**: 这一步只保证会话已经从列表消失, 文件由后台接着清 (释放快照, 回收
+    blob, rmtree 会话目录) —— 那部分耗时随项目大小走, 留在请求里迟早超时。
+
+    删的是当前会话时, 返回体里的 ``current_session_id`` 是紧接着新开的那一个 ——
+    客户端据此切过去, 而不是自己猜删完之后停在哪。
+    """
+    runtime = idle_runtime(request, "删除会话")
+    try:
+        report, current = runtime.delete_session(session_id)
+    except SessionStateError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, exc.message) from exc
+    return {
+        "deleted": report.session_id,
+        "title": report.title,
+        # 不报"清掉了几个恢复点": 那要等后台清完才知道。报一个还没发生的数字, 不如
+        # 如实说清理还在跑。
+        "cleanup": "scheduled",
+        "current_session_id": current.session_id,
+    }
 
 
 @router.get("/sessions/{session_id}/transcript")
