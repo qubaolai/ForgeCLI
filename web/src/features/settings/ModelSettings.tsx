@@ -10,7 +10,11 @@ import { DEFAULT_TEMPERATURE, DEFAULT_TOP_P, buildInitialModelParams, modelPlace
 import { thinkingEffortList, thinkingEffortText } from "../../types";
 import type { AdminActions, AdminCatalog, Checkpoint, FieldSpec, KnownProvider, LlmRuntimeSettings, Model, Provider, ProviderProtocol } from "../../types";
 
+export type ModelSettingsView = "models" | "providers" | "gateway";
+
 export type ModelSettingsProps = {
+  /** 打开时停在哪个子页。只在挂载时读一次, 之后由子导航自己管。 */
+  initialView?: ModelSettingsView;
   providers: Provider[];
   providerSettings: Provider[];
   providerFields: FieldSpec[];
@@ -32,8 +36,8 @@ export function ProviderMark({ providerId, label }: { providerId: string; label?
   return <span className={`provider-mark provider-${providerId}`}>{(label || providerId).slice(0, 1).toUpperCase()}</span>;
 }
 
-export function ModelSettings({ providers, providerSettings, providerFields, modelFields, knownProviders, providerProtocols, llmRuntime, catalog, actions, onAddModel, onAddProvider, onRemoveModel, onSaveModel, onSaveProvider, onSaveLlmRuntime }: ModelSettingsProps) {
-  const [view, setView] = useState<"models" | "providers" | "gateway">("models");
+export function ModelSettings({ initialView = "models", providers, providerSettings, providerFields, modelFields, knownProviders, providerProtocols, llmRuntime, catalog, actions, onAddModel, onAddProvider, onRemoveModel, onSaveModel, onSaveProvider, onSaveLlmRuntime }: ModelSettingsProps) {
+  const [view, setView] = useState<ModelSettingsView>(initialView);
   const [showAdd, setShowAdd] = useState(false);
   const [showAddProvider, setShowAddProvider] = useState(false);
   // 配置里有、但不在内置注册表里的那几家 = 用户自己加的。

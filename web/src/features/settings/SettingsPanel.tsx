@@ -8,7 +8,11 @@ import { useEffect, useState } from "react";
 import type { AdminActions, AdminCatalog, Checkpoint, FieldSpec, KnownProvider, LearnedRule, LlmRuntimeSettings, Provider, ProviderProtocol, Setting, WorkspaceRoot } from "../../types";
 import { CheckpointRow, ModelSettings } from "./ModelSettings";
 
+export type SettingsTab = "general" | "models" | "security" | "recovery" | "status";
+
 export type SettingsPanelProps = {
+  /** 打开时停在哪个 tab。只在挂载时读一次, 之后由面板自己管。 */
+  initialTab?: SettingsTab;
   items: Setting[];
   roots: WorkspaceRoot[];
   rules: LearnedRule[];
@@ -37,8 +41,8 @@ export type SettingsPanelProps = {
   onSaveLlmRuntime: (changed: Record<string, string>) => void;
 };
 
-export function SettingsPanel({ items, roots, rules, checkpoints, providers, providerSettings, providerFields, modelFields, knownProviders, providerProtocols, llmRuntime, catalog, actions, onClose, onSave, onReset, onAddRoot, onRemoveRoot, onRevokeRule, onRestore, onAddModel, onAddProvider, onRemoveModel, onSaveModel, onSaveProvider, onSaveLlmRuntime }: SettingsPanelProps) {
-  const [tab, setTab] = useState<"general" | "models" | "security" | "recovery" | "status">("general");
+export function SettingsPanel({ initialTab = "general", items, roots, rules, checkpoints, providers, providerSettings, providerFields, modelFields, knownProviders, providerProtocols, llmRuntime, catalog, actions, onClose, onSave, onReset, onAddRoot, onRemoveRoot, onRevokeRule, onRestore, onAddModel, onAddProvider, onRemoveModel, onSaveModel, onSaveProvider, onSaveLlmRuntime }: SettingsPanelProps) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
   const [path, setPath] = useState("");
   const [access, setAccess] = useState("read");
   return <div className="modal-backdrop settings-layer" role="dialog" aria-modal="true" aria-label="设置" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="settings-panel"><header><div><h2>设置</h2><p>应用级与当前项目配置</p></div><button onClick={onClose}>×</button></header><div className="settings-body"><nav><button className={tab === "general" ? "active" : ""} onClick={() => setTab("general")}>常规</button><button className={tab === "models" ? "active" : ""} onClick={() => setTab("models")}>模型</button><button className={tab === "security" ? "active" : ""} onClick={() => setTab("security")}>安全与工具</button><button className={tab === "recovery" ? "active" : ""} onClick={() => setTab("recovery")}>恢复</button><button className={tab === "status" ? "active" : ""} onClick={() => setTab("status")}>状态</button></nav><div className="settings-fields">
