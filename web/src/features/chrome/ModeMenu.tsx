@@ -1,10 +1,11 @@
 /** 顶栏的姿态选择器。两个轴各自成组, 预设只是同时设两个轴的快捷方式。 */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { CheckIcon, ChevronIcon } from "@/shared/ui/icons";
 import { approvalOptions, sandboxOptions, stanceLabel } from "@/shared/lib/stance";
 import type { Stance } from "@/shared/lib/stance";
 import { useEscape } from "@/shared/hooks/useEscape";
+import { useOutsideClick } from "@/shared/hooks/useOutsideClick";
 
 export function ModeMenu({
   value,
@@ -17,18 +18,9 @@ export function ModeMenu({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  useEscape(
-    open,
-    useCallback(() => setOpen(false), []),
-  );
-  useEffect(() => {
-    if (!open) return;
-    const closeOutside = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", closeOutside);
-    return () => document.removeEventListener("mousedown", closeOutside);
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  useEscape(open, close);
+  useOutsideClick(open, rootRef, close);
   // 圆点跟着隔离档走: 那是"能造成多大后果"这一问的答案, 也是用户扫一眼最需要知道的。
   return (
     <div className="mode-menu" ref={rootRef}>

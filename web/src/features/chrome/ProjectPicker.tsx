@@ -1,8 +1,8 @@
-/** 项目选择与信任新目录。 */
+/** 项目选择与信任新目录的整屏浮层。 */
 
 import type { FormEvent } from "react";
-import type { Project } from "@/types/session";
 import { shortPath } from "@/shared/format";
+import type { Project } from "@/types/session";
 
 export function ProjectPicker({
   projects,
@@ -16,6 +16,7 @@ export function ProjectPicker({
 }: {
   projects: Project[];
   activeProjectId: string | null;
+  /** 有请求在跑时不许切: 切过去之后那一轮的事件没有地方可去。 */
   busy: boolean;
   trustPath: string;
   onTrustPath: (path: string) => void;
@@ -38,34 +39,71 @@ export function ProjectPicker({
         </div>
         <section className="project-grid">
           {projects.map((project) => (
-            <button
-              className={`project-card ${project.project_id === activeProjectId ? "active" : ""}`}
-              disabled={busy || project.project_id === activeProjectId}
-              onClick={() => onActivate(project.project_id)}
+            <ProjectCard
               key={project.project_id}
-            >
-              <span className="project-icon">⌘</span>
-              <strong>{shortPath(project.primary_workspace_root)}</strong>
-              <small>{project.primary_workspace_root}</small>
-              <span>{project.project_id === activeProjectId ? "当前项目" : "打开项目 →"}</span>
-            </button>
-          ))}
-          <form className="project-card add-project" onSubmit={onTrust}>
-            <strong>信任新项目</strong>
-            <small>输入本机目录的绝对路径</small>
-            <input
-              value={trustPath}
-              onChange={(event) => onTrustPath(event.target.value)}
-              placeholder="/path/to/repository"
-              disabled={busy}
+              project={project}
+              current={project.project_id === activeProjectId}
+              busy={busy}
+              onActivate={onActivate}
             />
-            <button type="submit" disabled={busy || !trustPath.trim()}>
-              添加并打开
-            </button>
-          </form>
+          ))}
+          <TrustProjectForm busy={busy} path={trustPath} onPath={onTrustPath} onSubmit={onTrust} />
         </section>
         <p className="escape-hint">按 Esc 关闭</p>
       </main>
     </div>
+  );
+}
+
+function ProjectCard({
+  project,
+  current,
+  busy,
+  onActivate,
+}: {
+  project: Project;
+  current: boolean;
+  busy: boolean;
+  onActivate: (id: string) => void;
+}) {
+  return (
+    <button
+      className={`project-card ${current ? "active" : ""}`}
+      disabled={busy || current}
+      onClick={() => onActivate(project.project_id)}
+    >
+      <span className="project-icon">⌘</span>
+      <strong>{shortPath(project.primary_workspace_root)}</strong>
+      <small>{project.primary_workspace_root}</small>
+      <span>{current ? "当前项目" : "打开项目 →"}</span>
+    </button>
+  );
+}
+
+function TrustProjectForm({
+  busy,
+  path,
+  onPath,
+  onSubmit,
+}: {
+  busy: boolean;
+  path: string;
+  onPath: (path: string) => void;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  return (
+    <form className="project-card add-project" onSubmit={onSubmit}>
+      <strong>信任新项目</strong>
+      <small>输入本机目录的绝对路径</small>
+      <input
+        value={path}
+        onChange={(event) => onPath(event.target.value)}
+        placeholder="/path/to/repository"
+        disabled={busy}
+      />
+      <button type="submit" disabled={busy || !path.trim()}>
+        添加并打开
+      </button>
+    </form>
   );
 }

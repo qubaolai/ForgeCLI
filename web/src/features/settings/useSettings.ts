@@ -7,6 +7,8 @@ import { useCallback, useState } from "react";
 import { api } from "@/shared/api/client";
 import type { Setting } from "@/types/session";
 
+export type SettingsFeature = ReturnType<typeof useSettings>;
+
 export function useSettings(onError: (message: string) => void) {
   const [settings, setSettings] = useState<Setting[]>([]);
 

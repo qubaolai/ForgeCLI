@@ -2,7 +2,8 @@
 
 import { useEffect } from "react";
 import type { Ref } from "react";
-import { LocalTurnView, Message, RestoredTurnView } from "@/features/conversation/Timeline";
+import { Message } from "@/features/conversation/Message";
+import { LocalTurnView, RestoredTurnView } from "@/features/conversation/TurnView";
 import type { LocalTurn } from "@/shared/lib/run/turn";
 import type { ToolDirectory } from "@/shared/lib/run/tools";
 import type { TranscriptEvent } from "@/types/session";

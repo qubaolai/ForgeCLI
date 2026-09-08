@@ -1,7 +1,5 @@
 /** 管理面的响应形状: 供应商, 模型, 网关, 工作区根, 学习规则, 恢复点与状态。 */
 
-import type { ToolSpec } from "@/types/tools";
-
 export type WorkspaceRoot = { path: string; access: string };
 
 export type LearnedRule = {
@@ -76,26 +74,6 @@ export type StatusView = {
 export type RecoveryStatus = {
   checkpoint_count: number;
   pending: Array<{ checkpoint_id: string; status: string; created_at: string }>;
-};
-
-/** 设置面板要展示的只读快照, 与它能触发的动作分开传, 免得再堆十几个平铺 prop。 */
-export type AdminCatalog = {
-  currentModel: string;
-  overrides: Record<string, string>;
-  origins: string[];
-  thinking: ThinkingView;
-  tools: ToolSpec[];
-  status: StatusView | null;
-  recovery: RecoveryStatus | null;
-};
-
-export type AdminActions = {
-  onSetCurrentModel: (providerId: string, modelId: string) => Promise<boolean>;
-  onSetOverride: (origin: string, providerId: string, modelId: string) => void;
-  onClearOverride: (origin: string) => void;
-  onPruneRules: () => void;
-  onUndo: () => void;
-  onPreviewCheckpoint: (id: string) => Promise<string>;
 };
 
 export type FieldSpec = { name: string; label: string; kind: string };

@@ -19,20 +19,18 @@ import { ConversationTimeline } from "@/features/conversation/ConversationTimeli
 import { useConversation } from "@/features/conversation/useConversation";
 import { useSessionActions } from "@/features/conversation/useSessionActions";
 import { useTimelineScroll } from "@/features/conversation/useTimelineScroll";
-import { PromptCard } from "@/features/humanInteraction/PromptCards";
+import { PromptCard } from "@/features/humanInteraction/PromptCard";
 import { usePrompts } from "@/features/humanInteraction/usePrompts";
 import { usePlanning } from "@/features/planning/usePlanning";
 import { useProjects } from "@/features/projects/useProjects";
 import { useProjectSwitch } from "@/features/projects/useProjectSwitch";
 import { useRequestActivity } from "@/features/requests/useRequestActivity";
 import { useResumePosition } from "@/features/runEvents/resumePosition";
-import { useRunEvents } from "@/features/runEvents/useRunEvents";
+import { useRunEventWiring } from "@/app/useRunEventWiring";
 import { SettingsPanel } from "@/features/settings/SettingsPanel";
 import { useSettings } from "@/features/settings/useSettings";
 import { api, setCsrfToken } from "@/shared/api/client";
 import { useEscape } from "@/shared/hooks/useEscape";
-import { isTerminalEvent } from "@/shared/lib/run/events";
-import { appendRunEvent } from "@/shared/lib/run/turn";
 
 function App() {
   const [error, setError] = useState("");
@@ -131,52 +129,13 @@ function App() {
   useEscape(showProjectPicker, closePicker);
   useEscape(showSettings, closeSettings);
 
-  // 事件流自己管连接, 退避与合帧; 这里只说"到了之后干什么" (ADR-0048 决策 5)。
-  const { connection, retryDelay, discardPending } = useRunEvents(activeProjectId, resumePosition, {
-    // 事件缓冲跨会话共用: 重连补发时会带上切换之前那个会话的尾巴。两个会话都有
-    // turn_0001, 不按归属丢掉就会叠进当前时间线 (ADR-0048 决策 2)。
-    accepts: (event) => {
-      const scope = conversation.sessionScopeRef.current;
-      return !scope || !event.session_id || event.session_id === scope;
-    },
-    onBatch: (batch) => {
-      conversation.setLocalTurns((items) =>
-        batch.reduce((carry, event) => appendRunEvent(carry, event), items),
-      );
-    },
-    onEvent: (event, flush) => {
-      if (event.kind === "prompt_requested" || event.kind === "prompt_resolved") {
-        void loadPrompts().catch((reason: Error) => setError(reason.message));
-      }
-      // 后端会在首个工具启动前连续发布整批 tool_queued，最后一条 queue_position=0。
-      // 立刻提交完整批次，避免普通流式事件的 33ms 合并窗口把它吞到完成事件后面。
-      if (event.kind === "tool_queued" && Number(event.payload.queue_position ?? 0) === 0) {
-        flush();
-      }
-      if (isTerminalEvent(event)) {
-        flush();
-        conversation.setBusy(false);
-        refreshWorkspace();
-        window.setTimeout(() => conversation.syncFinishedTurn(event.turn_id), 60);
-      }
-      if (["approval_requested", "approval_resolved", "plan_proposed", "todo_updated"].includes(event.kind)) {
-        refreshWorkspace();
-      }
-    },
-    onResync: () => {
-      // 位置已经被 hook 丢掉了; 这里负责重新取一次快照, 由快照带回新水位。
-      const scope = conversation.sessionScopeRef.current;
-      if (scope) void loadTranscript(scope).catch(() => undefined);
-      refreshWorkspace();
-    },
-    onOpen: (reconnected) => {
-      void loadPrompts().catch((reason: Error) => setError(reason.message));
-      if (reconnected) {
-        // 断线期间可能换了进程：项目、会话和运行态都要重新对齐。
-        loadProjects().catch(() => undefined);
-        refreshWorkspace();
-      }
-    },
+  const { connection, retryDelay, discardPending } = useRunEventWiring({
+    projectId: activeProjectId,
+    resumePosition,
+    conversation,
+    reloadPrompts: loadPrompts,
+    reloadProjects: loadProjects,
+    refreshWorkspace,
     onError: setError,
   });
 
@@ -332,51 +291,7 @@ function App() {
         />
       )}
 
-      {showSettings && (
-        <SettingsPanel
-          items={settingsFeature.settings}
-          roots={admin.workspaceRoots}
-          rules={admin.rules}
-          checkpoints={admin.checkpoints}
-          providerSettings={admin.providerSettings}
-          providerFields={admin.providerFields}
-          modelFields={admin.modelFields}
-          providers={admin.providers}
-          knownProviders={admin.knownProviders}
-          llmRuntime={admin.llmRuntime}
-          catalog={{
-            currentModel: admin.currentModel,
-            overrides: admin.overrides,
-            origins: admin.origins,
-            thinking: admin.thinking,
-            tools: admin.tools,
-            status: admin.statusView,
-            recovery: admin.recovery,
-          }}
-          actions={{
-            onSetCurrentModel: admin.chooseCurrentModel,
-            onSetOverride: admin.setModelOverride,
-            onClearOverride: admin.clearModelOverride,
-            onPruneRules: admin.pruneRules,
-            onUndo: admin.undoLatest,
-            onPreviewCheckpoint: admin.previewCheckpoint,
-          }}
-          onClose={closeSettings}
-          onSave={settingsFeature.save}
-          onReset={settingsFeature.reset}
-          onAddRoot={admin.addWorkspace}
-          onRemoveRoot={admin.removeWorkspace}
-          onRevokeRule={admin.revokeRule}
-          onRestore={admin.restoreCheckpoint}
-          onAddModel={admin.addModel}
-          onRemoveModel={admin.removeModel}
-          onSaveModel={admin.saveModelFields}
-          providerProtocols={admin.providerProtocols}
-          onAddProvider={admin.addProvider}
-          onSaveProvider={admin.saveProviderFields}
-          onSaveLlmRuntime={admin.saveLlmRuntime}
-        />
-      )}
+      {showSettings && <SettingsPanel admin={admin} settings={settingsFeature} onClose={closeSettings} />}
     </main>
   );
 }

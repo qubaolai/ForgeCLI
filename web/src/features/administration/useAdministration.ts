@@ -36,6 +36,10 @@ export type ProviderDraft = {
   api_key_env: string;
 };
 
+/** 管理面的全部状态与动作。面板直接吃这一个对象 —— 逐项转发过一次二十四个
+ *  prop, 加一个字段要改四个文件, 而漏掉一个不会报错。 */
+export type Administration = ReturnType<typeof useAdministration>;
+
 export function useAdministration(onError: (message: string) => void, reloadProjects: () => Promise<void>) {
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRoot[]>([]);
   const [rules, setRules] = useState<LearnedRule[]>([]);

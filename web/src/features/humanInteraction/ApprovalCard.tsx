@@ -1,12 +1,14 @@
-/** 待答卡片。审批与提问同一条队列 (ADR-0043 决策 3), 所以入口只有 PromptCard 一个,
- * 按 kind 分派到审批卡或问题卡。
+/** 审批卡片。
+ *
+ * 卡片上每一档危险程度、每一句提示都来自后端已经算好的字段 —— 界面重新推导一次
+ * "这次危不危险", 就是把裁决逻辑复制到了一个没人测的地方 (见 shared/lib/approval)。
  */
 
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { ChevronIcon, ShieldIcon } from "@/shared/ui/icons";
+import type { Approval } from "@/shared/lib/approval";
 import {
-  approvalOf,
   canLearn,
   defaultOpenSections,
   headlineOf,
@@ -15,22 +17,6 @@ import {
   severityOf,
   shownTargetGroups,
 } from "@/shared/lib/approval";
-import type { Approval, Prompt } from "@/shared/lib/approval";
-import { QuestionCard } from "@/features/humanInteraction/QuestionCard";
-import type { ResolvePrompt } from "@/features/humanInteraction/QuestionCard";
-
-/** 待答队列只有一条, 卡片按 kind 分支 (ADR-0043 决策 11)。 */
-export function PromptCard({ prompt, onResolve }: { prompt: Prompt; onResolve: ResolvePrompt }) {
-  if (prompt.kind === "question") return <QuestionCard prompt={prompt} onResolve={onResolve} />;
-  return (
-    <ApprovalCard
-      approval={approvalOf(prompt)}
-      onResolve={(id, choice, text) => {
-        void onResolve(id, choice, text).catch(() => undefined);
-      }}
-    />
-  );
-}
 
 export function ApprovalCard({
   approval,
@@ -154,13 +140,13 @@ export function ApprovalCard({
   );
 }
 
-export function scriptMeta(scripts: Approval["view"]["script_snapshots"]) {
+function scriptMeta(scripts: Approval["view"]["script_snapshots"]) {
   const lines = scripts.reduce((total, item) => total + item.source.split("\n").length, 0);
   return scripts.length > 1 ? `${scripts.length} 段 · ${lines} 行` : `${lines} 行`;
 }
 
 /** 证据分块。收的是体量, 不是事实的存在 —— 所以标题与条目数在收起时也看得见。 */
-export function ApprovalSection({
+function ApprovalSection({
   title,
   meta,
   defaultOpen,

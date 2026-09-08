@@ -1,9 +1,10 @@
 /** 顶栏的模型选择器, 带 thinking 档位。 */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { CheckIcon, ChevronIcon } from "@/shared/ui/icons";
 import type { ThinkingView } from "@/types/admin";
 import { useEscape } from "@/shared/hooks/useEscape";
+import { useOutsideClick } from "@/shared/hooks/useOutsideClick";
 
 /** 输入框旁的模型与思考强度入口: 这两项调得最勤, 不该每次都进设置页。
  *
@@ -27,18 +28,9 @@ export function ModelMenu({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  useEscape(
-    open,
-    useCallback(() => setOpen(false), []),
-  );
-  useEffect(() => {
-    if (!open) return;
-    const closeOutside = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", closeOutside);
-    return () => document.removeEventListener("mousedown", closeOutside);
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  useEscape(open, close);
+  useOutsideClick(open, rootRef, close);
   const efforts = thinking.supported_efforts ?? [];
   const thinkingOn = thinking.mode === "on";
   const label = current ? current.split(":").slice(1).join(":") || current : "选择模型";
