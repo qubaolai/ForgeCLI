@@ -73,13 +73,15 @@ export function parseMarkdown(content: string): MarkdownBlock[] {
     }
     if (/^\s*>/.test(line)) {
       const quote: string[] = [];
-      while (index < lines.length && /^\s*>/.test(lines[index])) quote.push(lines[index++].replace(/^\s*>\s?/, ""));
+      while (index < lines.length && /^\s*>/.test(lines[index]))
+        quote.push(lines[index++].replace(/^\s*>\s?/, ""));
       blocks.push({ kind: "quote", text: quote.join("\n") });
       continue;
     }
     const paragraph: string[] = [line];
     index += 1;
-    while (index < lines.length && lines[index].trim() && !startsBlock(lines[index])) paragraph.push(lines[index++]);
+    while (index < lines.length && lines[index].trim() && !startsBlock(lines[index]))
+      paragraph.push(lines[index++]);
     blocks.push({ kind: "paragraph", text: paragraph.join("\n") });
   }
   return blocks;

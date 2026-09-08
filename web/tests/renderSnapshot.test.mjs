@@ -46,10 +46,34 @@ after(() => server.close());
 
 const load = async (key) => server.ssrLoadModule(MODULES[key]);
 
-const [runProcess, markdown, runModel, timeline, promptCards, settingsPanel, modelSettings,
-  projectPicker, confirmDialog, modeMenu, modelMenu, planningPanel] = await Promise.all(
-  ["runProcess", "markdown", "runModel", "timeline", "promptCards", "settingsPanel", "modelSettings",
-    "projectPicker", "confirmDialog", "modeMenu", "modelMenu", "planningPanel"].map(load),
+const [
+  runProcess,
+  markdown,
+  runModel,
+  timeline,
+  promptCards,
+  settingsPanel,
+  modelSettings,
+  projectPicker,
+  confirmDialog,
+  modeMenu,
+  modelMenu,
+  planningPanel,
+] = await Promise.all(
+  [
+    "runProcess",
+    "markdown",
+    "runModel",
+    "timeline",
+    "promptCards",
+    "settingsPanel",
+    "modelSettings",
+    "projectPicker",
+    "confirmDialog",
+    "modeMenu",
+    "modelMenu",
+    "planningPanel",
+  ].map(load),
 );
 
 // 时间冻住: 没有终态事件的那一轮用 now - startedAt 算耗时, 不冻住就每次跑都不一样。
@@ -73,33 +97,68 @@ function settingsProps(extra) {
   const a = fixture.adminFixture;
   return {
     items: fixture.settings,
-    roots: a.roots, rules: a.rules, checkpoints: a.checkpoints,
-    providers: a.providers, providerSettings: a.providerSettings,
-    providerFields: a.providerFields, modelFields: a.modelFields,
-    knownProviders: a.knownProviders, providerProtocols: a.providerProtocols,
-    llmRuntime: a.llmRuntime, catalog: a.catalog,
+    roots: a.roots,
+    rules: a.rules,
+    checkpoints: a.checkpoints,
+    providers: a.providers,
+    providerSettings: a.providerSettings,
+    providerFields: a.providerFields,
+    modelFields: a.modelFields,
+    knownProviders: a.knownProviders,
+    providerProtocols: a.providerProtocols,
+    llmRuntime: a.llmRuntime,
+    catalog: a.catalog,
     actions: {
-      onSetCurrentModel: asyncNoop, onSetOverride: noop, onClearOverride: noop,
-      onPruneRules: noop, onUndo: noop, onPreviewCheckpoint: async () => "",
+      onSetCurrentModel: asyncNoop,
+      onSetOverride: noop,
+      onClearOverride: noop,
+      onPruneRules: noop,
+      onUndo: noop,
+      onPreviewCheckpoint: async () => "",
     },
-    onClose: noop, onSave: noop, onReset: noop, onAddRoot: noop, onRemoveRoot: noop,
-    onRevokeRule: noop, onRestore: noop, onAddModel: asyncNoop, onAddProvider: asyncNoop,
-    onRemoveModel: noop, onSaveModel: noop, onSaveProvider: noop, onSaveLlmRuntime: noop,
+    onClose: noop,
+    onSave: noop,
+    onReset: noop,
+    onAddRoot: noop,
+    onRemoveRoot: noop,
+    onRevokeRule: noop,
+    onRestore: noop,
+    onAddModel: asyncNoop,
+    onAddProvider: asyncNoop,
+    onRemoveModel: noop,
+    onSaveModel: noop,
+    onSaveProvider: noop,
+    onSaveLlmRuntime: noop,
     ...extra,
   };
 }
 
 const cases = () => [
-  ["runProcess-completed", runProcess.RunProcess, { turn: fixture.completedTurn, directory: fixture.directory }],
+  [
+    "runProcess-completed",
+    runProcess.RunProcess,
+    { turn: fixture.completedTurn, directory: fixture.directory },
+  ],
   ["runProcess-running", runProcess.RunProcess, { turn: fixture.runningTurn, directory: fixture.directory }],
   ["runProcess-failed", runProcess.RunProcess, { turn: fixture.failedTurn, directory: fixture.directory }],
 
-  ["timeline-localTurn", timeline.LocalTurnView, { turn: fixture.completedTurn, directory: fixture.directory }],
-  ["timeline-restoredTurn", timeline.RestoredTurnView, {
-    run: runModel.restoreTurn({ turn_id: "turn-1", events: fixture.completedEvents, outputs: fixture.completedOutputs }, 1730000000000),
-    item: fixture.transcriptItem,
-    directory: fixture.directory,
-  }],
+  [
+    "timeline-localTurn",
+    timeline.LocalTurnView,
+    { turn: fixture.completedTurn, directory: fixture.directory },
+  ],
+  [
+    "timeline-restoredTurn",
+    timeline.RestoredTurnView,
+    {
+      run: runModel.restoreTurn(
+        { turn_id: "turn-1", events: fixture.completedEvents, outputs: fixture.completedOutputs },
+        1730000000000,
+      ),
+      item: fixture.transcriptItem,
+      directory: fixture.directory,
+    },
+  ],
   ["timeline-userMessage", timeline.Message, { item: fixture.userItem }],
   ["timeline-assistantMessage", timeline.Message, { item: fixture.transcriptItem }],
 
@@ -112,42 +171,93 @@ const cases = () => [
   ["settings-status", settingsPanel.SettingsPanel, settingsProps({ initialTab: "status" })],
   ["settings-models", settingsPanel.SettingsPanel, settingsProps({ initialTab: "models" })],
 
-  ...["models", "providers", "gateway"].map((view) => [`modelSettings-${view}`, modelSettings.ModelSettings, {
-    initialView: view,
-    providers: fixture.adminFixture.providers,
-    providerSettings: fixture.adminFixture.providerSettings,
-    providerFields: fixture.adminFixture.providerFields,
-    modelFields: fixture.adminFixture.modelFields,
-    knownProviders: fixture.adminFixture.knownProviders,
-    providerProtocols: fixture.adminFixture.providerProtocols,
-    llmRuntime: fixture.adminFixture.llmRuntime,
-    catalog: fixture.adminFixture.catalog,
-    actions: {
-      onSetCurrentModel: asyncNoop, onSetOverride: noop, onClearOverride: noop,
-      onPruneRules: noop, onUndo: noop, onPreviewCheckpoint: async () => "",
+  ...["models", "providers", "gateway"].map((view) => [
+    `modelSettings-${view}`,
+    modelSettings.ModelSettings,
+    {
+      initialView: view,
+      providers: fixture.adminFixture.providers,
+      providerSettings: fixture.adminFixture.providerSettings,
+      providerFields: fixture.adminFixture.providerFields,
+      modelFields: fixture.adminFixture.modelFields,
+      knownProviders: fixture.adminFixture.knownProviders,
+      providerProtocols: fixture.adminFixture.providerProtocols,
+      llmRuntime: fixture.adminFixture.llmRuntime,
+      catalog: fixture.adminFixture.catalog,
+      actions: {
+        onSetCurrentModel: asyncNoop,
+        onSetOverride: noop,
+        onClearOverride: noop,
+        onPruneRules: noop,
+        onUndo: noop,
+        onPreviewCheckpoint: async () => "",
+      },
+      onAddModel: asyncNoop,
+      onAddProvider: asyncNoop,
+      onRemoveModel: noop,
+      onSaveModel: noop,
+      onSaveProvider: noop,
+      onSaveLlmRuntime: noop,
     },
-    onAddModel: asyncNoop, onAddProvider: asyncNoop, onRemoveModel: noop,
-    onSaveModel: noop, onSaveProvider: noop, onSaveLlmRuntime: noop,
-  }]),
+  ]),
 
-  ["projectPicker", projectPicker.ProjectPicker, {
-    projects: fixture.projects, activeProjectId: "p-1", busy: false, trustPath: "/tmp/new",
-    onTrustPath: noop, onTrust: noop, onActivate: noop, onCancel: noop,
-  }],
-  ["confirmDialog", confirmDialog.ConfirmDialog, {
-    title: "删除这个会话？", body: "不可撤销。", confirmLabel: "删除", busy: false,
-    onConfirm: noop, onCancel: noop,
-  }],
-  ["modeMenu", modeMenu.ModeMenu, {
-    value: { sandbox: "workspace_write", approval: "always" }, disabled: false, onChange: noop,
-  }],
-  ["modelMenu", modelMenu.ModelMenu, {
-    current: "deepseek:deepseek-chat", models: ["deepseek:deepseek-chat"],
-    thinking: fixture.adminFixture.catalog.thinking, disabled: false, onChoose: noop, onThinking: noop,
-  }],
-  ["planningPanel", planningPanel.PlanningPanel, {
-    planning: fixture.planning, index: fixture.planIndex, onResolve: noop, onActivate: noop,
-  }],
+  [
+    "projectPicker",
+    projectPicker.ProjectPicker,
+    {
+      projects: fixture.projects,
+      activeProjectId: "p-1",
+      busy: false,
+      trustPath: "/tmp/new",
+      onTrustPath: noop,
+      onTrust: noop,
+      onActivate: noop,
+      onCancel: noop,
+    },
+  ],
+  [
+    "confirmDialog",
+    confirmDialog.ConfirmDialog,
+    {
+      title: "删除这个会话？",
+      body: "不可撤销。",
+      confirmLabel: "删除",
+      busy: false,
+      onConfirm: noop,
+      onCancel: noop,
+    },
+  ],
+  [
+    "modeMenu",
+    modeMenu.ModeMenu,
+    {
+      value: { sandbox: "workspace_write", approval: "always" },
+      disabled: false,
+      onChange: noop,
+    },
+  ],
+  [
+    "modelMenu",
+    modelMenu.ModelMenu,
+    {
+      current: "deepseek:deepseek-chat",
+      models: ["deepseek:deepseek-chat"],
+      thinking: fixture.adminFixture.catalog.thinking,
+      disabled: false,
+      onChoose: noop,
+      onThinking: noop,
+    },
+  ],
+  [
+    "planningPanel",
+    planningPanel.PlanningPanel,
+    {
+      planning: fixture.planning,
+      index: fixture.planIndex,
+      onResolve: noop,
+      onActivate: noop,
+    },
+  ],
   ["markdown", markdown.Markdown, { content: fixture.markdownSample }],
 ];
 

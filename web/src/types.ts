@@ -108,7 +108,13 @@ export type Provider = {
   max_retries: number;
   models: Model[];
 };
-export type KnownProvider = { id: string; label: string; api_key_env?: string; available: boolean; builtin?: boolean };
+export type KnownProvider = {
+  id: string;
+  label: string;
+  api_key_env?: string;
+  available: boolean;
+  builtin?: boolean;
+};
 export type ThinkingView = {
   model: string;
   configured: boolean;
@@ -148,7 +154,9 @@ export type ToolsResponse = { items: ToolSpec[]; all: ToolDirectoryItem[] };
 
 /** 后端给的是数组 (顺序稳定, 便于诊断), 展示要的是按名字查 —— 转一次即可。 */
 export function indexTools(items: ToolDirectoryItem[]): ToolDirectory {
-  return Object.fromEntries(items.map((item) => [item.name, { title: item.title, capabilities: item.capabilities }]));
+  return Object.fromEntries(
+    items.map((item) => [item.name, { title: item.title, capabilities: item.capabilities }]),
+  );
 }
 export type StatusView = {
   session_id: string;

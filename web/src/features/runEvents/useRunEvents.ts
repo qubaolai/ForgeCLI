@@ -80,11 +80,16 @@ export function useRunEvents(
     flushEvents();
   }, [flushEvents]);
 
-  const discardPending = useCallback(() => { pending.current = []; }, []);
-
-  useEffect(() => () => {
-    if (flushHandle.current) window.clearTimeout(flushHandle.current);
+  const discardPending = useCallback(() => {
+    pending.current = [];
   }, []);
+
+  useEffect(
+    () => () => {
+      if (flushHandle.current) window.clearTimeout(flushHandle.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!projectId) return;
@@ -165,14 +170,16 @@ export function useRunEvents(
         source = null;
         if (disposed) return;
         // 会话密钥跨重启复用，正常不会走到这里；真失效时给出可操作提示。
-        fetch("/api/v1/bootstrap").then(
-          (response) => (response.status === 401 ? "stale" : "retry"),
-          () => "retry",
-        ).then((verdict) => {
-          if (disposed) return;
-          if (verdict === "stale") latest.current.onError(STALE_SESSION);
-          scheduleRetry();
-        });
+        fetch("/api/v1/bootstrap")
+          .then(
+            (response) => (response.status === 401 ? "stale" : "retry"),
+            () => "retry",
+          )
+          .then((verdict) => {
+            if (disposed) return;
+            if (verdict === "stale") latest.current.onError(STALE_SESSION);
+            scheduleRetry();
+          });
       };
     }
 

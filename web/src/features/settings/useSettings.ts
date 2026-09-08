@@ -15,12 +15,17 @@ export function useSettings(onError: (message: string) => void) {
     setSettings(result.items);
   }, []);
 
-  const write = useCallback(async (key: string, init: RequestInit) => {
-    try {
-      await api(`/settings/${key}`, init);
-      await load();
-    } catch (reason) { onError((reason as Error).message); }
-  }, [load, onError]);
+  const write = useCallback(
+    async (key: string, init: RequestInit) => {
+      try {
+        await api(`/settings/${key}`, init);
+        await load();
+      } catch (reason) {
+        onError((reason as Error).message);
+      }
+    },
+    [load, onError],
+  );
 
   return {
     settings,

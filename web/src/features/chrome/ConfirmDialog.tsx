@@ -10,7 +10,13 @@
 import { useEscape } from "../../ui";
 
 export function ConfirmDialog({
-  title, body, confirmLabel, busy, danger = true, onConfirm, onCancel,
+  title,
+  body,
+  confirmLabel,
+  busy,
+  danger = true,
+  onConfirm,
+  onCancel,
 }: {
   title: string;
   body: string;
@@ -29,19 +35,18 @@ export function ConfirmDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby="confirm-title"
-      onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) onCancel(); }}
+      onMouseDown={(event) => {
+        if (!busy && event.target === event.currentTarget) onCancel();
+      }}
     >
       <section className="confirm-dialog">
         <h2 id="confirm-title">{title}</h2>
         <p>{body}</p>
         <footer>
-          <button onClick={onCancel} disabled={busy}>取消</button>
-          <button
-            className={danger ? "danger" : "primary"}
-            onClick={onConfirm}
-            disabled={busy}
-            autoFocus
-          >
+          <button onClick={onCancel} disabled={busy}>
+            取消
+          </button>
+          <button className={danger ? "danger" : "primary"} onClick={onConfirm} disabled={busy} autoFocus>
             {busy ? `${confirmLabel}中…` : confirmLabel}
           </button>
         </footer>

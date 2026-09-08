@@ -13,7 +13,15 @@ import {
 const LABELS = ["读取", "写入", "删除", "移动", "网络", "外部副作用"];
 
 /** 后端 counts 含为零的类别, 所以替身也必须含 —— 少一行就测不到"零不等于没提"。 */
-function approval({ counts = {}, mandatory = false, unresolved = null, scopes = ["once"], blocked = "", scripts = [], previews = [] } = {}) {
+function approval({
+  counts = {},
+  mandatory = false,
+  unresolved = null,
+  scopes = ["once"],
+  blocked = "",
+  scripts = [],
+  previews = [],
+} = {}) {
   return {
     approval_id: "ap_1",
     mandatory,

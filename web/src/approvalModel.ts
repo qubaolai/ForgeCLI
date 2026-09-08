@@ -154,9 +154,7 @@ export function headlineOf(approval: Approval): string {
 export function isConsequential(approval: Approval) {
   const view = approval.view;
   if (view.unresolved_reason) return true;
-  return view.target_groups.some(
-    (group) => group.label !== "读取" && group.paths.length > 0,
-  );
+  return view.target_groups.some((group) => group.label !== "读取" && group.paths.length > 0);
 }
 
 /** 有内容的目标分组; 空组不占位置。 */

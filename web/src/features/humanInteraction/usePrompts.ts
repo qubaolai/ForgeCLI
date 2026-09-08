@@ -22,25 +22,22 @@ export function usePrompts(onError: (message: string) => void) {
   }, []);
 
   /** 审批与提问同一条路: choice 是点了哪个选项, text 是自己写的那一句。 */
-  const resolve = useCallback(async (
-    id: string,
-    choice: string,
-    text = "",
-    selectedValues: string[] = [],
-    skipped = false,
-  ) => {
-    try {
-      await api(`/prompts/${id}/resolve`, {
-        method: "POST",
-        body: JSON.stringify({ choice, text, selected_values: selectedValues, skipped }),
-      });
-      await load();
-    } catch (reason) {
-      onError((reason as Error).message);
-      // 往上抛: 卡片要据此保留草稿并显示"提交失败, 请重试"。
-      throw reason;
-    }
-  }, [load, onError]);
+  const resolve = useCallback(
+    async (id: string, choice: string, text = "", selectedValues: string[] = [], skipped = false) => {
+      try {
+        await api(`/prompts/${id}/resolve`, {
+          method: "POST",
+          body: JSON.stringify({ choice, text, selected_values: selectedValues, skipped }),
+        });
+        await load();
+      } catch (reason) {
+        onError((reason as Error).message);
+        // 往上抛: 卡片要据此保留草稿并显示"提交失败, 请重试"。
+        throw reason;
+      }
+    },
+    [load, onError],
+  );
 
   return { prompts, load, resolve };
 }

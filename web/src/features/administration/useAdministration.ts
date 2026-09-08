@@ -37,10 +37,7 @@ export type ProviderDraft = {
   api_key_env: string;
 };
 
-export function useAdministration(
-  onError: (message: string) => void,
-  reloadProjects: () => Promise<void>,
-) {
+export function useAdministration(onError: (message: string) => void, reloadProjects: () => Promise<void>) {
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRoot[]>([]);
   const [rules, setRules] = useState<LearnedRule[]>([]);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
@@ -85,7 +82,9 @@ export function useAdministration(
     try {
       const value = await api<ToolsResponse>("/tools");
       setToolDirectory(indexTools(value.all));
-    } catch { /* 退回显示工具名 */ }
+    } catch {
+      /* 退回显示工具名 */
+    }
   }, []);
 
   const loadAll = useCallback(async () => {
@@ -108,84 +107,131 @@ export function useAdministration(
   }, [loadModels]);
 
   /** 一次写操作 + 一次重新拉取。`after` 决定拉哪一份。 */
-  const write = useCallback(async (
-    run: () => Promise<unknown>,
-    after: () => Promise<unknown> = loadAll,
-  ): Promise<boolean> => {
-    try {
-      await run();
-      await after();
-      return true;
-    } catch (reason) {
-      fail(reason);
-      return false;
-    }
-  }, [fail, loadAll]);
+  const write = useCallback(
+    async (run: () => Promise<unknown>, after: () => Promise<unknown> = loadAll): Promise<boolean> => {
+      try {
+        await run();
+        await after();
+        return true;
+      } catch (reason) {
+        fail(reason);
+        return false;
+      }
+    },
+    [fail, loadAll],
+  );
 
   /** 逐字段 PATCH, 但只在整批做完后刷新一次: 中途刷新会把还没保存的输入冲掉。 */
-  const saveFields = useCallback(async (
-    changed: Record<string, string>,
-    endpoint: (field: string) => string,
-  ) => {
-    try {
-      for (const [field, value] of Object.entries(changed)) {
-        await api(endpoint(field), { method: "PATCH", body: JSON.stringify({ value }) });
+  const saveFields = useCallback(
+    async (changed: Record<string, string>, endpoint: (field: string) => string) => {
+      try {
+        for (const [field, value] of Object.entries(changed)) {
+          await api(endpoint(field), { method: "PATCH", body: JSON.stringify({ value }) });
+        }
+      } catch (reason) {
+        fail(reason);
       }
-    } catch (reason) {
-      fail(reason);
-    }
-    await loadModels().catch(() => undefined);
-  }, [fail, loadModels]);
+      await loadModels().catch(() => undefined);
+    },
+    [fail, loadModels],
+  );
 
   const withProjects = useCallback(async () => {
     await Promise.all([reloadProjects(), loadAll()]);
   }, [reloadProjects, loadAll]);
 
   return {
-    workspaceRoots, rules, checkpoints, providers, knownProviders, providerProtocols,
-    providerSettings, providerFields, modelFields, llmRuntime, currentModel, overrides,
-    origins, thinking, tools, toolDirectory, statusView, recovery,
+    workspaceRoots,
+    rules,
+    checkpoints,
+    providers,
+    knownProviders,
+    providerProtocols,
+    providerSettings,
+    providerFields,
+    modelFields,
+    llmRuntime,
+    currentModel,
+    overrides,
+    origins,
+    thinking,
+    tools,
+    toolDirectory,
+    statusView,
+    recovery,
 
     loadAll,
     loadModels,
     loadToolDirectory,
 
     addWorkspace: (path: string, access: string) =>
-      write(() => api("/workspace-roots", { method: "POST", body: JSON.stringify({ path, access }) }), withProjects),
+      write(
+        () => api("/workspace-roots", { method: "POST", body: JSON.stringify({ path, access }) }),
+        withProjects,
+      ),
     removeWorkspace: (path: string) =>
-      write(() => api(`/workspace-roots?path=${encodeURIComponent(path)}`, { method: "DELETE" }), withProjects),
+      write(
+        () => api(`/workspace-roots?path=${encodeURIComponent(path)}`, { method: "DELETE" }),
+        withProjects,
+      ),
     revokeRule: (id: string) => write(() => api(`/rules/${id}`, { method: "DELETE" })),
     pruneRules: () => write(() => api("/rules/prune", { method: "POST" })),
     restoreCheckpoint: (id: string) =>
-      write(() => api(`/checkpoints/${id}/restore`, { method: "POST", body: JSON.stringify({ force_conflicts: false }) })),
+      write(() =>
+        api(`/checkpoints/${id}/restore`, {
+          method: "POST",
+          body: JSON.stringify({ force_conflicts: false }),
+        }),
+      ),
     undoLatest: () => write(() => api("/undo", { method: "POST" })),
 
     addProvider: (body: ProviderDraft) =>
       write(() => api("/providers", { method: "POST", body: JSON.stringify(body) })),
     addModel: (providerId: string, modelId: string, params: Record<string, unknown>) =>
-      write(() => api("/models", {
-        method: "POST",
-        body: JSON.stringify({ provider_id: providerId, model_id: modelId, params }),
-      }), loadModels),
+      write(
+        () =>
+          api("/models", {
+            method: "POST",
+            body: JSON.stringify({ provider_id: providerId, model_id: modelId, params }),
+          }),
+        loadModels,
+      ),
     removeModel: (providerId: string, modelId: string) =>
-      write(() => api(
-        `/models?provider_id=${encodeURIComponent(providerId)}&model_id=${encodeURIComponent(modelId)}`,
-        { method: "DELETE" },
-      ), loadModels),
+      write(
+        () =>
+          api(
+            `/models?provider_id=${encodeURIComponent(providerId)}&model_id=${encodeURIComponent(modelId)}`,
+            { method: "DELETE" },
+          ),
+        loadModels,
+      ),
     chooseCurrentModel: (providerId: string, modelId: string) =>
-      write(() => api("/models/current", {
-        method: "PUT", body: JSON.stringify({ provider_id: providerId, model_id: modelId }),
-      }), loadModels),
+      write(
+        () =>
+          api("/models/current", {
+            method: "PUT",
+            body: JSON.stringify({ provider_id: providerId, model_id: modelId }),
+          }),
+        loadModels,
+      ),
     setModelOverride: (origin: string, providerId: string, modelId: string) =>
-      write(() => api(`/model-overrides/${encodeURIComponent(origin)}`, {
-        method: "PUT", body: JSON.stringify({ provider_id: providerId, model_id: modelId }),
-      }), loadModels),
+      write(
+        () =>
+          api(`/model-overrides/${encodeURIComponent(origin)}`, {
+            method: "PUT",
+            body: JSON.stringify({ provider_id: providerId, model_id: modelId }),
+          }),
+        loadModels,
+      ),
     clearModelOverride: (origin: string) =>
       write(() => api(`/model-overrides/${encodeURIComponent(origin)}`, { method: "DELETE" }), loadModels),
 
     saveModelFields: (providerId: string, modelId: string, changed: Record<string, string>) =>
-      saveFields(changed, (field) =>
-        `/models/${field}?provider_id=${encodeURIComponent(providerId)}&model_id=${encodeURIComponent(modelId)}`),
+      saveFields(
+        changed,
+        (field) =>
+          `/models/${field}?provider_id=${encodeURIComponent(providerId)}&model_id=${encodeURIComponent(modelId)}`,
+      ),
     saveProviderFields: (providerId: string, changed: Record<string, string>) =>
       saveFields(changed, (field) => `/providers/${encodeURIComponent(providerId)}/${field}`),
     // key 形如 "cache.ttl_seconds": 网关配置分段, 但对用户是同一张表单。
@@ -195,10 +241,13 @@ export function useAdministration(
     updateThinking: async (mode: string, effort: string) => {
       try {
         const result = await api<{ thinking: ThinkingView }>("/thinking", {
-          method: "POST", body: JSON.stringify({ mode, effort }),
+          method: "POST",
+          body: JSON.stringify({ mode, effort }),
         });
         setThinking(result.thinking);
-      } catch (reason) { fail(reason); }
+      } catch (reason) {
+        fail(reason);
+      }
     },
 
     /** 预览把失败也当成内容返回: 它渲染在一个折叠区里, 弹错误横幅太重。 */

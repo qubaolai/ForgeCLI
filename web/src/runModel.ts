@@ -211,9 +211,7 @@ export function finishLocalTurn(
 }
 
 export function failUnboundTurn(turns: LocalTurn[], clientId: string, error: string): LocalTurn[] {
-  return turns.map((turn) => turn.clientId === clientId
-    ? { ...turn, status: "failed", error }
-    : turn);
+  return turns.map((turn) => (turn.clientId === clientId ? { ...turn, status: "failed", error } : turn));
 }
 
 export function isTerminalEvent(event: RunEvent) {
@@ -231,11 +229,21 @@ export function terminalFailureDetail(events: RunEvent[]) {
   return stringValue(failed?.payload.detail);
 }
 
-export function shouldSendOnEnter(key: string, shiftKey: boolean, isComposing: boolean, compositionActive: boolean) {
+export function shouldSendOnEnter(
+  key: string,
+  shiftKey: boolean,
+  isComposing: boolean,
+  compositionActive: boolean,
+) {
   return key === "Enter" && !shiftKey && !isComposing && !compositionActive;
 }
 
-export function shouldAutoFollow(scrollHeight: number, scrollTop: number, clientHeight: number, threshold = 140) {
+export function shouldAutoFollow(
+  scrollHeight: number,
+  scrollTop: number,
+  clientHeight: number,
+  threshold = 140,
+) {
   return scrollHeight - scrollTop - clientHeight <= threshold;
 }
 
@@ -246,11 +254,14 @@ export function metricsFor(events: RunEvent[], now = Date.now(), startedAt = now
   const payload = finished?.payload ?? {};
   const totalFromCalls = usage.reduce((total, event) => {
     const explicit = numberValue(event.payload.total_tokens);
-    return total + (explicit || numberValue(event.payload.input_tokens) + numberValue(event.payload.output_tokens));
+    return (
+      total + (explicit || numberValue(event.payload.input_tokens) + numberValue(event.payload.output_tokens))
+    );
   }, 0);
   return {
     elapsedMs: numberValue(payload.elapsed_ms) || Math.max(0, now - startedAt),
-    modelCalls: numberValue(payload.model_calls) || events.filter((event) => event.kind === "model_started").length,
+    modelCalls:
+      numberValue(payload.model_calls) || events.filter((event) => event.kind === "model_started").length,
     toolCalls: numberValue(payload.tool_calls) || uniqueToolCount(events),
     inputTokens: sumPayload(usage, "input_tokens"),
     outputTokens: sumPayload(usage, "output_tokens"),
@@ -259,7 +270,10 @@ export function metricsFor(events: RunEvent[], now = Date.now(), startedAt = now
     totalTokens: totalFromCalls,
     compactTokens: compaction.reduce((total, event) => {
       const explicit = numberValue(event.payload.total_tokens);
-      return total + (explicit || numberValue(event.payload.input_tokens) + numberValue(event.payload.output_tokens));
+      return (
+        total +
+        (explicit || numberValue(event.payload.input_tokens) + numberValue(event.payload.output_tokens))
+      );
     }, 0),
     estimated: usage.some((event) => Boolean(event.payload.estimated)),
   };
@@ -268,16 +282,25 @@ export function metricsFor(events: RunEvent[], now = Date.now(), startedAt = now
 export function groupToolEvents(events: RunEvent[]) {
   const groups: Array<{ id: string; events: RunEvent[] }> = [];
   for (const event of events) {
-    if (!event.kind.startsWith("tool_") && !event.kind.startsWith("approval_") && event.kind !== "policy_resolved") continue;
-    const key = event.invocation_id ?? event.tool_call_id ?? `tool-${event.payload.tool_name ?? event.sequence}`;
+    if (
+      !event.kind.startsWith("tool_") &&
+      !event.kind.startsWith("approval_") &&
+      event.kind !== "policy_resolved"
+    )
+      continue;
+    const key =
+      event.invocation_id ?? event.tool_call_id ?? `tool-${event.payload.tool_name ?? event.sequence}`;
     let group = groups.find((item) => item.id === key);
     if (!group && event.invocation_id) {
       const name = stringValue(event.payload.tool_name);
-      group = groups.find((item) => (
-        item.events.every((candidate) => !candidate.invocation_id)
-        && !item.events.some((candidate) => candidate.kind === "tool_completed" || candidate.kind === "tool_cancelled")
-        && stringValue(item.events[0]?.payload.tool_name) === name
-      ));
+      group = groups.find(
+        (item) =>
+          item.events.every((candidate) => !candidate.invocation_id) &&
+          !item.events.some(
+            (candidate) => candidate.kind === "tool_completed" || candidate.kind === "tool_cancelled",
+          ) &&
+          stringValue(item.events[0]?.payload.tool_name) === name,
+      );
       if (group) group.id = event.invocation_id;
     }
     if (!group) {
@@ -321,9 +344,11 @@ function sumPayload(events: RunEvent[], key: string) {
 }
 
 function uniqueToolCount(events: RunEvent[]) {
-  return new Set(events.filter((event) => event.kind === "tool_queued").map((event) => (
-    event.invocation_id ?? event.tool_call_id ?? event.event_id
-  ))).size;
+  return new Set(
+    events
+      .filter((event) => event.kind === "tool_queued")
+      .map((event) => event.invocation_id ?? event.tool_call_id ?? event.event_id),
+  ).size;
 }
 
 // ---- 处理过程的步骤时间线 ----
@@ -375,7 +400,15 @@ export function summariseTools(groups: ToolGroup[], directory: ToolDirectory = {
 
 export type TimelineItem =
   | { id: string; kind: "model"; key: string; sequence: number; events: RunEvent[]; reason: string }
-  | { id: string; kind: "tools"; sequence: number; category: ToolCategory; mergeKey: string; groups: ToolGroup[]; reason: string }
+  | {
+      id: string;
+      kind: "tools";
+      sequence: number;
+      category: ToolCategory;
+      mergeKey: string;
+      groups: ToolGroup[];
+      reason: string;
+    }
   | { id: string; kind: "note"; sequence: number; event: RunEvent; reason: string };
 
 const NOTE_KINDS = ["todo_updated", "plan_proposed", "context_compacted"];
@@ -391,7 +424,11 @@ const OTHER_TOOLS: ToolCategory = { id: "other", label: "其他工具" };
  */
 const CAPABILITY_CATEGORIES: Array<{ id: string; label: string; capabilities: string[] }> = [
   { id: "shell", label: "执行命令", capabilities: ["execute_shell", "execute_script"] },
-  { id: "write", label: "修改文件", capabilities: ["workspace_write", "workspace_delete", "path_move", "external_write"] },
+  {
+    id: "write",
+    label: "修改文件",
+    capabilities: ["workspace_write", "workspace_delete", "path_move", "external_write"],
+  },
   { id: "read", label: "读取文件", capabilities: ["workspace_read", "external_read", "artifact_read"] },
   { id: "planning", label: "任务", capabilities: ["plan_only"] },
   { id: "memory", label: "记忆", capabilities: ["memory_write"] },
@@ -424,15 +461,23 @@ export function toolActionLabel(toolName: string, directory: ToolDirectory = {})
   return directory[toolName]?.title || toolName;
 }
 
-export function categoryOf(toolName: string, capabilities: string[] = [], directory: ToolDirectory = {}): ToolCategory {
+export function categoryOf(
+  toolName: string,
+  capabilities: string[] = [],
+  directory: ToolDirectory = {},
+): ToolCategory {
   // 顺序即优先级: 一次调用同时声明读和写时, 它是一次写入。
-  const byCapability = CAPABILITY_CATEGORIES.find((item) => item.capabilities.some((name) => capabilities.includes(name)));
+  const byCapability = CAPABILITY_CATEGORIES.find((item) =>
+    item.capabilities.some((name) => capabilities.includes(name)),
+  );
   if (byCapability) return { id: byCapability.id, label: byCapability.label };
   // 连 prepare 都没走到的调用没有能力可看, 这时退回目录里那个工具**声明**的能力上界。
   // 不按命名空间猜: 模型编出来的 `fs_write_file` 也以 `fs_` 开头, 猜成"读取文件"就是在
   // 替一次没发生过的写入洗白 —— 目录里没有的名字归"其他工具"。
   const declared = directory[toolName]?.capabilities ?? [];
-  const byDeclared = CAPABILITY_CATEGORIES.find((item) => item.capabilities.some((name) => declared.includes(name)));
+  const byDeclared = CAPABILITY_CATEGORIES.find((item) =>
+    item.capabilities.some((name) => declared.includes(name)),
+  );
   return byDeclared ? { id: byDeclared.id, label: byDeclared.label } : OTHER_TOOLS;
 }
 
@@ -510,10 +555,13 @@ export function activityOf(turn: LocalTurn, directory: ToolDirectory = {}): stri
   if (awaiting) return "等待你的审批";
   // 通过分组后的生命周期判断，避免 queued 用 tool_call_id、started/completed 用
   // invocation_id 时同一次调用在 Map 里留下两个身份。队列是串行的，不能称作“并行处理”。
-  const activeTools = groupToolEvents(turn.events).filter((group) => !group.events.some(
-    (event) => event.kind === "tool_completed" || event.kind === "tool_cancelled",
-  ));
-  const runningTools = activeTools.filter((group) => group.events.some((event) => event.kind === "tool_started"));
+  const activeTools = groupToolEvents(turn.events).filter(
+    (group) =>
+      !group.events.some((event) => event.kind === "tool_completed" || event.kind === "tool_cancelled"),
+  );
+  const runningTools = activeTools.filter((group) =>
+    group.events.some((event) => event.kind === "tool_started"),
+  );
   if (runningTools.length > 0) {
     const names = [...new Set(runningTools.map((group) => toolNameOf(group.events)).filter(Boolean))];
     const label = names.length === 1 ? toolActionLabel(names[0], directory) : `${runningTools.length} 个工具`;
@@ -522,7 +570,8 @@ export function activityOf(turn: LocalTurn, directory: ToolDirectory = {}): stri
   }
   if (activeTools.length > 0) {
     const names = [...new Set(activeTools.map((group) => toolNameOf(group.events)).filter(Boolean))];
-    if (activeTools.length === 1 && names.length === 1) return `准备调用${toolActionLabel(names[0], directory)}`;
+    if (activeTools.length === 1 && names.length === 1)
+      return `准备调用${toolActionLabel(names[0], directory)}`;
     return `准备调用 ${activeTools.length} 个工具`;
   }
   if (modelRunning) return thinking ? "模型思考中…" : "模型生成中…";

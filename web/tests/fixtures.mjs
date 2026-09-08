@@ -25,27 +25,51 @@ function event(kind, sequence, payload = {}, extra = {}) {
 function toolCall(base, name, invocation, options = {}) {
   const target = options.target ?? "README.md";
   return [
-    event("tool_queued", base, { tool_name: name, queue_position: 0, arguments: [["path", target]] }, { tool_call_id: invocation }),
-    event("tool_prepared", base + 1, {
-      tool_name: name,
-      capabilities: directory[name].capabilities,
-      targets: [target],
-      target_count: 1,
-      arguments: [["path", target]],
-    }, { invocation_id: invocation, tool_call_id: invocation }),
-    event("policy_resolved", base + 2, {
-      decision: "allow", reason: "只读命令", matched_rule_id: "rule-7", risk_facts: [], detail: "",
-    }, { invocation_id: invocation }),
+    event(
+      "tool_queued",
+      base,
+      { tool_name: name, queue_position: 0, arguments: [["path", target]] },
+      { tool_call_id: invocation },
+    ),
+    event(
+      "tool_prepared",
+      base + 1,
+      {
+        tool_name: name,
+        capabilities: directory[name].capabilities,
+        targets: [target],
+        target_count: 1,
+        arguments: [["path", target]],
+      },
+      { invocation_id: invocation, tool_call_id: invocation },
+    ),
+    event(
+      "policy_resolved",
+      base + 2,
+      {
+        decision: "allow",
+        reason: "只读命令",
+        matched_rule_id: "rule-7",
+        risk_facts: [],
+        detail: "",
+      },
+      { invocation_id: invocation },
+    ),
     event("tool_started", base + 3, { tool_name: name }, { invocation_id: invocation }),
-    event("tool_completed", base + 4, {
-      tool_name: name,
-      status: options.status ?? "ok",
-      elapsed_ms: options.elapsedMs ?? 42,
-      result_summary: options.summary ?? "读到 120 行",
-      error_summary: options.error ?? "",
-      executed: true,
-      bytes_out: 3400,
-    }, { invocation_id: invocation }),
+    event(
+      "tool_completed",
+      base + 4,
+      {
+        tool_name: name,
+        status: options.status ?? "ok",
+        elapsed_ms: options.elapsedMs ?? 42,
+        result_summary: options.summary ?? "读到 120 行",
+        error_summary: options.error ?? "",
+        executed: true,
+        bytes_out: 3400,
+      },
+      { invocation_id: invocation },
+    ),
   ];
 }
 
@@ -59,11 +83,24 @@ export const completedEvents = [
   event("todo_updated", 14, { current: "拆 App.tsx", done: 1, total: 3 }),
   event("plan_proposed", 15, { title: "前端重构", revision: 2, step_count: 8 }),
   event("context_compacted", 16, { tokens_saved: 12000, messages_replaced: 9 }),
-  event("model_usage", 17, {
-    input_tokens: 5000, output_tokens: 400, reasoning_tokens: 120,
-    cached_tokens: 3000, total_tokens: 5400,
-  }, { request_id: "req-1" }),
-  event("model_usage", 18, { origin: "compact", input_tokens: 800, output_tokens: 100, total_tokens: 900 }, { request_id: "req-c" }),
+  event(
+    "model_usage",
+    17,
+    {
+      input_tokens: 5000,
+      output_tokens: 400,
+      reasoning_tokens: 120,
+      cached_tokens: 3000,
+      total_tokens: 5400,
+    },
+    { request_id: "req-1" },
+  ),
+  event(
+    "model_usage",
+    18,
+    { origin: "compact", input_tokens: 800, output_tokens: 100, total_tokens: 900 },
+    { request_id: "req-c" },
+  ),
   event("model_started", 19, {}, { request_id: "req-2" }),
   event("model_completed", 20, { tool_call_count: 0 }, { request_id: "req-2" }),
   event("turn_completed", 21, { elapsed_ms: 8400, model_calls: 2, tool_calls: 2 }),
@@ -79,19 +116,42 @@ export const runningEvents = [
   event("model_started", 1, {}, { request_id: "req-1" }),
   event("model_reasoning_status", 2, { status: "started" }, { request_id: "req-1" }),
   event("model_completed", 3, { tool_call_count: 1 }, { request_id: "req-1" }),
-  event("tool_queued", 4, { tool_name: "shell_run", queue_position: 0, arguments: [["command", "npm run build"]] }, { tool_call_id: "inv-9" }),
-  event("tool_prepared", 5, {
-    tool_name: "shell_run", capabilities: ["execute_shell"], targets: [], target_count: 0,
-    arguments: [["command", "npm run build"]],
-  }, { invocation_id: "inv-9", tool_call_id: "inv-9" }),
+  event(
+    "tool_queued",
+    4,
+    { tool_name: "shell_run", queue_position: 0, arguments: [["command", "npm run build"]] },
+    { tool_call_id: "inv-9" },
+  ),
+  event(
+    "tool_prepared",
+    5,
+    {
+      tool_name: "shell_run",
+      capabilities: ["execute_shell"],
+      targets: [],
+      target_count: 0,
+      arguments: [["command", "npm run build"]],
+    },
+    { invocation_id: "inv-9", tool_call_id: "inv-9" },
+  ),
   event("approval_requested", 6, {}, { invocation_id: "inv-9" }),
 ];
 
 /** 失败的一轮: 模型层报错 + 终态详情。 */
 export const failedEvents = [
   event("model_started", 1, {}, { request_id: "req-1" }),
-  event("model_failed", 2, { message: "供应商返回 429", error_kind: "rate_limited" }, { request_id: "req-1" }),
-  event("turn_failed", 3, { detail: "供应商返回 429，已重试 3 次", elapsed_ms: 2100, model_calls: 1, tool_calls: 0 }),
+  event(
+    "model_failed",
+    2,
+    { message: "供应商返回 429", error_kind: "rate_limited" },
+    { request_id: "req-1" },
+  ),
+  event("turn_failed", 3, {
+    detail: "供应商返回 429，已重试 3 次",
+    elapsed_ms: 2100,
+    model_calls: 1,
+    tool_calls: 0,
+  }),
 ];
 
 const startedAt = 1730000000000;
@@ -147,11 +207,16 @@ export const criticalApproval = {
       { label: "写入", paths: ["node_modules/"] },
       { label: "读取", paths: ["package.json"] },
     ],
-    script_snapshots: [{ language: "bash", origin: "inline", path: "", source: "set -e\nrm -rf build\nnpm ci" }],
+    script_snapshots: [
+      { language: "bash", origin: "inline", path: "", source: "set -e\nrm -rf build\nnpm ci" },
+    ],
     content_previews: [{ path: "src/a.ts", content: "export const a = 1;", truncated: true }],
     counts: [
-      { label: "删除", count: 1 }, { label: "写入", count: 1 },
-      { label: "读取", count: 1 }, { label: "网络", count: 0 }, { label: "外部副作用", count: 0 },
+      { label: "删除", count: 1 },
+      { label: "写入", count: 1 },
+      { label: "读取", count: 1 },
+      { label: "网络", count: 0 },
+      { label: "外部副作用", count: 0 },
     ],
     unresolved_reason: null,
     allowed_scopes: ["once", "workspace"],
@@ -173,8 +238,11 @@ export const calmApproval = {
     script_snapshots: [],
     content_previews: [],
     counts: [
-      { label: "删除", count: 0 }, { label: "写入", count: 0 },
-      { label: "读取", count: 1 }, { label: "网络", count: 0 }, { label: "外部副作用", count: 0 },
+      { label: "删除", count: 0 },
+      { label: "写入", count: 0 },
+      { label: "读取", count: 1 },
+      { label: "网络", count: 0 },
+      { label: "外部副作用", count: 0 },
     ],
     unresolved_reason: null,
     allowed_scopes: ["once"],
@@ -184,37 +252,88 @@ export const calmApproval = {
 
 export const settings = [
   {
-    key: "output.theme", label: "界面主题", help: "深色或浅色", level: "app", kind: "choice",
-    value: "dark", choices: ["dark", "light"], default: "dark", overridden: false, effect: "立即生效",
+    key: "output.theme",
+    label: "界面主题",
+    help: "深色或浅色",
+    level: "app",
+    kind: "choice",
+    value: "dark",
+    choices: ["dark", "light"],
+    default: "dark",
+    overridden: false,
+    effect: "立即生效",
   },
   {
-    key: "run.stream", label: "流式输出", help: "边生成边显示", level: "project", kind: "bool",
-    value: "true", choices: [], default: "false", overridden: true, effect: "下一轮生效",
+    key: "run.stream",
+    label: "流式输出",
+    help: "边生成边显示",
+    level: "project",
+    kind: "bool",
+    value: "true",
+    choices: [],
+    default: "false",
+    overridden: true,
+    effect: "下一轮生效",
   },
   {
-    key: "run.timeout", label: "单轮超时", help: "", level: "project", kind: "text",
-    value: "600", choices: [], default: "300", overridden: true, effect: "下一轮生效",
+    key: "run.timeout",
+    label: "单轮超时",
+    help: "",
+    level: "project",
+    kind: "text",
+    value: "600",
+    choices: [],
+    default: "300",
+    overridden: true,
+    effect: "下一轮生效",
   },
 ];
 
-export const providers = [{
-  id: "deepseek",
-  name: "DeepSeek",
-  api_base: "https://api.deepseek.com/v1/chat/completions",
-  api_key_env: "DEEPSEEK_API_KEY",
-  timeout: 60,
-  max_retries: 2,
-  models: [{ provider: "deepseek", id: "deepseek-chat", params: { context_window: 65536, temperature: 0.7, thinking_mode: "off" } }],
-}];
+export const providers = [
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    api_base: "https://api.deepseek.com/v1/chat/completions",
+    api_key_env: "DEEPSEEK_API_KEY",
+    timeout: 60,
+    max_retries: 2,
+    models: [
+      {
+        provider: "deepseek",
+        id: "deepseek-chat",
+        params: { context_window: 65536, temperature: 0.7, thinking_mode: "off" },
+      },
+    ],
+  },
+];
 
 export const adminFixture = {
-  roots: [{ path: "/Users/dev/repo", access: "write" }, { path: "/Users/dev/notes", access: "read" }],
-  rules: [{ rule_id: "r-1", label: "允许 npm ci", scope: "workspace", revoked: false, match: { mode: "prefix" } }],
-  checkpoints: [{ checkpoint_id: "cp-1", status: "committed", snapshot_strategy: "copy", created_at: "2026-09-08T09:00:00", mutations: { entries: [] } }],
+  roots: [
+    { path: "/Users/dev/repo", access: "write" },
+    { path: "/Users/dev/notes", access: "read" },
+  ],
+  rules: [
+    { rule_id: "r-1", label: "允许 npm ci", scope: "workspace", revoked: false, match: { mode: "prefix" } },
+  ],
+  checkpoints: [
+    {
+      checkpoint_id: "cp-1",
+      status: "committed",
+      snapshot_strategy: "copy",
+      created_at: "2026-09-08T09:00:00",
+      mutations: { entries: [] },
+    },
+  ],
   providers,
   providerSettings: providers,
-  providerFields: [{ name: "api_base", label: "API 地址", kind: "text" }, { name: "timeout", label: "超时（秒）", kind: "number" }],
-  modelFields: [{ name: "context_window", label: "上下文窗口", kind: "number" }, { name: "temperature", label: "温度", kind: "number" }],
+  providerFields: [
+    { name: "api_base", label: "API 地址", kind: "text" },
+    { name: "timeout", label: "超时（秒）", kind: "number" },
+  ],
+  modelFields: [
+    { name: "context_window", label: "上下文窗口", kind: "number" },
+    { name: "temperature", label: "温度", kind: "number" },
+  ],
   knownProviders: [
     { id: "deepseek", label: "DeepSeek", api_key_env: "DEEPSEEK_API_KEY", available: true, builtin: true },
     { id: "acme", label: "Acme", api_key_env: "ACME_API_KEY", available: false, builtin: false },
@@ -232,10 +351,34 @@ export const adminFixture = {
     currentModel: "deepseek:deepseek-chat",
     overrides: { compact: "deepseek:deepseek-chat" },
     origins: ["agent", "compact", "title"],
-    thinking: { model: "deepseek:deepseek-chat", configured: true, mode: "on", effort: "medium", supported_efforts: ["low", "medium", "high"] },
-    tools: [{ name: "fs_read", title: "读取文件", description: "读取工作区内的文件", declared_capabilities: ["workspace_read"], default_timeout_seconds: 30 }],
-    status: { session_id: "sess-1", mode: "workspace_write/always", last_event_id: "e21", workspace_roots: ["/Users/dev/repo"], model: "deepseek:deepseek-chat", busy: false },
-    recovery: { checkpoint_count: 1, pending: [{ checkpoint_id: "cp-2", status: "pending", created_at: "2026-09-08T09:30:00" }] },
+    thinking: {
+      model: "deepseek:deepseek-chat",
+      configured: true,
+      mode: "on",
+      effort: "medium",
+      supported_efforts: ["low", "medium", "high"],
+    },
+    tools: [
+      {
+        name: "fs_read",
+        title: "读取文件",
+        description: "读取工作区内的文件",
+        declared_capabilities: ["workspace_read"],
+        default_timeout_seconds: 30,
+      },
+    ],
+    status: {
+      session_id: "sess-1",
+      mode: "workspace_write/always",
+      last_event_id: "e21",
+      workspace_roots: ["/Users/dev/repo"],
+      model: "deepseek:deepseek-chat",
+      busy: false,
+    },
+    recovery: {
+      checkpoint_count: 1,
+      pending: [{ checkpoint_id: "cp-2", status: "pending", created_at: "2026-09-08T09:30:00" }],
+    },
   },
 };
 
@@ -247,10 +390,21 @@ export const projects = [
 export const planning = {
   markdown: "# 前端重构\n\n把结构收敛到一套布局。\n\n- 删死代码\n- 拆 App\n",
   plan: {
-    plan_id: "plan-1", title: "前端重构", goal: "结构收敛", status: "proposed",
-    steps: [{ title: "删死代码", detail: "五个函数" }, { title: "拆 App", detail: "按区块" }],
+    plan_id: "plan-1",
+    title: "前端重构",
+    goal: "结构收敛",
+    status: "proposed",
+    steps: [
+      { title: "删死代码", detail: "五个函数" },
+      { title: "拆 App", detail: "按区块" },
+    ],
   },
-  todo: { items: [{ title: "删死代码", status: "done" }, { title: "拆 App", status: "pending" }] },
+  todo: {
+    items: [
+      { title: "删死代码", status: "done" },
+      { title: "拆 App", status: "pending" },
+    ],
+  },
 };
 
 export const planIndex = {

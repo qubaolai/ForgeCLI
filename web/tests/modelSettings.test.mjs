@@ -17,7 +17,10 @@ test("model refs preserve local model ids containing colons", () => {
 
 test("provider availability explains the action the user needs", () => {
   assert.equal(providerAvailabilityCopy({ available: true, api_key_env: "DEEPSEEK_API_KEY" }), "密钥已就绪");
-  assert.equal(providerAvailabilityCopy({ available: false, api_key_env: "OPENAI_API_KEY" }), "缺少 OPENAI_API_KEY");
+  assert.equal(
+    providerAvailabilityCopy({ available: false, api_key_env: "OPENAI_API_KEY" }),
+    "缺少 OPENAI_API_KEY",
+  );
   assert.equal(providerAvailabilityCopy({ available: true, api_key_env: "" }), "无需密钥");
 });
 
@@ -32,24 +35,45 @@ test("sampling parameters are always sent, never left to the provider", () => {
   // 留空等于让每家供应商用自己的默认值, 而那些默认值互不相同 —— 同一个提示词换个
   // 供应商就得到不同的发散程度, 而配置里看不出为什么。
   assert.deepEqual(buildInitialModelParams("64000", "8192"), {
-    context_window: 64000, max_tokens: 8192, temperature: 0.7, top_p: 1, thinking_mode: "off",
+    context_window: 64000,
+    max_tokens: 8192,
+    temperature: 0.7,
+    top_p: 1,
+    thinking_mode: "off",
   });
 });
 
 test("thinking is part of adding a model, not a later separate edit", () => {
   assert.deepEqual(
-    buildInitialModelParams("", "", { temperature: "0.2", topP: "0.9", thinkingMode: "on", thinkingEffort: "high" }),
+    buildInitialModelParams("", "", {
+      temperature: "0.2",
+      topP: "0.9",
+      thinkingMode: "on",
+      thinkingEffort: "high",
+    }),
     { temperature: 0.2, top_p: 0.9, thinking_mode: "on", thinking_effort: "high" },
   );
 });
 
 test("an out-of-range sampling value is refused before it reaches the backend", () => {
   assert.throws(
-    () => buildInitialModelParams("", "", { temperature: "3", topP: "1.0", thinkingMode: "off", thinkingEffort: "" }),
+    () =>
+      buildInitialModelParams("", "", {
+        temperature: "3",
+        topP: "1.0",
+        thinkingMode: "off",
+        thinkingEffort: "",
+      }),
     /温度必须是 0 到 2 之间的数字/,
   );
   assert.throws(
-    () => buildInitialModelParams("", "", { temperature: "0.7", topP: "2", thinkingMode: "off", thinkingEffort: "" }),
+    () =>
+      buildInitialModelParams("", "", {
+        temperature: "0.7",
+        topP: "2",
+        thinkingMode: "off",
+        thinkingEffort: "",
+      }),
     /top_p必须是 0 到 1 之间的数字/,
   );
 });

@@ -15,19 +15,26 @@ export function useProjects() {
     setActiveProjectId(result.active_project_id);
   }, []);
 
-  const activate = useCallback(async (projectId: string) => {
-    await api(`/projects/${projectId}/activate`, { method: "POST" });
-    await load();
-  }, [load]);
+  const activate = useCallback(
+    async (projectId: string) => {
+      await api(`/projects/${projectId}/activate`, { method: "POST" });
+      await load();
+    },
+    [load],
+  );
 
-  const trust = useCallback(async (path: string) => {
-    const project = await api<Project>("/projects", {
-      method: "POST", body: JSON.stringify({ path }),
-    });
-    setTrustPath("");
-    await load();
-    await activate(project.project_id);
-  }, [load, activate]);
+  const trust = useCallback(
+    async (path: string) => {
+      const project = await api<Project>("/projects", {
+        method: "POST",
+        body: JSON.stringify({ path }),
+      });
+      setTrustPath("");
+      await load();
+      await activate(project.project_id);
+    },
+    [load, activate],
+  );
 
   const activeProject = useMemo(
     () => projects.find((item) => item.project_id === activeProjectId),
@@ -35,7 +42,11 @@ export function useProjects() {
   );
 
   return {
-    projects, activeProjectId, activeProject, trustPath, setTrustPath,
+    projects,
+    activeProjectId,
+    activeProject,
+    trustPath,
+    setTrustPath,
     load,
     activate,
     trust,

@@ -37,7 +37,10 @@ test("model deltas stream in order and terminal event completes the turn", () =>
   turns = appendRunEvent(turns, event("model_output_delta", 2, { text: "你" }, { request_id: "r1" }));
   turns = appendRunEvent(turns, event("model_output_delta", 3, { text: "好" }, { request_id: "r1" }));
   turns = appendRunEvent(turns, event("model_completed", 4, { tool_call_count: 0 }, { request_id: "r1" }));
-  turns = appendRunEvent(turns, event("turn_completed", 5, { elapsed_ms: 230, model_calls: 1, tool_calls: 0 }));
+  turns = appendRunEvent(
+    turns,
+    event("turn_completed", 5, { elapsed_ms: 230, model_calls: 1, tool_calls: 0 }),
+  );
   assert.equal(turns[0].turnId, "turn-1");
   assert.equal(turns[0].assistantText, "你好");
   assert.equal(turns[0].status, "completed");
@@ -60,7 +63,14 @@ test("the answer keeps growing while the answering call is still streaming", () 
 test("tool events are grouped by invocation and metrics retain CLI usage fields", () => {
   const events = [
     event("model_started", 1),
-    event("model_usage", 2, { input_tokens: 10, output_tokens: 4, reasoning_tokens: 2, cached_tokens: 3, total_tokens: 14, estimated: true }),
+    event("model_usage", 2, {
+      input_tokens: 10,
+      output_tokens: 4,
+      reasoning_tokens: 2,
+      cached_tokens: 3,
+      total_tokens: 14,
+      estimated: true,
+    }),
     event("tool_queued", 3, { tool_name: "shell_run" }, { tool_call_id: "provider-call-1" }),
     event("tool_started", 4, { tool_name: "shell_run" }, { invocation_id: "i1" }),
     event("tool_completed", 5, { tool_name: "shell_run", elapsed_ms: 80 }, { invocation_id: "i1" }),
@@ -68,9 +78,16 @@ test("tool events are grouped by invocation and metrics retain CLI usage fields"
   ];
   assert.equal(groupToolEvents(events).length, 1);
   assert.deepEqual(metricsFor(events, 2000, 1000), {
-    elapsedMs: 420, modelCalls: 1, toolCalls: 1,
-    inputTokens: 10, outputTokens: 4, reasoningTokens: 2, cachedTokens: 3,
-    totalTokens: 14, compactTokens: 0, estimated: true,
+    elapsedMs: 420,
+    modelCalls: 1,
+    toolCalls: 1,
+    inputTokens: 10,
+    outputTokens: 4,
+    reasoningTokens: 2,
+    cachedTokens: 3,
+    totalTokens: 14,
+    compactTokens: 0,
+    estimated: true,
   });
 });
 
@@ -90,7 +107,10 @@ test("a complete queued batch is visible before its first invocation starts", ()
   const groups = groupToolEvents(events);
   assert.equal(groups.length, 3);
   assert.equal(groups[0].id, "inv-1");
-  assert.deepEqual(groups.slice(1).map((group) => group.id), ["call-2", "call-3"]);
+  assert.deepEqual(
+    groups.slice(1).map((group) => group.id),
+    ["call-2", "call-3"],
+  );
 });
 
 test("queued tools are reported as pending, never as parallel execution", () => {
@@ -106,7 +126,9 @@ test("queued tools are reported as pending, never as parallel execution", () => 
   turn.events.push(event("tool_started", 4, { tool_name: "fs_read" }, { invocation_id: "inv-1" }));
   assert.equal(activityOf(turn, directory), "正在读取文件，另有 2 个待处理");
 
-  turn.events.push(event("tool_completed", 5, { tool_name: "fs_read", status: "ok" }, { invocation_id: "inv-1" }));
+  turn.events.push(
+    event("tool_completed", 5, { tool_name: "fs_read", status: "ok" }, { invocation_id: "inv-1" }),
+  );
   assert.equal(activityOf(turn, directory), "准备调用 2 个工具");
 });
 
@@ -116,8 +138,19 @@ test("context compaction is counted in the turn total and broken out separately"
   const events = [
     event("model_started", 1),
     event("model_usage", 2, { origin: "act", input_tokens: 10, output_tokens: 4, total_tokens: 14 }),
-    event("context_compacted", 3, { level: "summary", tokens_before: 9000, tokens_after: 1200, tokens_saved: 7800, messages_replaced: 12 }),
-    event("model_usage", 4, { origin: "compact", input_tokens: 8000, output_tokens: 200, total_tokens: 8200 }, { request_id: "r-compact" }),
+    event("context_compacted", 3, {
+      level: "summary",
+      tokens_before: 9000,
+      tokens_after: 1200,
+      tokens_saved: 7800,
+      messages_replaced: 12,
+    }),
+    event(
+      "model_usage",
+      4,
+      { origin: "compact", input_tokens: 8000, output_tokens: 200, total_tokens: 8200 },
+      { request_id: "r-compact" },
+    ),
     event("turn_completed", 5, { elapsed_ms: 100, model_calls: 1, tool_calls: 0 }),
   ];
   const metrics = metricsFor(events, 2000, 1000);
@@ -137,7 +170,10 @@ test("compaction usage does not become a phantom model step", () => {
   ];
   assert.equal(groupModelEvents(events).length, 1);
   const timeline = buildTimeline(events, {}, { r1: "最终回答" });
-  assert.deepEqual(timeline.map((item) => item.kind), ["model", "note"]);
+  assert.deepEqual(
+    timeline.map((item) => item.kind),
+    ["model", "note"],
+  );
 });
 
 test("token counts switch to k at a thousand", () => {
@@ -159,8 +195,13 @@ test("IME composition Enter does not send and scroll follow has a 140px dead zon
 });
 
 test("chat and plan markdown preserve semantic blocks without raw HTML execution", () => {
-  const blocks = parseMarkdown("# 标题\n\n1. 步骤\n   详细说明\n\n```python\nprint('hi')\n```\n\n<script>alert(1)</script>");
-  assert.deepEqual(blocks.map((block) => block.kind), ["heading", "list", "code", "paragraph"]);
+  const blocks = parseMarkdown(
+    "# 标题\n\n1. 步骤\n   详细说明\n\n```python\nprint('hi')\n```\n\n<script>alert(1)</script>",
+  );
+  assert.deepEqual(
+    blocks.map((block) => block.kind),
+    ["heading", "list", "code", "paragraph"],
+  );
   assert.equal(blocks[1].items[0], "步骤 — 详细说明");
   assert.equal(blocks[2].text, "print('hi')");
   assert.equal(blocks[3].text, "<script>alert(1)</script>");
@@ -192,7 +233,10 @@ test("streaming deltas stay out of the event array so long answers do not stall 
   turns = appendRunEvent(turns, event("model_started", 1, { call_index: 0 }, { request_id: "r1" }));
   const started = performance.now();
   for (let index = 0; index < 4000; index += 1) {
-    turns = appendRunEvent(turns, event("model_output_delta", index + 2, { text: "字" }, { request_id: "r1" }));
+    turns = appendRunEvent(
+      turns,
+      event("model_output_delta", index + 2, { text: "字" }, { request_id: "r1" }),
+    );
   }
   const elapsed = performance.now() - started;
   turns = appendRunEvent(turns, event("model_completed", 4002, { tool_call_count: 0 }, { request_id: "r1" }));
@@ -209,19 +253,30 @@ test("replayed events are dropped by turn sequence, and StrictMode double runs s
   const twice = appendRunEvent(turns, event("model_output_delta", 2, { text: "好" }, { request_id: "r1" }));
   assert.equal(once[0].outputs.r1, "好");
   assert.equal(twice[0].outputs.r1, "好");
-  assert.equal(appendRunEvent(once, event("model_output_delta", 2, { text: "好" }, { request_id: "r1" })), once);
+  assert.equal(
+    appendRunEvent(once, event("model_output_delta", 2, { text: "好" }, { request_id: "r1" })),
+    once,
+  );
 });
 
 test("a server snapshot rebuilds a finished process so a refreshed page can still open it", () => {
-  const turn = restoreTurn({
-    turn_id: "turn-1",
-    events: [
-      event("model_started", 1, {}, { request_id: "r1" }),
-      event("tool_completed", 2, { tool_name: "fs_read", status: "ok", elapsed_ms: 12 }, { invocation_id: "i1" }),
-      event("turn_completed", 3, { elapsed_ms: 900, model_calls: 1, tool_calls: 1 }),
-    ],
-    outputs: { r1: "中间正文" },
-  }, 5000);
+  const turn = restoreTurn(
+    {
+      turn_id: "turn-1",
+      events: [
+        event("model_started", 1, {}, { request_id: "r1" }),
+        event(
+          "tool_completed",
+          2,
+          { tool_name: "fs_read", status: "ok", elapsed_ms: 12 },
+          { invocation_id: "i1" },
+        ),
+        event("turn_completed", 3, { elapsed_ms: 900, model_calls: 1, tool_calls: 1 }),
+      ],
+      outputs: { r1: "中间正文" },
+    },
+    5000,
+  );
   assert.equal(turn.status, "completed");
   assert.equal(turn.turnId, "turn-1");
   assert.equal(turn.outputs.r1, "中间正文");
@@ -234,12 +289,16 @@ test("a half-streamed list marker must not hang the parser", () => {
     const blocks = parseMarkdown(partial);
     assert.ok(blocks.length <= 1, `${JSON.stringify(partial)} 解析出了 ${blocks.length} 个块`);
   }
-  assert.deepEqual(parseMarkdown("1. 第一项\n2. 第二项").map((b) => b.kind), ["list"]);
+  assert.deepEqual(
+    parseMarkdown("1. 第一项\n2. 第二项").map((b) => b.kind),
+    ["list"],
+  );
   assert.deepEqual(parseMarkdown("- 一\n- 二")[0].items, ["一", "二"]);
 });
 
 test("every streaming prefix of a markdown answer parses in bounded time", () => {
-  const answer = "# 标题\n\n先说结论。\n\n1. 第一步\n2. 第二步\n\n```bash\nmake ci\n```\n\n- 要点一\n- 要点二\n";
+  const answer =
+    "# 标题\n\n先说结论。\n\n1. 第一步\n2. 第二步\n\n```bash\nmake ci\n```\n\n- 要点一\n- 要点二\n";
   const started = performance.now();
   for (let cut = 0; cut <= answer.length; cut += 1) parseMarkdown(answer.slice(0, cut));
   assert.ok(performance.now() - started < 500, "逐字符前缀解析不该变慢");
@@ -251,7 +310,10 @@ test("narration never reaches the chat, not even for one frame", () => {
   // 不进聊天。
   let turns = [newLocalTurn("改个文件", 1000)];
   turns = appendRunEvent(turns, event("model_started", 1, { call_index: 0 }, { request_id: "r1" }));
-  turns = appendRunEvent(turns, event("model_output_delta", 2, { text: "让我先看看目录" }, { request_id: "r1" }));
+  turns = appendRunEvent(
+    turns,
+    event("model_output_delta", 2, { text: "让我先看看目录" }, { request_id: "r1" }),
+  );
   assert.equal(turns[0].assistantText, "", "流的过程中回答区必须始终是空的");
   assert.equal(turns[0].outputs.r1, "让我先看看目录", "正文只在处理过程里");
 
@@ -269,15 +331,18 @@ test("narration never reaches the chat, not even for one frame", () => {
 
 test("a restored turn knows which model call was the answer", () => {
   // 回答已经在 transcript 里; 处理过程再展示一遍, 刷新后同一段文字会出现两次。
-  const turn = restoreTurn({
-    turn_id: "turn-1",
-    events: [
-      event("model_completed", 2, { tool_call_count: 2 }, { request_id: "r1" }),
-      event("model_completed", 4, { tool_call_count: 0 }, { request_id: "r2" }),
-      event("turn_completed", 5, {}),
-    ],
-    outputs: { r1: "先看看", r2: "结论" },
-  }, 5000);
+  const turn = restoreTurn(
+    {
+      turn_id: "turn-1",
+      events: [
+        event("model_completed", 2, { tool_call_count: 2 }, { request_id: "r1" }),
+        event("model_completed", 4, { tool_call_count: 0 }, { request_id: "r2" }),
+        event("turn_completed", 5, {}),
+      ],
+      outputs: { r1: "先看看", r2: "结论" },
+    },
+    5000,
+  );
   assert.equal(turn.answerRequestId, "r2");
 });
 
@@ -351,10 +416,7 @@ test("different tools do not merge even when they fall in the same category", ()
   // 合并粒度是**工具名**, 不是类别: `fs_read` 与 `fs_find` 同属"读取文件", 并成一行之后
   // 就读不出模型到底是在检索还是在读文件了。这一条原先靠后端的 ToolAction 撑着, 那个字段
   // 已随 ADR-0042 删除。
-  const events = [
-    ...toolCall(10, "fs_read", "i1"),
-    ...toolCall(20, "fs_find", "i2"),
-  ];
+  const events = [...toolCall(10, "fs_read", "i1"), ...toolCall(20, "fs_find", "i2")];
   const timeline = buildTimeline(events, {}, {});
   assert.deepEqual(
     timeline.map((item) => item.kind),
@@ -372,7 +434,10 @@ test("tool calls separated by something the model said are not merged across it"
     ...toolCall(30, "fs_read", "i2"),
   ];
   const timeline = buildTimeline(events, {}, { r2: "接着看下一个" });
-  assert.deepEqual(timeline.map((item) => item.kind), ["tools", "model", "tools"]);
+  assert.deepEqual(
+    timeline.map((item) => item.kind),
+    ["tools", "model", "tools"],
+  );
 });
 
 test("a silent model call does not break the run of tool calls around it", () => {
@@ -387,20 +452,47 @@ test("a silent model call does not break the run of tool calls around it", () =>
   ];
   // 实测: 模型在工具调用旁边会吐一个空白字符, 于是 text_chars=1 而屏幕上什么都没有。
   // 判据看的是渲染器用的那份 outputs, 不是这个计数。
-  assert.deepEqual(buildTimeline(events, {}, { r2: " " }).map((item) => item.kind), ["tools"]);
+  assert.deepEqual(
+    buildTimeline(events, {}, { r2: " " }).map((item) => item.kind),
+    ["tools"],
+  );
 });
 
 test("an unregistered tool still shows what the model passed in", () => {
   // 回归: fs_write_file 连 prepare 都没走到, 页面上只剩一个工具名 —— 而"模型到底传了
   // 什么"正是这类失败唯一值得看的东西。
   const events = [
-    event("tool_queued", 1, { tool_name: "fs_write_file", arguments: [["path", "a.py"], ["content", "x"]] }, { tool_call_id: "c1" }),
-    event("tool_completed", 2, { tool_name: "fs_write_file", status: "tool_unavailable", executed: false, error_code: "tool_unavailable" }, { invocation_id: "i1" }),
+    event(
+      "tool_queued",
+      1,
+      {
+        tool_name: "fs_write_file",
+        arguments: [
+          ["path", "a.py"],
+          ["content", "x"],
+        ],
+      },
+      { tool_call_id: "c1" },
+    ),
+    event(
+      "tool_completed",
+      2,
+      {
+        tool_name: "fs_write_file",
+        status: "tool_unavailable",
+        executed: false,
+        error_code: "tool_unavailable",
+      },
+      { invocation_id: "i1" },
+    ),
   ];
   const timeline = buildTimeline(events);
   assert.equal(timeline.length, 1);
   const [group] = timeline[0].groups;
-  assert.deepEqual(group.events[0].payload.arguments, [["path", "a.py"], ["content", "x"]]);
+  assert.deepEqual(group.events[0].payload.arguments, [
+    ["path", "a.py"],
+    ["content", "x"],
+  ]);
   assert.equal(group.events.at(-1).payload.executed, false);
 });
 
@@ -431,9 +523,7 @@ test("the collapsed line separates thinking from generating", () => {
 });
 
 test("a running tool names the actual operation, not the tool id", () => {
-  const turn = running(
-    event("tool_started", 1, { tool_name: "todo_set_status" }, { tool_call_id: "c1" }),
-  );
+  const turn = running(event("tool_started", 1, { tool_name: "todo_set_status" }, { tool_call_id: "c1" }));
   assert.equal(activityOf(turn, DIRECTORY), "正在更新待办状态");
 });
 
@@ -463,10 +553,7 @@ test("waiting on a human outranks whatever else is open", () => {
 });
 
 test("a terminal turn reports its outcome instead of a live activity", () => {
-  const turn = running(
-    event("model_started", 1, {}, { request_id: "r1" }),
-    event("turn_cancelled", 2, {}),
-  );
+  const turn = running(event("model_started", 1, {}, { request_id: "r1" }), event("turn_cancelled", 2, {}));
   assert.equal(activityOf(turn), "处理已取消");
 });
 
@@ -498,13 +585,25 @@ test("every model call's text stays in the flow, none of it is retracted", () =>
   // 这条钉的是"留下": 两次调用的正文都要能从 outputs 里取到, 时间线也要给出两块。
   let turns = [newLocalTurn("改个文件", 1000)];
   turns = appendRunEvent(turns, event("model_started", 1, { call_index: 0 }, { request_id: "r1" }));
-  turns = appendRunEvent(turns, event("model_output_delta", 2, { text: "我先看看目录" }, { request_id: "r1" }));
-  turns = appendRunEvent(turns, event("model_completed", 3, { tool_call_count: 1, text_chars: 6 }, { request_id: "r1" }));
+  turns = appendRunEvent(
+    turns,
+    event("model_output_delta", 2, { text: "我先看看目录" }, { request_id: "r1" }),
+  );
+  turns = appendRunEvent(
+    turns,
+    event("model_completed", 3, { tool_call_count: 1, text_chars: 6 }, { request_id: "r1" }),
+  );
   turns = appendRunEvent(turns, event("tool_started", 4, { tool_name: "fs_find" }, { invocation_id: "i1" }));
-  turns = appendRunEvent(turns, event("tool_completed", 5, { tool_name: "fs_find" }, { invocation_id: "i1" }));
+  turns = appendRunEvent(
+    turns,
+    event("tool_completed", 5, { tool_name: "fs_find" }, { invocation_id: "i1" }),
+  );
   turns = appendRunEvent(turns, event("model_started", 6, { call_index: 1 }, { request_id: "r2" }));
   turns = appendRunEvent(turns, event("model_output_delta", 7, { text: "改好了" }, { request_id: "r2" }));
-  turns = appendRunEvent(turns, event("model_completed", 8, { tool_call_count: 0, text_chars: 3 }, { request_id: "r2" }));
+  turns = appendRunEvent(
+    turns,
+    event("model_completed", 8, { tool_call_count: 0, text_chars: 3 }, { request_id: "r2" }),
+  );
 
   const turn = turns[0];
   assert.equal(turn.outputs.r1, "我先看看目录", "叙述留在流里, 不被撤回");
@@ -520,29 +619,47 @@ test("a merged group shows only what it did, never which file", () => {
   // 收起时摆一个路径, 等于让一个随机挑出来的文件占满整行, 而它并不比另外几个更值得看。
   // 具体是哪几个展开就有。
   const directory = { fs_read: { title: "读取文件", capabilities: ["workspace_read"] } };
-  const call = (id, target) => ({ id, events: [
-    event("tool_prepared", 1, { tool_name: "fs_read", targets: [target] }, { invocation_id: id }),
-  ] });
+  const call = (id, target) => ({
+    id,
+    events: [event("tool_prepared", 1, { tool_name: "fs_read", targets: [target] }, { invocation_id: id })],
+  });
 
-  assert.deepEqual(summariseTools([call("a", "/x/y/Login.tsx")], directory),
-    { text: "读取文件", mono: false, count: 1 });
-  assert.deepEqual(
-    summariseTools([call("a", "/x/A.tsx"), call("b", "/x/B.tsx")], directory),
-    { text: "读取文件", mono: false, count: 2 },
-  );
+  assert.deepEqual(summariseTools([call("a", "/x/y/Login.tsx")], directory), {
+    text: "读取文件",
+    mono: false,
+    count: 1,
+  });
+  assert.deepEqual(summariseTools([call("a", "/x/A.tsx"), call("b", "/x/B.tsx")], directory), {
+    text: "读取文件",
+    mono: false,
+    count: 2,
+  });
 });
 
 test("no separator dot and no path ever reach the collapsed line", () => {
   // 回归: 那一行曾经是"按符号名找定义 · /Users/.../SysUserServiceImpl.java" —— 一条
   // 一百多字符的绝对路径占满整行。
   const directory = { find_definition: { title: "按符号名找定义", capabilities: ["workspace_read"] } };
-  const summary = summariseTools([{ id: "a", events: [
-    event("tool_prepared", 1, {
-      tool_name: "find_definition",
-      arguments: [["symbol", "SysUserServiceImpl"]],
-      targets: ["/Users/almond/Desktop/tmp_ant/test/backend/src/main/java/SysUserServiceImpl.java"],
-    }, { invocation_id: "i1" }),
-  ] }], directory);
+  const summary = summariseTools(
+    [
+      {
+        id: "a",
+        events: [
+          event(
+            "tool_prepared",
+            1,
+            {
+              tool_name: "find_definition",
+              arguments: [["symbol", "SysUserServiceImpl"]],
+              targets: ["/Users/almond/Desktop/tmp_ant/test/backend/src/main/java/SysUserServiceImpl.java"],
+            },
+            { invocation_id: "i1" },
+          ),
+        ],
+      },
+    ],
+    directory,
+  );
 
   assert.equal(summary.text, "按符号名找定义");
   assert.ok(!summary.text.includes("·"), "不要点符号分割");
@@ -551,9 +668,22 @@ test("no separator dot and no path ever reach the collapsed line", () => {
 
 test("a shell group uses the action title; the command stays in its expanded call", () => {
   const directory = { shell_run: { title: "执行 Shell 命令", capabilities: ["execute_shell"] } };
-  const summary = summariseTools([{ id: "a", events: [
-    event("tool_prepared", 1, { tool_name: "shell_run", arguments: [["command", "mvn -q compile"]] }, { invocation_id: "i1" }),
-  ] }], directory);
+  const summary = summariseTools(
+    [
+      {
+        id: "a",
+        events: [
+          event(
+            "tool_prepared",
+            1,
+            { tool_name: "shell_run", arguments: [["command", "mvn -q compile"]] },
+            { invocation_id: "i1" },
+          ),
+        ],
+      },
+    ],
+    directory,
+  );
 
   assert.deepEqual(summary, { text: "执行命令", mono: false, count: 1 });
 });
@@ -563,7 +693,10 @@ test("the count is a separate field, never spliced into the label", () => {
   // "按符号名找定义"这类标题根本拆不开。
   const directory = { fs_find: { title: "定位文件与认识目录", capabilities: ["workspace_read"] } };
   const summary = summariseTools(
-    [1, 2, 3].map((n) => ({ id: `g${n}`, events: [event("tool_prepared", n, { tool_name: "fs_find" }, { invocation_id: `i${n}` })] })),
+    [1, 2, 3].map((n) => ({
+      id: `g${n}`,
+      events: [event("tool_prepared", n, { tool_name: "fs_find" }, { invocation_id: `i${n}` })],
+    })),
     directory,
   );
 
@@ -587,11 +720,14 @@ test("different tools merged into one line still name their kinds", () => {
     fs_read: { title: "读取文件", capabilities: ["workspace_read"] },
     search_text: { title: "搜索文本", capabilities: ["workspace_read"] },
   };
-  const summary = summariseTools([
-    { id: "a", events: [event("tool_prepared", 1, { tool_name: "fs_read" }, { invocation_id: "i1" })] },
-    { id: "b", events: [event("tool_prepared", 2, { tool_name: "search_text" }, { invocation_id: "i2" })] },
-    { id: "c", events: [event("tool_prepared", 3, { tool_name: "fs_read" }, { invocation_id: "i3" })] },
-  ], directory);
+  const summary = summariseTools(
+    [
+      { id: "a", events: [event("tool_prepared", 1, { tool_name: "fs_read" }, { invocation_id: "i1" })] },
+      { id: "b", events: [event("tool_prepared", 2, { tool_name: "search_text" }, { invocation_id: "i2" })] },
+      { id: "c", events: [event("tool_prepared", 3, { tool_name: "fs_read" }, { invocation_id: "i3" })] },
+    ],
+    directory,
+  );
 
   assert.equal(summary.text, "读取文件 / 搜索文本");
   assert.equal(summary.count, 3);
@@ -614,7 +750,18 @@ test("merging is by tool name, not by the coarser category", () => {
   const timeline = buildTimeline(events, directory);
 
   assert.equal(timeline.length, 2, "定位归定位, 读取归读取");
-  assert.deepEqual(timeline.map((item) => item.groups.length), [2, 2]);
-  assert.deepEqual(summariseTools(timeline[0].groups, directory), { text: "定位文件与认识目录", mono: false, count: 2 });
-  assert.deepEqual(summariseTools(timeline[1].groups, directory), { text: "读取文件", mono: false, count: 2 });
+  assert.deepEqual(
+    timeline.map((item) => item.groups.length),
+    [2, 2],
+  );
+  assert.deepEqual(summariseTools(timeline[0].groups, directory), {
+    text: "定位文件与认识目录",
+    mono: false,
+    count: 2,
+  });
+  assert.deepEqual(summariseTools(timeline[1].groups, directory), {
+    text: "读取文件",
+    mono: false,
+    count: 2,
+  });
 });

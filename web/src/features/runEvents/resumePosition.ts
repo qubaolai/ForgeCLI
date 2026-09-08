@@ -32,8 +32,12 @@ export function useResumePosition(): ResumePosition {
   }, []);
 
   const read = useCallback(() => current.current, []);
-  const advance = useCallback((token: string) => { current.current = token; }, []);
-  const reset = useCallback(() => { current.current = ""; }, []);
+  const advance = useCallback((token: string) => {
+    current.current = token;
+  }, []);
+  const reset = useCallback(() => {
+    current.current = "";
+  }, []);
 
   // 必须是稳定的同一个对象: 事件流把它当 effect 依赖, 每次 render 换一个新的会让
   // SSE 连接跟着重建 —— 而重建一次连接就是一次断线, 断线要走一整轮补发。

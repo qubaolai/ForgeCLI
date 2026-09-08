@@ -37,7 +37,9 @@ function publish() {
 
 export function subscribeRequests(listener: () => void): () => void {
   listeners.add(listener);
-  return () => { listeners.delete(listener); };
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 export function requestActivity(): RequestActivity {
@@ -73,12 +75,14 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       if (response.status === 401) throw new Error(STALE_SESSION);
       let detail = `${response.status} ${response.statusText}`;
       try {
-        const body = await response.json() as { detail?: string };
+        const body = (await response.json()) as { detail?: string };
         detail = body.detail ?? detail;
-      } catch { /* use HTTP status */ }
+      } catch {
+        /* use HTTP status */
+      }
       throw new Error(detail);
     }
-    return await response.json() as T;
+    return (await response.json()) as T;
   } finally {
     window.clearTimeout(remind);
     slow.delete(id);

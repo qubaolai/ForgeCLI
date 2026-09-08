@@ -45,7 +45,10 @@ export function buildInitialModelParams(
   contextWindow: string,
   maxTokens: string,
   sampling: { temperature: string; topP: string; thinkingMode: string; thinkingEffort: string } = {
-    temperature: DEFAULT_TEMPERATURE, topP: DEFAULT_TOP_P, thinkingMode: "off", thinkingEffort: "",
+    temperature: DEFAULT_TEMPERATURE,
+    topP: DEFAULT_TOP_P,
+    thinkingMode: "off",
+    thinkingEffort: "",
   },
 ): Record<string, number | string> {
   const params: Record<string, number | string> = {};
