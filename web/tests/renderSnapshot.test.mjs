@@ -11,18 +11,18 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { after, test } from "node:test";
+import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { createServer } from "vite";
+import { load as loadModule } from "./load.mjs";
 
 import * as fixture from "./fixtures.mjs";
 
 // 组件位置只在这里写一次: 目录重排时只改这一段。
 const MODULES = {
-  runProcess: "/src/RunProcess.tsx",
-  markdown: "/src/Markdown.tsx",
-  runModel: "/src/runModel.ts",
+  runProcess: "/src/features/runProcess/RunProcess.tsx",
+  markdown: "/src/shared/ui/Markdown.tsx",
+  runModel: "/src/shared/lib/run.ts",
   timeline: "/src/features/conversation/Timeline.tsx",
   promptCards: "/src/features/humanInteraction/PromptCards.tsx",
   settingsPanel: "/src/features/settings/SettingsPanel.tsx",
@@ -37,14 +37,7 @@ const MODULES = {
 const snapshotDir = join(dirname(fileURLToPath(import.meta.url)), "snapshots");
 mkdirSync(snapshotDir, { recursive: true });
 
-const server = await createServer({
-  server: { middlewareMode: true, ws: false },
-  optimizeDeps: { noDiscovery: true, include: [] },
-  appType: "custom",
-});
-after(() => server.close());
-
-const load = async (key) => server.ssrLoadModule(MODULES[key]);
+const load = async (key) => loadModule(MODULES[key]);
 
 const [
   runProcess,

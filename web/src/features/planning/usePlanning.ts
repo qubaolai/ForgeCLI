@@ -1,8 +1,8 @@
 /** 计划与待办: 当前计划, 计划目录, 以及回合边界的计划评审决议。 */
 
 import { useCallback, useState } from "react";
-import { api } from "../../api/client";
-import type { PlanIndexView, Planning } from "../../types";
+import { api } from "@/shared/api/client";
+import type { PlanIndexView, Planning } from "@/types";
 
 export function usePlanning(onError: (message: string) => void) {
   const [planning, setPlanning] = useState<Planning>({});

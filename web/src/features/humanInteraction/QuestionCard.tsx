@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { Prompt } from "./approvalModel";
+import type { Prompt } from "@/shared/lib/approval";
 
 export type ResolvePrompt = (
   id: string,

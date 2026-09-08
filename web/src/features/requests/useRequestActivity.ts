@@ -6,7 +6,7 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { requestActivity, subscribeRequests } from "../../api/client";
+import { requestActivity, subscribeRequests } from "@/shared/api/client";
 
 export function useRequestActivity() {
   const activity = useSyncExternalStore(subscribeRequests, requestActivity);

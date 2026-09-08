@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { CheckIcon, ChevronIcon } from "../../icons";
+import { CheckIcon, ChevronIcon } from "@/shared/ui/icons";
 import {
   DEFAULT_TEMPERATURE,
   DEFAULT_TOP_P,
@@ -14,8 +14,8 @@ import {
   modelRef,
   providerAvailabilityCopy,
   splitModelRef,
-} from "../../modelSettings";
-import { thinkingEffortList, thinkingEffortText } from "../../types";
+} from "@/shared/lib/modelParams";
+import { thinkingEffortList, thinkingEffortText } from "@/types";
 import type {
   AdminActions,
   AdminCatalog,
@@ -26,7 +26,7 @@ import type {
   Model,
   Provider,
   ProviderProtocol,
-} from "../../types";
+} from "@/types";
 
 export type ModelSettingsView = "models" | "providers" | "gateway";
 

@@ -8,8 +8,8 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { api } from "../../api/client";
-import type { Prompt } from "../../approvalModel";
+import { api } from "@/shared/api/client";
+import type { Prompt } from "@/shared/lib/approval";
 
 export function usePrompts(onError: (message: string) => void) {
   const [prompts, setPrompts] = useState<Prompt[]>([]);

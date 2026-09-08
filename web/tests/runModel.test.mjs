@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
+import { load } from "./load.mjs";
+
+const {
   activityOf,
   appendRunEvent,
   buildTimeline,
@@ -17,8 +19,8 @@ import {
   restoreTurn,
   shouldAutoFollow,
   shouldSendOnEnter,
-} from "../src/runModel.ts";
-import { parseMarkdown } from "../src/markdownModel.ts";
+} = await load("/src/shared/lib/run.ts");
+const { parseMarkdown } = await load("/src/shared/lib/markdown.ts");
 
 function event(kind, sequence, payload = {}, extra = {}) {
   return { event_id: `e${sequence}`, kind, turn_id: "turn-1", sequence, payload, ...extra };

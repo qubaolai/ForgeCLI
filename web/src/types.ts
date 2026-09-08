@@ -5,7 +5,7 @@
  * 终端菜单和网页上叫不同名字时, 两边都不会报错, 只会让用户以为是两个开关。
  */
 
-import type { ToolDirectory } from "./runModel";
+import type { ToolDirectory } from "@/shared/lib/run";
 
 export type Project = {
   project_id: string;

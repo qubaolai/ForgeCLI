@@ -9,8 +9,8 @@
  */
 
 import { useCallback, useState } from "react";
-import { api } from "../../api/client";
-import { indexTools } from "../../types";
+import { api } from "@/shared/api/client";
+import { indexTools } from "@/types";
 import type {
   Checkpoint,
   FieldSpec,
@@ -26,8 +26,8 @@ import type {
   ToolSpec,
   ToolsResponse,
   WorkspaceRoot,
-} from "../../types";
-import type { ToolDirectory } from "../../runModel";
+} from "@/types";
+import type { ToolDirectory } from "@/shared/lib/run";
 
 export type ProviderDraft = {
   provider_id: string;

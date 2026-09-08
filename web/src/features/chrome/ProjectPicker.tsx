@@ -1,8 +1,8 @@
 /** 项目选择与信任新目录。 */
 
 import type { FormEvent } from "react";
-import type { Project } from "../../types";
-import { shortPath } from "../../ui";
+import type { Project } from "@/types";
+import { shortPath } from "@/shared/format";
 
 export function ProjectPicker({
   projects,

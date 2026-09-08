@@ -1,16 +1,10 @@
 import assert from "node:assert/strict";
-import { after, test } from "node:test";
+import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { createServer } from "vite";
+import { load } from "./load.mjs";
 
-const server = await createServer({
-  server: { middlewareMode: true, ws: false },
-  optimizeDeps: { noDiscovery: true, include: [] },
-  appType: "custom",
-});
-after(() => server.close());
-const { QuestionCard } = await server.ssrLoadModule("/src/QuestionCard.tsx");
+const { QuestionCard } = await load("/src/features/humanInteraction/QuestionCard.tsx");
 const prompt = {
   prompt_id: "q1",
   kind: "question",

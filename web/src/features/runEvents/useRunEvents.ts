@@ -9,8 +9,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { STALE_SESSION } from "../../api/client";
-import type { RunEvent } from "../../runModel";
+import { STALE_SESSION } from "@/shared/api/client";
+import type { RunEvent } from "@/shared/lib/run";
 import type { ResumePosition } from "./resumePosition";
 
 export type ConnectionState = "connecting" | "live" | "retrying" | "stopped";

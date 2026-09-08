@@ -1,10 +1,10 @@
 /** 顶栏的姿态选择器。两个轴各自成组, 预设只是同时设两个轴的快捷方式。 */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckIcon, ChevronIcon } from "../../icons";
-import { approvalOptions, sandboxOptions, stanceLabel } from "../../stance";
-import type { Stance } from "../../stance";
-import { useEscape } from "../../ui";
+import { CheckIcon, ChevronIcon } from "@/shared/ui/icons";
+import { approvalOptions, sandboxOptions, stanceLabel } from "@/shared/lib/stance";
+import type { Stance } from "@/shared/lib/stance";
+import { useEscape } from "@/shared/hooks/useEscape";
 
 export function ModeMenu({
   value,

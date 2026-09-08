@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ChevronIcon, GearIcon, PlanIcon } from "./icons";
+import { ChevronIcon, GearIcon, PlanIcon } from "@/shared/ui/icons";
 import {
   appendRunEvent,
   failUnboundTurn,
@@ -20,26 +20,27 @@ import {
   RunSnapshot,
   shouldAutoFollow,
   shouldSendOnEnter,
-} from "./runModel";
-import { api, setCsrfToken, SLOW_REQUEST_MS } from "./api/client";
-import { useRequestActivity } from "./features/requests/useRequestActivity";
-import { ConfirmDialog } from "./features/chrome/ConfirmDialog";
-import { useAdministration } from "./features/administration/useAdministration";
-import { useProjects } from "./features/projects/useProjects";
-import { usePrompts } from "./features/humanInteraction/usePrompts";
-import { useSettings } from "./features/settings/useSettings";
-import { usePlanning } from "./features/planning/usePlanning";
-import { type Stance } from "./stance";
-import { shortPath, useEscape, formatDelay } from "./ui";
-import { LocalTurnView, Message, RestoredTurnView } from "./features/conversation/Timeline";
-import { ModelMenu } from "./features/chrome/ModelMenu";
-import { ModeMenu } from "./features/chrome/ModeMenu";
-import { ProjectPicker } from "./features/chrome/ProjectPicker";
-import { PlanningPanel } from "./features/planning/PlanningPanel";
-import { PromptCard } from "./features/humanInteraction/PromptCards";
-import { SettingsPanel } from "./features/settings/SettingsPanel";
-import { connectionCopy, useRunEvents } from "./features/runEvents/useRunEvents";
-import { useResumePosition } from "./features/runEvents/resumePosition";
+} from "@/shared/lib/run";
+import { api, setCsrfToken, SLOW_REQUEST_MS } from "@/shared/api/client";
+import { useRequestActivity } from "@/features/requests/useRequestActivity";
+import { ConfirmDialog } from "@/features/chrome/ConfirmDialog";
+import { useAdministration } from "@/features/administration/useAdministration";
+import { useProjects } from "@/features/projects/useProjects";
+import { usePrompts } from "@/features/humanInteraction/usePrompts";
+import { useSettings } from "@/features/settings/useSettings";
+import { usePlanning } from "@/features/planning/usePlanning";
+import { type Stance } from "@/shared/lib/stance";
+import { shortPath, formatDelay } from "@/shared/format";
+import { useEscape } from "@/shared/hooks/useEscape";
+import { LocalTurnView, Message, RestoredTurnView } from "@/features/conversation/Timeline";
+import { ModelMenu } from "@/features/chrome/ModelMenu";
+import { ModeMenu } from "@/features/chrome/ModeMenu";
+import { ProjectPicker } from "@/features/chrome/ProjectPicker";
+import { PlanningPanel } from "@/features/planning/PlanningPanel";
+import { PromptCard } from "@/features/humanInteraction/PromptCards";
+import { SettingsPanel } from "@/features/settings/SettingsPanel";
+import { connectionCopy, useRunEvents } from "@/features/runEvents/useRunEvents";
+import { useResumePosition } from "@/features/runEvents/resumePosition";
 import type { Session, TranscriptEvent, TurnRunState } from "./types";
 
 function App() {

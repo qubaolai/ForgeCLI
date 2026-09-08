@@ -1,7 +1,7 @@
 import { MouseEvent, ReactNode, useEffect, useState } from "react";
-import { ChevronIcon } from "./icons";
-import { Markdown } from "./Markdown";
-import { formatElapsed } from "./ui";
+import { ChevronIcon } from "@/shared/ui/icons";
+import { Markdown } from "@/shared/ui/Markdown";
+import { formatElapsed } from "@/shared/format";
 import {
   activityOf,
   buildTimeline,
@@ -17,7 +17,7 @@ import {
   terminalFailureDetail,
   toolActionLabel,
   wasExecuted,
-} from "./runModel";
+} from "@/shared/lib/run";
 
 type StepState = "pending" | "running" | "done" | "failed" | "cancelled";
 

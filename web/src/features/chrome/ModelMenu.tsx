@@ -1,9 +1,9 @@
 /** 顶栏的模型选择器, 带 thinking 档位。 */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckIcon, ChevronIcon } from "../../icons";
-import type { ThinkingView } from "../../types";
-import { useEscape } from "../../ui";
+import { CheckIcon, ChevronIcon } from "@/shared/ui/icons";
+import type { ThinkingView } from "@/types";
+import { useEscape } from "@/shared/hooks/useEscape";
 
 /** 输入框旁的模型与思考强度入口: 这两项调得最勤, 不该每次都进设置页。
  *

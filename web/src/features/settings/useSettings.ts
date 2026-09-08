@@ -4,8 +4,8 @@
  */
 
 import { useCallback, useState } from "react";
-import { api } from "../../api/client";
-import type { Setting } from "../../types";
+import { api } from "@/shared/api/client";
+import type { Setting } from "@/types";
 
 export function useSettings(onError: (message: string) => void) {
   const [settings, setSettings] = useState<Setting[]>([]);

@@ -1,11 +1,12 @@
 /** 时间线上的一条: 历史正文, 用户消息, 以及一轮的过程与用量。 */
 
-import { formatElapsed } from "../../ui";
-import { CopyButton, Markdown } from "../../Markdown";
-import { RunProcess } from "../../RunProcess";
-import { formatTokens, metricsFor } from "../../runModel";
-import type { LocalTurn, ToolDirectory } from "../../runModel";
-import type { TranscriptEvent } from "../../types";
+import { formatElapsed } from "@/shared/format";
+import { CopyButton } from "@/shared/ui/CopyButton";
+import { Markdown } from "@/shared/ui/Markdown";
+import { RunProcess } from "@/features/runProcess/RunProcess";
+import { formatTokens, metricsFor } from "@/shared/lib/run";
+import type { LocalTurn, ToolDirectory } from "@/shared/lib/run";
+import type { TranscriptEvent } from "@/types";
 
 export function Message({ item }: { item: TranscriptEvent }) {
   const user = item.payload.role === "user";

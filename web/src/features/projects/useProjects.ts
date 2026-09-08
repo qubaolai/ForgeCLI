@@ -1,8 +1,8 @@
 /** 受信项目: 列举, 激活, 信任一个新目录。 */
 
 import { useCallback, useMemo, useState } from "react";
-import { api } from "../../api/client";
-import type { Project } from "../../types";
+import { api } from "@/shared/api/client";
+import type { Project } from "@/types";
 
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);

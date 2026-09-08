@@ -17,7 +17,7 @@ import type {
   ProviderProtocol,
   Setting,
   WorkspaceRoot,
-} from "../../types";
+} from "@/types";
 import { CheckpointRow, ModelSettings } from "./ModelSettings";
 
 export type SettingsTab = "general" | "models" | "security" | "recovery" | "status";

@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { ChevronIcon, ShieldIcon } from "../../icons";
+import { ChevronIcon, ShieldIcon } from "@/shared/ui/icons";
 import {
   approvalOf,
   canLearn,
@@ -14,10 +14,10 @@ import {
   learnHintOf,
   severityOf,
   shownTargetGroups,
-} from "../../approvalModel";
-import type { Approval, Prompt } from "../../approvalModel";
-import { QuestionCard } from "../../QuestionCard";
-import type { ResolvePrompt } from "../../QuestionCard";
+} from "@/shared/lib/approval";
+import type { Approval, Prompt } from "@/shared/lib/approval";
+import { QuestionCard } from "@/features/humanInteraction/QuestionCard";
+import type { ResolvePrompt } from "@/features/humanInteraction/QuestionCard";
 
 /** 待答队列只有一条, 卡片按 kind 分支 (ADR-0043 决策 11)。 */
 export function PromptCard({ prompt, onResolve }: { prompt: Prompt; onResolve: ResolvePrompt }) {

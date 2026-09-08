@@ -1,14 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  canLearn,
-  defaultOpenSections,
-  headlineOf,
-  isConsequential,
-  learnHintOf,
-  severityOf,
-} from "../src/approvalModel.ts";
+import { load } from "./load.mjs";
+
+const { canLearn, defaultOpenSections, headlineOf, isConsequential, learnHintOf, severityOf } = await load(
+  "/src/shared/lib/approval.ts",
+);
 
 const LABELS = ["读取", "写入", "删除", "移动", "网络", "外部副作用"];
 

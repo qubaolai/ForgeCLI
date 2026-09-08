@@ -1,13 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  buildInitialModelParams,
-  modelPlaceholder,
-  modelRef,
-  providerAvailabilityCopy,
-  splitModelRef,
-} from "../src/modelSettings.ts";
+import { load } from "./load.mjs";
+
+const { buildInitialModelParams, modelPlaceholder, modelRef, providerAvailabilityCopy, splitModelRef } =
+  await load("/src/shared/lib/modelParams.ts");
 
 test("model refs preserve local model ids containing colons", () => {
   const ref = modelRef("local", "qwen3:8b");

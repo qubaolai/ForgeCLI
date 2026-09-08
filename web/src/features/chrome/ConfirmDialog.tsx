@@ -7,7 +7,7 @@
  * 用户最想看到进度的时候。
  */
 
-import { useEscape } from "../../ui";
+import { useEscape } from "@/shared/hooks/useEscape";
 
 export function ConfirmDialog({
   title,
