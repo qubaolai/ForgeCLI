@@ -1,59 +1,9 @@
 {#
-当前运行事实. ADR-0041 之后它不再是系统提示词的一个块, 而是请求的第 [4] 层, 由
-application/context 渲染 —— 提示词只剩静态策略, 而这里的每一项都随模式与工作区变.
-
-原先末尾还有一行"tools: N 个". 删了: tool schema 就在同一个请求里, 模型自己数得出来,
-而多说一遍就是关于工具的第二份说法 (ADR-0042 决策 5), 还让这一层平白依赖工具目录.
-
-自动放行的能力名: 全库唯一一处按能力枚举写死的表, 它值得 —— 能力词汇是闭集, 改动要走
-ADR 并升 CAPABILITY_VOCABULARY_VERSION (ADR-0004 5), 因此这张表不会悄悄漂. 而按模式各写
-一段散文会漂 —— 那是四份互相独立的副本.
-
-顺序即渲染顺序, 与传进来的集合无关: 集合的迭代顺序不稳定, 会让同样的输入产出不同的提示
-词, 从而毁掉指纹的确定性.
-
-其余行里 platform / shell 一类是标识符, 不是措辞, 所以只有值从外面传进来.
-隔离与审批两行是措辞, 所以名字表在这里.
+当前运行事实
 #}
-{% set sandbox_names = {
-    "read_only": "工作区不可写. 只能读与检索, 动不了任何文件",
-    "workspace_write": "工作区可写, 不能联网",
-    "full_access": "工作区可写, 可以联网",
-} %}
-{% set approval_names = {
-    "always": "文件工具自动, Shell 每次都要人类确认",
-    "auto": "围栏内可以自动启动 Shell; 越界的仍要确认",
-    "never": "围栏就是全部边界, 除硬性禁止外不再逐次确认",
-} %}
-{% set capability_names = [
-    ("plan_only", "计划"),
-    ("artifact_read", "读回已归档的输出"),
-    ("workspace_read", "工作区读取"),
-    ("workspace_write", "工作区写入"),
-    ("workspace_delete", "工作区删除"),
-    ("path_move", "移动与重命名"),
-    ("external_read", "工作区外读取"),
-    ("external_write", "工作区外写入"),
-    ("credential_access", "读取凭证"),
-    ("execute_shell", "执行 Shell"),
-    ("execute_script", "执行脚本"),
-    ("spawn_process", "启动子进程"),
-    ("network_access", "网络访问"),
-    ("external_irreversible_effect", "不可逆的外部动作"),
-    ("model_call", "调用模型"),
-] %}
-{#
-隔离与审批是两个独立的轴 (ADR-0009 修订). 分两行给, 不拼成一个词 —— 模型要据此判断
-"我能不能直接动手"和"我要不要先说一声", 而那是两个不同的问题.
-#}
-隔离: {{ sandbox_names[sandbox] }}
-审批: {{ approval_names[approval] }}
-自动放行: {{ capability_names | selectattr("0", "in", auto_allowed) | map(attribute="1") | join(", ") }}
-需人类确认: 其余一切
+# 运行时事实
 platform: {{ platform }}
 shell: {{ shell_kind }}
-isolation: {{ isolation_level }}   {{ isolation_summary }}
-path: 继承自启动 forge 的 shell, 只去掉了工作区内的目录
 working_directory: {{ working_directory }}
 workspace_roots: {{ workspace_root }}
 git_repository: {{ git_repository }}

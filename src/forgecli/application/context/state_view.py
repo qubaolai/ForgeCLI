@@ -71,6 +71,7 @@ def render_state_frame(
     groups = _memory_groups(memory)
     if plan is None and todo is None and not groups:
         return ""
+    # 加载提示词模板: frame.md.j2
     return render_state("frame", plan=plan, todo=todo, memory_groups=groups)
 
 

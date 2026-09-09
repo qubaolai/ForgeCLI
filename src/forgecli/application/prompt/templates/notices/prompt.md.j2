@@ -1,15 +1,5 @@
 {#
 提示词自己要用的两段.
-
-schema_instruction 会**追加在 PromptSnapshot.text 之后**再发给供应商, 因此供应商实际
-收到的 system prompt 比 PromptSnapshot.fingerprint 覆盖的内容多一段. 当前
-complete_structured 全库没有调用方 (Agent 主循环走原生 tool calling), 所以这个偏差
-还没有真实影响; 真要用起来, 得让这一段也进那个指纹.
-#}
-{#
-项目指令正文里与分隔行同形的整行, 前面加一个标记 (ADR-0018 5.3).
-不转义的话, 一份 FORGE.md 只要自己写一行 `--- END WORKSPACE INSTRUCTIONS ---`, 后面的
-内容看起来就跑到了受信任区段里 —— 那是一条现成的提权路径.
 #}
 {% macro instruction_escaped_line(line) %}
 [已转义] {{ line }}

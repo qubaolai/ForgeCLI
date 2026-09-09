@@ -37,7 +37,6 @@ from forgecli.application.prompt.sentinels import (
 )
 from forgecli.application.prompt.template_renderer import (
     PROMPT_STATIC_BUDGET,
-    PROMPT_TEXT_VERSION,
     render_block,
     render_heading,
 )
@@ -62,7 +61,7 @@ class SystemPromptBuilder:
         workspace = _workspace_instructions(instructions)
         if workspace is not None:
             blocks.append(workspace)
-        return PromptSnapshot(version=PROMPT_TEXT_VERSION, blocks=tuple(blocks))
+        return PromptSnapshot(blocks=tuple(blocks))
 
 
 @lru_cache(maxsize=1)

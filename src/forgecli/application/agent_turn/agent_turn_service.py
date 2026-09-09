@@ -109,20 +109,19 @@ class AgentTurnService:
         session: SessionService,
         *,
         loop_factory: Callable[[], BuiltinAgentLoop],
-        # 提示词三件套是**必填**: 缺提示词的主 Agent 不知道自己是谁, 有哪些工具, 也不
-        # 知道自己在什么平台上 (ADR-0018 §11). 给个默认值就等于允许静默降级回接入之前
-        # 的状态, 而那种降级不会报错, 只会让模型开始猜.
+        # 提示词三件套是必填: 缺提示词的主 Agent 不知道自己是谁, 有哪些工具, 也不
+        # 知道自己在什么平台上. 在执行shell时, 如果llm不知道当前平台, 给出的命令可能无法执行
         prompt_builder: SystemPromptBuilder,
         runtime_facts: Callable[[], RuntimeFacts],
         instructions: ProjectInstructionReader,
         # 每轮现取, 与 runtime_facts 同一个形状: 用户可能刚 /model 换过模型, 上一轮的
         # 窗口不作数. 返回 None 表示这一轮算不出窗口 (目录里没有这个模型), 那时不压缩
-        # 也不猜 —— 猜小了平白压掉内容, 猜大了等于没有这道防线 (ADR-0032 决策 1).
+        # 也不猜 —— 猜小了平白压掉内容, 猜大了等于没有这道防线
         context_budget: Callable[[], ContextBudget | None],
-        # 与循环持有的是**同一个**实例. /compact 走的是这一份, 自动压缩走循环那一份,
+        # 与循环持有的是同一个实例. /compact 走的是这一份, 自动压缩走循环那一份,
         # 但两条路必须用同一套判据与同一个 ArtifactStore.
         context: WindowManager | None = None,
-        # 记忆的唯一入口 (ADR-0033 决策 10). 给这里而不是给循环: ADR-0010 明写循环
+        # 记忆的唯一入口. 给这里而不是给循环: 循环
         # 不读写长期记忆, 而功能上也用不着 —— 读只发生在 _assemble_context 那一刻,
         # 与 ProjectInstructionReader 和 PlanningService 完全同构.
         memory: MemoryService | None = None,
@@ -143,7 +142,7 @@ class AgentTurnService:
         self._memory = memory
         # 计划与待办缺省为 None: 没接时两个提示词块整块不渲染, 链路照常工作.
         self._planning = planning
-        # 计划与待办的运行事件发在这里 (ADR-0022 §7): 服务独家持有 turn_id 且是唯一的
+        # 计划与待办的运行事件发在这里: 服务独家持有 turn_id 且是唯一的
         # 驱动方. 换成协调器发, 就得让协调器认识"plan_write 这个名字意味着要发事件".
         self._run_bus = run_bus
         # 每 turn 经工厂取新 loop 实例（BuiltinAgentLoop 持有 per-turn 状态）。
@@ -155,7 +154,6 @@ class AgentTurnService:
         self._turns = 0
         self._window = Window()
         # 正在跑的那一轮. 谁要给事件标归属就问它, 而不是去读日志上下文
-        # (ADR-0048 决策 2): 编号是这里发的, 这里就是那个事实的出处.
         self._current_turn: TurnIdentity | None = None
 
     def reconfigure(
@@ -272,23 +270,19 @@ class AgentTurnService:
     # ---- 提示词 ----
 
     def _assemble_context(self, mode: SessionMode) -> AssembledContext:
-        """按变更源把本轮上下文分层组装 (ADR-0041 决策 1).
-
+        """本轮上下文分层组装.
         任一步都不调模型也不执行工具: 上下文必须在第一次模型调用之前就已经定死
-        (ADR-0018 §6.1).
-
-        三层的读取时机各不相同, 而这正是它们分层的理由:
-
-        - [2][3] 提示词只依赖包版本与 FORGE.md, builder 内部按进程缓存内置五块;
-        - [4] 运行事实每轮现取 —— 用户可能刚 /add-dir 加过根, 上一轮的事实不作数;
-        - [6] 计划, 待办与记忆同样每轮现读: 待办的价值就在于它反映**此刻**的执行状态,
-          而模型上一轮刚用 todo_set_status 打过勾.
+        三层的读取时机各不相同:
+        - 提示词只依赖应用版本与 FORGE.md, builder 内部按进程缓存内置五块;
+        - 运行事实每轮现取 —— 用户可能刚 /add-dir 加过可工作目录, 上一轮的事实需要废弃;
+        - 计划, 待办与记忆同样每轮现读.
         """
         facts = self._runtime_facts()
+
         assembled = self._assembler.assemble(
             mode=mode,
             facts=facts,
-            # 本轮读一次. 工具在本轮改了 FORGE.md, 新内容从下一轮生效 (ADR-0018 §6.2).
+            # 加载项目下的 FORGE.md, 新内容从下一轮生效
             instructions=self._instructions.read(facts.workspace_roots),
             planning=None if self._planning is None else self._planning.load(),
             memory=() if self._memory is None else self._memory.load(),
@@ -300,7 +294,6 @@ class AgentTurnService:
         policy = assembled.policy
         _log.info(
             "context.assembled",
-            version=policy.version,
             fingerprint=policy.fingerprint,
             blocks=len(policy.blocks),
             policy_chars=len(policy.text),

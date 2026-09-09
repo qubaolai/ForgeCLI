@@ -1,12 +1,7 @@
 {#
-模型提问的回答在 /resume 之后怎么回到窗口 (ADR-0043 决策 12).
-
-会话内它是一条 tool result, 与发起提问的那次 tool_call 配对; 事件流里没有工具往返, 所以
-重建时换成一条用户消息. 形状不一致是刻意的取舍 —— 回答是那次往返里唯一不可复现的部分,
-宁可换个形状留下, 不可丢.
+模型提问的回答在 /resume 之后怎么回到窗口.
 #}
 {% macro answer_replay(question, answer) %}
 你问过: {{ question }}
-
 我的回答: {{ answer }}
 {% endmacro %}

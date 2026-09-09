@@ -65,13 +65,6 @@ __all__ = [
     "templates_fingerprint",
 ]
 
-# 改任何一份模板都要升它, 并更新 tests/prompt/test_prompt_text.py 的指纹. 提示词变了模型
-# 行为就会变, 这件事必须是显式的 (ADR-0018 §15.3).
-#
-# 接 MAIN_AGENT_PROMPT_VERSION 的 5 与 PROMPT_TEXT_VERSION 的 10 往下数: 三个常量数的是
-# 同一件事 (Forge 撰写的正文改了没有), 只是管辖范围一次比一次大.
-PROMPT_TEXT_VERSION = 20
-
 # 静态提示词 (blocks/ 下的五个内置块) 的 token 上限 (ADR-0042 决策 4).
 #
 # **只能下调.** 想加一条规则就得先删一条, 而不是把上限往上抬一点 —— 提示词的腐化方式
@@ -133,7 +126,7 @@ def render_heading(block_id: PromptBlockId, /) -> str:
 
 
 def render_runtime(name: str, /, **context: object) -> str:
-    """渲染 `runtime/` 下的一份正文 (ADR-0041 的第 [4] 层).
+    """渲染 `runtime/` 下的一份正文 .
 
     与 `render_block` 分开是因为它收的不是 `PromptBlockId` —— 运行事实已经不是提示词的
     块了. 复用那个枚举等于把一个刚迁出去的概念又拽回来.

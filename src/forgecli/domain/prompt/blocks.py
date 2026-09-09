@@ -67,7 +67,7 @@ class PromptBlock:
 
 @dataclass(frozen=True)
 class PromptSnapshot:
-    """一份编译好的提示词 (ADR-0042 决策 1).
+    """一份编译好的提示词.
 
     text 与 fingerprint 是**派生**属性: 调用方无法传入与块序列不匹配的值.
 
@@ -75,18 +75,15 @@ class PromptSnapshot:
     内置正文必须同时升版本并更新快照测试.
     """
 
-    version: int
     blocks: tuple[PromptBlock, ...]
     # 派生字段. compare=False 让它们不参与相等比较, 也不进 canonical 哈希.
     text: str = field(default="", compare=False)
     fingerprint: str = field(default="", compare=False)
 
     def __post_init__(self) -> None:
-        if self.version < 1:
-            raise ValueError("PromptSnapshot.version 必须为正整数")
         if not self.blocks:
             raise ValueError("PromptSnapshot.blocks 不能为空")
         text = "\n\n".join(block.render() for block in self.blocks)
         object.__setattr__(self, "text", text)
         # 指纹不放回文本: 自引用会让指纹不稳定.
-        object.__setattr__(self, "fingerprint", digest_text(f"{self.version}\n{text}"))
+        object.__setattr__(self, "fingerprint", digest_text(f"{text}"))

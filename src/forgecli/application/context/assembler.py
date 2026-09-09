@@ -50,6 +50,7 @@ class ContextAssembler:
         fence: FencePolicy | None = None,
     ) -> AssembledContext:
         return AssembledContext(
+            # 加载内置的几乎不变化的提示词块
             policy=self._builder.build(instructions),
             runtime_context=render_runtime_context(facts, mode=mode, fence=fence),
             state_frame=render_state_frame(planning or ActivePlanning(), memory),

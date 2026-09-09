@@ -467,7 +467,7 @@ flowchart TD
 flowchart TD
     A["_pending_calls = 模型返回的调用序列"] --> B["_dispatch_next：检查 EXTERNAL 变化 → pop(0)"]
     B --> C["ProgressGuard.is_repeat(call)"]
-    C --> D{"相同签名是否已超过 2 次?"}
+    C --> D{"seen > MAX_IDENTICAL_CALLS(2)?"}
     D -->|是| E["_reject_repeat：补失败 ToolResultBlock + tool_rejected"]
     E --> F{"队列还有调用?"}
     F -->|是| B
@@ -499,7 +499,7 @@ flowchart TD
     B -->|是| C["返回立即收工具的通知"]
     B -->|否| D{"disposition == BLOCKED?"}
     D -->|是| E["累计 blocked_calls + 1"]
-    E --> F{"累计达到 3 次?"}
+    E --> F{"累计 >= MAX_BLOCKED_CALLS(3)?"}
     F -->|是| C
     F -->|否| G["继续循环"]
     D -->|否| G
@@ -515,7 +515,7 @@ flowchart TD
     Q -->|是| R["累加 barren_streak"]
     Q -->|否| S["清零 streak"]
     R --> T["整批结束调用 barren_nudge"]
-    T --> U{"达到 3 次?"}
+    T --> U{"streak >= MAX_BARREN_OBSERVATIONS(3)?"}
     U -->|是| V["只提醒换思路；清零计数；不收工具"]
     U -->|否| G
 ```
@@ -537,7 +537,7 @@ flowchart TD
     B -->|非网关异常| H["抛至 AgentTurnService._obtain_outcome 隔离"]
     I["protocol_markup_in 检出参数里混入协议标记"] --> D
     D --> J["_malformed_responses + 1"]
-    J --> K{"超过 _MAX_MALFORMED_RESPONSES?"}
+    J --> K{"超过 _MAX_MALFORMED_RESPONSES(2)?"}
     K -->|是| L["MODEL_ERROR_BLOCKING"]
     K -->|否| M["追加 USER 格式错误说明；保留工具目录"]
     M --> N["_advance：由模型重新产生参数"]
@@ -774,9 +774,12 @@ flowchart TD
     U --> V["PolicyEngine.decide → _apply_learned_rule"]
 ```
 
-DERIVE 先把不透明命令变为事实，CHECK 再按实际能力检查，不能反过来对 Shell 的最宽能力
-声明直接报警。可执行文件绑定、脚本读取的细节继续读 `analyzers/executable_binding.py`、
-`script_binding.py`、`executable_resolver.py`。工具层和安全层之间传递的是计划，不是工具实例。
+DERIVE 先把不透明命令变为事实, CHECK 再按实际能力检查, 不能反过来对 Shell 的最宽能力
+声明直接报警. 可执行文件绑定与脚本读取的细节继续读 `security/analyzers/executable_binding.py`
+和 `security/analyzers/script_binding.py`; 解析 PATH, 判定内建与受控可执行文件的
+`executable_resolver.py` 在上一层 `application/security/`, 不在 `analyzers/` 里.
+命令方言, token 切分与效果推导另在 `domain/security/shell/` (`parser.py`, `posix.py`,
+`powershell.py`, `effects.py`). 工具层和安全层之间传递的是 `ToolPlan`, 不是工具实例.
 
 ### 6.3 策略分支：以 _verdict 的真实顺序为准
 
@@ -1021,22 +1024,28 @@ flowchart TD
 注册清单以 `interfaces/runtime/tool_wiring.py::build_tool_stack()` 为准。下列每个 perform
 入口之前，都有 §6 的统一管线；图中“授权后”不表示工具可以自己绕过管线。
 
-| 工具名 | 实现类 | 主要协作对象 |
-|---|---|---|
-| `fs_read` | `ReadFileTool` | FileSystemView、ResourceGovernor、ArtifactStore |
-| `search_text` | `SearchTextTool` | glob、regex、文件状态令牌、输出归档 |
-| `fs_apply_patch` | `ApplyPatchTool` | patch_envelope、patch_apply、text_edit、注入的写函数 |
-| `shell_run` | `ShellRunTool` | CommandExecutor、SandboxProvider、输出归档 |
-| `artifact_read` | `ArtifactReadTool` | ArtifactStore |
-| `ask_user` | `AskUserTool` | HumanPromptService，流程见 §7.1 |
-| `plan_read` | `PlanReadTool` | PlanningService.read_plan |
-| `plan_write` | `PlanWriteTool` | PlanningService.write_plan、计划评审 |
-| `todo_write` | `TodoWriteTool` | PlanningService.write_todo |
-| `todo_set_status` | `TodoSetStatusTool` | PlanningService.update_status |
-| `memory_write` | `MemoryWriteTool` | MemoryService.remember |
-| `memory_forget` | `MemoryForgetTool` | MemoryService.forget |
+注册顺序即 `registry.register_all()` 的字面顺序, 与模型看到的目录顺序无关: 目录由
+`catalog_for(mode)` 按模式过滤后生成.
 
-这些实现位于 `application/tools/builtin/`。共用 `base.py` 提供 `validate_arguments()`、
+| 工具名 | 实现类 | 源文件（`application/tools/builtin/`） | 主要协作对象 |
+|---|---|---|---|
+| `plan_read` | `PlanReadTool` | `planning_tools.py` | PlanningService.read_plan |
+| `plan_write` | `PlanWriteTool` | `planning_tools.py` | PlanningService.write_plan、计划评审 |
+| `todo_write` | `TodoWriteTool` | `planning_tools.py` | PlanningService.write_todo |
+| `todo_set_status` | `TodoSetStatusTool` | `planning_tools.py` | PlanningService.update_status |
+| `ask_user` | `AskUserTool` | `ask_user.py` | HumanPromptService，流程见 §7.1 |
+| `artifact_read` | `ArtifactReadTool` | `artifact_read.py` | ArtifactStore |
+| `memory_write` | `MemoryWriteTool` | `memory_tools.py` | MemoryService.remember |
+| `memory_forget` | `MemoryForgetTool` | `memory_tools.py` | MemoryService.forget |
+| `fs_read` | `ReadFileTool` | `fs_read.py` | FileSystemView、ResourceGovernor、ArtifactStore |
+| `search_text` | `SearchTextTool` | `search_text.py` | glob、regex、文件状态令牌、输出归档 |
+| `fs_apply_patch` | `ApplyPatchTool` | `fs_apply_patch.py` | patch_envelope、patch_apply、text_edit、注入的写函数 |
+| `shell_run` | `ShellRunTool` | `shell_run.py` | CommandExecutor、SandboxProvider、输出归档 |
+
+四个计划/待办工具共享 `planning_tools.py::_PlanningTool`, 两个记忆工具共享
+`memory_tools.py::_MemoryTool`; 找 perform 分支时先看基类再看子类覆写.
+`patch_apply.py`, `patch_envelope.py`, `text_edit.py` 是 `fs_apply_patch` 的实现细节模块,
+自身不在 `ToolRegistry` 里. 共用 `base.py` 提供 `validate_arguments()`、
 `resolve_target()`、`path_state_token()`、`emit_text()` 等函数；当前仍由具体工具调用，
 不是 ToolRuntime 自动对所有工具运行一套 schema／输出模板。
 
@@ -1948,3 +1957,219 @@ flowchart TD
 读完应能不看目录树就解释：谁产生动作、谁执行动作、谁裁决、谁签发、谁记录、谁展示，以及
 每个失败分支交还哪个值对象。遇到新功能，先在对应主流程插入真实入口和出口，再扩展图，
 不要只在目录表增加一个文件名。
+
+## 附录 A. HTTP 路由导航
+
+装配在 `interfaces/web/routers/__init__.py::ROUTERS`, 由 `app.py::create_app` 依次
+`include_router`. 挂载顺序与行为无关 (路径彼此不重叠), 但静态资源 `app.mount("/")` 必须
+排在全部 router 之后, 否则它会吃掉 `/api/v1/*`.
+
+**三种取运行时的方式** (`interfaces/web/deps.py`), 决定这条路由在没有项目或正在跑 turn 时
+返回什么:
+
+| 取法 | 没有激活项目 | turn 运行中 |
+|---|---|---|
+| `registry(request)` | 正常处理, 不需要项目 | 正常处理 |
+| `active_runtime(request)` | 409 "尚未激活项目" | 正常处理 |
+| `idle_runtime(request, 动作)` | 409 "尚未激活项目" | 409 "turn 运行期间不能{动作}" |
+
+`idle_runtime` 不是唯一的空闲闸: `new_session`, `resume_session`, `set_mode` 走
+`active_runtime`, 忙闲由 `ProjectRuntime` 对应方法自己的 `if self.busy` 抛 `RuntimeError`,
+再由路由折成 409. 排查"为什么运行中还能改这个"时两处都要看.
+
+### A.1 握手与探活 (`handshake.py`, 无前缀)
+
+| 方法 | 路径 | 处理函数 | 取运行时 |
+|---|---|---|---|
+| GET | `/boot` | `boot` L31 | 不取, 只比对 `SecurityState.boot_token` |
+| GET | `/api/v1/health` | `health` L55 | 不取 |
+| GET | `/api/v1/bootstrap` | `bootstrap` L60 | `registry` |
+
+`/boot` 与 `/api/v1/health` 是 `LocalControlPlaneGuard` 里唯二不要求 session cookie 的路径,
+见 §2.2. `/boot` 成功后清空 boot_token 并 303 到 `/`, 同一条链接不能用第二次.
+
+### A.2 项目 (`projects.py`, 前缀 `/api/v1/projects`)
+
+| 方法 | 路径 | 处理函数 | 取运行时 |
+|---|---|---|---|
+| GET | `` | `list_projects` L25 | `registry` |
+| POST | `` | `trust_project` L37 | `registry` |
+| POST | `/{project_id}/activate` | `activate_project` L47 | `registry` |
+
+这三条不经 `active_runtime`: 选项目本身就发生在还没有激活项目的时候. `activate` 把
+`KeyError` 折成 404, `ProjectLockedError` 折成 423, 其余 `RuntimeError` (含"正忙不能切项目")
+折成 409, 对应 §2.3 的分支.
+
+### A.3 会话与模式 (`sessions.py`, 前缀 `/api/v1`)
+
+| 方法 | 路径 | 处理函数 | 取运行时 |
+|---|---|---|---|
+| GET | `/sessions` | `list_sessions` L55 | `active_runtime` |
+| POST | `/sessions` | `new_session` L65 | `active_runtime` + 运行时自查 busy |
+| POST | `/sessions/{session_id}/resume` | `resume_session` L73 | `active_runtime` + 运行时自查 busy |
+| DELETE | `/sessions/{session_id}` | `delete_session` L83 | `idle_runtime("删除会话")` |
+| GET | `/sessions/{session_id}/transcript` | `transcript` L108 | `active_runtime` |
+| POST | `/mode` | `set_mode` L117 | `active_runtime` + 运行时自查 busy |
+
+`delete_session` 立刻返回, 磁盘清理在后台线程里继续, 响应体的 `cleanup` 固定是
+`"scheduled"`, 不报"清掉了几个恢复点", 见 §12.3. 删的是当前会话时, `current_session_id`
+是紧接着新开的那一个.
+
+### A.4 轮次 (`turns.py`, 前缀 `/api/v1/turns`)
+
+| 方法 | 路径 | 处理函数 | 取运行时 |
+|---|---|---|---|
+| POST | `` | `start_turn` L24 | `active_runtime` |
+| GET | `/current` | `current_turn` L34 | `active_runtime` |
+| POST | `/current/cancel` | `cancel_turn` L45 | `active_runtime` |
+
+POST 返回 202, 只说明后台线程已启动, 见 §3.1. `GET /current` 是终态的权威来源, 前端
+`syncFinishedTurn()` 查的就是它. cancel 也返回 202, 语义见 §7.2 的接线限制.
+
+### A.5 运行事件 (`run_events.py`, 前缀 `/api/v1`)
+
+| 方法 | 路径 | 处理函数 | 取运行时 |
+|---|---|---|---|
+| GET | `/events` | `events` L73 | `active_runtime` |
+| GET | `/runs` | `runs` L134 | `active_runtime` |
+
+`/events` 是 SSE 长连接, 额外取 `stopping` 事件以便服务关闭时主动收尾; 续传位置来自
+`after` 查询参数或 `Last-Event-ID` 头, 见 §11.3. `/runs` 先取水位再读内容, 见 §11.2.
+
+### A.6 人机提示 (`human_interaction.py`, 前缀 `/api/v1/prompts`)
+
+| 方法 | 路径 | 处理函数 | 取运行时 |
+|---|---|---|---|
+| GET | `` | `pending_prompts` L27 | `active_runtime` |
+| POST | `/{prompt_id}/resolve` | `resolve_prompt` L32 | `active_runtime` |
+
+刻意用 `active_runtime` 而不是 `idle_runtime`: 审批和提问正是在 turn 运行期间产生的,
+要求空闲会让卡片永远答不上. 代次校验在 `BlockingHumanPromptBroker.resolve` 里, 见 §7.1.
+
+### A.7 计划与待办 (`planning.py`, 前缀 `/api/v1`)
+
+| 方法 | 路径 | 处理函数 | 取运行时 |
+|---|---|---|---|
+| GET | `/planning` | `planning` L21 | `active_runtime` |
+| GET | `/planning/markdown` | `planning_markdown` L30 | `active_runtime` |
+| GET | `/plans` | `plans` L46 | `active_runtime` |
+| POST | `/plans/{plan_id}/activate` | `activate_plan` L52 | `active_runtime` |
+| POST | `/plan-reviews/current/resolve` | `resolve_plan_review` L59 | `active_runtime` |
+
+`resolve_plan_review` 同样必须在非空闲语义下可达: 它处理的是 `waiting_plan_review` 状态,
+且可能直接起一轮新 turn, 见 §7.3.
+
+### A.8 配置与模型 (`settings.py` 前缀 `/api/v1/settings`, `models.py` 前缀 `/api/v1`)
+
+| 方法 | 路径 | 处理函数 | 取运行时 |
+|---|---|---|---|
+| GET | `/api/v1/settings` | `settings` L22 | `active_runtime` |
+| PATCH | `/api/v1/settings/{key:path}` | `update_setting` L51 | `idle_runtime("修改运行配置")` |
+| DELETE | `/api/v1/settings/{key:path}` | `reset_setting` L63 | `idle_runtime("修改运行配置")` |
+| GET | `/api/v1/models` | `models` L112 | `active_runtime` |
+| PUT | `/api/v1/models/current` | `set_current_model` L167 | `idle_runtime("切换模型")` |
+| POST | `/api/v1/models` | `add_model` L207 | `idle_runtime` |
+| DELETE | `/api/v1/models` | `remove_model` L216 | `idle_runtime` |
+| PATCH | `/api/v1/models/{field}` | `update_model_field` L227 | `idle_runtime` |
+| PUT | `/api/v1/model-overrides/{origin}` | `set_model_override` L179 | `idle_runtime("修改模型覆盖")` |
+| DELETE | `/api/v1/model-overrides/{origin}` | `clear_model_override` L190 | `idle_runtime("修改模型覆盖")` |
+| POST | `/api/v1/thinking` | `update_thinking` L198 | `idle_runtime("修改 thinking")` |
+| POST | `/api/v1/providers` | `add_provider` L258 | `idle_runtime` |
+| PATCH | `/api/v1/providers/{provider_id}/{field}` | `update_provider_field` L278 | `idle_runtime` |
+| PATCH | `/api/v1/llm-runtime/{section}/{field}` | `update_llm_runtime_field` L292 | `idle_runtime("修改网关配置")` |
+
+`{key:path}` 用 path 转换器是因为配置键自带点号分段 (`logging.level`), 普通段会被截断.
+写操作之后触发 `reload_llm()` 的条件与失败保留旧对象的行为见 §12.4.
+
+### A.9 工具, 规则, 工作区, 恢复, 状态
+
+| 方法 | 路径 | 处理函数 | 取运行时 |
+|---|---|---|---|
+| GET | `/api/v1/tools` | `tools.py::tools` L14 | `active_runtime` |
+| GET | `/api/v1/rules` | `rules.py::rules` L17 | `active_runtime` |
+| DELETE | `/api/v1/rules/{rule_id}` | `rules.py::revoke_rule` L29 | `active_runtime` |
+| POST | `/api/v1/rules/prune` | `rules.py::prune_rules` L36 | `active_runtime` |
+| GET | `/api/v1/workspace-roots` | `workspace.py::workspace_roots` L38 | `active_runtime` |
+| POST | `/api/v1/workspace-roots` | `workspace.py::add_workspace_root` L50 | `idle_runtime("修改工作区授权")` |
+| DELETE | `/api/v1/workspace-roots` | `workspace.py::remove_workspace_root` L70 | `idle_runtime("修改工作区授权")` |
+| GET | `/api/v1/recovery` | `recovery.py::recovery_status` L23 | `active_runtime` |
+| GET | `/api/v1/checkpoints` | `recovery.py::checkpoints` L29 | `active_runtime` |
+| GET | `/api/v1/checkpoints/{id}/preview` | `recovery.py::preview_checkpoint` L35 | `active_runtime` |
+| POST | `/api/v1/checkpoints/{id}/restore` | `recovery.py::restore_checkpoint` L46 | `idle_runtime("执行恢复")` |
+| POST | `/api/v1/undo` | `recovery.py::undo_latest` L63 | `idle_runtime("执行撤销")` |
+| GET | `/api/v1/status` | `status.py::status_view` L16 | `active_runtime` |
+
+恢复层的读 (状态, 列表, 预览) 用 `active_runtime`, 只有真正改工作区的 restore 与 undo
+要求空闲. `GET /tools` 返回两份清单: `items` 按当前模式过滤, `all` 是全部已注册工具的
+展示名, 供过程视图翻译历史事件里的工具名 —— 那些调用可能发生在换模式之前.
+
+`/api/v1/workspace-roots` 的 GET 只读项目根列表与本进程授权, 不要求空闲; 授权本身重启后
+回到 READ, 见 §12.5.
+
+**全局异常映射** (`app.py::create_app`): `WorkspaceError` 与 `GrantError` 统一折成 422,
+不必在每条路由里各写一遍 try.
+
+## 附录 B. TUI 命令导航
+
+命令表在 `interfaces/tui/commands/registry.py::COMMANDS`, 一条命令一行 `Command` 记录:
+名字, 一句 summary, 处理函数, `usage`, `-h` 才展开的 `detail`, 以及 `/help` 分组用的
+`category`. `dispatch()` 先按名字精确查表, 认不出就用 `difflib.get_close_matches` 给最近的
+三个, 不猜着执行.
+
+`-h` / `--help` 在处理函数之前拦截 (`HELP_FLAGS`), 所以每条命令的处理函数不需要自己认这个
+参数. 处理函数签名统一是 `(context: CommandContext, argument: str) -> None`.
+
+**`CommandContext`** (`commands/context.py`) 是命令能拿到的全部东西, 只有三样:
+
+- `console`: rich 输出.
+- `registry`: `ProjectRuntimeRegistry`. `context.runtime` 是它的 property, 没有激活项目时
+  抛 `NoActiveProject`, 需要项目的命令据此提前收场, 不是各判各的 None.
+- `exit_requested`: 命令只表达"我要退出"这个意愿, 由 REPL 决定怎么收场.
+
+`context.require_idle()` 是 TUI 侧与 Web `idle_runtime` 对应的那道闸: turn 运行期间拒绝改
+运行配置, 打印一行提示并返回 False.
+
+**刻意不含 REPL 本身**: 命令拿到 REPL 就会出现两条控制流, 而它们对"现在能不能读下一行输入"
+迟早会有不同答案.
+
+| 命令 | 分类 | 处理函数 | 用到的运行时入口 |
+|---|---|---|---|
+| `/help` | 帮助 | `registry.cmd_help` | 只读 `COMMANDS` 表 |
+| `/status` | 会话 | `session.cmd_status` L37 | `runtime.session`, `project`, `llm` |
+| `/new` | 会话 | `session.cmd_new` L66 | `ProjectRuntime.new_session` |
+| `/sessions` | 会话 | `session.cmd_sessions` L73 | `list_sessions` + `resume` |
+| `/resume <id>` | 会话 | `session.cmd_resume` L164 | `ProjectRuntime.resume` |
+| `/delete-session [id]` | 会话 | `session.cmd_delete_session` L110 | `ProjectRuntime.delete_session` |
+| `/clear` | 会话 | `session.cmd_clear` L32 | 只清屏, 不动会话 |
+| `/exit` | 会话 | `session.cmd_exit` L28 | 置 `exit_requested` |
+| `/mode [预设名]` | 运行 | `mode.cmd_mode` L31 | `ProjectRuntime.set_mode` |
+| `/model [provider:model]` | 模型 | `model.cmd_model` L59 | `set_current_model`, `reload_llm` |
+| `/provider [add]` | 模型 | `provider.cmd_provider` L38 | `LlmConfigService` |
+| `/thinking [on\|off\|强度]` | 模型 | `model.cmd_thinking` L87 | `update_thinking` (不落盘) |
+| `/gateway` | 模型 | `model.cmd_gateway` L130 | 网关缓存, 熔断与重试视图 |
+| `/config [键] [值\|--reset]` | 设置 | `config.cmd_config` L67 | `ConfigService` |
+| `/tools` | 安全 | `security.cmd_tools` L24 | `dispatcher.catalog_for(mode)` |
+| `/rules [prune]` | 安全 | `security.cmd_rules` L49 | `runtime.tools.learned` (`LearnedRuleService`) |
+| `/dirs [路径]` | 安全 | `security.cmd_dirs` L100 | `grant_workspace`, `revoke_workspace` |
+| `/projects [路径]` | 项目 | `project.cmd_projects` L28 | `ProjectService`, `registry.activate` |
+| `/plan [review\|计划 id]` | 计划 | `planning.cmd_plan` L32 | `PlanningService`, 计划评审 |
+| `/todo` | 计划 | `planning.cmd_todo` L78 | `PlanningService` 待办视图 |
+| `/checkpoints` | 恢复 | `recovery.cmd_checkpoints` L22 | `list_checkpoints`, `RecoveryService.restore` |
+| `/undo` | 恢复 | `recovery.cmd_undo` L63 | `list_checkpoints()[0]` → `_restore`, 与 Web 撤销同一个动作 |
+| `/recovery` | 恢复 | `recovery.cmd_recovery` L73 | `recovery_status`, 未收尾事务 |
+
+共 23 条, 分 9 类 (帮助, 会话, 运行, 模型, 设置, 安全, 项目, 计划, 恢复).
+`/help` 按 `category` 在 `COMMANDS` 里首次出现的顺序分组 (`_category_order()` 用
+`dict.fromkeys`), 不另立排序字段 —— 换一条命令的位置就会换一次分组顺序.
+
+**与 Web 的对应关系**: 每条命令背后都是 `ProjectRuntime` 或应用服务的同一个方法, 与附录 A
+里的路由调用的是同一个入口 —— 两个界面共用一个业务入口, 不各写一份规则. 排查"TUI 能做但
+Web 不能"这类问题时, 先确认两边打到的是不是同一个方法, 再看是不是空闲闸的位置不同
+(`require_idle()` 对 `idle_runtime`).
+
+**几个只在 TUI 侧存在的东西**, 不在命令表里, 找不到时不要在 `commands/` 下翻:
+
+- 模式切换的 Tab / Shift-Tab 快捷键在输入框里, 见 `interfaces/tui/prompt.py::ForgePrompt` L193.
+- 审批与提问卡片由 `session_app.py::SessionApp._resolve_prompt` L252 驱动, 不是斜杠命令, 见 §2.5.
+- 计划评审在一轮结束后由 `session_app.py::SessionApp._settle` L278 触发, `/plan review` 是手动入口.
+- Ctrl-C 的两级语义 (第一次请求取消, 第二次结束 `_drive()` 的等待) 见 §7.2.

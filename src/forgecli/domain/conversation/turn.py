@@ -64,7 +64,7 @@ class AssistantResponse:
 
 @dataclass(frozen=True)
 class TurnIdentity:
-    """一轮的完整身份 (ADR-0048 决策 2)。
+    """一轮的完整身份。
 
     turn 编号在每个会话里各自从 1 起, 所以 ``turn_0001`` 单独拿出来指不了任何一轮 ——
     两个会话都有一个。凡是要跨会话存放, 传输或展示轮次的地方, 传的都该是这一对。

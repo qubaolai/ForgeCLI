@@ -23,7 +23,6 @@ from forgecli.application.context.runtime_facts import RuntimeFacts
 from forgecli.application.prompt.template_renderer import render_runtime
 from forgecli.domain.execution.fence import FencePolicy
 from forgecli.domain.intents import SessionMode
-from forgecli.domain.security.budget import fence_allowed_capabilities
 
 __all__ = ["render_runtime_context"]
 
@@ -32,25 +31,11 @@ def render_runtime_context(
     facts: RuntimeFacts, *, mode: SessionMode, fence: FencePolicy | None
 ) -> str:
     """渲染这一轮的运行上下文."""
-    allowed = fence_allowed_capabilities(
-        fence,
-        confined=facts.isolation_level.contained,
-        # 报**看得清时**的边界. 这一层要回答的是"哪些能力会自动放行", 而按 False 报
-        # 会在 accept_edits 下少报 EXECUTE_SHELL —— 于是模型以为每跑一条命令都要先问人,
-        # 而实际上目标封闭的命令根本不会停. 报窄比报宽更误导: 前者让它不敢动手.
-        targets_closed=True,
-    )
     return render_runtime(
+        # 加载提示词模板: runtime_facts.md.j2
         "runtime_facts",
-        sandbox=mode.sandbox.value,
-        approval=mode.approval.value,
-        # 传取值而不是枚举: 模板按取值查名字表, 而顺序由那张表定, 与这里传的集合无关.
-        # 集合的迭代顺序不稳定会让同样的输入产出不同的文本.
-        auto_allowed=frozenset(capability.value for capability in allowed),
         platform=facts.platform,
         shell_kind=facts.shell_kind,
-        isolation_level=facts.isolation_level.value,
-        isolation_summary=facts.isolation_summary,
         working_directory=facts.working_directory,
         workspace_root=facts.workspace_roots[0],
         git_repository="yes" if facts.git_repository else "no",
