@@ -1,58 +1,47 @@
 /** 还没有活动项目时的整屏落地页: 选一个已信任的项目, 或者信任一个新目录。 */
 
-import type { FormEvent } from "react";
-import { shortPath } from "@/shared/format";
+import { Avatar, Flex, Layout, Space, Typography, theme } from "antd";
+import { ProjectGrid } from "@/features/projects/ProjectGrid";
 import type { Project } from "@/types/session";
 
 export function ProjectLanding({
   projects,
-  error,
   trustPath,
   onTrustPath,
   onActivate,
   onTrust,
 }: {
   projects: Project[];
-  error: string;
   trustPath: string;
   onTrustPath: (path: string) => void;
   onActivate: (projectId: string) => void;
-  onTrust: (event: FormEvent) => void;
+  onTrust: () => void;
 }) {
+  const { token } = theme.useToken();
   return (
-    <main className="project-center">
-      <div className="brand-lockup">
-        <span className="forge-mark">F</span>
-        <div>
-          <h1>Forge</h1>
-          <p>本地优先的 AI 工程工作台</p>
-        </div>
-      </div>
-      {error && <div className="error-banner">{error}</div>}
-      <section className="project-grid">
-        {projects.map((project) => (
-          <button
-            className="project-card"
-            key={project.project_id}
-            onClick={() => onActivate(project.project_id)}
-          >
-            <span className="project-icon">⌘</span>
-            <strong>{shortPath(project.primary_workspace_root)}</strong>
-            <small>{project.primary_workspace_root}</small>
-            <span>打开项目 →</span>
-          </button>
-        ))}
-        <form className="project-card add-project" onSubmit={onTrust}>
-          <strong>信任新项目</strong>
-          <small>输入本机目录的绝对路径</small>
-          <input
-            value={trustPath}
-            onChange={(event) => onTrustPath(event.target.value)}
-            placeholder="/path/to/repository"
+    <Layout style={{ minHeight: "100vh" }}>
+      <Flex vertical align="center" justify="center" gap="large" style={{ padding: 32 }}>
+        <Space size="middle">
+          <Avatar size={48} shape="square" style={{ background: token.colorPrimary, fontSize: 24 }}>
+            F
+          </Avatar>
+          <div>
+            <Typography.Title level={2} style={{ margin: 0 }}>
+              Forge
+            </Typography.Title>
+            <Typography.Text type="secondary">本地优先的 AI 工程工作台</Typography.Text>
+          </div>
+        </Space>
+        <div style={{ width: "100%", maxWidth: 960 }}>
+          <ProjectGrid
+            projects={projects}
+            trustPath={trustPath}
+            onTrustPath={onTrustPath}
+            onTrust={onTrust}
+            onActivate={onActivate}
           />
-          <button type="submit">添加并打开</button>
-        </form>
-      </section>
-    </main>
+        </div>
+      </Flex>
+    </Layout>
   );
 }

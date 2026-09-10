@@ -1,5 +1,6 @@
 /** 一次模型调用说的话。 */
 
+import { Alert, Flex, Spin, Typography } from "antd";
 import type { RunEvent } from "@/shared/lib/run/events";
 import { stringValue } from "@/shared/lib/run/events";
 import { Markdown } from "@/shared/ui/Markdown";
@@ -26,9 +27,11 @@ export function NarrationBlock({
 
   if (failed) {
     return (
-      <p className="run-flow-error">
-        {stringValue(failed.payload.message) || stringValue(failed.payload.error_kind)}
-      </p>
+      <Alert
+        type="error"
+        showIcon
+        title={stringValue(failed.payload.message) || stringValue(failed.payload.error_kind)}
+      />
     );
   }
   if (!output.trim()) {
@@ -36,11 +39,13 @@ export function NarrationBlock({
     // 结束，不能让先前的 reasoning_started 继续显示成“思考中”。错误由终态详情展示。
     if (terminal) return null;
     // 还没吐字。思考与生成分开说 —— 思考可能持续很久且一个字都不吐, 看起来像卡住了。
-    return completed ? null : <p className="run-flow-waiting">{thinking ? "思考中…" : "生成中…"}</p>;
+    if (completed) return null;
+    return (
+      <Flex gap="small" align="center">
+        <Spin size="small" />
+        <Typography.Text type="secondary">{thinking ? "思考中…" : "生成中…"}</Typography.Text>
+      </Flex>
+    );
   }
-  return (
-    <div className="run-flow-text">
-      <Markdown content={output} />
-    </div>
-  );
+  return <Markdown content={output} />;
 }

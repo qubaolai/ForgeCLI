@@ -1,16 +1,18 @@
-import { Fragment, ReactNode, useMemo } from "react";
+/** 把解析好的 Markdown 块画出来。
+ *
+ * 排版全在 styles/index.css 的 .forge-md 里 —— 这一块是自己解析出来的标签树,
+ * 没有对应的 antd 组件; 套 antd 的 Typography 只会让两套间距规则按注入顺序打架。
+ */
+
+import { Fragment, useMemo } from "react";
+import type { ReactNode } from "react";
 import { MarkdownBlock as Block, parseMarkdown } from "@/shared/lib/markdown";
 import { CopyButton } from "@/shared/ui/CopyButton";
 
-type MarkdownProps = {
-  content: string;
-  compact?: boolean;
-};
-
-export function Markdown({ content, compact = false }: MarkdownProps) {
+export function Markdown({ content }: { content: string }) {
   const blocks = useMemo(() => parseMarkdown(content), [content]);
   return (
-    <div className={`markdown-body ${compact ? "compact" : ""}`}>
+    <div className="forge-md">
       {blocks.map((block, index) => (
         <MarkdownBlock block={block} key={`${block.kind}-${index}`} />
       ))}
@@ -21,10 +23,10 @@ export function Markdown({ content, compact = false }: MarkdownProps) {
 function MarkdownBlock({ block }: { block: Block }) {
   if (block.kind === "code") {
     return (
-      <figure className="markdown-code">
+      <figure>
         <figcaption>
           <span>{block.language || "code"}</span>
-          <CopyButton content={block.text} className="code-copy" compact label="复制代码" />
+          <CopyButton content={block.text} compact label="复制代码" />
         </figcaption>
         <pre>
           <code>{block.text}</code>

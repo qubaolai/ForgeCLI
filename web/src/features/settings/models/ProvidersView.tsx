@@ -5,66 +5,53 @@
  * 就会让它出现在"自建"那一组下, 而不会有任何东西报错。
  */
 
+import { Button, Collapse, Flex, Typography } from "antd";
+import { PlusOutlined } from "@ant-design/icons";
 import type { Administration } from "@/features/administration/useAdministration";
-import { ProviderEditor } from "@/features/settings/models/ProviderEditor";
+import { providerCollapseItem } from "@/features/settings/models/ProviderEditor";
+import type { KnownProvider } from "@/types/admin";
 
 export function ProvidersView({ admin, onOpenAdd }: { admin: Administration; onOpenAdd: () => void }) {
-  const builtinProviders = admin.knownProviders.filter((item) => item.builtin !== false);
-  const customProviders = admin.knownProviders.filter((item) => item.builtin === false);
+  const items = (known: KnownProvider[]) =>
+    known.flatMap((entry) => {
+      const provider = admin.providerSettings.find((item) => item.id === entry.id);
+      if (!provider) return [];
+      return [
+        providerCollapseItem({
+          provider,
+          known: entry,
+          fields: admin.providerFields,
+          onSaveProvider: admin.saveProviderFields,
+        }),
+      ];
+    });
+  const builtin = items(admin.knownProviders.filter((item) => item.builtin !== false));
+  const custom = items(admin.knownProviders.filter((item) => item.builtin === false));
 
   return (
-    <>
-      <div className="model-page-heading">
-        <div>
-          <h3>供应商</h3>
-          <p>配置兼容端点与密钥环境变量；API 密钥不会在页面中读取或保存。</p>
-        </div>
-        <button type="button" className="primary-action" onClick={() => onOpenAdd()}>
-          ＋ 添加供应商
-        </button>
-      </div>
-      <div className="provider-availability-list">
-        {builtinProviders.map((known) => {
-          const provider = admin.providerSettings.find((item) => item.id === known.id);
-          if (!provider) return null;
-          return (
-            <ProviderEditor
-              key={known.id}
-              provider={provider}
-              known={known}
-              fields={admin.providerFields}
-              onSaveProvider={admin.saveProviderFields}
-            />
-          );
-        })}
-      </div>
-      {/* 自建的单独一组: 它们没有注册表默认值可以回落, 而且用户需要一眼看出哪几家是自己加的。
-      可用性一律从 knownProviders 里取 —— 这里曾经自己编过一个 available: true,
-      于是一家根本没配环境变量的供应商在界面上显示"密钥已就绪"。 */}
-      {customProviders.length > 0 && (
+    <Flex vertical gap="middle">
+      <Flex justify="space-between" align="flex-start" gap="small" wrap>
+        <Flex vertical>
+          <Typography.Text strong>供应商</Typography.Text>
+          <Typography.Text type="secondary">
+            配置兼容端点与密钥环境变量；API 密钥不会在页面中读取或保存。
+          </Typography.Text>
+        </Flex>
+        <Button type="primary" icon={<PlusOutlined />} onClick={onOpenAdd}>
+          添加供应商
+        </Button>
+      </Flex>
+      <Collapse size="small" items={builtin} />
+      {custom.length > 0 && (
         <>
-          <h4 className="provider-group-heading">自建供应商</h4>
-          <div className="provider-availability-list">
-            {customProviders.map((known) => {
-              const provider = admin.providerSettings.find((item) => item.id === known.id);
-              if (!provider) return null;
-              return (
-                <ProviderEditor
-                  key={known.id}
-                  provider={provider}
-                  known={known}
-                  fields={admin.providerFields}
-                  onSaveProvider={admin.saveProviderFields}
-                />
-              );
-            })}
-          </div>
+          <Typography.Text strong>自建供应商</Typography.Text>
+          <Collapse size="small" items={custom} />
         </>
       )}
-      <p className="field-help provider-protocol-help">
-        目前只有 OpenAI Compatible <code>/chat/completions</code> 协议有对应的适配器；Ollama、vLLM
-        等本地端点属于这一类。
-      </p>
-    </>
+      <Typography.Text type="secondary">
+        目前只有 OpenAI Compatible <Typography.Text code>/chat/completions</Typography.Text>{" "}
+        协议有对应的适配器；Ollama、vLLM 等本地端点属于这一类。
+      </Typography.Text>
+    </Flex>
   );
 }

@@ -1,8 +1,10 @@
-/** 一组同一动作的工具活动: 收起时一行, 展开是一张平表。 */
+/** 一组同一动作的工具活动: 收起时一行浅色文字, 展开是缩进的调用清单。
+ *
+ * 不用卡片也不用表格: 工具是"顺带发生的事", 给它一个带边框的框, 一轮跑十几次之后
+ * 模型说的话就被这些框推散了。收起时它退到背景里, 点开才给逐次调用的详情。
+ */
 
-import { useState } from "react";
-import type { MouseEvent } from "react";
-import { ChevronIcon } from "@/shared/ui/icons";
+import { Collapse, Flex, Tag, Typography } from "antd";
 import { formatElapsed } from "@/shared/format";
 import type { RunEvent } from "@/shared/lib/run/events";
 import { numberValue, stringValue } from "@/shared/lib/run/events";
@@ -12,15 +14,24 @@ import { summariseTools, toolActionLabel, wasExecuted } from "@/shared/lib/run/t
 import type { StepState } from "@/features/runProcess/stepState";
 import { stateOfTool, toolState } from "@/features/runProcess/stepState";
 
-/** `<details>` 的 toggle 是异步事件；受控用法必须自己同步翻转，否则会被重渲染覆盖。 */
-function toggle(setOpen: (update: (value: boolean) => boolean) => void) {
-  return (event: MouseEvent<HTMLElement>) => {
-    event.preventDefault();
-    setOpen((value) => !value);
-  };
-}
+type Tone = "secondary" | "warning" | "danger";
 
-/** 一组同一动作的工具活动: 收起时一行, 展开是一张平表。 */
+/**
+ * 展开层里的一行 = 一次调用。
+ *
+ * 原先这里是三层嵌套 (决策摘要 → 类别 → 工具名 → 状态 → 调用详情), 把摘要行已经说过的
+ * 话又说了三遍, 而真正要看的参数与目标躺在第四层。一次读文件因此占掉半屏。
+ */
+type CallRow = {
+  key: string;
+  tool: string;
+  subject: string;
+  state: StepState;
+  stateText: string;
+  elapsedMs: number;
+  notes: Array<{ text: string; tone: Tone }>;
+};
+
 export function ToolRun({
   groups,
   turnStatus,
@@ -32,7 +43,8 @@ export function ToolRun({
   reason: string;
   directory: ToolDirectory;
 }) {
-  const states = groups.map((group) => stateOfTool(group.events, turnStatus));
+  const rows = groups.map((group) => describeCall(group.id, group.events, turnStatus, directory));
+  const states = rows.map((row) => row.state);
   const state: StepState = states.includes("running")
     ? "running"
     : states.includes("pending")
@@ -45,59 +57,112 @@ export function ToolRun({
   const failures = states.filter((item) => item === "failed").length;
   const summary = summariseTools(groups, directory);
   // 工具组一律默认收起；用户主动展开之后，状态变化不强行改 open。
-  const [open, setOpen] = useState(false);
   const active = state === "pending" || state === "running";
+  const elapsed = rows.reduce((total, row) => total + row.elapsedMs, 0);
 
   return (
-    <details className={`tool-line ${state}`} open={open}>
-      <summary onClick={toggle(setOpen)}>
-        <ChevronIcon className="tool-caret" />
-        {/* 命令要一个动词才读得通:「正在mvn -q compile」不是话。 */}
-        {active && summary.mono && (
-          <span className="tool-running-verb">{state === "running" ? "正在跑" : "准备运行"}</span>
-        )}
-        <span className={`tool-what ${summary.mono ? "mono" : ""}`}>
-          {active && !summary.mono ? (state === "running" ? "正在" : "准备调用") : ""}
-          {summary.text}
-        </span>
-        {/* 次数单独一列, 不拼进文字: 拼进去要做"读取文件"→"读取 6 个文件"的动宾拆分,
-          而那对"执行 Shell 命令"这类标题拆不开。 */}
-        {summary.count > 1 && <span className="tool-count">{summary.count} 次</span>}
-        {/* 失败计数上到摘要行: 一屏十几行里唯一发生了事的就是它, 收起时也得看得见。 */}
-        {failures > 0 && <span className="tool-flag">{failures} 个失败</span>}
-        {state === "cancelled" && <span className="tool-flag">已取消</span>}
-      </summary>
-      <div className="tool-line-body">
-        {/* 类别与裁决理由只在展开后给: 收起时那一行要回答"它做了什么", 不是"它属于哪一类"。 */}
-        {/* 派发本身不再发决策摘要, 所以这里剩下的都是真的有话说的 (连续无新信息, 格式
-          损坏重试)。 */}
-        {reason && <p className="step-reason">{reason}</p>}
-        {groups.map((group) => (
-          <ToolCall events={group.events} turnStatus={turnStatus} directory={directory} key={group.id} />
-        ))}
-      </div>
-    </details>
+    <Collapse
+      ghost
+      size="small"
+      styles={{
+        header: { padding: "2px 0", alignItems: "center" },
+        title: { minWidth: 0 },
+        icon: { paddingInlineEnd: 8, fontSize: 11, color: "var(--forge-muted)", opacity: 0.7 },
+        body: { padding: 0 },
+      }}
+      items={[
+        {
+          key: "tools",
+          label: (
+            <Flex align="center" gap={8} style={{ minWidth: 0 }}>
+              {/* 命令要一个动词才读得通:「正在mvn -q compile」不是话。 */}
+              <Typography.Text
+                type={state === "failed" ? "danger" : "secondary"}
+                ellipsis
+                className={state === "running" ? "tool-running" : undefined}
+              >
+                {active ? (state === "running" ? "正在" : "准备调用") : ""}
+                {summary.text}
+              </Typography.Text>
+              {/* 次数单独一格, 不拼进文字: 拼进去要做"读取文件"→"读取 6 个文件"的动宾拆分,
+                  而那对"执行 Shell 命令"这类标题拆不开。 */}
+              {summary.count > 1 && (
+                <Typography.Text type="secondary" style={{ fontSize: 10, flex: "0 0 auto" }}>
+                  {summary.count} 次
+                </Typography.Text>
+              )}
+              {/* 失败计数上到摘要行: 一屏十几行里唯一发生了事的就是它, 收起时也得看得见。 */}
+              {failures > 0 && (
+                <Tag bordered={false} color="error" style={{ fontSize: 10, marginInlineEnd: 0 }}>
+                  {failures} 个失败
+                </Tag>
+              )}
+              {state === "cancelled" && (
+                <Tag bordered={false} style={{ fontSize: 10, marginInlineEnd: 0 }}>
+                  已取消
+                </Tag>
+              )}
+              {elapsed > 0 && (
+                <Typography.Text
+                  type="secondary"
+                  style={{ fontSize: 10, marginInlineStart: "auto", flex: "0 0 auto" }}
+                >
+                  {formatElapsed(elapsed)}
+                </Typography.Text>
+              )}
+            </Flex>
+          ),
+          children: (
+            <div className="tool-body">
+              {/* 裁决理由只在展开后给: 收起时那一行要回答"它做了什么", 不是"它属于哪一类"。
+                  派发本身不再发决策摘要, 所以这里剩下的都是真的有话说的。 */}
+              {reason && (
+                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                  {reason}
+                </Typography.Text>
+              )}
+              {rows.map((row) => (
+                <div className="call-row" key={row.key}>
+                  <Typography.Text
+                    type={row.state === "failed" ? "danger" : undefined}
+                    className={row.state === "running" ? "tool-running" : undefined}
+                    style={{ whiteSpace: "nowrap", fontSize: 12 }}
+                  >
+                    {row.tool}
+                  </Typography.Text>
+                  <Typography.Text type="secondary" className="call-subject" title={row.subject}>
+                    {row.subject}
+                  </Typography.Text>
+                  <Typography.Text
+                    type={row.state === "failed" ? "danger" : "secondary"}
+                    style={{ fontSize: 10 }}
+                  >
+                    {row.stateText}
+                  </Typography.Text>
+                  <Typography.Text type="secondary" style={{ fontSize: 10 }}>
+                    {row.elapsedMs > 0 ? formatElapsed(row.elapsedMs) : ""}
+                  </Typography.Text>
+                  {row.notes.map((note) => (
+                    <Typography.Text className="call-note" type={note.tone} key={note.text}>
+                      {note.text}
+                    </Typography.Text>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ),
+        },
+      ]}
+    />
   );
 }
 
-/**
- * 展开层里的一行 = 一次调用。
- *
- * 原先这里是三层嵌套 (决策摘要 → 类别 → 工具名 → 状态 → 调用详情), 把摘要行已经说过的
- * 话又说了三遍, 而真正要看的参数与目标躺在第四层。一次读文件因此占掉半屏。
- *
- * 现在一次调用就是一行: 工具 · 目标 · 结果 · 耗时。参数和裁决只在真的有话说时才多给
- * 一行 —— 大多数只读调用没有。
- */
-function ToolCall({
-  events,
-  turnStatus,
-  directory,
-}: {
-  events: RunEvent[];
-  turnStatus: LocalTurn["status"];
-  directory: ToolDirectory;
-}) {
+function describeCall(
+  key: string,
+  events: RunEvent[],
+  turnStatus: LocalTurn["status"],
+  directory: ToolDirectory,
+): CallRow {
   const latest = events.at(-1);
   const queued = events.find((event) => event.kind === "tool_queued");
   const prepared = events.find((event) => event.kind === "tool_prepared");
@@ -115,38 +180,31 @@ function ToolCall({
   const targets = Array.isArray(prepared?.payload.targets) ? prepared.payload.targets.map(stringValue) : [];
   const targetCount = numberValue(prepared?.payload.target_count);
   const state = stateOfTool(events, turnStatus);
-  const stateText = toolState(latest, completed, awaiting, state);
   const summary = completed
     ? stringValue(completed.payload.error_summary) || stringValue(completed.payload.result_summary)
     : "";
-  // 目标优先于入参: 它是裁决层解析出来的结果, 比模型写进去的那一份准。
-  const subject = targets.length
-    ? targets.slice(0, 3).join(", ") + (targetCount > targets.length ? ` 等 ${targetCount} 个` : "")
-    : args.map(([key, value]) => `${key}=${clip(value)}`).join(" ");
 
-  return (
-    <div className={`call-row ${state}`}>
-      <span className="call-tool">{toolActionLabel(name, directory)}</span>
-      <span className="call-subject" title={subject}>
-        {subject}
-      </span>
-      {stateText && <span className="call-state">{stateText}</span>}
-      {/* 没执行过的终态与"执行了然后失败了"是两回事。 */}
-      {completed && !wasExecuted(completed) && stringValue(completed.payload.status) !== "not_run" && (
-        <span className="call-state">未执行</span>
-      )}
-      <span className="call-took">
-        {completed ? formatElapsed(numberValue(completed.payload.elapsed_ms)) : ""}
-      </span>
-      {summary && <p className={`call-note ${state === "failed" ? "danger" : ""}`}>{summary}</p>}
-      {awaiting && <p className="call-note warn">等待人类审批</p>}
-      {policy && (
-        <div className="call-note">
-          <PolicyLine event={policy} />
-        </div>
-      )}
-    </div>
-  );
+  const notes: CallRow["notes"] = [];
+  if (summary) notes.push({ text: summary, tone: state === "failed" ? "danger" : "secondary" });
+  if (awaiting) notes.push({ text: "等待人类审批", tone: "warning" });
+  // 没执行过的终态与"执行了然后失败了"是两回事。
+  if (completed && !wasExecuted(completed) && stringValue(completed.payload.status) !== "not_run") {
+    notes.push({ text: "未执行", tone: "warning" });
+  }
+  if (policy) notes.push(policyNote(policy));
+
+  return {
+    key,
+    tool: toolActionLabel(name, directory),
+    // 目标优先于入参: 它是裁决层解析出来的结果, 比模型写进去的那一份准。
+    subject: targets.length
+      ? targets.slice(0, 3).join(", ") + (targetCount > targets.length ? ` 等 ${targetCount} 个` : "")
+      : args.map(([field, value]) => `${field}=${clip(value)}`).join(" "),
+    state,
+    stateText: toolState(latest, completed, awaiting, state),
+    elapsedMs: completed ? numberValue(completed.payload.elapsed_ms) : 0,
+    notes,
+  };
 }
 
 function argumentsOf(event: RunEvent | undefined): Array<[string, string]> {
@@ -158,20 +216,21 @@ function argumentsOf(event: RunEvent | undefined): Array<[string, string]> {
   });
 }
 
-function PolicyLine({ event }: { event: RunEvent }) {
+function policyNote(event: RunEvent): { text: string; tone: Tone } {
   const decision = stringValue(event.payload.decision);
   const facts = Array.isArray(event.payload.risk_facts) ? event.payload.risk_facts.map(stringValue) : [];
   const rule = stringValue(event.payload.matched_rule_id);
   const detail = stringValue(event.payload.detail);
-  return (
-    <p className={`step-line ${decision === "allow" ? "muted" : "warn"}`}>
-      安全裁决 {decision}
-      {event.payload.reason ? ` · ${stringValue(event.payload.reason)}` : ""}
-      {rule ? ` · 规则 ${rule}` : ""}
-      {facts.length > 0 ? ` · 风险 ${facts.join(", ")}` : ""}
-      {detail ? ` · ${detail}` : ""}
-    </p>
-  );
+  const text = [
+    `安全裁决 ${decision}`,
+    event.payload.reason ? stringValue(event.payload.reason) : "",
+    rule ? `规则 ${rule}` : "",
+    facts.length > 0 ? `风险 ${facts.join(", ")}` : "",
+    detail,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return { text, tone: decision === "allow" ? "secondary" : "warning" };
 }
 
 function clip(value: string, limit = 480) {

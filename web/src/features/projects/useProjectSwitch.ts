@@ -4,7 +4,6 @@
  * 选择器 —— 而且在有请求在跑时直接拒绝: 切过去之后那一轮的事件没有地方可去。
  */
 
-import type { FormEvent } from "react";
 import type { useProjects } from "@/features/projects/useProjects";
 
 export function useProjectSwitch({
@@ -35,8 +34,7 @@ export function useProjectSwitch({
     }
   }
 
-  async function trust(event: FormEvent) {
-    event.preventDefault();
+  async function trust() {
     clearTimeline();
     closePicker();
     try {

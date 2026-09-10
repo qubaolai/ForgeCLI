@@ -1,20 +1,28 @@
-/** 处理过程底部那一行用量。 */
+/** 处理过程底部那一行用量。跑的过程中它一直在变, 所以只给量级, 明细挂在悬停上。 */
 
+import { Space, Tooltip, Typography } from "antd";
+import { formatElapsed, formatTokens } from "@/shared/format";
 import type { metricsFor } from "@/shared/lib/run/metrics";
-import { formatTokens } from "@/shared/format";
-import { formatElapsed } from "@/shared/format";
 
 export function RunMetrics({ metrics }: { metrics: ReturnType<typeof metricsFor> }) {
   return (
-    <span className="run-metrics">
-      <span>{formatElapsed(metrics.elapsedMs)}</span>
-      <span>{metrics.modelCalls} 次模型</span>
-      <span>{metrics.toolCalls} 次工具</span>
-      <span title={tokenBreakdown(metrics)}>
-        {metrics.estimated ? "约 " : ""}
-        {formatTokens(metrics.totalTokens)} tokens
-      </span>
-    </span>
+    <Space size={5} wrap split="·" style={{ fontSize: 10 }}>
+      <Typography.Text type="secondary" style={{ fontSize: 10 }}>
+        {formatElapsed(metrics.elapsedMs)}
+      </Typography.Text>
+      <Typography.Text type="secondary" style={{ fontSize: 10 }}>
+        {metrics.modelCalls} 次模型
+      </Typography.Text>
+      <Typography.Text type="secondary" style={{ fontSize: 10 }}>
+        {metrics.toolCalls} 次工具
+      </Typography.Text>
+      <Tooltip title={tokenBreakdown(metrics)}>
+        <Typography.Text type="secondary" style={{ fontSize: 10 }}>
+          {metrics.estimated ? "约 " : ""}
+          {formatTokens(metrics.totalTokens)} tokens
+        </Typography.Text>
+      </Tooltip>
+    </Space>
   );
 }
 

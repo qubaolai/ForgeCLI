@@ -4,7 +4,8 @@
  * `isComposing` 在部分输入法上不可靠, 所以另外用 composition 事件自己记一份。
  */
 
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
+import { Button, Flex, Input, Typography } from "antd";
 import { shouldSendOnEnter } from "@/features/conversation/interaction";
 import { ModeMenu } from "@/features/chrome/ModeMenu";
 import { ModelMenu } from "@/features/chrome/ModelMenu";
@@ -44,31 +45,18 @@ export function Composer({
   onChooseModel: (providerId: string, modelId: string) => void;
   onThinking: (mode: string, effort: string) => void;
 }) {
-  const boxRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const offline = connection === "stopped";
-
-  // 跟着内容长高, 到 240px 封顶后转成内部滚动。
-  useEffect(() => {
-    const node = boxRef.current;
-    if (!node) return;
-    node.style.height = "auto";
-    node.style.height = `${Math.min(node.scrollHeight, 240)}px`;
-  }, [value]);
+  const sendable = Boolean(value.trim()) && !offline;
 
   return (
-    <form
-      className={`composer ${offline ? "offline" : ""}`}
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSend();
-      }}
-    >
-      <textarea
-        ref={boxRef}
+    <div className={`composer ${offline ? "offline" : ""}`}>
+      <Input.TextArea
+        variant="borderless"
         value={value}
-        rows={1}
+        autoSize={{ minRows: 3, maxRows: 10 }}
         disabled={offline}
+        style={{ padding: "14px 16px", lineHeight: 1.6 }}
         onChange={(event) => onChange(event.target.value)}
         onCompositionStart={() => {
           composingRef.current = true;
@@ -81,14 +69,14 @@ export function Composer({
             shouldSendOnEnter(event.key, event.shiftKey, event.nativeEvent.isComposing, composingRef.current)
           ) {
             event.preventDefault();
-            event.currentTarget.form?.requestSubmit();
+            if (sendable && !busy) onSend();
           }
         }}
         placeholder={
           offline ? "连不上本地服务，请重新运行 forge 后刷新页面" : "描述你想理解、规划或修改的工程任务…"
         }
       />
-      <div className="composer-bar">
+      <Flex align="center" gap={8} wrap className="composer-bar">
         <ModeMenu value={stance} disabled={busy} onChange={onStance} />
         <ModelMenu
           current={currentModel}
@@ -98,17 +86,19 @@ export function Composer({
           onChoose={onChooseModel}
           onThinking={onThinking}
         />
-        <span className="composer-hint">Enter 发送 · Shift+Enter 换行</span>
+        <Typography.Text type="secondary" style={{ marginInlineStart: "auto", fontSize: 10 }}>
+          Enter 发送 · Shift+Enter 换行
+        </Typography.Text>
         {busy ? (
-          <button type="button" className="stop" onClick={onCancel} disabled={stopping}>
-            {stopping ? "停止中…" : "停止"}
-          </button>
+          <Button danger onClick={onCancel} loading={stopping}>
+            {stopping ? "停止中" : "停止"}
+          </Button>
         ) : (
-          <button type="submit" disabled={!value.trim() || offline}>
+          <Button type="primary" disabled={!sendable} onClick={onSend}>
             发送 ↑
-          </button>
+          </Button>
         )}
-      </div>
-    </form>
+      </Flex>
+    </div>
   );
 }

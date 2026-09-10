@@ -1,11 +1,22 @@
-/** 顶栏的姿态选择器。两个轴各自成组, 预设只是同时设两个轴的快捷方式。 */
+/** 姿态菜单: 隔离与审批两个轴, 一次点一个。 */
 
-import { useCallback, useRef, useState } from "react";
-import { CheckIcon, ChevronIcon } from "@/shared/ui/icons";
+import { Button, Dropdown, Flex, Typography } from "antd";
+import { DownOutlined } from "@ant-design/icons";
 import { approvalOptions, sandboxOptions, stanceLabel } from "@/shared/lib/stance";
 import type { Stance } from "@/shared/lib/stance";
-import { useEscape } from "@/shared/hooks/useEscape";
-import { useOutsideClick } from "@/shared/hooks/useOutsideClick";
+
+/** 一个选项两行: 上面是档位名, 下面是这一档具体允许什么。 */
+function option(item: { value: string; label: string; hint: string }, axis: string) {
+  return {
+    key: `${axis}:${item.value}`,
+    label: (
+      <Flex vertical>
+        <Typography.Text strong>{item.label}</Typography.Text>
+        <Typography.Text type="secondary">{item.hint}</Typography.Text>
+      </Flex>
+    ),
+  };
+}
 
 export function ModeMenu({
   value,
@@ -16,98 +27,37 @@ export function ModeMenu({
   disabled: boolean;
   onChange: (patch: Partial<Stance>) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => setOpen(false), []);
-  useEscape(open, close);
-  useOutsideClick(open, rootRef, close);
-  // 圆点跟着隔离档走: 那是"能造成多大后果"这一问的答案, 也是用户扫一眼最需要知道的。
   return (
-    <div className="mode-menu" ref={rootRef}>
-      <button
-        type="button"
-        className="mode-trigger"
-        disabled={disabled}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => setOpen((state) => !state)}
-      >
-        <i className={`mode-dot ${value.sandbox}`} />
-        <span>{stanceLabel(value)}</span>
-        <ChevronIcon className="mode-caret" />
-      </button>
-      {open && (
-        <div className="mode-options">
-          <StanceGroup
-            label="隔离"
-            hint="围栏允许什么"
-            options={sandboxOptions}
-            current={value.sandbox}
-            dotted
-            onPick={(next) => {
-              setOpen(false);
-              onChange({ sandbox: next });
-            }}
-          />
-          <StanceGroup
-            label="审批"
-            hint="什么时候要你点头"
-            options={approvalOptions}
-            current={value.approval}
-            onPick={(next) => {
-              setOpen(false);
-              onChange({ approval: next });
-            }}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function StanceGroup({
-  label,
-  hint,
-  options,
-  current,
-  dotted,
-  onPick,
-}: {
-  label: string;
-  hint: string;
-  options: Array<{ value: string; label: string; hint: string }>;
-  current: string;
-  dotted?: boolean;
-  onPick: (value: string) => void;
-}) {
-  return (
-    <section className="stance-group">
-      <header>
-        <strong>{label}</strong>
-        <small>{hint}</small>
-      </header>
-      <ul role="listbox" aria-label={label}>
-        {options.map((item) => (
-          <li key={item.value}>
-            <button
-              type="button"
-              role="option"
-              aria-selected={item.value === current}
-              className={item.value === current ? "active" : ""}
-              onClick={() => {
-                if (item.value !== current) onPick(item.value);
-              }}
-            >
-              {dotted && <i className={`mode-dot ${item.value}`} />}
-              <span>
-                <strong>{item.label}</strong>
-                <small>{item.hint}</small>
-              </span>
-              {item.value === current && <CheckIcon className="mode-check" />}
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
+    <Dropdown
+      disabled={disabled}
+      trigger={["click"]}
+      menu={{
+        selectable: true,
+        selectedKeys: [`sandbox:${value.sandbox}`, `approval:${value.approval}`],
+        items: [
+          {
+            key: "sandbox",
+            type: "group",
+            label: "隔离 · 围栏允许什么",
+            children: sandboxOptions.map((item) => option(item, "sandbox")),
+          },
+          {
+            key: "approval",
+            type: "group",
+            label: "审批 · 什么时候要你点头",
+            children: approvalOptions.map((item) => option(item, "approval")),
+          },
+        ],
+        onClick: ({ key }) => {
+          const [axis, next] = key.split(":");
+          onChange(axis === "sandbox" ? { sandbox: next } : { approval: next });
+        },
+      }}
+    >
+      <Button disabled={disabled}>
+        {stanceLabel(value)}
+        <DownOutlined />
+      </Button>
+    </Dropdown>
   );
 }

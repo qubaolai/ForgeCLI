@@ -5,9 +5,21 @@
  */
 
 import { useState } from "react";
-import type { FormEvent } from "react";
-import { useEscape } from "@/shared/hooks/useEscape";
-import { CheckIcon, ChevronIcon } from "@/shared/ui/icons";
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Collapse,
+  Drawer,
+  Flex,
+  Form,
+  Input,
+  Radio,
+  Space,
+  Switch,
+  Tag,
+  Typography,
+} from "antd";
 import {
   DEFAULT_TEMPERATURE,
   DEFAULT_TOP_P,
@@ -15,8 +27,20 @@ import {
   modelPlaceholder,
   providerAvailabilityCopy,
 } from "@/shared/lib/modelParams";
-import { ProviderMark } from "@/features/settings/models/ProviderMark";
+import { ProviderAvatar } from "@/features/settings/models/ProviderAvatar";
 import type { KnownProvider, Provider } from "@/types/admin";
+
+type ModelDraft = {
+  providerId: string;
+  modelId: string;
+  thinking: boolean;
+  thinkingEffort: string;
+  temperature: string;
+  topP: string;
+  contextWindow: string;
+  maxTokens: string;
+  makeDefault: boolean;
+};
 
 export function AddModelDrawer({
   knownProviders,
@@ -33,35 +57,24 @@ export function AddModelDrawer({
   onAdd: (providerId: string, modelId: string, params: Record<string, unknown>) => Promise<boolean>;
   onSetCurrent: (providerId: string, modelId: string) => Promise<boolean>;
 }) {
-  const [providerId, setProviderId] = useState(knownProviders[0]?.id ?? "");
-  const [modelId, setModelId] = useState("");
-  const [contextWindow, setContextWindow] = useState("");
-  const [maxTokens, setMaxTokens] = useState("");
-  // 采样与 thinking 在**添加时**就填: 它们是这个模型怎么用的一部分, 不是事后想起来
-  // 才去某个单独入口调的东西。
-  const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE);
-  const [topP, setTopP] = useState(DEFAULT_TOP_P);
-  const [thinkingMode, setThinkingMode] = useState("off");
-  const [thinkingEffort, setThinkingEffort] = useState("");
-  const [makeDefault, setMakeDefault] = useState(true);
+  const [form] = Form.useForm<ModelDraft>();
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState("");
+  const providerId = Form.useWatch("providerId", form) ?? knownProviders[0]?.id ?? "";
+  const thinking = Form.useWatch("thinking", form);
+  const makeDefault = Form.useWatch("makeDefault", form);
   const selected = knownProviders.find((item) => item.id === providerId);
   const selectedSettings = providerSettings.find((item) => item.id === providerId);
+  const ready = selected?.available || !selected?.api_key_env;
 
-  // 抽屉盖在设置面板上面, 所以 Esc 只关它, 不往下传。
-  useEscape(true, onClose, true);
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (!providerId || !modelId.trim() || saving) return;
+  async function submit(values: ModelDraft) {
     let params: Record<string, unknown>;
     try {
-      params = buildInitialModelParams(contextWindow, maxTokens, {
-        temperature,
-        topP,
-        thinkingMode,
-        thinkingEffort,
+      params = buildInitialModelParams(values.contextWindow ?? "", values.maxTokens ?? "", {
+        temperature: values.temperature,
+        topP: values.topP,
+        thinkingMode: values.thinking ? "on" : "off",
+        thinkingEffort: values.thinkingEffort ?? "",
       });
       setValidationError("");
     } catch (reason) {
@@ -69,173 +82,145 @@ export function AddModelDrawer({
       return;
     }
     setSaving(true);
-    const created = await onAdd(providerId, modelId.trim(), params);
-    if (created && makeDefault) await onSetCurrent(providerId, modelId.trim());
+    const modelId = values.modelId.trim();
+    const created = await onAdd(values.providerId, modelId, params);
+    if (created && values.makeDefault) await onSetCurrent(values.providerId, modelId);
     setSaving(false);
     if (created) onClose();
   }
 
   return (
-    <div
-      className="model-drawer-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
+    <Drawer
+      open
+      title="添加模型"
+      onClose={onClose}
+      size={500}
+      keyboard={!saving}
+      mask={{ closable: !saving }}
+      closable={!saving}
+      destroyOnHidden
+      footer={
+        <Flex justify="flex-end" gap="small">
+          <Button onClick={onClose} disabled={saving}>
+            取消
+          </Button>
+          <Button type="primary" loading={saving} onClick={() => form.submit()}>
+            {makeDefault ? "添加并使用" : "添加模型"}
+          </Button>
+        </Flex>
+      }
     >
-      <aside className="model-drawer" role="dialog" aria-modal="true" aria-label="添加模型">
-        <header>
-          <div>
-            <h3>添加模型</h3>
-            <p>先选择供应商，再填写模型 ID。</p>
-          </div>
-          <button type="button" aria-label="关闭添加模型" onClick={onClose}>
-            ×
-          </button>
-        </header>
-        <form onSubmit={submit}>
-          <fieldset>
-            <legend>1. 选择供应商</legend>
-            <div className="provider-choice-grid">
+      <Form<ModelDraft>
+        form={form}
+        layout="vertical"
+        onFinish={submit}
+        initialValues={{
+          providerId: knownProviders[0]?.id ?? "",
+          modelId: "",
+          thinking: false,
+          thinkingEffort: "",
+          temperature: DEFAULT_TEMPERATURE,
+          topP: DEFAULT_TOP_P,
+          contextWindow: "",
+          maxTokens: "",
+          makeDefault: true,
+        }}
+      >
+        <Form.Item name="providerId" label="选择供应商">
+          <Radio.Group disabled={saving}>
+            <Space direction="vertical">
               {knownProviders.map((provider) => (
-                <button
-                  type="button"
-                  key={provider.id}
-                  className={provider.id === providerId ? "active" : ""}
-                  aria-pressed={provider.id === providerId}
-                  onClick={() => {
-                    setProviderId(provider.id);
-                    setValidationError("");
-                  }}
-                >
-                  <ProviderMark providerId={provider.id} label={provider.label} />
-                  <span>
-                    <strong>{provider.label}</strong>
-                    <small className={provider.available || !provider.api_key_env ? "ready" : ""}>
+                <Radio value={provider.id} key={provider.id}>
+                  <Space>
+                    <ProviderAvatar providerId={provider.id} label={provider.label} size="small" />
+                    <Typography.Text strong>{provider.label}</Typography.Text>
+                    <Tag color={provider.available || !provider.api_key_env ? "green" : "default"}>
                       {providerAvailabilityCopy(provider)}
-                    </small>
-                  </span>
-                  <CheckIcon />
-                </button>
+                    </Tag>
+                  </Space>
+                </Radio>
               ))}
-            </div>
-          </fieldset>
+            </Space>
+          </Radio.Group>
+        </Form.Item>
 
-          <fieldset>
-            <legend>2. 模型信息</legend>
-            <label className="model-input">
-              <span>模型 ID</span>
-              <input
-                autoFocus
-                value={modelId}
-                onChange={(event) => setModelId(event.target.value)}
-                placeholder={modelPlaceholder(providerId)}
-              />
-              <small>填写供应商 API 使用的准确模型名称。</small>
-            </label>
-            <div
-              className={`provider-connection-summary ${selected?.available || !selected?.api_key_env ? "ready" : "warning"}`}
-            >
-              <span>
-                <i /> <strong>{selected?.label || "供应商"}</strong> ·{" "}
-                {providerAvailabilityCopy(selected ?? { available: false })}
-                {selectedSettings?.api_base ? ` · ${selectedSettings.api_base}` : ""}
-              </span>
-              <button type="button" onClick={onEditProvider}>
-                编辑连接配置
-              </button>
-            </div>
-          </fieldset>
+        <Form.Item
+          name="modelId"
+          label="模型 ID"
+          extra="填写供应商 API 使用的准确模型名称。"
+          rules={[{ required: true, message: "填一个模型 ID" }]}
+        >
+          <Input autoFocus placeholder={modelPlaceholder(providerId)} disabled={saving} />
+        </Form.Item>
+        <Alert
+          type={ready ? "success" : "warning"}
+          showIcon
+          title={`${selected?.label || "供应商"} · ${providerAvailabilityCopy(selected ?? { available: false })}`}
+          description={selectedSettings?.api_base}
+          action={
+            <Button size="small" onClick={onEditProvider}>
+              编辑连接配置
+            </Button>
+          }
+          style={{ marginBottom: 16 }}
+        />
 
-          <fieldset>
-            <legend>3. 思考</legend>
-            <label className="model-input">
-              <span>Thinking</span>
-              <select value={thinkingMode} onChange={(event) => setThinkingMode(event.target.value)}>
-                <option value="off">关闭</option>
-                <option value="on">开启</option>
-              </select>
-              <small>开启后模型会先推理再回答，更准也更慢更贵。</small>
-            </label>
-            {thinkingMode === "on" && (
-              <label className="model-input">
-                <span>思考强度</span>
-                <input
-                  value={thinkingEffort}
-                  onChange={(event) => setThinkingEffort(event.target.value)}
-                  placeholder="留空用模型默认"
-                />
-                <small>填模型自己声明的强度名，例如 low / medium / high。</small>
-              </label>
-            )}
-          </fieldset>
+        <Form.Item
+          name="thinking"
+          label="Thinking"
+          valuePropName="checked"
+          extra="开启后模型会先推理再回答，更准也更慢更贵。"
+        >
+          <Switch disabled={saving} />
+        </Form.Item>
+        {thinking && (
+          <Form.Item
+            name="thinkingEffort"
+            label="思考强度"
+            extra="填模型自己声明的强度名，例如 low / medium / high。"
+          >
+            <Input placeholder="留空用模型默认" disabled={saving} />
+          </Form.Item>
+        )}
 
-          <details className="model-add-advanced">
-            <summary>
-              高级参数{" "}
-              <span>
-                添加后也可以修改 <ChevronIcon />
-              </span>
-            </summary>
-            <div>
-              <label>
-                <span>温度</span>
-                <input
-                  inputMode="decimal"
-                  value={temperature}
-                  onChange={(event) => setTemperature(event.target.value)}
-                />
-              </label>
-              <label>
-                <span>top_p</span>
-                <input inputMode="decimal" value={topP} onChange={(event) => setTopP(event.target.value)} />
-              </label>
-              <label>
-                <span>上下文窗口</span>
-                <input
-                  inputMode="numeric"
-                  value={contextWindow}
-                  onChange={(event) => setContextWindow(event.target.value)}
-                  placeholder="使用供应商默认值"
-                />
-              </label>
-              <label>
-                <span>最大输出 Tokens</span>
-                <input
-                  inputMode="numeric"
-                  value={maxTokens}
-                  onChange={(event) => setMaxTokens(event.target.value)}
-                  placeholder="使用供应商默认值"
-                />
-              </label>
-            </div>
-          </details>
-          {validationError && (
-            <p className="model-validation-error" role="alert">
-              {validationError}
-            </p>
-          )}
-          <label className="model-default-check">
-            <input
-              type="checkbox"
-              checked={makeDefault}
-              onChange={(event) => setMakeDefault(event.target.checked)}
-            />
-            <span>添加后设为默认模型</span>
-          </label>
-          <footer>
-            <button type="button" onClick={onClose}>
-              取消
-            </button>
-            <button
-              type="submit"
-              className="primary-action"
-              disabled={!providerId || !modelId.trim() || saving}
-            >
-              {saving ? "添加中…" : makeDefault ? "添加并使用" : "添加模型"}
-            </button>
-          </footer>
-        </form>
-      </aside>
-    </div>
+        <Collapse
+          size="small"
+          style={{ marginBottom: 16 }}
+          items={[
+            {
+              key: "advanced",
+              label: (
+                <Space>
+                  <Typography.Text>高级参数</Typography.Text>
+                  <Typography.Text type="secondary">添加后也可以修改</Typography.Text>
+                </Space>
+              ),
+              children: (
+                <>
+                  <Form.Item name="temperature" label="温度">
+                    <Input inputMode="decimal" disabled={saving} />
+                  </Form.Item>
+                  <Form.Item name="topP" label="top_p">
+                    <Input inputMode="decimal" disabled={saving} />
+                  </Form.Item>
+                  <Form.Item name="contextWindow" label="上下文窗口">
+                    <Input inputMode="numeric" placeholder="使用供应商默认值" disabled={saving} />
+                  </Form.Item>
+                  <Form.Item name="maxTokens" label="最大输出 Tokens">
+                    <Input inputMode="numeric" placeholder="使用供应商默认值" disabled={saving} />
+                  </Form.Item>
+                </>
+              ),
+            },
+          ]}
+        />
+        {validationError && (
+          <Alert type="error" showIcon title={validationError} style={{ marginBottom: 16 }} />
+        )}
+        <Form.Item name="makeDefault" valuePropName="checked">
+          <Checkbox disabled={saving}>添加后设为默认模型</Checkbox>
+        </Form.Item>
+      </Form>
+    </Drawer>
   );
 }

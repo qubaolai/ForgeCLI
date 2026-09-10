@@ -53,7 +53,6 @@ from forgecli.domain.tool.hashing import digest_text
 
 __all__ = [
     "PROMPT_STATIC_BUDGET",
-    "PROMPT_TEXT_VERSION",
     "TEMPLATE_SUFFIX",
     "render_block",
     "render_heading",

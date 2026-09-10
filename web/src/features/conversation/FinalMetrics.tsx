@@ -1,5 +1,10 @@
-/** 一轮跑完之后, 消息底下那排用量。 */
+/** 一轮跑完之后, 消息底下那排用量。
+ *
+ * 一格一个胶囊: 这排数字是拿来扫的, 不是拿来读的 —— 排成一句话之后没人看得出
+ * 哪个是输入哪个是输出。
+ */
 
+import { Tooltip } from "antd";
 import { formatElapsed, formatTokens } from "@/shared/format";
 import type { metricsFor } from "@/shared/lib/run/metrics";
 
@@ -15,21 +20,22 @@ export function FinalMetrics({ metrics }: { metrics: ReturnType<typeof metricsFo
   if (metrics.compactTokens > 0) chips.push(["压缩", formatTokens(metrics.compactTokens)]);
   chips.push(["模型", `${metrics.modelCalls} 次`], ["工具", `${metrics.toolCalls} 次`]);
   return (
-    <span className="final-metrics">
+    <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 6px" }}>
       {chips.map(([label, value]) => (
         <span className="metric" key={label}>
           <i>{label}</i>
           {value}
         </span>
       ))}
-      <span
-        className="metric total"
+      <Tooltip
         title={`${metrics.totalTokens.toLocaleString()} tokens · ${metrics.estimated ? "供应商未回 usage，本轮为本地估算" : "供应商返回的用量"}`}
       >
-        <i>合计</i>
-        {metrics.estimated ? "≈" : ""}
-        {formatTokens(metrics.totalTokens)} tokens
-      </span>
+        <span className="metric total">
+          <i>合计</i>
+          {metrics.estimated ? "≈" : ""}
+          {formatTokens(metrics.totalTokens)} tokens
+        </span>
+      </Tooltip>
     </span>
   );
 }

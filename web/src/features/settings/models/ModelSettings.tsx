@@ -4,6 +4,7 @@
  */
 
 import { useState } from "react";
+import { Tabs } from "antd";
 import type { Administration } from "@/features/administration/useAdministration";
 import { AddModelDrawer } from "@/features/settings/models/AddModelDrawer";
 import { AddProviderDrawer } from "@/features/settings/models/AddProviderDrawer";
@@ -12,12 +13,6 @@ import { ModelsView } from "@/features/settings/models/ModelsView";
 import { ProvidersView } from "@/features/settings/models/ProvidersView";
 
 export type ModelSettingsView = "models" | "providers" | "gateway";
-
-const VIEWS: Array<[ModelSettingsView, string]> = [
-  ["models", "模型"],
-  ["providers", "供应商"],
-  ["gateway", "网关"],
-];
 
 export function ModelSettings({
   admin,
@@ -32,31 +27,30 @@ export function ModelSettings({
   const [showAddProvider, setShowAddProvider] = useState(false);
 
   return (
-    <div className="model-settings">
-      <div className="model-subnav" role="tablist" aria-label="模型设置分类">
-        {VIEWS.map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={view === value}
-            className={view === value ? "active" : ""}
-            onClick={() => setView(value)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {view === "models" && (
-        <ModelsView
-          admin={admin}
-          onOpenAdd={() => setShowAdd(true)}
-          onGoProviders={() => setView("providers")}
-        />
-      )}
-      {view === "providers" && <ProvidersView admin={admin} onOpenAdd={() => setShowAddProvider(true)} />}
-      {view === "gateway" && <GatewayView admin={admin} />}
+    <>
+      <Tabs
+        activeKey={view}
+        onChange={(key) => setView(key as ModelSettingsView)}
+        items={[
+          {
+            key: "models",
+            label: "模型",
+            children: (
+              <ModelsView
+                admin={admin}
+                onOpenAdd={() => setShowAdd(true)}
+                onGoProviders={() => setView("providers")}
+              />
+            ),
+          },
+          {
+            key: "providers",
+            label: "供应商",
+            children: <ProvidersView admin={admin} onOpenAdd={() => setShowAddProvider(true)} />,
+          },
+          { key: "gateway", label: "网关", children: <GatewayView admin={admin} /> },
+        ]}
+      />
 
       {showAddProvider && (
         <AddProviderDrawer
@@ -79,6 +73,6 @@ export function ModelSettings({
           onSetCurrent={admin.chooseCurrentModel}
         />
       )}
-    </div>
+    </>
   );
 }

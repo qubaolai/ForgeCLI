@@ -4,10 +4,10 @@
  * "这次危不危险", 就是把裁决逻辑复制到了一个没人测的地方 (见 shared/lib/approval)。
  */
 
-import { useState } from "react";
-import type { ReactNode } from "react";
-import { ChevronIcon, ShieldIcon } from "@/shared/ui/icons";
-import type { Approval } from "@/shared/lib/approval";
+import { Alert, Button, Card, Collapse, Flex, Space, Tag, Typography } from "antd";
+import type { AlertProps, CollapseProps } from "antd";
+import { SafetyCertificateOutlined } from "@ant-design/icons";
+import type { Approval, Severity } from "@/shared/lib/approval";
 import {
   canLearn,
   defaultOpenSections,
@@ -18,6 +18,13 @@ import {
   shownTargetGroups,
 } from "@/shared/lib/approval";
 
+/** 三档危险程度只决定提示条的颜色; 判定在 shared/lib/approval 里。 */
+const SEVERITY_TYPE: Record<Severity, AlertProps["type"]> = {
+  calm: "info",
+  caution: "warning",
+  critical: "error",
+};
+
 export function ApprovalCard({
   approval,
   onResolve,
@@ -26,151 +33,147 @@ export function ApprovalCard({
   onResolve: (id: string, choice: string, text?: string) => void;
 }) {
   const view = approval.view;
-  const severity = severityOf(approval);
   const openBy = defaultOpenSections(approval);
   const targets = shownTargetGroups(approval);
   const root = view.workspace_roots[0] ?? "";
+
+  const sections: CollapseProps["items"] = [];
+  if (view.script_snapshots.length > 0) {
+    sections.push({
+      key: "scripts",
+      label: <SectionLabel title="脚本正文" meta={scriptMeta(view.script_snapshots)} />,
+      children: (
+        <Flex vertical gap="small">
+          {view.script_snapshots.map((snapshot, index) => (
+            <Flex vertical gap={4} key={`${snapshot.path}-${index}`}>
+              <Flex justify="space-between" gap="small">
+                <Typography.Text code>{snapshot.path || snapshot.origin || "内联脚本"}</Typography.Text>
+                <Typography.Text type="secondary">{snapshot.language}</Typography.Text>
+              </Flex>
+              <Code text={snapshot.source} />
+            </Flex>
+          ))}
+        </Flex>
+      ),
+    });
+  }
+  if (view.content_previews.length > 0) {
+    sections.push({
+      key: "previews",
+      label: <SectionLabel title="写入预览" meta={`${view.content_previews.length} 个文件`} />,
+      children: (
+        <Flex vertical gap="small">
+          {view.content_previews.map((preview, index) => (
+            <Flex vertical gap={4} key={`${preview.path}-${index}`}>
+              <Typography.Text code>{preview.path}</Typography.Text>
+              <Code text={preview.content} />
+              {preview.truncated && <Typography.Text type="secondary">已截断</Typography.Text>}
+            </Flex>
+          ))}
+        </Flex>
+      ),
+    });
+  }
+  if (isConsequential(approval) && targets.length > 0) {
+    sections.push({
+      key: "targets",
+      label: (
+        <SectionLabel
+          title="目标清单"
+          meta={`${targets.reduce((total, group) => total + group.paths.length, 0)} 个路径`}
+        />
+      ),
+      children: (
+        <Flex vertical gap="small">
+          {targets.map((group) => (
+            <Flex vertical gap={2} key={group.label}>
+              <Typography.Text strong>{group.label}</Typography.Text>
+              {group.paths.map((path) => (
+                <Typography.Text code ellipsis={{ tooltip: path }} key={path}>
+                  {path}
+                </Typography.Text>
+              ))}
+            </Flex>
+          ))}
+        </Flex>
+      ),
+    });
+  }
+  const openKeys = ["scripts", "previews", "targets"].filter((key) => openBy[key as keyof typeof openBy]);
+
   return (
-    <section className={`approval-card sev-${severity}`}>
-      <span className="ac-stripe" />
-      <header>
-        <span className="ac-badge">
-          <ShieldIcon />
-        </span>
-        <div className="ac-heading">
-          <h2>{headlineOf(approval)}</h2>
-          <p>{approval.mandatory ? "这一档不能记成规则, 每次都会问" : "确认下面的内容再决定"}</p>
-        </div>
-        <span className="ac-chips">
-          <span className="ac-chip tool">{view.tool_name}</span>
-          {view.mode && <span className="ac-chip">{view.mode}</span>}
-        </span>
-      </header>
-
-      {/* 命令永远可见: 一个安全决策的默认态不该是"什么都没说"。 */}
-      <pre className="ac-cmd">{view.raw_command}</pre>
-      {root && (
-        <p className="ac-root" title={root}>
-          工作区 {root}
-        </p>
-      )}
-
-      <div className="ac-counts">
-        {view.counts.map((item) => (
-          <span className="ac-count" data-on={item.count > 0 ? "1" : "0"} key={item.label}>
-            {item.label} <b>{item.count}</b>
-          </span>
-        ))}
-      </div>
-
-      <div className="ac-body">
-        {view.script_snapshots.length > 0 && (
-          <ApprovalSection
-            title="脚本正文"
-            meta={scriptMeta(view.script_snapshots)}
-            defaultOpen={openBy.scripts}
-          >
-            {view.script_snapshots.map((snapshot, index) => (
-              <div className="ac-file" key={`${snapshot.path}-${index}`}>
-                <div className="ac-file-head">
-                  <code>{snapshot.path || snapshot.origin || "内联脚本"}</code>
-                  <span>{snapshot.language}</span>
-                </div>
-                <pre className="ac-pre">{snapshot.source}</pre>
-              </div>
-            ))}
-          </ApprovalSection>
+    <Card
+      size="small"
+      title={
+        <Space>
+          <SafetyCertificateOutlined />
+          {headlineOf(approval)}
+        </Space>
+      }
+      extra={
+        <Space size={4}>
+          <Tag color="blue">{view.tool_name}</Tag>
+          {view.mode && <Tag>{view.mode}</Tag>}
+        </Space>
+      }
+    >
+      <Flex vertical gap="small">
+        <Alert
+          type={SEVERITY_TYPE[severityOf(approval)]}
+          showIcon
+          title={approval.mandatory ? "这一档不能记成规则, 每次都会问" : "确认下面的内容再决定"}
+        />
+        {/* 命令永远可见: 一个安全决策的默认态不该是"什么都没说"。 */}
+        <Code text={view.raw_command} />
+        {root && (
+          <Typography.Text type="secondary" ellipsis={{ tooltip: root }}>
+            工作区 {root}
+          </Typography.Text>
         )}
-
-        {view.content_previews.length > 0 && (
-          <ApprovalSection
-            title="写入预览"
-            meta={`${view.content_previews.length} 个文件`}
-            defaultOpen={openBy.previews}
-          >
-            {view.content_previews.map((preview, index) => (
-              <div className="ac-file" key={`${preview.path}-${index}`}>
-                <div className="ac-file-head">
-                  <code>{preview.path}</code>
-                </div>
-                <pre className="ac-pre">{preview.content}</pre>
-                {preview.truncated && <p className="ac-trunc">已截断</p>}
-              </div>
-            ))}
-          </ApprovalSection>
-        )}
-
-        {isConsequential(approval) && targets.length > 0 && (
-          <ApprovalSection
-            title="目标清单"
-            meta={`${targets.reduce((total, group) => total + group.paths.length, 0)} 个路径`}
-            defaultOpen={openBy.targets}
-          >
-            {targets.map((group) => (
-              <div className="ac-tgroup" key={group.label}>
-                <span className="ac-tlabel">{group.label}</span>
-                <div className="ac-tpaths">
-                  {group.paths.map((path) => (
-                    <code key={path} title={path}>
-                      {path}
-                    </code>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </ApprovalSection>
-        )}
-      </div>
-
-      <footer>
-        <p className="ac-learn">{learnHintOf(approval)}</p>
-        <span className="ac-btns">
-          <button className="ac-deny" onClick={() => onResolve(approval.approval_id, "deny")}>
+        <Space wrap size={4}>
+          {view.counts.map((item) => (
+            <Tag color={item.count > 0 ? "blue" : "default"} key={item.label}>
+              {item.label} {item.count}
+            </Tag>
+          ))}
+        </Space>
+        {sections.length > 0 && <Collapse size="small" defaultActiveKey={openKeys} items={sections} />}
+        <Typography.Text type="secondary">{learnHintOf(approval)}</Typography.Text>
+        <Flex gap="small" justify="flex-end" wrap>
+          <Button danger onClick={() => onResolve(approval.approval_id, "deny")}>
             拒绝
-          </button>
-          <button disabled={!canLearn(approval)} onClick={() => onResolve(approval.approval_id, "workspace")}>
+          </Button>
+          <Button disabled={!canLearn(approval)} onClick={() => onResolve(approval.approval_id, "workspace")}>
             始终允许
-          </button>
-          <button className="primary" onClick={() => onResolve(approval.approval_id, "once")}>
+          </Button>
+          <Button type="primary" onClick={() => onResolve(approval.approval_id, "once")}>
             允许一次
-          </button>
-        </span>
-      </footer>
-    </section>
+          </Button>
+        </Flex>
+      </Flex>
+    </Card>
+  );
+}
+
+/** 证据分块。收的是体量, 不是事实的存在 —— 所以标题与条目数在收起时也看得见。 */
+function SectionLabel({ title, meta }: { title: string; meta: string }) {
+  return (
+    <Space>
+      <Typography.Text strong>{title}</Typography.Text>
+      <Typography.Text type="secondary">{meta}</Typography.Text>
+    </Space>
+  );
+}
+
+function Code({ text }: { text: string }) {
+  return (
+    <Typography>
+      <pre style={{ margin: 0, maxHeight: 240, overflow: "auto" }}>{text}</pre>
+    </Typography>
   );
 }
 
 function scriptMeta(scripts: Approval["view"]["script_snapshots"]) {
   const lines = scripts.reduce((total, item) => total + item.source.split("\n").length, 0);
   return scripts.length > 1 ? `${scripts.length} 段 · ${lines} 行` : `${lines} 行`;
-}
-
-/** 证据分块。收的是体量, 不是事实的存在 —— 所以标题与条目数在收起时也看得见。 */
-function ApprovalSection({
-  title,
-  meta,
-  defaultOpen,
-  children,
-}: {
-  title: string;
-  meta: string;
-  defaultOpen: boolean;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <details className="ac-sec" open={open}>
-      <summary
-        onClick={(event) => {
-          event.preventDefault();
-          setOpen((value) => !value);
-        }}
-      >
-        <ChevronIcon className="ac-sec-caret" />
-        <b>{title}</b>
-        <span className="ac-sec-meta">{meta}</span>
-      </summary>
-      <div className="ac-sec-body">{children}</div>
-    </details>
-  );
 }

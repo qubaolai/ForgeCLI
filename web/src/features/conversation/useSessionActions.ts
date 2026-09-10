@@ -25,8 +25,6 @@ export function useSessionActions({
   reloadWorkspace: () => Promise<void>;
   onError: (message: string) => void;
 }) {
-  // 正在等待确认的那个会话 id。删除不可撤销, 所以走一个必须显式按下的对话框。
-  const [confirmDelete, setConfirmDelete] = useState("");
   const [deleting, setDeleting] = useState(false);
 
   async function create() {
@@ -54,7 +52,7 @@ export function useSessionActions({
     }
   }
 
-  /** 删掉一个会话及其计划、处理过程与恢复点。不可撤销, 所以入口是两步确认。 */
+  /** 删掉一个会话及其计划、处理过程与恢复点。不可撤销, 所以入口是一次 Popconfirm。 */
   async function remove(sessionId: string) {
     try {
       setDeleting(true);
@@ -63,7 +61,6 @@ export function useSessionActions({
       const result = await api<{ current_session_id: string; cleanup: string }>(`/sessions/${sessionId}`, {
         method: "DELETE",
       });
-      setConfirmDelete("");
       // 删的是当前会话时后端已经开了一个新的, 切过去 —— 不自己猜停在哪。
       if (result.current_session_id !== conversation.currentSessionId) {
         conversation.enterSession(result.current_session_id);
@@ -79,5 +76,5 @@ export function useSessionActions({
     }
   }
 
-  return { confirmDelete, setConfirmDelete, deleting, create, resume, remove };
+  return { deleting, create, resume, remove };
 }

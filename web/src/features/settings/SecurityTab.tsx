@@ -1,62 +1,125 @@
 /** 安全与工具页: 工作区目录, 学习规则, 当前模式下模型看得见的工具。 */
 
 import { useState } from "react";
+import {
+  Button,
+  Collapse,
+  Empty,
+  Flex,
+  Input,
+  Popconfirm,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
+import { PlusOutlined } from "@ant-design/icons";
 import type { Administration } from "@/features/administration/useAdministration";
+import type { LearnedRule, WorkspaceRoot } from "@/types/admin";
 
 export function SecurityTab({ admin }: { admin: Administration }) {
   return (
-    <>
-      <h3>工作区目录</h3>
-      {admin.workspaceRoots.map((root, index) => (
-        <div className="admin-row" key={root.path}>
-          <div>
-            <strong>{root.path}</strong>
-            <small>{root.access === "write" ? "可读写" : "只读"}</small>
-          </div>
-          {/* 第一个是主目录, 移不掉 —— 移掉之后这个项目就没有可操作的地方了。 */}
-          {index > 0 && <button onClick={() => admin.removeWorkspace(root.path)}>移除</button>}
-        </div>
-      ))}
-      <AddRootRow onAdd={admin.addWorkspace} />
+    <Flex vertical gap="middle">
+      <Table<WorkspaceRoot>
+        size="small"
+        pagination={false}
+        rowKey="path"
+        title={() => <Typography.Text strong>工作区目录</Typography.Text>}
+        footer={() => <AddRootRow onAdd={admin.addWorkspace} />}
+        dataSource={admin.workspaceRoots}
+        columns={[
+          { title: "目录", dataIndex: "path" },
+          {
+            title: "权限",
+            dataIndex: "access",
+            width: 96,
+            render: (access: string) => <Tag>{access === "write" ? "可读写" : "只读"}</Tag>,
+          },
+          {
+            title: "",
+            key: "action",
+            width: 88,
+            // 第一个是主目录, 移不掉 —— 移掉之后这个项目就没有可操作的地方了。
+            render: (_value, root, index) =>
+              index > 0 ? (
+                <Popconfirm
+                  title="移除这个目录？"
+                  description="移除后 Forge 不再能读写它。"
+                  okText="移除"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true }}
+                  onConfirm={() => admin.removeWorkspace(root.path)}
+                >
+                  <Button size="small" danger>
+                    移除
+                  </Button>
+                </Popconfirm>
+              ) : null,
+          },
+        ]}
+      />
 
-      <h3>学习规则</h3>
-      {admin.rules.length ? (
-        admin.rules.map((rule) => (
-          <div className="admin-row" key={rule.rule_id}>
-            <div>
-              <strong>{rule.label || rule.rule_id}</strong>
-              <small>
-                {rule.scope} · {rule.match.mode}
-              </small>
-            </div>
-            <button onClick={() => admin.revokeRule(rule.rule_id)}>撤销</button>
-          </div>
-        ))
-      ) : (
-        <p className="empty-copy">没有工作区学习规则。</p>
-      )}
-      <div className="add-root prune-row">
-        <button onClick={admin.pruneRules}>清理已过期 / 已撤销的规则</button>
-      </div>
+      <Table<LearnedRule>
+        size="small"
+        pagination={false}
+        rowKey="rule_id"
+        title={() => <Typography.Text strong>学习规则</Typography.Text>}
+        footer={() => (
+          <Button size="small" onClick={admin.pruneRules}>
+            清理已过期 / 已撤销的规则
+          </Button>
+        )}
+        dataSource={admin.rules}
+        locale={{
+          emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有工作区学习规则。" />,
+        }}
+        columns={[
+          { title: "规则", dataIndex: "rule_id", render: (id: string, rule) => rule.label || id },
+          { title: "范围", dataIndex: "scope", width: 120 },
+          { title: "匹配", dataIndex: ["match", "mode"], width: 120 },
+          {
+            title: "",
+            key: "action",
+            width: 88,
+            render: (_value, rule) => (
+              <Button size="small" onClick={() => admin.revokeRule(rule.rule_id)}>
+                撤销
+              </Button>
+            ),
+          },
+        ]}
+      />
 
-      <h3>当前模式下模型可见的工具</h3>
-      <p className="field-help">工具集合由模式的能力上界决定; 换模式会改变这份清单。</p>
-      {admin.tools.map((tool) => (
-        <details className="model-editor tool-entry" key={tool.name}>
-          <summary>
-            <span>
-              <strong>{tool.name}</strong>
-              <small>{tool.title}</small>
-            </span>
-            <small>{tool.declared_capabilities.join(" · ") || "无声明能力"}</small>
-          </summary>
-          <div className="model-fields">
-            <p className="field-help">{tool.description}</p>
-          </div>
-        </details>
-      ))}
-      {!admin.tools.length && <p className="empty-copy">当前模式下没有可见工具。</p>}
-    </>
+      <Flex vertical gap="small">
+        <Typography.Text strong>当前模式下模型可见的工具</Typography.Text>
+        <Typography.Text type="secondary">
+          工具集合由模式的能力上界决定; 换模式会改变这份清单。
+        </Typography.Text>
+        {admin.tools.length ? (
+          <Collapse
+            size="small"
+            items={admin.tools.map((tool) => ({
+              key: tool.name,
+              label: (
+                <Space wrap>
+                  <Typography.Text strong>{tool.name}</Typography.Text>
+                  <Typography.Text type="secondary">{tool.title}</Typography.Text>
+                </Space>
+              ),
+              extra: (
+                <Typography.Text type="secondary">
+                  {tool.declared_capabilities.join(" · ") || "无声明能力"}
+                </Typography.Text>
+              ),
+              children: <Typography.Text type="secondary">{tool.description}</Typography.Text>,
+            }))}
+          />
+        ) : (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前模式下没有可见工具。" />
+        )}
+      </Flex>
+    </Flex>
   );
 }
 
@@ -64,22 +127,33 @@ function AddRootRow({ onAdd }: { onAdd: (path: string, access: string) => void }
   const [path, setPath] = useState("");
   const [access, setAccess] = useState("read");
   return (
-    <div className="add-root">
-      <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="额外目录路径" />
-      <select value={access} onChange={(event) => setAccess(event.target.value)}>
-        <option value="read">只读</option>
-        <option value="write">读写</option>
-      </select>
-      <button
+    <Space.Compact block>
+      <Input
+        value={path}
+        onChange={(event) => setPath(event.target.value)}
+        placeholder="额外目录路径"
+        aria-label="额外目录路径"
+      />
+      <Select
+        value={access}
+        onChange={setAccess}
+        style={{ width: 110 }}
+        options={[
+          { value: "read", label: "只读" },
+          { value: "write", label: "读写" },
+        ]}
+      />
+      <Button
+        type="primary"
+        icon={<PlusOutlined />}
+        disabled={!path.trim()}
         onClick={() => {
-          if (path.trim()) {
-            onAdd(path, access);
-            setPath("");
-          }
+          onAdd(path, access);
+          setPath("");
         }}
       >
         添加
-      </button>
-    </div>
+      </Button>
+    </Space.Compact>
   );
 }

@@ -1,23 +1,304 @@
-/* 样式按功能分块, 但**顺序不能重排**。
+/* antd 覆盖不到的那几处: 正文排版、工具行、输入框、用量胶囊、顶部进度条。
  *
- * 类名全是全局的, 而这张表里有靠层叠顺序生效的地方 (比如 .modal-backdrop 与
- * .modal-backdrop.confirm-layer)。换了顺序不会报错, 只会让某个遮罩层换个样子。
- * 下面这串 @import 的次序就是原来单文件里的次序, 拼回去逐字节相同。
+ * 这里**不出现任何具体色值** —— 颜色全部读 `--forge-*`, 那几个变量由
+ * app/UiProvider.tsx 从当前主题的 token 写到 :root 上。换主题时这张表跟着走,
+ * 自己再抄一份颜色的话, 只会在切换明暗时和组件分叉。
  */
 
-@import "./base.css";
-@import "./shell.css";
-@import "./workspace.css";
-@import "./conversation.css";
-@import "./markdown.css";
-@import "./composer.css";
-@import "./menus.css";
-@import "./planning.css";
-@import "./runSteps.css";
-@import "./approval.css";
-@import "./project.css";
-@import "./settings.css";
-@import "./models.css";
-@import "./responsive.css";
-@import "./runFlow.css";
-@import "./question.css";
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+/* ---------- 左栏 ----------
+ * antd 的 Sider 在自己内部又包了一层 div, flex 不传下去, 工作区就钉不到底部。 */
+.ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+/* 删除按钮平时不在: 一列会话里最显眼的东西不该是删除。 */
+.session-delete {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.ant-menu-item:hover .session-delete,
+.session-delete:focus-visible {
+  opacity: 1;
+}
+.session-menu .ant-menu-item-selected {
+  box-shadow: inset 2px 0 var(--forge-accent);
+}
+
+/* ---------- 顶部细进度条: 有请求在途时才出现, 不占布局 ---------- */
+.request-bar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 2px;
+  z-index: 1200;
+  overflow: hidden;
+  pointer-events: none;
+}
+.request-bar::after {
+  content: "";
+  display: block;
+  height: 100%;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--forge-accent), transparent);
+  animation: forge-slide 1.1s linear infinite;
+}
+@keyframes forge-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(350%);
+  }
+}
+
+/* ---------- 复制按钮: 浅灰, 悬浮才提亮 ---------- */
+.forge-copy .ant-typography-copy {
+  color: var(--forge-muted);
+  opacity: 0.72;
+  font-size: 11px;
+  transition:
+    opacity 0.12s,
+    color 0.12s;
+}
+.forge-copy .ant-typography-copy:hover {
+  opacity: 1;
+  color: var(--forge-text-soft);
+}
+
+/* ---------- 一轮跑完之后那排用量 ---------- */
+.metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  border: 1px solid var(--forge-border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  color: var(--forge-muted);
+  font-size: 9px;
+  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.metric i {
+  font-style: normal;
+  opacity: 0.68;
+}
+.metric.total {
+  color: var(--forge-text);
+  font-weight: 600;
+  border-color: color-mix(in srgb, var(--forge-accent) 42%, var(--forge-border));
+  background: color-mix(in srgb, var(--forge-accent) 10%, transparent);
+}
+
+/* ---------- 处理过程 ---------- */
+.run-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--forge-accent);
+}
+.run-dot.done {
+  background: color-mix(in srgb, var(--forge-muted) 60%, transparent);
+}
+.run-dot.failed {
+  background: var(--forge-danger);
+}
+.run-dot.cancelled {
+  background: var(--forge-warning);
+}
+.run-dot.running {
+  animation: forge-pulse 1.4s infinite;
+}
+@keyframes forge-pulse {
+  50% {
+    opacity: 0.25;
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--forge-accent) 15%, transparent);
+  }
+}
+.run-meta {
+  padding-top: 7px;
+  border-top: 1px solid var(--forge-border);
+}
+
+/* ---------- 工具活动: 收起时一行浅色文字 ---------- */
+.tool-caret {
+  transform: rotate(-90deg);
+  transition: transform 0.15s;
+}
+.tool-caret.open {
+  transform: rotate(0);
+}
+.tool-body {
+  margin: 6px 0 2px 17px;
+  padding: 6px 0 4px 12px;
+  border-left: 2px solid var(--forge-border);
+  display: grid;
+  gap: 5px;
+}
+/* 一次调用一行: 工具 · 目标 · 状态 · 耗时。说明只在真的有话说时才多占一行。 */
+.call-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+}
+.call-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font:
+    11px/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.call-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 11px;
+}
+/* 正在跑的那一行自己会呼吸, 不另外摆一个"执行中"标记。 */
+.tool-running {
+  animation: forge-blink 1.4s ease-in-out infinite;
+}
+@keyframes forge-blink {
+  50% {
+    opacity: 0.4;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool-running,
+  .run-dot.running,
+  .request-bar::after {
+    animation: none;
+  }
+}
+
+/* ---------- Markdown 正文 ---------- */
+.forge-md {
+  font-size: 13px;
+  line-height: 1.72;
+  overflow-wrap: anywhere;
+}
+.forge-md > :first-child {
+  margin-top: 0;
+}
+.forge-md > :last-child {
+  margin-bottom: 0;
+}
+.forge-md h1,
+.forge-md h2,
+.forge-md h3,
+.forge-md h4 {
+  line-height: 1.3;
+  margin: 1.25em 0 0.55em;
+}
+.forge-md h1 {
+  font-size: 1.5em;
+}
+.forge-md h2 {
+  font-size: 1.28em;
+}
+.forge-md h3 {
+  font-size: 1.12em;
+}
+.forge-md h4 {
+  font-size: 1em;
+}
+.forge-md p {
+  margin: 0.65em 0;
+}
+.forge-md ul,
+.forge-md ol {
+  margin: 0.65em 0;
+  padding-left: 1.6em;
+}
+.forge-md li {
+  margin: 0.28em 0;
+}
+.forge-md blockquote {
+  margin: 0.75em 0;
+  padding: 0.2em 0 0.2em 12px;
+  border-inline-start: 3px solid color-mix(in srgb, var(--forge-accent) 50%, var(--forge-border));
+  color: var(--forge-muted);
+}
+.forge-md :not(pre) > code {
+  padding: 0.14em 0.4em;
+  border-radius: 5px;
+  background: var(--forge-code-inline);
+  color: var(--forge-text);
+  font:
+    0.92em ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.forge-md figure {
+  margin: 0.85em 0;
+  border: 1px solid var(--forge-border);
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--forge-code-bg);
+}
+.forge-md figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 2px 11px;
+  border-bottom: 1px solid var(--forge-border);
+  color: var(--forge-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.forge-md figure pre {
+  margin: 0;
+  padding: 10px 12px 12px;
+  overflow-x: auto;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.forge-md figure pre code {
+  font:
+    12px/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--forge-text);
+}
+
+/* ---------- 输入框 ---------- */
+.composer {
+  border: 1px solid color-mix(in srgb, var(--forge-accent) 34%, var(--forge-border));
+  background: var(--forge-raise);
+  border-radius: 13px;
+  box-shadow: 0 16px 45px var(--forge-shadow);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--forge-accent) 62%, var(--forge-border));
+  box-shadow:
+    0 16px 45px var(--forge-shadow),
+    0 0 0 3px color-mix(in srgb, var(--forge-accent) 15%, transparent);
+}
+.composer.offline {
+  border-color: color-mix(in srgb, var(--forge-danger) 45%, var(--forge-border));
+}
+.composer-bar {
+  padding: 7px 9px;
+  border-top: 1px solid var(--forge-border);
+}
