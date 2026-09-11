@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
+from forgecli.application.agent_loop.rules import builtin_rules
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.agent_turn import AgentTurnService
 from forgecli.application.agent_turn.cancellation import TurnCancelSource
@@ -234,12 +235,13 @@ class ProjectRuntime:
             return BuiltinAgentLoop(
                 self.llm.gateway,
                 self.llm.usage_meter,
+                # 每轮现建一份规则表 (ADR-0049): 好几条规则带着本轮的计数器. 读字段
+                # 而不是闭包住一个实例: /compact 走服务那一份, 自动压缩走循环这一份,
+                # 换模型之后两边必须还是同一个 (ADR-0048 决策 1).
+                rules=builtin_rules(context=self._window_manager),
                 cancel_token_factory=self.cancel_source.current,
                 model_transport_policy=ModelTransportPolicy(),
                 event_bus=self.event_bus,
-                # 读字段而不是闭包住一个实例: /compact 走服务那一份, 自动压缩走循环
-                # 这一份, 换模型之后两边必须还是同一个 (ADR-0048 决策 1).
-                context=self._window_manager,
                 workspace_snapshot_provider=OsWorkspaceSnapshotProvider(
                     lambda: self.tools.context_factory().workspace_roots
                 ),

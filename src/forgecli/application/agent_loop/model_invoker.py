@@ -78,12 +78,12 @@ class AgentModelInvoker:
         """流式中断时已累积的部分回答文本 (无则为 None)."""
         return self._partial_answer
 
-    def invoke(self, 
-             request: ModelRequest, 
-             transport: ModelTransportMode,
-        ) -> ModelOutcome | LoopStop:
-        """根据llm调用方式 走网关的不同接口
-        """
+    def invoke(
+        self,
+        request: ModelRequest,
+        transport: ModelTransportMode,
+    ) -> ModelOutcome | LoopStop:
+        """根据llm调用方式 走网关的不同接口"""
         if transport is ModelTransportMode.COMPLETE:
             return self._complete(request)
         return self._stream(request)

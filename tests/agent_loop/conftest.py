@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
+from forgecli.application.agent_loop.rules import builtin_rules
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.context.window_manager import WindowManager
 from forgecli.application.llm.transport_policy import ModelTransportPolicy
@@ -54,9 +55,9 @@ class Harness:
         return BuiltinAgentLoop(
             self.gateway,
             FakeMeter(),  # type: ignore[arg-type]
+            rules=builtin_rules(context=self.context),
             model_transport_policy=ModelTransportPolicy(),
             event_bus=self.bus,
-            context=self.context,
             workspace_snapshot_provider=self.workspace,
         )
 

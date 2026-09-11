@@ -37,6 +37,8 @@ OPEN_EXTENSION_POINTS: frozenset[str] = frozenset(
     {
         "Tool",
         "CapabilityAnalyzer",
+        # 主循环的规则 (ADR-0049 决策 2): 每条判断一个实现, 加一条不改循环.
+        "LoopRule",
     }
 )
 
