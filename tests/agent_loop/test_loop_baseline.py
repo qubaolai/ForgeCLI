@@ -521,3 +521,13 @@ def test_observe_before_start_raises(harness):
     h = harness()
     with pytest.raises(RuntimeError):
         h.loop().observe(LoopObservation(content="x"))
+
+
+def test_observe_after_finished_raises(harness):
+    import pytest
+
+    h = harness(Reply(text="ok"))
+    stop, loop = h.run(loop_input())
+    assert stop.reason is LoopStopReason.FINAL_ANSWER
+    with pytest.raises(RuntimeError):
+        loop.observe(LoopObservation(content="x"))

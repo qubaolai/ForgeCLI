@@ -81,6 +81,7 @@ from forgecli.domain.agent.actions import (
     ToolRequest,
     ToolRequestAction,
 )
+from forgecli.domain.agent.phase import LoopPhase
 from forgecli.domain.agent.state import AssembledContext, LoopInput
 from forgecli.domain.agent.stop import LoopStopReason
 from forgecli.domain.context.budget import ContextBudget
@@ -160,8 +161,7 @@ class BuiltinAgentLoop:
             on_usage=self._usage_drafts_sink,
             timer=timer,
         )
-        self._started = False
-        self._finished = False
+        self._phase = LoopPhase.NOT_STARTED
         self._transport_policy = model_transport_policy
         self._turn_id: str | None = None
         self._usage_drafts: list[UsageRecordDraft] = []
@@ -204,9 +204,8 @@ class BuiltinAgentLoop:
     # ---- AgentLoop 端口 ----
 
     def start(self, loop_input: LoopInput) -> LoopStepResult:
-        if self._started:
+        if self._phase is not LoopPhase.NOT_STARTED:
             raise RuntimeError("BuiltinAgentLoop 每轮只能 start 一次 (每 turn 新实例)")
-        self._started = True
         self._turn_id = loop_input.turn_id
         self._session_id = loop_input.session_id
         self._window = Window(messages=loop_input.context.initial_window)
@@ -249,15 +248,16 @@ class BuiltinAgentLoop:
         return self._advance()
 
     def observe(self, observation: LoopObservation) -> LoopStepResult:
-        if not self._started:
-            raise RuntimeError("BuiltinAgentLoop 未 start, 不接受 observe")
-        if self._finished:
-            return self._stop(LoopStopReason.FINAL_ANSWER, None)
-        if self._dispatched is None:
-            # 上一步产出的是 AnswerAction: 驱动方确认送达后本轮就结束.
-            self._finished = True
-            return self._stop(LoopStopReason.FINAL_ANSWER, None)
-        return self._observe_tool(observation)
+        match self._phase:
+            case LoopPhase.NOT_STARTED:
+                raise RuntimeError("BuiltinAgentLoop 未 start, 不接受 observe")
+            case LoopPhase.FINISHED:
+                raise RuntimeError("BuiltinAgentLoop 已结束, 不接受 observe")
+            case LoopPhase.AWAITING_ANSWER_ACK:
+                # 上一步产出的是 AnswerAction: 驱动方确认送达后本轮就结束.
+                return self._stop(LoopStopReason.FINAL_ANSWER, None)
+            case LoopPhase.AWAITING_TOOL_RESULT:
+                return self._observe_tool(observation)
 
     # ---- 驱动方读取 ----
 
@@ -368,6 +368,7 @@ class BuiltinAgentLoop:
             )
         if isinstance(outcome, LoopStop):
             # ModelCaller 已经自己收过尾 (中断 / 取消), 这里只补 turn 终态.
+            self._phase = LoopPhase.FINISHED
             self._turn_finished(outcome.reason)
             return outcome
         # 模型生成期间也可能有人改了工作区. 如果这次本来要直接回答, 不能把一个基于旧
@@ -428,6 +429,7 @@ class BuiltinAgentLoop:
             # 重试) 挤成同一种东西。派发本身不是一次需要解释的决策。
             return self._dispatch_next(reason="")
         self._dispatched = None
+        self._phase = LoopPhase.AWAITING_ANSWER_ACK
         self._events.next_step()
         return self._decision("模型已产出最终回答", AnswerAction(text=outcome.text))
 
@@ -440,6 +442,7 @@ class BuiltinAgentLoop:
         if self._progress.is_repeat(call):
             return self._reject_repeat(call)
         self._dispatched = call
+        self._phase = LoopPhase.AWAITING_TOOL_RESULT
         self._tool_calls += 1
         update_run_context(step=self._events.next_step(), tool=call.name)
         # 入参**原样**写进日志, 与发给终端的 scrub_arguments 是两条路: 屏幕上要防的是
@@ -825,7 +828,7 @@ class BuiltinAgentLoop:
             steps=self._events.step,
             elapsed_ms=self._events.elapsed_ms(),
         )
-        self._finished = True
+        self._phase = LoopPhase.FINISHED
         self._turn_finished(reason, detail=message or "")
         return LoopStop(reason, message=message)
 
