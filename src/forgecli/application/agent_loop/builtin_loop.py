@@ -44,16 +44,18 @@ from forgecli.application.agent_loop.model_invoker import (
     AgentModelInvoker,
     ModelOutcome,
 )
-from forgecli.application.agent_loop.progress import ProgressGuard
 from forgecli.application.agent_loop.rule import LoopRule, LoopView
 from forgecli.application.agent_loop.rule_table import RuleTable
 from forgecli.application.agent_loop.run_events import LoopEventPublisher
-from forgecli.application.agent_loop.transcript import (
-    labelled,
-    render_call,
-    transcript_view,
+from forgecli.application.agent_loop.transcript import labelled, transcript_view
+from forgecli.application.agent_loop.verdicts import (
+    CloseTools,
+    Deny,
+    Inject,
+    Reask,
+    Replace,
+    Rewrite,
 )
-from forgecli.application.agent_loop.verdicts import Reask, Replace, Rewrite
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.llm.error_hints import actionable_message
 from forgecli.application.llm.gateway.errors import (
@@ -75,7 +77,6 @@ from forgecli.domain.agent.actions import (
     LoopObservation,
     LoopStepResult,
     LoopStop,
-    ObservationDisposition,
     ToolRequest,
     ToolRequestAction,
 )
@@ -140,8 +141,6 @@ class BuiltinAgentLoop:
             timer=timer,
         )
         self._rules = RuleTable(rules, events=self._events)
-        # 第 3 步搬进规则. 暂留.
-        self._progress = ProgressGuard()
         self._phase = LoopPhase.NOT_STARTED
         self._turn_id: str | None = None
         self._session_id = ""
@@ -165,6 +164,9 @@ class BuiltinAgentLoop:
         # 模型一次要了多个工具时的等待队列, 以及正在等 observation 的那一个.
         self._pending_calls: list[ToolCall] = []
         self._dispatched: ToolCall | None = None
+        # 规则在一批工具还没排空时要求追加的消息. 攒着, 整批回填完再写: 插在两条
+        # 工具结果中间会打断配对的连续区, 供应商会拒.
+        self._deferred: list[Inject] = []
         self._model_calls = 0
         self._tool_calls = 0
 
@@ -401,8 +403,11 @@ class BuiltinAgentLoop:
         # 在运行, 因此这里发现的变化明确归为 external (第 4 步搬进规则).
         self._check_workspace_changes(WorkspaceChangeSource.EXTERNAL)
         call = self._pending_calls.pop(0)
-        if self._progress.is_repeat(call):
-            return self._reject_repeat(call)
+        verdict = self._rules.before_dispatch(call, self._view())
+        if isinstance(verdict, Deny):
+            return self._deny(call, verdict)
+        if isinstance(verdict, LoopStop):
+            return self._stop(verdict)
         self._dispatched = call
         self._phase = LoopPhase.AWAITING_TOOL_RESULT
         self._tool_calls += 1
@@ -428,29 +433,28 @@ class BuiltinAgentLoop:
             ),
         )
 
-    def _reject_repeat(self, call: ToolCall) -> LoopStepResult:
-        """同样的调用已经做过了: 不再执行, 直接把这个事实回填给模型.
+    def _deny(self, call: ToolCall, verdict: Deny) -> LoopStepResult:
+        """规则挡下了这一个调用: 不执行, 把规则给的那段文字当它的工具结果回填.
 
-        回填而不是静默跳过, 也不是直接停止本轮: 模型必须知道"你在重复", 否则它只会
-        原样再要一次. 这条消息进 transcript, 下一次模型调用就看得到.
+        回填而不是静默跳过, 也不是直接停止本轮: 模型必须知道这个调用怎么了, 否则它
+        只会原样再要一次. 这条消息进 transcript, 下一次模型调用就看得到.
         """
-        notice = self._progress.repeat_notice(render_call(call))
         self._append(
             ChatMessage(
                 role=MessageRole.TOOL,
                 content=(
                     ToolResultBlock(
                         tool_call_id=call.tool_call_id,
-                        content=notice,
+                        content=verdict.notice,
                         is_error=True,
                     ),
                 ),
             ),
         )
-        self._events.tool_rejected(call, notice=notice, code="repeated_call")
+        self._events.tool_rejected(call, notice=verdict.notice, code=verdict.code)
         self._dispatched = None
         if self._pending_calls:
-            return self._dispatch_next(reason="跳过重复调用, 派发下一个")
+            return self._dispatch_next(reason="跳过被拒的调用, 派发下一个")
         return self._advance()
 
     def _observe_tool(self, observation: LoopObservation) -> LoopStepResult:
@@ -492,27 +496,20 @@ class BuiltinAgentLoop:
         # 这里不发 TOOL_COMPLETED: 执行结果的权威事实在协调器那边 (状态, 耗时, 退出码,
         # 是否改了文件). 循环只拿到一段回填文本, 用它冒充执行结论会让终端显示的
         # "完成"与真正发生的事脱节.
-        self._progress.track(observation)
-        if observation.disposition is ObservationDisposition.AWAIT_USER_DECISION:
-            # 工具交出了需要人裁决的东西, 本轮到此为止 (ADR-0023 决策 1).
-            #
-            # 不走 _close_tools: 那条路是"工具没了但你继续说", 而这里模型已经把要说
-            # 的说完了 —— 它交出了一份计划, 正等着回话.
-            return self._stop(LoopStop(LoopStopReason.WAIT_PLAN_REVIEW))
-        halt = self._progress.should_close_tools(observation)
-        if halt is not None:
-            return self._close_tools(halt)
+        verdict = self._rules.after_observe(call, observation, self._view())
+        if isinstance(verdict, LoopStop):
+            return self._stop(verdict)
+        if isinstance(verdict, CloseTools):
+            return self._close_tools(verdict.notice)
+        if isinstance(verdict, Inject):
+            self._deferred.append(verdict)
         if self._pending_calls:
             return self._dispatch_next(reason="继续派发同一批中的下一个工具调用")
-        # 提醒只在整批工具结果都回填完之后追加. 插在两条 tool result 中间会打断
-        # "assistant 的 tool_calls -> 配对的 tool result"这段连续区, 供应商会拒.
-        nudge = self._progress.barren_nudge()
-        if nudge is not None:
-            notice, summary = nudge
-            self._append(
-                ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)),
-            )
-            self._events.decision(summary)
+        # 整批工具结果都回填完了, 攒着的消息现在才能写.
+        for inject in self._deferred:
+            self._append(*inject.messages)
+            self._events.decision(inject.summary)
+        self._deferred = []
         return self._advance()
 
     def _close_tools(self, notice: str) -> LoopStepResult:
@@ -527,6 +524,7 @@ class BuiltinAgentLoop:
             abandoned=[call.name for call in self._pending_calls],
         )
         self._abandon_pending(notice)
+        self._deferred = []
         self._tools = ()
         self._tools_closed = True
         self._dispatched = None

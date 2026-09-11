@@ -7,12 +7,16 @@
 from __future__ import annotations
 
 from forgecli.application.agent_loop.rule import LoopRule
+from forgecli.application.agent_loop.rules.barren_streak import BarrenStreakRule
 from forgecli.application.agent_loop.rules.context_fit import ContextFitRule
 from forgecli.application.agent_loop.rules.empty_response import EmptyResponseRule
 from forgecli.application.agent_loop.rules.malformed_output import (
     MalformedOutputRule,
 )
 from forgecli.application.agent_loop.rules.model_budget import ModelBudgetRule
+from forgecli.application.agent_loop.rules.plan_review import PlanReviewRule
+from forgecli.application.agent_loop.rules.refusal import RefusalRule
+from forgecli.application.agent_loop.rules.repeat_call import RepeatCallRule
 from forgecli.application.agent_loop.rules.tools_closed import ToolsClosedRule
 from forgecli.application.context.window_manager import WindowManager
 
@@ -22,14 +26,24 @@ __all__ = ["builtin_rules"]
 def builtin_rules(*, context: WindowManager | None) -> tuple[LoopRule, ...]:
     """每轮现建: 好几条规则带着本轮的计数器."""
     return (
+        # ---- 调模型之前 ----
         # 预算先于压缩: 该停了就别再为压缩花一次模型调用 (它自己声明了这条约束).
         ModelBudgetRule(),
         # 压缩紧跟预算: 调模型之前最后一道, 看到的是这一轮要发出去的窗口.
         ContextFitRule(context),
-        # 模型回来之后, 先看它有没有说话.
+        # ---- 模型回来之后 ----
+        # 先看它有没有说话.
         EmptyResponseRule(),
         # 再看它说的话能不能用. 排在目录已收之前, 理由写在它的约束里.
         MalformedOutputRule(),
         # 最后才问"目录已收你还要工具": 前面两条都过了, 这才是模型自己的选择.
         ToolsClosedRule(),
+        # ---- 派发一个工具之前 ----
+        RepeatCallRule(),
+        # ---- 拿到工具结果之后 ----
+        # 计划评审先于收工具, 理由写在它的约束里.
+        PlanReviewRule(),
+        RefusalRule(),
+        # 空转提醒最后: 前面两条任一命中, 这一条就不用再数了.
+        BarrenStreakRule(),
     )

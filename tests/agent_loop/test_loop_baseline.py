@@ -531,3 +531,34 @@ def test_observe_after_finished_raises(harness):
     assert stop.reason is LoopStopReason.FINAL_ANSWER
     with pytest.raises(RuntimeError):
         loop.observe(LoopObservation(content="x"))
+
+
+def test_nudge_inside_a_batch_waits_for_the_batch(harness):
+    """三个空结果在同一批里: 提醒必须落在第三条工具结果之后, 不能插在中间."""
+    h = harness(
+        Reply(
+            tool_calls=(
+                call("fs_read", "c1", path="a"),
+                call("fs_read", "c2", path="b"),
+                call("fs_read", "c3", path="c"),
+            )
+        ),
+        Reply(text="没找到"),
+    )
+
+    def empty(action: ToolRequestAction) -> LoopObservation:
+        return LoopObservation(content="", source=ObservationSource.TOOL)
+
+    stop, loop = h.run(loop_input(), on_tool=empty)
+    assert stop.reason is LoopStopReason.FINAL_ANSWER
+    roles = [m.role for m in loop.window]
+    # user, assistant(tool_calls), tool, tool, tool, user(提醒), assistant
+    assert roles == [
+        MessageRole.USER,
+        MessageRole.ASSISTANT,
+        MessageRole.TOOL,
+        MessageRole.TOOL,
+        MessageRole.TOOL,
+        MessageRole.USER,
+        MessageRole.ASSISTANT,
+    ]
