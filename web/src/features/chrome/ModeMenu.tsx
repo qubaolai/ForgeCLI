@@ -1,7 +1,7 @@
 /** 姿态菜单: 隔离与审批两个轴, 一次点一个。 */
 
 import { Button, Dropdown, Flex, Typography } from "antd";
-import { DownOutlined } from "@ant-design/icons";
+import { SettingOutlined } from "@ant-design/icons";
 import { approvalOptions, sandboxOptions, stanceLabel } from "@/shared/lib/stance";
 import type { Stance } from "@/shared/lib/stance";
 
@@ -56,7 +56,7 @@ export function ModeMenu({
     >
       <Button disabled={disabled}>
         {stanceLabel(value)}
-        <DownOutlined />
+        <SettingOutlined aria-hidden="true" />
       </Button>
     </Dropdown>
   );

@@ -10,6 +10,203 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  overflow: hidden;
+}
+
+html {
+  background: var(--forge-page, var(--forge-raise));
+}
+
+:root {
+  --forge-ui-font-size: clamp(14px, calc(13px + 0.25vw), 16px);
+  --forge-ui-control-height: clamp(38px, calc(36px + 0.45vw), 42px);
+  --forge-ui-control-height-sm: clamp(33px, calc(32px + 0.3vw), 37px);
+}
+
+body {
+  color: var(--forge-text);
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  font-size: var(--forge-ui-font-size);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.ant-btn:not(.ant-btn-icon-only) {
+  min-height: var(--forge-ui-control-height);
+  height: auto;
+  padding-block: 6px;
+  font-size: var(--forge-ui-font-size);
+}
+
+.ant-btn.ant-btn-sm:not(.ant-btn-icon-only) {
+  min-height: var(--forge-ui-control-height-sm);
+  font-size: clamp(12px, calc(11.5px + 0.2vw), 14px);
+}
+
+.ant-btn.ant-btn-icon-only {
+  min-width: var(--forge-ui-control-height);
+  min-height: var(--forge-ui-control-height);
+}
+
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-select-single:not(.ant-select-customize-input) .ant-select-selector {
+  min-height: var(--forge-ui-control-height);
+  font-size: var(--forge-ui-font-size);
+}
+
+.ant-menu,
+.ant-menu-item,
+.ant-menu-submenu-title,
+.ant-card,
+.ant-form-item-label > label {
+  font-size: var(--forge-ui-font-size);
+}
+
+::selection {
+  color: var(--forge-text);
+  background: color-mix(in srgb, var(--forge-accent) 24%, transparent);
+}
+
+*:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--forge-accent) 72%, transparent);
+  outline-offset: 2px;
+}
+
+/* ---------- 工作区外壳 ---------- */
+.forge-shell {
+  background: var(--forge-page, var(--forge-raise));
+}
+
+.forge-shell-splitter {
+  overflow: hidden;
+}
+
+.forge-shell-splitter > .ant-splitter-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.forge-shell-splitter > .ant-splitter-bar {
+  flex: 0 0 8px;
+  background: transparent;
+}
+
+.forge-shell-splitter > .ant-splitter-bar .ant-splitter-bar-dragger {
+  width: 2px;
+  border-radius: 999px;
+  background: var(--forge-border);
+  opacity: 0.55;
+  transition:
+    width 0.15s,
+    background 0.15s,
+    opacity 0.15s;
+}
+
+.forge-shell-splitter > .ant-splitter-bar:hover .ant-splitter-bar-dragger,
+.forge-shell-splitter > .ant-splitter-bar .ant-splitter-bar-dragger-active {
+  width: 4px;
+  background: var(--forge-accent);
+  opacity: 1;
+}
+
+.forge-sidebar-panel,
+.forge-main-panel {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.forge-main-layout,
+.forge-content,
+.forge-conversation-shell {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.forge-main-layout {
+  display: flex;
+  flex-direction: column;
+}
+
+.forge-content {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.forge-workspace-splitter,
+.forge-workspace-splitter .ant-splitter-panel {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.forge-content {
+  background: color-mix(in srgb, var(--forge-raise) 72%, transparent);
+}
+
+.forge-topbar {
+  position: relative;
+  z-index: 20;
+  box-shadow: 0 1px 0 var(--forge-border);
+}
+
+.forge-topbar-inner {
+  min-width: 0;
+}
+
+.forge-brand {
+  flex: 0 0 auto;
+}
+
+.forge-project-trigger {
+  min-width: 0;
+  max-width: min(34vw, 360px);
+  color: var(--forge-text-soft) !important;
+}
+
+.forge-project-trigger > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forge-project-trigger:hover {
+  background: color-mix(in srgb, var(--forge-accent) 9%, transparent) !important;
+}
+
+.forge-connection {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding-inline: 4px;
+  white-space: nowrap;
+}
+
+.forge-connection .ant-badge-status-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.forge-topbar-actions .ant-btn {
+  min-width: 32px;
 }
 
 /* ---------- 左栏 ----------
@@ -20,6 +217,376 @@ body,
   min-height: 0;
   height: 100%;
 }
+
+.forge-session-sidebar {
+  height: 100%;
+  background: color-mix(in srgb, var(--forge-raise) 82%, transparent) !important;
+  border-inline-end: 0 !important;
+  box-shadow: none !important;
+  flex: 0 0 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  overflow-x: hidden;
+}
+
+.forge-sidebar-brand {
+  min-height: 56px;
+  padding: 0 16px;
+  border-bottom: 0;
+}
+
+.forge-sidebar-projects {
+  margin: 8px 10px 0;
+  padding: 6px 0 8px;
+}
+
+.forge-sidebar-section-heading {
+  min-height: 34px;
+  padding: 0 8px;
+}
+
+.forge-sidebar-project-list {
+  display: grid;
+  gap: 4px;
+}
+
+.forge-sidebar-project-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px 7px 6px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--forge-text-soft);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.forge-sidebar-project-row .ant-typography {
+  min-width: 0;
+  flex: 1;
+}
+
+.forge-sidebar-project-row:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--forge-border) 32%, transparent);
+}
+
+.forge-sidebar-project-row.current {
+  color: var(--forge-text-soft);
+  background: transparent;
+  font-weight: inherit;
+}
+
+.forge-sidebar-project-row:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.forge-sidebar-new-session {
+  padding: 14px 14px 12px;
+}
+
+.forge-sidebar-new-session .ant-btn {
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--forge-accent) 12%, transparent);
+}
+
+.forge-sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.forge-sidebar-project-heading {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border-radius: 8px;
+}
+
+.forge-sidebar-project-heading .forge-sidebar-project-row {
+  flex: 1;
+}
+
+.forge-sidebar-project-toggle {
+  display: grid;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: var(--forge-muted);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+
+.forge-sidebar-project-toggle:hover {
+  color: var(--forge-accent);
+  background: color-mix(in srgb, var(--forge-accent) 10%, transparent);
+}
+
+.forge-sidebar-project-toggle .anticon {
+  color: var(--forge-muted);
+  font-size: 18px;
+}
+
+.forge-project-session-group {
+  margin: 2px 0 7px 22px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.forge-project-session-group .session-menu {
+  background: transparent;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.forge-session-loading,
+.forge-session-empty {
+  display: block;
+  padding: 8px 10px 8px;
+  font-size: 12px;
+}
+
+.forge-load-more {
+  width: 100%;
+  margin-top: 2px;
+  color: var(--forge-muted) !important;
+  text-align: start;
+}
+
+.forge-load-more:hover {
+  color: var(--forge-text-soft) !important;
+  background: transparent !important;
+}
+
+.forge-sidebar-heading {
+  min-height: 44px;
+  border-bottom: 1px solid var(--forge-border);
+}
+
+.session-menu .ant-menu-item {
+  min-height: 48px;
+  margin: 2px 0 !important;
+  padding: 7px 8px !important;
+  border-radius: 8px;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    transform 0.15s;
+}
+
+.session-menu .ant-menu-item:hover,
+.session-menu .ant-menu-item-active {
+  transform: none;
+  background: transparent !important;
+}
+
+.forge-workspace-info {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 10px 14px !important;
+  background: color-mix(in srgb, var(--forge-accent) 4%, transparent);
+}
+
+.forge-workspace-info .ant-typography:not(.ant-typography-secondary) {
+  color: var(--forge-text-soft);
+}
+
+.forge-plan-shell {
+  height: 100%;
+  min-width: 0;
+  border-inline-start: 1px solid var(--forge-border);
+  background: color-mix(in srgb, var(--forge-raise) 82%, transparent);
+}
+
+.forge-plan-dock {
+  background: transparent !important;
+}
+
+.forge-plan-dock .ant-card-head {
+  min-height: 52px;
+  border-bottom-color: var(--forge-border);
+}
+
+.forge-plan-dock .ant-card-body {
+  padding: 18px;
+}
+
+/* ---------- 对话区 ---------- */
+.conversation-timeline {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
+  background:
+    radial-gradient(
+      circle at 50% -20%,
+      color-mix(in srgb, var(--forge-accent) 5%, transparent),
+      transparent 42%
+    ),
+    transparent;
+}
+
+.conversation-content {
+  padding-bottom: 8px;
+}
+
+.conversation-empty {
+  min-height: min(50vh, 420px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.conversation-empty .ant-result-title {
+  margin-top: 14px;
+  font-size: 20px;
+}
+
+.message-frame {
+  position: relative;
+  padding: 4px 0;
+}
+
+.message-frame .message-avatar {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--forge-raise) 84%, transparent);
+}
+
+.message-frame .message-author {
+  letter-spacing: 0.01em;
+}
+
+.message-user .message-avatar {
+  border: 1px solid var(--forge-border);
+}
+
+.message-user .ant-typography-paragraph {
+  padding: 10px 13px;
+  border: 1px solid var(--forge-border);
+  border-radius: 4px 12px 12px 12px;
+  background: color-mix(in srgb, var(--forge-fill, var(--forge-border)) 26%, transparent);
+}
+
+.message-assistant .forge-md {
+  padding-top: 1px;
+}
+
+.message-frame .forge-copy {
+  min-height: 24px;
+}
+
+/* ---------- 输入区 ---------- */
+.forge-composer-wrap {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 0 clamp(18px, 3vw, 44px) 16px;
+}
+
+.forge-composer-content {
+  position: relative;
+}
+
+.composer {
+  overflow: hidden;
+  border: 1px solid var(--forge-border);
+  border-radius: 16px;
+  background: var(--forge-raise);
+  box-shadow: 0 10px 34px var(--forge-shadow);
+  transition:
+    border-color 0.16s,
+    box-shadow 0.16s;
+}
+
+.composer.focused {
+  border-color: var(--forge-accent);
+  box-shadow:
+    0 10px 34px var(--forge-shadow),
+    0 0 0 3px color-mix(in srgb, var(--forge-accent) 18%, transparent),
+    0 0 26px color-mix(in srgb, var(--forge-accent) 15%, transparent);
+}
+
+.composer.offline {
+  border-color: color-mix(in srgb, var(--forge-danger) 45%, var(--forge-border));
+}
+
+.composer-project {
+  min-width: 0;
+  min-height: 38px;
+  padding: 7px 15px;
+  border-bottom: 1px solid var(--forge-border);
+  background: color-mix(in srgb, var(--forge-accent) 5%, var(--forge-raise));
+}
+
+.composer-project .anticon {
+  flex: 0 0 auto;
+  color: var(--forge-muted);
+}
+
+.composer-project .ant-typography:last-child {
+  min-width: 0;
+}
+
+.forge-composer-input.ant-input,
+.forge-composer-input.ant-input:hover,
+.forge-composer-input.ant-input:focus,
+.forge-composer-input.ant-input:focus-visible {
+  padding: 15px 17px 13px;
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  line-height: 1.6;
+}
+
+.composer-bar {
+  min-height: 48px;
+  padding: 7px 9px;
+  border-top: 1px solid var(--forge-border);
+}
+
+.composer-menus {
+  min-width: 0;
+}
+
+.composer-menus .ant-btn {
+  max-width: 100%;
+  background: transparent;
+  box-shadow: none;
+}
+
+.composer-action .ant-btn {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 10px;
+  font-size: 16px;
+}
+
+.composer-action {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+}
 /* 删除按钮平时不在: 一列会话里最显眼的东西不该是删除。 */
 .session-delete {
   opacity: 0;
@@ -29,8 +596,20 @@ body,
 .session-delete:focus-visible {
   opacity: 1;
 }
-.session-menu .ant-menu-item-selected {
-  box-shadow: inset 2px 0 var(--forge-accent);
+.session-menu .ant-menu-item-selected,
+.session-menu .ant-menu-item-selected:hover {
+  color: var(--forge-text) !important;
+  background: color-mix(in srgb, var(--forge-border) 52%, transparent) !important;
+  box-shadow: none;
+  border-radius: 9px;
+}
+
+.session-menu .ant-menu-item-selected .ant-typography {
+  color: inherit;
+}
+
+.session-menu .ant-menu-item-selected .ant-typography-secondary {
+  color: var(--forge-muted);
 }
 
 /* ---------- 顶部细进度条: 有请求在途时才出现, 不占布局 ---------- */
@@ -191,6 +770,43 @@ body,
   line-height: 1.72;
   overflow-wrap: anywhere;
 }
+
+.forge-md a {
+  color: var(--forge-accent);
+}
+
+.forge-md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-spacing: 0;
+  border-collapse: separate;
+  border: 1px solid var(--forge-border);
+  border-radius: 8px;
+}
+
+.forge-md th,
+.forge-md td {
+  padding: 7px 10px;
+  border-inline-end: 1px solid var(--forge-border);
+  border-bottom: 1px solid var(--forge-border);
+  text-align: start;
+  white-space: nowrap;
+}
+
+.forge-md th {
+  background: color-mix(in srgb, var(--forge-border) 42%, transparent);
+  font-weight: 600;
+}
+
+.forge-md tr:last-child td {
+  border-bottom: 0;
+}
+
+.forge-md th:last-child,
+.forge-md td:last-child {
+  border-inline-end: 0;
+}
 .forge-md > :first-child {
   margin-top: 0;
 }
@@ -279,26 +895,306 @@ body,
   color: var(--forge-text);
 }
 
-/* ---------- 输入框 ---------- */
-.composer {
-  border: 1px solid color-mix(in srgb, var(--forge-accent) 34%, var(--forge-border));
-  background: var(--forge-raise);
-  border-radius: 13px;
-  box-shadow: 0 16px 45px var(--forge-shadow);
+/* ---------- 项目落地页 ---------- */
+.forge-landing {
+  background:
+    radial-gradient(
+      circle at 50% 0%,
+      color-mix(in srgb, var(--forge-accent) 11%, transparent),
+      transparent 42%
+    ),
+    var(--forge-page, var(--forge-raise));
+}
+
+.forge-landing-inner {
+  width: 100%;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.forge-landing-brand .ant-avatar {
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--forge-accent) 22%, transparent);
+}
+
+.forge-project-grid-wrap {
+  padding: 8px;
+  border: 1px solid var(--forge-border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--forge-raise) 74%, transparent);
+  box-shadow: 0 24px 70px var(--forge-shadow);
+}
+
+.forge-project-picker-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(280px, 0.92fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.forge-project-list-panel,
+.forge-add-project-panel {
+  min-width: 0;
+  border: 1px solid var(--forge-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--forge-raise) 76%, transparent);
+}
+
+.forge-project-list-panel {
+  min-height: 300px;
+  padding: 8px;
+}
+
+.forge-project-list-heading {
+  padding: 4px 8px 10px;
+  border-bottom: 1px solid var(--forge-border);
+}
+
+.forge-project-list {
+  display: grid;
+  gap: 2px;
+  padding-top: 6px;
+}
+
+.forge-project-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--forge-text);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
   transition:
+    background 0.15s,
     border-color 0.15s,
-    box-shadow 0.15s;
+    transform 0.15s;
 }
-.composer:focus-within {
-  border-color: color-mix(in srgb, var(--forge-accent) 62%, var(--forge-border));
-  box-shadow:
-    0 16px 45px var(--forge-shadow),
-    0 0 0 3px color-mix(in srgb, var(--forge-accent) 15%, transparent);
+
+.forge-project-row:hover:not(:disabled) {
+  border-color: var(--forge-border);
+  background: color-mix(in srgb, var(--forge-border) 34%, transparent);
+  transform: translateX(2px);
 }
-.composer.offline {
-  border-color: color-mix(in srgb, var(--forge-danger) 45%, var(--forge-border));
+
+.forge-project-row.current {
+  border-color: color-mix(in srgb, var(--forge-accent) 28%, var(--forge-border));
+  background: color-mix(in srgb, var(--forge-accent) 10%, transparent);
 }
-.composer-bar {
-  padding: 7px 9px;
+
+.forge-project-row.current .ant-avatar {
+  color: var(--forge-accent);
+  background: color-mix(in srgb, var(--forge-accent) 16%, transparent);
+}
+
+.forge-project-row:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.forge-project-row-copy {
+  min-width: 0;
+}
+
+.forge-project-row-copy .ant-typography {
+  display: block;
+  line-height: 1.5;
+}
+
+.forge-project-row-copy .ant-typography-secondary {
+  font-size: 11px;
+}
+
+.forge-project-row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  color: var(--forge-muted);
+  font-size: 12px;
+}
+
+.forge-project-row.current .forge-project-row-action {
+  color: var(--forge-accent);
+}
+
+.forge-project-list-empty {
+  display: grid;
+  min-height: 250px;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+}
+
+.forge-add-project-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px;
+}
+
+.forge-add-project-panel > .ant-flex:first-child .ant-avatar {
+  color: var(--forge-accent);
+  background: color-mix(in srgb, var(--forge-accent) 12%, transparent);
+}
+
+.forge-add-project-action {
+  padding-top: 16px;
   border-top: 1px solid var(--forge-border);
+}
+
+.forge-project-picker-modal .ant-modal-body {
+  padding-top: 4px;
+}
+
+/* ---------- 待处理事项 ---------- */
+.attention-card {
+  border-color: color-mix(in srgb, var(--forge-warning) 32%, var(--forge-border));
+}
+
+.attention-card .ant-card-head {
+  background: color-mix(in srgb, var(--forge-warning) 5%, transparent);
+}
+
+/* ---------- 设置 ---------- */
+.forge-settings-modal .ant-modal-content {
+  overflow: hidden;
+  border: 1px solid var(--forge-border);
+  box-shadow: 0 24px 80px var(--forge-shadow);
+}
+
+.forge-settings-modal .ant-modal {
+  max-width: calc(100vw - 24px);
+}
+
+.forge-settings-modal .ant-modal-header {
+  margin-bottom: 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--forge-border);
+}
+
+.forge-settings-modal .ant-modal-body {
+  padding-top: 18px;
+}
+
+.forge-settings-modal .ant-tabs-tab {
+  border-radius: 8px;
+}
+
+@media (max-width: 860px) {
+  .forge-project-trigger {
+    max-width: 25vw;
+  }
+
+  .forge-composer-wrap {
+    padding-inline: 18px;
+  }
+
+  .forge-plan-dock .ant-card-body {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 680px) {
+  .forge-topbar {
+    padding-inline: 8px !important;
+  }
+
+  .forge-brand .ant-typography {
+    display: none;
+  }
+
+  .forge-project-trigger {
+    max-width: 38vw;
+    padding-inline: 7px;
+  }
+
+  .forge-connection .ant-badge-status-text {
+    display: none;
+  }
+
+  .forge-connection {
+    padding-inline: 7px;
+  }
+
+  .forge-workspace-splitter .forge-plan-shell {
+    border-top: 1px solid var(--forge-border);
+    border-inline-start: 0;
+  }
+
+  .conversation-timeline {
+    padding: 18px 14px !important;
+  }
+
+  .forge-composer-wrap {
+    padding: 0 14px 12px;
+  }
+
+  .composer-bar {
+    align-items: stretch;
+  }
+
+  .composer-menus {
+    width: 100%;
+  }
+
+  .composer-menus > * {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .composer-menus .ant-btn {
+    width: 100%;
+  }
+
+  .composer-action {
+    margin-inline-start: auto;
+  }
+
+  .message-frame {
+    gap: 8px !important;
+  }
+
+  .message-frame .message-avatar {
+    width: 26px;
+    height: 26px;
+    font-size: 11px;
+  }
+
+  .forge-project-grid-wrap {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .forge-project-picker-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .forge-project-list-panel {
+    min-height: 0;
+  }
+
+  .forge-project-list-empty {
+    min-height: 160px;
+  }
+
+  .forge-landing-inner {
+    justify-content: flex-start;
+    padding: 28px 16px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-menu .ant-menu-item,
+  .forge-project-row,
+  .forge-sidebar-project-row,
+  .forge-copy .ant-typography-copy {
+    transition: none;
+  }
 }

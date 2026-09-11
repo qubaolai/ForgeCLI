@@ -7,7 +7,7 @@ import { Markdown } from "@/shared/ui/Markdown";
 import type { TranscriptEvent } from "@/types/session";
 
 /** 正文栏的最大宽度。输入区用同一个数, 两处边缘才对得齐。 */
-export const CONTENT_WIDTH = 860;
+export const CONTENT_WIDTH = 960;
 
 /** 一条消息的骨架: 头像 + 名字 + 正文 + 底部操作区。历史与本地轮次共用。 */
 export function MessageFrame({
@@ -23,10 +23,11 @@ export function MessageFrame({
   const { token } = theme.useToken();
   const assistant = role === "assistant";
   return (
-    <Flex gap={12} align="flex-start" style={{ width: "100%" }}>
+    <Flex gap={14} align="flex-start" className={`message-frame message-${role}`} style={{ width: "100%" }}>
       <Avatar
-        size={30}
+        size={32}
         shape="square"
+        className="message-avatar"
         style={{
           flex: "0 0 auto",
           fontSize: 12,
@@ -40,7 +41,9 @@ export function MessageFrame({
         {assistant ? "F" : "你"}
       </Avatar>
       <Flex vertical gap={4} style={{ flex: 1, minWidth: 0 }}>
-        <Typography.Text strong>{assistant ? "Forge" : "你"}</Typography.Text>
+        <Typography.Text strong className="message-author">
+          {assistant ? "Forge" : "你"}
+        </Typography.Text>
         {children}
         {footer}
       </Flex>

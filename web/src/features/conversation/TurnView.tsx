@@ -46,7 +46,7 @@ export function LocalTurnView({ turn, directory }: { turn: LocalTurn; directory:
   // 占位轮次没有本地用户文本（刷新页面后接上的 turn），用户消息已经在 transcript 里。
   const done = turn.status !== "running";
   return (
-    <Flex vertical gap={26}>
+    <Flex vertical gap={20}>
       {turn.userText && <UserMessage text={turn.userText} />}
       <MessageFrame
         role="assistant"

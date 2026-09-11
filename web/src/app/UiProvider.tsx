@@ -108,7 +108,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
       locale={zhCN}
       theme={{
         algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
-        token: { ...(dark ? DARK : LIGHT), borderRadius: 8, fontSize: 13 },
+        token: { ...(dark ? DARK : LIGHT), borderRadius: 8, fontSize: 14 },
         components: {
           Menu: { itemMarginInline: 8, itemMarginBlock: 2, itemPaddingInline: 10, itemBorderRadius: 8 },
           Collapse: { contentPadding: 0 },

@@ -48,6 +48,7 @@ export function QuestionCard({ prompt, onResolve }: { prompt: Prompt; onResolve:
 
   return (
     <Card
+      className="attention-card question-card"
       size="small"
       title="Forge · 需要你的意见"
       extra={<Tag color={sending ? "processing" : "gold"}>{sending ? "正在提交…" : "等待回答"}</Tag>}

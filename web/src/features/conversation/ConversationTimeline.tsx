@@ -33,13 +33,15 @@ export function ConversationTimeline({
 
   return (
     <div
+      className="conversation-timeline"
       ref={scrollRef}
       onScroll={onScroll}
-      style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "26px clamp(22px, 6vw, 80px)" }}
+      style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "22px clamp(18px, 3vw, 44px)" }}
     >
-      <div style={{ maxWidth: CONTENT_WIDTH, margin: "0 auto" }}>
+      <div className="conversation-content" style={{ maxWidth: CONTENT_WIDTH, margin: "0 auto" }}>
         {!transcript.length && !localTurns.length && (
           <Result
+            className="conversation-empty"
             icon={
               <Avatar size={46} shape="square" style={{ background: token.colorPrimary, fontSize: 23 }}>
                 F
@@ -49,8 +51,8 @@ export function ConversationTimeline({
             subTitle="描述你想理解、规划或修改的工程任务。"
           />
         )}
-        {/* 一条消息与下一条之间留 26px: 比段落间距大一档, 一眼能看出这是两个人在说话。 */}
-        <Flex vertical gap={26}>
+        {/* 一条消息与下一条之间留 20px: 保持轮次分明, 同时让更多内容留在首屏。 */}
+        <Flex vertical gap={20}>
           {transcript.map((item) => {
             const run =
               item.payload.role === "assistant" ? restoredByTurn.get(item.payload.turn_id ?? "") : undefined;

@@ -103,6 +103,7 @@ export function ApprovalCard({
 
   return (
     <Card
+      className="attention-card approval-card"
       size="small"
       title={
         <Space>

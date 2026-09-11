@@ -34,11 +34,11 @@ export function useProjectSwitch({
     }
   }
 
-  async function trust() {
+  async function trust(path: string) {
     clearTimeline();
     closePicker();
     try {
-      await projects.trust(projects.trustPath);
+      await projects.trust(path);
     } catch (reason) {
       onError((reason as Error).message);
     }

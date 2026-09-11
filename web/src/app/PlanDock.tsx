@@ -20,6 +20,7 @@ export function PlanDock({
 }) {
   return (
     <Card
+      className="forge-plan-dock"
       title="计划"
       size="small"
       variant="borderless"

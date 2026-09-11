@@ -17,12 +17,14 @@ export function useSessionActions({
   conversation,
   discardPending,
   reloadWorkspace,
+  reloadProjectSessions,
   onError,
 }: {
   conversation: Conversation;
   /** 丢掉事件流里还没渲染的那一批。 */
   discardPending: () => void;
   reloadWorkspace: () => Promise<void>;
+  reloadProjectSessions?: () => Promise<void>;
   onError: (message: string) => void;
 }) {
   const [deleting, setDeleting] = useState(false);
@@ -35,6 +37,7 @@ export function useSessionActions({
       discardPending();
       await conversation.loadTranscript(session.session_id);
       await reloadWorkspace();
+      await reloadProjectSessions?.();
     } catch (reason) {
       onError((reason as Error).message);
     }
@@ -69,6 +72,7 @@ export function useSessionActions({
         await conversation.loadTranscript(result.current_session_id);
       }
       await reloadWorkspace();
+      await reloadProjectSessions?.();
     } catch (reason) {
       onError((reason as Error).message);
     } finally {

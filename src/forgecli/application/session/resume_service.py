@@ -35,9 +35,13 @@ class ResumeService:
         self._events = event_store
 
     def list_sessions(
-        self, query: str | None = None, *, limit: int = _DEFAULT_LIMIT
+        self,
+        query: str | None = None,
+        *,
+        offset: int = 0,
+        limit: int = _DEFAULT_LIMIT,
     ) -> list[SessionSnapshot]:
-        """枚举可恢复会话，按 updated_at 倒序（最近在前），最多 limit 条。
+        """枚举可恢复会话，按 updated_at 倒序（最近在前），返回指定分页。
 
         给定 query 时按子串过滤（匹配 title 或 session_id，大小写不敏感）。
         """
@@ -47,7 +51,8 @@ class ResumeService:
             if snapshot is not None and _matches(snapshot, query):
                 snapshots.append(snapshot)
         snapshots.sort(key=lambda s: s.updated_at, reverse=True)
-        return snapshots[:limit]
+        start = max(0, offset)
+        return snapshots[start : start + max(0, limit)]
 
     def load_full(
         self, session_id: str

@@ -762,6 +762,25 @@ class ProjectRuntimeRegistry:
             self._active = activated
             return activated
 
+    def list_sessions(
+        self, project_id: str, *, offset: int = 0, limit: int = 20
+    ) -> list[SessionSnapshot]:
+        """读取任意已信任项目的会话摘要，不激活项目也不获取项目锁。
+
+        左侧导航需要同时展示多个项目；这里复用无状态的恢复查询，只读对应项目的
+        ``sessions`` 目录，避免为了画列表切换当前运行项目。
+        """
+        project = self.projects.get(project_id)
+        if project is None:
+            raise KeyError(project_id)
+        sessions_dir = config_dir() / "projects" / project.project_id / "sessions"
+        resume = ResumeService(
+            FsSessionCatalog(sessions_dir),
+            JsonStateStore(sessions_dir),
+            JsonlEventStore(sessions_dir),
+        )
+        return resume.list_sessions(offset=offset, limit=limit)
+
     def close(self) -> None:
         with self._lock:
             active, self._active = self._active, None

@@ -33,6 +33,7 @@ export function SettingsPanel({
   ];
   return (
     <Modal
+      className="forge-settings-modal"
       open
       title="设置"
       onCancel={onClose}

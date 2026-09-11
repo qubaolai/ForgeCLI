@@ -4,8 +4,9 @@
  * `isComposing` 在部分输入法上不可靠, 所以另外用 composition 事件自己记一份。
  */
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Button, Flex, Input, Typography } from "antd";
+import { BorderOutlined, EnterOutlined, FolderOutlined } from "@ant-design/icons";
 import { shouldSendOnEnter } from "@/features/conversation/interaction";
 import { ModeMenu } from "@/features/chrome/ModeMenu";
 import { ModelMenu } from "@/features/chrome/ModelMenu";
@@ -28,6 +29,8 @@ export function Composer({
   thinking,
   onChooseModel,
   onThinking,
+  projectName,
+  showProjectHint,
 }: {
   value: string;
   onChange: (text: string) => void;
@@ -44,19 +47,33 @@ export function Composer({
   thinking: ThinkingView;
   onChooseModel: (providerId: string, modelId: string) => void;
   onThinking: (mode: string, effort: string) => void;
+  projectName: string;
+  showProjectHint: boolean;
 }) {
   const composingRef = useRef(false);
+  const [focused, setFocused] = useState(false);
   const offline = connection === "stopped";
   const sendable = Boolean(value.trim()) && !offline;
 
   return (
-    <div className={`composer ${offline ? "offline" : ""}`}>
+    <div className={`composer ${focused ? "focused" : ""} ${offline ? "offline" : ""}`}>
+      {showProjectHint && projectName && (
+        <Flex align="center" gap={8} className="composer-project" aria-label={`当前项目 ${projectName}`}>
+          <FolderOutlined aria-hidden="true" />
+          <Typography.Text type="secondary">当前项目</Typography.Text>
+          <Typography.Text strong ellipsis>
+            {projectName}
+          </Typography.Text>
+        </Flex>
+      )}
       <Input.TextArea
+        className="forge-composer-input"
         variant="borderless"
         value={value}
         autoSize={{ minRows: 3, maxRows: 10 }}
         disabled={offline}
-        style={{ padding: "14px 16px", lineHeight: 1.6 }}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         onChange={(event) => onChange(event.target.value)}
         onCompositionStart={() => {
           composingRef.current = true;
@@ -77,27 +94,39 @@ export function Composer({
         }
       />
       <Flex align="center" gap={8} wrap className="composer-bar">
-        <ModeMenu value={stance} disabled={busy} onChange={onStance} />
-        <ModelMenu
-          current={currentModel}
-          models={models}
-          thinking={thinking}
-          disabled={busy}
-          onChoose={onChooseModel}
-          onThinking={onThinking}
-        />
-        <Typography.Text type="secondary" style={{ marginInlineStart: "auto", fontSize: 10 }}>
-          Enter 发送 · Shift+Enter 换行
-        </Typography.Text>
-        {busy ? (
-          <Button danger onClick={onCancel} loading={stopping}>
-            {stopping ? "停止中" : "停止"}
-          </Button>
-        ) : (
-          <Button type="primary" disabled={!sendable} onClick={onSend}>
-            发送 ↑
-          </Button>
-        )}
+        <Flex align="center" gap={8} className="composer-menus">
+          <ModeMenu value={stance} disabled={busy} onChange={onStance} />
+          <ModelMenu
+            current={currentModel}
+            models={models}
+            thinking={thinking}
+            disabled={busy}
+            onChoose={onChooseModel}
+            onThinking={onThinking}
+          />
+        </Flex>
+        <Flex className="composer-action">
+          {busy ? (
+            <Button
+              type="primary"
+              danger
+              icon={<BorderOutlined />}
+              loading={stopping}
+              onClick={onCancel}
+              aria-label={stopping ? "正在停止" : "停止生成"}
+              title={stopping ? "正在停止" : "停止生成"}
+            />
+          ) : (
+            <Button
+              type="primary"
+              icon={<EnterOutlined />}
+              disabled={!sendable}
+              onClick={onSend}
+              aria-label="发送消息"
+              title="发送消息"
+            />
+          )}
+        </Flex>
       </Flex>
     </div>
   );

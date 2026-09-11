@@ -1,7 +1,7 @@
 /** 模型菜单: 当前模型, 以及这个模型的思考开关与强度。 */
 
 import { Button, Empty, Flex, Popover, Select, Switch, Tag, Typography } from "antd";
-import { DownOutlined } from "@ant-design/icons";
+import { MoreOutlined } from "@ant-design/icons";
 import type { ThinkingView } from "@/types/admin";
 
 export function ModelMenu({
@@ -75,7 +75,7 @@ export function ModelMenu({
           {label}
         </Typography.Text>
         {thinkingOn && <Tag color="blue">思考{thinking.effort ? ` · ${thinking.effort}` : ""}</Tag>}
-        <DownOutlined />
+        <MoreOutlined aria-hidden="true" />
       </Button>
     </Popover>
   );

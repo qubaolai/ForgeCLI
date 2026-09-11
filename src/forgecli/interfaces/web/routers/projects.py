@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from forgecli.infrastructure.project import ProjectLockedError
 from forgecli.interfaces.web.deps import project_payload, registry
+from forgecli.shared.serialization import to_jsonable
 
 router = APIRouter(prefix="/api/v1/projects")
 
@@ -54,3 +55,28 @@ async def activate_project(project_id: str, request: Request) -> dict[str, objec
     except RuntimeError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return project_payload(runtime.project)
+
+
+@router.get("/{project_id}/sessions")
+async def list_project_sessions(
+    project_id: str,
+    request: Request,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=5, ge=1, le=50),
+) -> dict[str, object]:
+    """分页读取项目会话，供左侧项目导航使用。"""
+    projects = registry(request)
+    try:
+        items = projects.list_sessions(project_id, offset=offset, limit=limit + 1)
+    except KeyError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "项目不存在") from None
+    page = items[:limit]
+    has_more = len(items) > limit
+    return {
+        "project_id": project_id,
+        "items": [to_jsonable(item) for item in page],
+        "offset": offset,
+        "limit": limit,
+        "has_more": has_more,
+        "next_offset": offset + len(page) if has_more else None,
+    }

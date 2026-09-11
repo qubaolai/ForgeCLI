@@ -7,7 +7,6 @@ import type { Project } from "@/types/session";
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const [trustPath, setTrustPath] = useState("");
 
   const load = useCallback(async () => {
     const result = await api<{ items: Project[]; active_project_id: string | null }>("/projects");
@@ -29,7 +28,6 @@ export function useProjects() {
         method: "POST",
         body: JSON.stringify({ path }),
       });
-      setTrustPath("");
       await load();
       await activate(project.project_id);
     },
@@ -45,8 +43,6 @@ export function useProjects() {
     projects,
     activeProjectId,
     activeProject,
-    trustPath,
-    setTrustPath,
     load,
     activate,
     trust,
