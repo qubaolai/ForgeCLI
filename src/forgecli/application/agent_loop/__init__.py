@@ -7,12 +7,12 @@
 循环内部按 ADR-0049 分成两层:
 
 - ``builtin_loop`` 只剩控制流: 调模型, 派工具, 回填结果, 收尾. 它负责执行处置.
-- ``rules/`` 是"下一步做什么"的判断, 每条一个文件, 在它关心的时机上给一个处置
-  (``verdicts``). 规则表怎么跑, 顺序怎么校验, 见 ``rule_table``; 规则能看到什么, 见
-  ``rule.LoopView``; 规则能写的只有 ``ledger.TurnLedger``.
+- ``rules/`` 是"下一步做什么"的判断, 每条一个文件, 每条就是一个方法, 返回这个时机
+  允许的处置 (``verdicts``). 哪个时机按什么顺序跑哪些方法, 全写在 ``rules/__init__.py``
+  那张五列的表里; 怎么跑见 ``rule_table``; 规则能看到什么, 见 ``rule.LoopView``; 规则能
+  写的只有 ``ledger.TurnLedger``.
 
-本包对外的扩展点是 ``rule.LoopRule``: 加一条判断就是加一个文件, 再在
-``rules/__init__.py`` 那份带理由的列表里加一行.
+加一条判断就是加一个方法, 再在 ``rules/__init__.py`` 对应时机那一列里加一行.
 
 循环的词汇 (动作 / 状态 / 停止原因) 住在 domain.agent, 本包不转手再导出领域类型.
 事件总线不在本包: 观察事件的范围是整个 turn (ADR-0016), 由 application.agent_run 承载,

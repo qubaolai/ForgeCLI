@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from forgecli.application.agent_loop.rule import (
     BeforeDispatchVerdict,
-    LoopRuleBase,
     LoopView,
 )
 from forgecli.application.agent_loop.transcript import render_call
@@ -41,9 +40,7 @@ def signature_of(call: ToolCall) -> str:
     )
 
 
-class RepeatCallRule(LoopRuleBase):
-    name = "repeat_call"
-
+class RepeatCallRule:
     def __init__(self) -> None:
         # (工具名 + 参数) -> 本轮已派发次数.
         self._counts: dict[str, int] = {}

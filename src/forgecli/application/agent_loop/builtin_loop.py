@@ -18,8 +18,9 @@
   它只负责把目录翻译成模型能看懂的 schema.
 
 **这个模块只剩控制流** (ADR-0049 决策 4). "下一步做什么"的判断全在规则里
-(``rules/``), 每条规则在它关心的时机上给一个处置 (``verdicts``), 循环负责执行处置:
-换窗口, 追加消息, 拒绝一个调用, 收工具目录, 停. 规则表怎么跑见 ``rule_table``.
+(``rules/``): 每个时机一列方法, 每个方法给一个处置 (``verdicts``), 循环负责执行处置:
+换窗口, 追加消息, 拒绝一个调用, 收工具目录, 停. 哪个时机跑什么见 ``rules/__init__``,
+怎么跑见 ``rule_table``.
 
 留在循环里不搬的: 派一个工具等结果并回填成配对的工具结果, 给排队中的调用补结果,
 写 assistant 消息, 组请求, 窗口只追加, 一次只派一个. 这些是协议本身, 不是判断.
@@ -37,15 +38,15 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 from forgecli.application.agent_loop.ledger import TurnLedger
 from forgecli.application.agent_loop.model_invoker import (
     AgentModelInvoker,
     ModelOutcome,
 )
-from forgecli.application.agent_loop.rule import LoopRule, LoopView
-from forgecli.application.agent_loop.rule_table import RuleTable
+from forgecli.application.agent_loop.rule import LoopView
+from forgecli.application.agent_loop.rule_table import RuleRunner, RuleTable
 from forgecli.application.agent_loop.run_events import LoopEventPublisher
 from forgecli.application.agent_loop.transcript import labelled, transcript_view
 from forgecli.application.agent_loop.verdicts import (
@@ -112,7 +113,7 @@ class BuiltinAgentLoop:
         gateway: LlmGateway,
         usage_meter: UsageMeter,
         *,
-        rules: Sequence[LoopRule],
+        rules: RuleTable,
         model_transport_policy: ModelTransportPolicy,
         request_id_factory: Callable[[], str] = _new_request_id,
         cancel_token_factory: Callable[[], CancelToken | None] = lambda: None,
@@ -133,7 +134,7 @@ class BuiltinAgentLoop:
             on_usage=self._ledger.add_usage,
             timer=timer,
         )
-        self._rules = RuleTable(rules, events=self._events)
+        self._rules = RuleRunner(rules, events=self._events)
         self._phase = LoopPhase.NOT_STARTED
         self._turn_id: str | None = None
         self._session_id = ""
@@ -186,7 +187,7 @@ class BuiltinAgentLoop:
             tools=[schema.name for schema in self._tools],
             messages=len(self._messages),
             prompt_fingerprint=loop_input.context.policy.fingerprint,
-            rules=list(self._rules.names),
+            rules=self._rules.table.describe(),
             context_window=None if budget is None else budget.context_window,
             context_allowance=None if budget is None else budget.allowance,
         )

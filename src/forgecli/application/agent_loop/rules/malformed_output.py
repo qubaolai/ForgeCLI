@@ -16,10 +16,8 @@ from __future__ import annotations
 from forgecli.application.agent_loop.model_invoker import ModelOutcome
 from forgecli.application.agent_loop.rule import (
     AfterModelVerdict,
-    LoopRuleBase,
     LoopView,
     ModelErrorVerdict,
-    OrderRule,
 )
 from forgecli.application.agent_loop.transcript import protocol_markup_in
 from forgecli.application.agent_loop.verdicts import Continue, Reask
@@ -45,15 +43,7 @@ _log = get_log(__name__)
 MAX_MALFORMED_RESPONSES = 2
 
 
-class MalformedOutputRule(LoopRuleBase):
-    name = "malformed_output"
-    runs_before = (
-        OrderRule(
-            "tools_closed",
-            '一个格式坏掉的调用不该被当成"模型无视目录已收"的证据, 罚错了对象',
-        ),
-    )
-
+class MalformedOutputRule:
     def __init__(self) -> None:
         self._count = 0
 
@@ -78,7 +68,7 @@ class MalformedOutputRule(LoopRuleBase):
             )
         return Continue()
 
-    def on_model_error(
+    def on_bad_json(
         self, error: ModelGatewayError, view: LoopView
     ) -> ModelErrorVerdict:
         """参数不是完整 JSON (流式半截, 或非流式解析失败)."""

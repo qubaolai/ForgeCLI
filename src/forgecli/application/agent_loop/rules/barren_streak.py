@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from forgecli.application.agent_loop.rule import (
     AfterObserveVerdict,
-    LoopRuleBase,
     LoopView,
 )
 from forgecli.application.agent_loop.verdicts import Continue, Inject
@@ -31,9 +30,7 @@ _log = get_log(__name__)
 MAX_BARREN_OBSERVATIONS = 3
 
 
-class BarrenStreakRule(LoopRuleBase):
-    name = "barren_streak"
-
+class BarrenStreakRule:
     def __init__(self) -> None:
         self._streak = 0
         self._last: tuple[str, str] | None = None

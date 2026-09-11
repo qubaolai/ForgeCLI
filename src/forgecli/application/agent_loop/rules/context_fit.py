@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from forgecli.application.agent_loop.rule import (
     BeforeModelVerdict,
-    LoopRuleBase,
     LoopView,
     ModelErrorVerdict,
 )
@@ -28,9 +27,7 @@ __all__ = ["ContextFitRule"]
 _log = get_log(__name__)
 
 
-class ContextFitRule(LoopRuleBase):
-    name = "context_fit"
-
+class ContextFitRule:
     def __init__(self, context: WindowManager | None) -> None:
         # 缺省为 None: 没给窗口管理就不压缩, 不猜一个窗口大小.
         self._context = context
@@ -76,7 +73,7 @@ class ContextFitRule(LoopRuleBase):
             return Rewrite(result.window)
         return Continue()
 
-    def on_model_error(
+    def on_overflow(
         self, error: ModelGatewayError, view: LoopView
     ) -> ModelErrorVerdict:
         """供应商说上下文太长: 强压一次再发, 而不是让这一轮作废.

@@ -19,9 +19,7 @@ from forgecli.application.agent_loop.rule import (
     AfterObserveVerdict,
     BeforeDispatchVerdict,
     BeforeModelVerdict,
-    LoopRuleBase,
     LoopView,
-    OrderRule,
 )
 from forgecli.application.agent_loop.verdicts import Continue, Reask, Rewrite
 from forgecli.application.prompt.template_renderer import render_notice
@@ -41,16 +39,7 @@ __all__ = ["WorkspaceWatchRule"]
 _log = get_log(__name__)
 
 
-class WorkspaceWatchRule(LoopRuleBase):
-    name = "workspace_watch"
-    runs_before = (
-        OrderRule(
-            "context_fit",
-            "通知要先进窗口, 这次压缩才把它算进预算. 反过来一次大改动的变更列表"
-            " (几 KB) 不进本次估算, 而它恰恰最可能把窗口顶过水位",
-        ),
-    )
-
+class WorkspaceWatchRule:
     def __init__(self, provider: WorkspaceSnapshotProvider | None) -> None:
         # 没接快照就什么都不看. 第一次检查点只拍基线, 不产生变化.
         self._monitor = None if provider is None else WorkspaceChangeMonitor(provider)

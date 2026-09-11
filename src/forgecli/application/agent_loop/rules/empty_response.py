@@ -5,7 +5,6 @@ from __future__ import annotations
 from forgecli.application.agent_loop.model_invoker import ModelOutcome
 from forgecli.application.agent_loop.rule import (
     AfterModelVerdict,
-    LoopRuleBase,
     LoopView,
 )
 from forgecli.application.agent_loop.verdicts import Continue
@@ -19,9 +18,7 @@ __all__ = ["EmptyResponseRule"]
 _log = get_log(__name__)
 
 
-class EmptyResponseRule(LoopRuleBase):
-    name = "empty_response"
-
+class EmptyResponseRule:
     def after_model(self, outcome: ModelOutcome, view: LoopView) -> AfterModelVerdict:
         if not outcome.empty:
             return Continue()

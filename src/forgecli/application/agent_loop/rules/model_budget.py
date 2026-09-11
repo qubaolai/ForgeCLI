@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from forgecli.application.agent_loop.rule import (
     BeforeModelVerdict,
-    LoopRuleBase,
     LoopView,
-    OrderRule,
 )
 from forgecli.application.agent_loop.verdicts import Continue
 from forgecli.application.prompt.template_renderer import render_notice
@@ -22,15 +20,7 @@ _log = get_log(__name__)
 DEFAULT_MAX_MODEL_CALLS = 9999
 
 
-class ModelBudgetRule(LoopRuleBase):
-    name = "model_budget"
-    runs_before = (
-        OrderRule(
-            "context_fit",
-            "本轮已经该停了, 压缩还要再调一次模型, 那次调用记进用量却什么也没换来",
-        ),
-    )
-
+class ModelBudgetRule:
     def __init__(self, *, limit: int = DEFAULT_MAX_MODEL_CALLS) -> None:
         self._limit = limit
 

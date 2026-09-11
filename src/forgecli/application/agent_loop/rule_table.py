@@ -1,29 +1,34 @@
-"""规则表: 一份有序的规则列表, 以及在每个时机上怎么跑它 (ADR-0049 决策 3 / 决策 4).
+"""规则表: 五个时机, 每个时机一列方法; 以及怎么跑它 (ADR-0049 决策 3, 2026-09-11 修订).
 
-只有两条执行规矩:
+``RuleTable`` 是数据: 五个有序元组, 就是 ``rules/__init__.py`` 里写的那份. 读它就知道
+每个时机跑什么, 什么顺序. 顺序的理由写在那份表旁边的注释里, 由
+``tests/agent_loop/test_rule_table.py`` 守着 —— 改错顺序 ``make test`` 停.
 
-- 调模型之前, `Rewrite` 更新窗口之后**接着看下一条规则**, 后面的规则看到的是换过的窗口.
-- 其余非 `Continue` 的处置, 后面的规则不再看, 交给循环立刻执行.
+``RuleRunner`` 是执行: 只有两条规矩.
 
-顺序就是列表的书写顺序. 硬约束由规则自己声明 (`runs_before` / `runs_after`), 装配时
-校验, 挪错位置进程起不来. 不用数字, 不做排序: 十条规则四条约束, 排序会让剩下六条的
-最终顺序变成一个要在脑子里跑一遍算法才知道的结果.
+- 调模型之前, ``Rewrite`` 更新窗口之后**接着看下一条**, 后面的看到的是换过的窗口.
+- 其余非 ``Continue`` 的处置, 后面的不再看, 交给循环立刻执行.
 
-规则在任何时机抛异常, 记一条日志和一条运行事件, 按 `Continue` 处理, 本轮不因此失败
+一条规则抛异常, 记一条日志和一条运行事件, 按 ``Continue`` 处理, 本轮不因此失败
 (ADR-0010 §7.2).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from forgecli.application.agent_loop.model_invoker import ModelOutcome
 from forgecli.application.agent_loop.rule import (
+    AfterModelStep,
     AfterModelVerdict,
+    AfterObserveStep,
     AfterObserveVerdict,
+    BeforeDispatchStep,
     BeforeDispatchVerdict,
-    LoopRule,
+    BeforeModelStep,
     LoopView,
+    ModelErrorStep,
     ModelErrorVerdict,
 )
 from forgecli.application.agent_loop.run_events import LoopEventPublisher
@@ -33,73 +38,54 @@ from forgecli.domain.agent.actions import LoopObservation, LoopStop
 from forgecli.domain.tool.tool_call import ToolCall
 from forgecli.shared.observability.log import get_log
 
-__all__ = ["RuleOrderError", "RuleTable", "validate_rule_order"]
+__all__ = ["RuleRunner", "RuleTable"]
 
 _log = get_log(__name__)
 
 
-class RuleOrderError(ValueError):
-    """规则表的书写顺序违反了某条规则声明的硬约束."""
-
-
-def validate_rule_order(rules: Sequence[LoopRule]) -> None:
-    """按每条规则声明的约束检查列表顺序. 违反就抛, 消息里带两条规则的名字与理由.
-
-    约束指向的规则不在表里也算错: 多半是改名之后忘了改声明, 而那种漏掉不会报错.
-    """
-    names = [rule.name for rule in rules]
-    duplicates = {name for name in names if names.count(name) > 1}
-    if duplicates:
-        raise RuleOrderError(f"规则名重复: {sorted(duplicates)}")
-    position = {name: index for index, name in enumerate(names)}
-    for rule in rules:
-        for constraint in rule.runs_before:
-            peer = position.get(constraint.peer)
-            if peer is None:
-                raise RuleOrderError(
-                    f"{rule.name} 声明要排在 {constraint.peer} 之前, 但表里没有它"
-                )
-            if position[rule.name] >= peer:
-                raise RuleOrderError(
-                    f"{rule.name} 必须排在 {constraint.peer} 之前: {constraint.why}"
-                )
-        for constraint in rule.runs_after:
-            peer = position.get(constraint.peer)
-            if peer is None:
-                raise RuleOrderError(
-                    f"{rule.name} 声明要排在 {constraint.peer} 之后, 但表里没有它"
-                )
-            if position[rule.name] <= peer:
-                raise RuleOrderError(
-                    f"{rule.name} 必须排在 {constraint.peer} 之后: {constraint.why}"
-                )
-
-
+@dataclass(frozen=True)
 class RuleTable:
-    def __init__(
-        self, rules: Sequence[LoopRule], *, events: LoopEventPublisher
-    ) -> None:
-        validate_rule_order(rules)
-        self._rules = tuple(rules)
+    """五个时机各一列. 同一个对象的方法出现在几列, 它就参与几个时机, 状态自然共享."""
+
+    before_model: tuple[BeforeModelStep, ...] = ()
+    on_model_error: tuple[ModelErrorStep, ...] = ()
+    after_model: tuple[AfterModelStep, ...] = ()
+    before_dispatch: tuple[BeforeDispatchStep, ...] = ()
+    after_observe: tuple[AfterObserveStep, ...] = ()
+
+    def describe(self) -> dict[str, list[str]]:
+        """每个时机跑哪些方法, 给日志用."""
+        return {
+            "before_model": [_name(step) for step in self.before_model],
+            "on_model_error": [_name(step) for step in self.on_model_error],
+            "after_model": [_name(step) for step in self.after_model],
+            "before_dispatch": [_name(step) for step in self.before_dispatch],
+            "after_observe": [_name(step) for step in self.after_observe],
+        }
+
+
+def _name(step: Callable[..., object]) -> str:
+    """`WorkspaceWatchRule.before_model` 这种, 类名带方法名, 够定位."""
+    return str(getattr(step, "__qualname__", repr(step)))
+
+
+class RuleRunner:
+    def __init__(self, table: RuleTable, *, events: LoopEventPublisher) -> None:
+        self._table = table
         self._events = events
 
     @property
-    def names(self) -> tuple[str, ...]:
-        return tuple(rule.name for rule in self._rules)
+    def table(self) -> RuleTable:
+        return self._table
 
     # ---- 五个时机 ----
 
     def before_model(
         self, view: Callable[[], LoopView], apply: Callable[[Rewrite], None]
     ) -> Continue | LoopStop:
-        """`view` 每次现取: 前一条规则改写了窗口, 后一条要看到.
-
-        改写由循环执行 (`apply`), 这里不碰循环的字段.
-        """
-        for rule in self._rules:
-            verdict = self._guarded(
-                rule, "before_model", lambda r: r.before_model(view())
-            )
+        """`view` 每次现取: 前一条改写了窗口, 后一条要看到. 改写由循环执行 (`apply`)."""
+        for step in self._table.before_model:
+            verdict = self._guarded(step, view())
             if isinstance(verdict, Rewrite):
                 apply(verdict)
             elif isinstance(verdict, LoopStop):
@@ -109,28 +95,22 @@ class RuleTable:
     def on_model_error(
         self, error: ModelGatewayError, view: LoopView
     ) -> ModelErrorVerdict:
-        for rule in self._rules:
-            verdict = self._guarded(
-                rule, "on_model_error", lambda r: r.on_model_error(error, view)
-            )
+        for step in self._table.on_model_error:
+            verdict = self._guarded(step, error, view)
             if not isinstance(verdict, Continue):
                 return verdict
         return Continue()
 
     def after_model(self, outcome: ModelOutcome, view: LoopView) -> AfterModelVerdict:
-        for rule in self._rules:
-            verdict = self._guarded(
-                rule, "after_model", lambda r: r.after_model(outcome, view)
-            )
+        for step in self._table.after_model:
+            verdict = self._guarded(step, outcome, view)
             if not isinstance(verdict, Continue):
                 return verdict
         return Continue()
 
     def before_dispatch(self, call: ToolCall, view: LoopView) -> BeforeDispatchVerdict:
-        for rule in self._rules:
-            verdict = self._guarded(
-                rule, "before_dispatch", lambda r: r.before_dispatch(call, view)
-            )
+        for step in self._table.before_dispatch:
+            verdict = self._guarded(step, call, view)
             if not isinstance(verdict, Continue):
                 return verdict
         return Continue()
@@ -138,31 +118,25 @@ class RuleTable:
     def after_observe(
         self, call: ToolCall, observation: LoopObservation, view: LoopView
     ) -> AfterObserveVerdict:
-        for rule in self._rules:
-            verdict = self._guarded(
-                rule,
-                "after_observe",
-                lambda r: r.after_observe(call, observation, view),
-            )
+        for step in self._table.after_observe:
+            verdict = self._guarded(step, call, observation, view)
             if not isinstance(verdict, Continue):
                 return verdict
         return Continue()
 
     # ---- 隔离 ----
 
-    def _guarded[V](
-        self, rule: LoopRule, timing: str, ask: Callable[[LoopRule], V]
-    ) -> V | Continue:
+    def _guarded[V](self, step: Callable[..., V], *args: object) -> V | Continue:
         try:
-            return ask(rule)
+            return step(*args)
         except Exception as error:
             # 一条规则坏了不该让整轮失败, 但也不能静默: 日志与事件各记一条.
+            name = _name(step)
             _log.exception(
                 "loop.rule_failed",
-                rule=rule.name,
-                timing=timing,
+                rule=name,
                 error=type(error).__name__,
                 message=str(error),
             )
-            self._events.decision(f"规则 {rule.name} 在 {timing} 出错, 已跳过")
+            self._events.decision(f"规则 {name} 出错, 已跳过")
             return Continue()

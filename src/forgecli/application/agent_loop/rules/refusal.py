@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from forgecli.application.agent_loop.rule import (
     AfterObserveVerdict,
-    LoopRuleBase,
     LoopView,
 )
 from forgecli.application.agent_loop.verdicts import CloseTools, Continue
@@ -31,9 +30,7 @@ _log = get_log(__name__)
 MAX_BLOCKED_CALLS = 3
 
 
-class RefusalRule(LoopRuleBase):
-    name = "refusal"
-
+class RefusalRule:
     def __init__(self) -> None:
         self._blocked = 0
 
