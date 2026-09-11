@@ -110,7 +110,8 @@ class AgentTurnService:
         *,
         loop_factory: Callable[[], BuiltinAgentLoop],
         # 提示词三件套是必填: 缺提示词的主 Agent 不知道自己是谁, 有哪些工具, 也不
-        # 知道自己在什么平台上. 在执行shell时, 如果llm不知道当前平台, 给出的命令可能无法执行
+        # 知道自己在什么平台上. 执行 shell 时, 模型不知道当前平台, 给出的命令可能跑
+        # 不起来.
         prompt_builder: SystemPromptBuilder,
         runtime_facts: Callable[[], RuntimeFacts],
         instructions: ProjectInstructionReader,
@@ -404,15 +405,15 @@ class AgentTurnService:
                 return _TurnOutcome(
                     text=render_notice("stop.unsupported_action"),
                     status=TurnStatus.FAILED,
-                    usage_drafts=loop.usage_drafts,
-                    compaction_drafts=loop.compaction_drafts,
+                    usage_drafts=loop.ledger.usage_drafts,
+                    compaction_drafts=loop.ledger.compaction_drafts,
                     window=loop.window,
                 )
         return _TurnOutcome(
             text=render_notice("stop.loop_steps_exceeded"),
             status=TurnStatus.FAILED,
-            usage_drafts=loop.usage_drafts,
-            compaction_drafts=loop.compaction_drafts,
+            usage_drafts=loop.ledger.usage_drafts,
+            compaction_drafts=loop.ledger.compaction_drafts,
             window=loop.window,
         )
 
@@ -565,8 +566,8 @@ class AgentTurnService:
     def _outcome_from_stop(
         self, stop: LoopStop, answer: str | None, loop: BuiltinAgentLoop
     ) -> _TurnOutcome:
-        drafts = loop.usage_drafts
-        compactions = loop.compaction_drafts
+        drafts = loop.ledger.usage_drafts
+        compactions = loop.ledger.compaction_drafts
         if stop.reason is LoopStopReason.FINAL_ANSWER:
             if answer is None:
                 return _TurnOutcome(

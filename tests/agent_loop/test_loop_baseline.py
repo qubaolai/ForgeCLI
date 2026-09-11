@@ -49,7 +49,9 @@ def test_plain_answer(harness):
     assert last.role is MessageRole.ASSISTANT
     assert isinstance(last.content[0], TextBlock)
     assert last.content[0].text == "你好"
-    assert loop.usage_drafts and loop.usage_drafts[0].turn_id == "turn_0001"
+    assert (
+        loop.ledger.usage_drafts and loop.ledger.usage_drafts[0].turn_id == "turn_0001"
+    )
     kinds = h.events.kinds()
     assert kinds[-1] is K.TURN_COMPLETED
     assert K.MODEL_STARTED in kinds and K.MODEL_COMPLETED in kinds
@@ -344,7 +346,7 @@ def test_window_is_evicted_before_model_call(harness):
     stop, loop = h.run(loop_input(LoopInputSpec(window=big_window(), budget=budget)))
 
     assert stop.reason is LoopStopReason.FINAL_ANSWER
-    assert loop.compaction_drafts
+    assert loop.ledger.compaction_drafts
     assert len(h.gateway.requests[0].messages) < 60
     assert K.CONTEXT_COMPACTED in h.events.kinds()
 
@@ -363,7 +365,7 @@ def test_overflow_forces_eviction_then_retries(harness):
     assert stop.reason is LoopStopReason.FINAL_ANSWER
     assert len(h.gateway.requests) == 2
     assert len(h.gateway.requests[1].messages) < len(h.gateway.requests[0].messages)
-    assert loop.compaction_drafts
+    assert loop.ledger.compaction_drafts
 
 
 def test_second_overflow_stops_compaction_required(harness):

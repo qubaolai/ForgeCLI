@@ -79,7 +79,6 @@ from forgecli.domain.agent.actions import (
 from forgecli.domain.agent.phase import LoopPhase
 from forgecli.domain.agent.state import AssembledContext, LoopInput
 from forgecli.domain.agent.stop import LoopStopReason
-from forgecli.domain.context.compaction import CompactionDraft
 from forgecli.domain.context.window import Window
 from forgecli.domain.conversation.message import (
     ChatMessage,
@@ -91,8 +90,8 @@ from forgecli.domain.intents import SessionMode
 from forgecli.domain.model.origin import RequestOrigin
 from forgecli.domain.model.params import ModelParams
 from forgecli.domain.model.request import ModelRequest
-from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.tool.catalog import ToolCatalog
+from forgecli.domain.tool.result import ResultProvenance
 from forgecli.domain.tool.tool_call import ToolCall, ToolSchema
 from forgecli.shared.cancellation import CancelToken
 from forgecli.shared.observability.context import update as update_run_context
@@ -228,16 +227,8 @@ class BuiltinAgentLoop:
 
     @property
     def ledger(self) -> TurnLedger:
-        """本轮的账本 (落盘由 AgentTurnService 执行)."""
+        """本轮的账本: 用量草稿与压缩记录 (落盘由 AgentTurnService 执行)."""
         return self._ledger
-
-    @property
-    def usage_drafts(self) -> tuple[UsageRecordDraft, ...]:
-        return self._ledger.usage_drafts
-
-    @property
-    def compaction_drafts(self) -> tuple[CompactionDraft, ...]:
-        return self._ledger.compaction_drafts
 
     @property
     def partial_answer(self) -> str | None:
@@ -419,18 +410,7 @@ class BuiltinAgentLoop:
         回填而不是静默跳过, 也不是直接停止本轮: 模型必须知道这个调用怎么了, 否则它
         只会原样再要一次. 这条消息进 transcript, 下一次模型调用就看得到.
         """
-        self._append(
-            ChatMessage(
-                role=MessageRole.TOOL,
-                content=(
-                    ToolResultBlock(
-                        tool_call_id=call.tool_call_id,
-                        content=verdict.notice,
-                        is_error=True,
-                    ),
-                ),
-            ),
-        )
+        self._append(_tool_result(call, verdict.notice, is_error=True))
         self._events.tool_rejected(call, notice=verdict.notice, code=verdict.code)
 
     def _observe_tool(self, observation: LoopObservation) -> LoopStepResult:
@@ -452,19 +432,13 @@ class BuiltinAgentLoop:
         # 回填正文单独走 debug: info 级别无条件打整段, 一次带正文的读取就是几 KB.
         if _log.enabled_for_debug():
             _log.debug("tool.observed.content", content=observation.content)
-        content = labelled(call, observation.content)
         self._append(
-            ChatMessage(
-                role=MessageRole.TOOL,
-                content=(
-                    ToolResultBlock(
-                        tool_call_id=call.tool_call_id,
-                        content=content,
-                        is_error=observation.is_error,
-                        provenance=observation.provenance,
-                    ),
-                ),
-            ),
+            _tool_result(
+                call,
+                labelled(call, observation.content),
+                is_error=observation.is_error,
+                provenance=observation.provenance,
+            )
         )
         # 这里不发 TOOL_COMPLETED: 执行结果的权威事实在协调器那边 (状态, 耗时, 退出码,
         # 是否改了文件). 循环只拿到一段回填文本, 用它冒充执行结论会让终端显示的
@@ -515,18 +489,7 @@ class BuiltinAgentLoop:
         """
         for call in self._pending_calls:
             detail = render_notice("loop.abandoned_call", notice=notice)
-            self._append(
-                ChatMessage(
-                    role=MessageRole.TOOL,
-                    content=(
-                        ToolResultBlock(
-                            tool_call_id=call.tool_call_id,
-                            content=detail,
-                            is_error=True,
-                        ),
-                    ),
-                ),
-            )
+            self._append(_tool_result(call, detail, is_error=True))
             self._events.tool_abandoned(call, notice=detail)
         self._pending_calls = []
 
@@ -608,6 +571,27 @@ class BuiltinAgentLoop:
         """产出一个动作, 同时把它的理由摘要发出去 (空摘要不发事件, 见发布器)."""
         self._events.decision(reason_summary)
         return action
+
+
+def _tool_result(
+    call: ToolCall,
+    content: str,
+    *,
+    is_error: bool,
+    provenance: ResultProvenance | None = None,
+) -> ChatMessage:
+    """一条配对的工具结果消息. 三处写法只该有一份."""
+    return ChatMessage(
+        role=MessageRole.TOOL,
+        content=(
+            ToolResultBlock(
+                tool_call_id=call.tool_call_id,
+                content=content,
+                is_error=is_error,
+                provenance=provenance,
+            ),
+        ),
+    )
 
 
 def _schemas_of(catalog: ToolCatalog | None) -> tuple[ToolSchema, ...]:
