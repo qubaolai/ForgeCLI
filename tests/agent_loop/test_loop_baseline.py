@@ -564,3 +564,17 @@ def test_nudge_inside_a_batch_waits_for_the_batch(harness):
         MessageRole.USER,
         MessageRole.ASSISTANT,
     ]
+
+
+def test_a_batch_denied_in_full_does_not_recurse(harness):
+    """模型反复要同一个被挡下的调用: 派发与调模型不能互相套起来.
+
+    400 次足够让"派发 -> 挡下 -> 回去调模型"这条路在递归写法下撞上 Python 的栈上限.
+    """
+    same = call("fs_read", "c", path="a")
+    h = harness(*([Reply(tool_calls=(same,))] * 400), Reply(text="好吧"))
+    stop, _ = h.run(loop_input(), max_steps=1000)
+    assert stop.reason is LoopStopReason.FINAL_ANSWER
+    # 前两次真派发了, 之后全被挡下.
+    assert len(h.tool_actions()) == 2
+    assert len(h.gateway.requests) == 401

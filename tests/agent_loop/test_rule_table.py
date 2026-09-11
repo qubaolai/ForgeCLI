@@ -83,3 +83,16 @@ def test_broken_rule_does_not_fail_the_turn():
     ]
     assert any("broken" in s and "before_model" in s for s in summaries)
     assert events.kinds()[-1] is K.TURN_COMPLETED
+
+
+def test_fit_before_workspace_watch_fails_with_reason():
+    """ADR-0049 验收: 把 context_fit 挪到 workspace_watch 之前, 装配时抛错并带理由."""
+    from forgecli.application.agent_loop.rules.workspace_watch import (
+        WorkspaceWatchRule,
+    )
+
+    rules = (ContextFitRule(None), WorkspaceWatchRule(None))
+    with pytest.raises(RuleOrderError) as caught:
+        validate_rule_order(rules)
+    assert "workspace_watch 必须排在 context_fit 之前" in str(caught.value)
+    assert "通知要先进窗口" in str(caught.value)

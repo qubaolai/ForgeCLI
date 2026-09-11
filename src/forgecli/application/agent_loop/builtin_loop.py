@@ -285,7 +285,19 @@ class BuiltinAgentLoop:
                 outcome = after.outcome
 
             self._remember_assistant(outcome)
-            return self._dispatch_or_answer(outcome)
+            if not outcome.tool_calls:
+                return self._answer(outcome)
+            self._pending_calls = list(outcome.tool_calls)
+            # 模型这一轮请求的调用已经全部确定. 先把整批意图发给观察端, 再派发第一个,
+            # 页面才能在任何工具真正启动之前画出完整队列. 裁决与执行事实仍由协调器发布,
+            # 这里不会把"模型请求了"说成"必然会执行".
+            self._events.tool_batch(outcome.tool_calls)
+            # 不发决策摘要: "模型请求 N 个工具调用"只是把界面上已经画着的东西再说一遍.
+            dispatched = self._dispatch_next(reason="")
+            if dispatched is None:
+                # 整批都被规则挡下了: 模型要看到每一个调用的结果才知道下一步.
+                continue
+            return dispatched
 
     def _call_model(self) -> ModelOutcome | LoopStop | Reask | Rewrite:
         """组请求, 发出去, 把出错的路交给规则."""
@@ -348,24 +360,17 @@ class BuiltinAgentLoop:
             self._window = verdict.window
         self._events.decision(verdict.summary)
 
-    def _dispatch_or_answer(self, outcome: ModelOutcome) -> LoopStepResult:
-        if outcome.tool_calls:
-            self._pending_calls = list(outcome.tool_calls)
-            # 模型这一轮请求的调用已经全部确定. 先把整批意图发给观察端, 再派发第一个,
-            # 页面才能在任何工具真正启动之前画出完整队列. 裁决与执行事实仍由协调器发布,
-            # 这里不会把"模型请求了"说成"必然会执行".
-            self._events.tool_batch(outcome.tool_calls)
-            # 不发决策摘要: "模型请求 N 个工具调用"只是把界面上已经画着的东西再说一遍.
-            return self._dispatch_next(reason="")
+    def _answer(self, outcome: ModelOutcome) -> LoopAction:
         self._dispatched = None
         self._phase = LoopPhase.AWAITING_ANSWER_ACK
         self._events.next_step()
         return self._decision("模型已产出最终回答", AnswerAction(text=outcome.text))
 
-    def _dispatch_next(self, *, reason: str) -> LoopStepResult:
+    def _dispatch_next(self, *, reason: str) -> LoopAction | LoopStop | None:
         """派发队列里的下一个没被规则挡下的调用. 一次一个, 不并行.
 
-        整批都被挡下时回到调模型: 模型要看到每一个调用的结果才知道下一步.
+        队列空了 (整批都被挡下, 或本来就派完了) 返回 None, 由调用方决定回去调模型:
+        这里不自己调 `_advance`, 不然派发与调模型就互相套起来了.
         """
         while self._pending_calls:
             call = self._pending_calls.pop(0)
@@ -402,7 +407,7 @@ class BuiltinAgentLoop:
                 ),
             )
         self._dispatched = None
-        return self._advance()
+        return None
 
     def _deny(self, call: ToolCall, verdict: Deny) -> None:
         """规则挡下了这一个调用: 不执行, 把规则给的那段文字当它的工具结果回填.
@@ -451,7 +456,9 @@ class BuiltinAgentLoop:
         if isinstance(verdict, Inject):
             self._deferred.append(verdict)
         if self._pending_calls:
-            return self._dispatch_next(reason="继续派发同一批中的下一个工具调用")
+            dispatched = self._dispatch_next(reason="继续派发同一批中的下一个工具调用")
+            if dispatched is not None:
+                return dispatched
         # 整批工具结果都回填完了, 攒着的消息现在才能写.
         for inject in self._deferred:
             self._append(*inject.messages)
