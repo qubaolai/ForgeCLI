@@ -18,14 +18,23 @@ from forgecli.application.agent_loop.rules.plan_review import PlanReviewRule
 from forgecli.application.agent_loop.rules.refusal import RefusalRule
 from forgecli.application.agent_loop.rules.repeat_call import RepeatCallRule
 from forgecli.application.agent_loop.rules.tools_closed import ToolsClosedRule
+from forgecli.application.agent_loop.rules.workspace_watch import WorkspaceWatchRule
 from forgecli.application.context.window_manager import WindowManager
+from forgecli.application.workspace.monitor import WorkspaceSnapshotProvider
 
 __all__ = ["builtin_rules"]
 
 
-def builtin_rules(*, context: WindowManager | None) -> tuple[LoopRule, ...]:
+def builtin_rules(
+    *,
+    context: WindowManager | None,
+    workspace_provider: WorkspaceSnapshotProvider | None,
+) -> tuple[LoopRule, ...]:
     """每轮现建: 好几条规则带着本轮的计数器."""
     return (
+        # 工作区变化排第一: 它四个时机都要拍快照, 而且通知要赶在压缩之前进窗口 (它
+        # 自己声明了这条约束). 排在别的规则前面, 任何一条规则停下之前它都已经看过一眼.
+        WorkspaceWatchRule(workspace_provider),
         # ---- 调模型之前 ----
         # 预算先于压缩: 该停了就别再为压缩花一次模型调用 (它自己声明了这条约束).
         ModelBudgetRule(),

@@ -20,7 +20,7 @@ from support.loop_fakes import FakeMeter, Reply, loop_input, recording_bus
 
 
 def test_builtin_table_is_consistent():
-    validate_rule_order(builtin_rules(context=None))
+    validate_rule_order(builtin_rules(context=None, workspace_provider=None))
 
 
 def test_swapping_budget_and_fit_fails_with_reason():
@@ -67,7 +67,7 @@ def test_broken_rule_does_not_fail_the_turn():
     loop = BuiltinAgentLoop(
         ScriptedGateway(Reply(text="ok")),
         FakeMeter(),  # type: ignore[arg-type]
-        rules=(Broken(), *builtin_rules(context=None)),
+        rules=(Broken(), *builtin_rules(context=None, workspace_provider=None)),
         model_transport_policy=ModelTransportPolicy(),
         event_bus=bus,
     )

@@ -67,10 +67,6 @@ from forgecli.application.llm.gateway.gateway import LlmGateway
 from forgecli.application.llm.metering import UsageMeter
 from forgecli.application.llm.transport_policy import ModelTransportPolicy
 from forgecli.application.prompt.template_renderer import render_notice
-from forgecli.application.workspace.monitor import (
-    WorkspaceChangeMonitor,
-    WorkspaceSnapshotProvider,
-)
 from forgecli.domain.agent.actions import (
     AnswerAction,
     LoopAction,
@@ -98,7 +94,6 @@ from forgecli.domain.model.request import ModelRequest
 from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.tool.catalog import ToolCatalog
 from forgecli.domain.tool.tool_call import ToolCall, ToolSchema
-from forgecli.domain.workspace.changes import WorkspaceChange, WorkspaceChangeSource
 from forgecli.shared.cancellation import CancelToken
 from forgecli.shared.observability.context import update as update_run_context
 from forgecli.shared.observability.log import get_log
@@ -124,7 +119,6 @@ class BuiltinAgentLoop:
         cancel_token_factory: Callable[[], CancelToken | None] = lambda: None,
         event_bus: AgentRunEventBus | None = None,
         timer: Callable[[], float] = time.monotonic,
-        workspace_snapshot_provider: WorkspaceSnapshotProvider | None = None,
     ) -> None:
         self._new_request_id = request_id_factory
         self._new_cancel_token = cancel_token_factory
@@ -154,13 +148,6 @@ class BuiltinAgentLoop:
         self._assembled: AssembledContext | None = None
         self._tools: tuple[ToolSchema, ...] = ()
         self._tools_closed = False
-        # 第 4 步搬进规则. 暂留.
-        self._workspace_monitor = (
-            None
-            if workspace_snapshot_provider is None
-            else WorkspaceChangeMonitor(workspace_snapshot_provider)
-        )
-        self._workspace_changes: list[WorkspaceChange] = []
         # 模型一次要了多个工具时的等待队列, 以及正在等 observation 的那一个.
         self._pending_calls: list[ToolCall] = []
         self._dispatched: ToolCall | None = None
@@ -183,8 +170,6 @@ class BuiltinAgentLoop:
         # 换了之后"模型为什么突然改了行为"就再也对不上任何一条事件.
         self._assembled = loop_input.context
         self._tools = _schemas_of(loop_input.tool_catalog)
-        if self._workspace_monitor is not None:
-            self._workspace_monitor.start()
         self._events.start_turn(session_id=self._session_id, turn_id=self._turn_id)
         # 本轮的标识就位, 上一轮的清零. `update` 没有还原点, 所以由每一轮自己把
         # step / req / tool 归零 —— 否则 loop.start 那一行会带着上一轮的步号.
@@ -288,10 +273,6 @@ class BuiltinAgentLoop:
         `continue`, 不递归.
         """
         while True:
-            # 工作区检查 (第 4 步搬进规则).
-            self._check_workspace_changes(WorkspaceChangeSource.EXTERNAL)
-            self._publish_workspace_notice()
-
             stop = self._rules.before_model(self._view, self._apply_rewrite)
             if isinstance(stop, LoopStop):
                 return self._stop(stop)
@@ -301,13 +282,6 @@ class BuiltinAgentLoop:
                 return self._stop(outcome)
             if isinstance(outcome, Reask | Rewrite):
                 self._apply_retry(outcome)
-                continue
-
-            # 模型生成期间也可能有人改了工作区. 如果这次本来要直接回答, 不能把一个
-            # 基于旧文件状态的答案当成最终答案 (第 4 步搬进规则).
-            self._check_workspace_changes(WorkspaceChangeSource.EXTERNAL)
-            if self._workspace_changes and not outcome.tool_calls:
-                self._publish_workspace_notice()
                 continue
 
             after = self._rules.after_model(outcome, self._view())
@@ -398,42 +372,48 @@ class BuiltinAgentLoop:
         return self._decision("模型已产出最终回答", AnswerAction(text=outcome.text))
 
     def _dispatch_next(self, *, reason: str) -> LoopStepResult:
-        """派发队列里的下一个工具调用. 一次一个, 不并行."""
-        # 模型思考和真正执行之间也留出一个外部修改窗口. 这个检查点还没有 agent 工具
-        # 在运行, 因此这里发现的变化明确归为 external (第 4 步搬进规则).
-        self._check_workspace_changes(WorkspaceChangeSource.EXTERNAL)
-        call = self._pending_calls.pop(0)
-        verdict = self._rules.before_dispatch(call, self._view())
-        if isinstance(verdict, Deny):
-            return self._deny(call, verdict)
-        if isinstance(verdict, LoopStop):
-            return self._stop(verdict)
-        self._dispatched = call
-        self._phase = LoopPhase.AWAITING_TOOL_RESULT
-        self._tool_calls += 1
-        update_run_context(step=self._events.next_step(), tool=call.name)
-        # 入参**原样**写进日志, 与发给终端的 scrub_arguments 是两条路: 屏幕上要防的是
-        # 一屏 base64 把过程刷没, 而排查一次"工具为什么这么干"必须看到它真正收到了什么.
-        _log.info(
-            "tool.requested",
-            tool=call.name,
-            tool_call_id=call.tool_call_id,
-            arguments=call.arguments,
-            queued=len(self._pending_calls),
-            tool_call_index=self._tool_calls,
-        )
-        return self._decision(
-            reason,
-            ToolRequestAction(
-                request=ToolRequest(
-                    name=call.name,
-                    arguments=call.arguments,
-                    tool_call_id=call.tool_call_id,
-                )
-            ),
-        )
+        """派发队列里的下一个没被规则挡下的调用. 一次一个, 不并行.
 
-    def _deny(self, call: ToolCall, verdict: Deny) -> LoopStepResult:
+        整批都被挡下时回到调模型: 模型要看到每一个调用的结果才知道下一步.
+        """
+        while self._pending_calls:
+            call = self._pending_calls.pop(0)
+            verdict = self._rules.before_dispatch(call, self._view())
+            if isinstance(verdict, LoopStop):
+                return self._stop(verdict)
+            if isinstance(verdict, Deny):
+                self._deny(call, verdict)
+                reason = "跳过被拒的调用, 派发下一个"
+                continue
+            self._dispatched = call
+            self._phase = LoopPhase.AWAITING_TOOL_RESULT
+            self._tool_calls += 1
+            update_run_context(step=self._events.next_step(), tool=call.name)
+            # 入参**原样**写进日志, 与发给终端的 scrub_arguments 是两条路: 屏幕上要防
+            # 的是一屏 base64 把过程刷没, 而排查一次"工具为什么这么干"必须看到它真正
+            # 收到了什么.
+            _log.info(
+                "tool.requested",
+                tool=call.name,
+                tool_call_id=call.tool_call_id,
+                arguments=call.arguments,
+                queued=len(self._pending_calls),
+                tool_call_index=self._tool_calls,
+            )
+            return self._decision(
+                reason,
+                ToolRequestAction(
+                    request=ToolRequest(
+                        name=call.name,
+                        arguments=call.arguments,
+                        tool_call_id=call.tool_call_id,
+                    )
+                ),
+            )
+        self._dispatched = None
+        return self._advance()
+
+    def _deny(self, call: ToolCall, verdict: Deny) -> None:
         """规则挡下了这一个调用: 不执行, 把规则给的那段文字当它的工具结果回填.
 
         回填而不是静默跳过, 也不是直接停止本轮: 模型必须知道这个调用怎么了, 否则它
@@ -452,10 +432,6 @@ class BuiltinAgentLoop:
             ),
         )
         self._events.tool_rejected(call, notice=verdict.notice, code=verdict.code)
-        self._dispatched = None
-        if self._pending_calls:
-            return self._dispatch_next(reason="跳过被拒的调用, 派发下一个")
-        return self._advance()
 
     def _observe_tool(self, observation: LoopObservation) -> LoopStepResult:
         """把工具结论写回 transcript, 然后继续派发或再调一次模型.
@@ -466,9 +442,6 @@ class BuiltinAgentLoop:
         call = self._dispatched
         assert call is not None
         self._dispatched = None
-        # 上一个检查点位于工具派发前. 这段差异属于刚刚完成的 agent 工具操作, 包括 shell
-        # 这类无法在结果中列出具体 mutation path 的工具 (第 4 步搬进规则).
-        self._check_workspace_changes(WorkspaceChangeSource.AGENT)
         _log.info(
             "tool.observed",
             tool=call.name,
@@ -556,33 +529,6 @@ class BuiltinAgentLoop:
             )
             self._events.tool_abandoned(call, notice=detail)
         self._pending_calls = []
-
-    # ---- 工作区 (第 4 步搬进规则) ----
-
-    def _check_workspace_changes(self, source: WorkspaceChangeSource) -> None:
-        if self._workspace_monitor is None:
-            return
-        self._workspace_changes.extend(self._workspace_monitor.checkpoint(source))
-
-    def _publish_workspace_notice(self) -> None:
-        if not self._workspace_changes:
-            return
-        changes = tuple(self._workspace_changes)
-        self._workspace_changes.clear()
-        notice = render_notice("loop.workspace_changed", changes=changes)
-        self._append(ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)))
-        self._events.workspace_changed(changes)
-        _log.info(
-            "workspace.changed",
-            changes=[
-                {
-                    "path": change.path,
-                    "kind": change.kind.value,
-                    "source": change.source.value,
-                }
-                for change in changes
-            ],
-        )
 
     # ---- transcript ----
 

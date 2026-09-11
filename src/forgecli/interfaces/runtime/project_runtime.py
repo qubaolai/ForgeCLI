@@ -238,13 +238,15 @@ class ProjectRuntime:
                 # 每轮现建一份规则表 (ADR-0049): 好几条规则带着本轮的计数器. 读字段
                 # 而不是闭包住一个实例: /compact 走服务那一份, 自动压缩走循环这一份,
                 # 换模型之后两边必须还是同一个 (ADR-0048 决策 1).
-                rules=builtin_rules(context=self._window_manager),
+                rules=builtin_rules(
+                    context=self._window_manager,
+                    workspace_provider=OsWorkspaceSnapshotProvider(
+                        lambda: self.tools.context_factory().workspace_roots
+                    ),
+                ),
                 cancel_token_factory=self.cancel_source.current,
                 model_transport_policy=ModelTransportPolicy(),
                 event_bus=self.event_bus,
-                workspace_snapshot_provider=OsWorkspaceSnapshotProvider(
-                    lambda: self.tools.context_factory().workspace_roots
-                ),
             )
 
         def runtime_facts() -> RuntimeFacts:

@@ -55,10 +55,11 @@ class Harness:
         return BuiltinAgentLoop(
             self.gateway,
             FakeMeter(),  # type: ignore[arg-type]
-            rules=builtin_rules(context=self.context),
+            rules=builtin_rules(
+                context=self.context, workspace_provider=self.workspace
+            ),
             model_transport_policy=ModelTransportPolicy(),
             event_bus=self.bus,
-            workspace_snapshot_provider=self.workspace,
         )
 
     def run(
