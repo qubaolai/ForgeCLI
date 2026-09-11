@@ -163,6 +163,7 @@ function App() {
     busy: conversation.busy,
     clearTimeline: conversation.clearTimeline,
     closePicker,
+    resume: sessionActions.resume,
     onError: setError,
   });
 
@@ -215,7 +216,7 @@ function App() {
             deleting={sessionActions.deleting}
             activeProject={projects.activeProject}
             onCreate={sessionActions.create}
-            onResume={sessionActions.resume}
+            onResume={projectSwitch.openSession}
             onDelete={sessionActions.remove}
             onLoadMore={projectSessions.loadNextPage}
           />

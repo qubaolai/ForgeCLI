@@ -38,7 +38,8 @@ export function SessionSidebar({
   deleting: boolean;
   activeProject?: Project;
   onCreate: () => void;
-  onResume: (sessionId: string) => void;
+  /** 点会话项: 带上它属于哪个项目, 非当前项目的要先切过去。 */
+  onResume: (projectId: string, sessionId: string) => void;
   onDelete: (sessionId: string) => void;
   onLoadMore: (projectId: string) => Promise<void>;
 }) {
@@ -87,8 +88,7 @@ export function SessionSidebar({
               icon={<PlusOutlined />}
               onClick={onOpenProjectPicker}
               title="添加项目"
-            >
-            </Button>
+            ></Button>
           </Flex>
           <div className="forge-sidebar-project-list" role="list">
             {projects.map((project) => {
@@ -139,7 +139,7 @@ export function SessionSidebar({
                           className="session-menu"
                           style={{ borderInlineEnd: "none" }}
                           selectedKeys={currentSessionId ? [currentSessionId] : []}
-                          onClick={({ key }) => onResume(key)}
+                          onClick={({ key }) => onResume(project.project_id, key)}
                           items={group.items.map((session) => {
                             const title = session.title || "未命名会话";
                             return {
