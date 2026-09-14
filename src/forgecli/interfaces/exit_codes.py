@@ -7,6 +7,7 @@
     4  终端入口拿不到交互式 TTY
     6  项目已被另一个 forge 进程占用
     7  端口被占用
+    8  --allow-full-access 被拒绝: 配置锁死了这一档, 或没有人在终端里确认过
 
 1–3 中只有 2 有框架语义，其余留给未预期失败或后续明确契约：
     - 1 是"未预期错误"的通用约定, 留给未捕获异常 (Python 自身即以 1 退出), 这样
@@ -38,3 +39,8 @@ class ExitCode(IntEnum):
     NO_TTY = 4
     PROJECT_LOCKED = 6
     PORT_BUSY = 7
+    # ``--allow-full-access`` 要过两道门 (ADR-0052): 配置
+    # ``security.disable_full_access`` 没锁, 且这台机器上有人在交互式终端里确认过一次.
+    # 哪一道没过都是这个码 —— 脚本只需要知道"没能以放开 Full Access 的方式起来",
+    # 具体是哪道门看提示文案.
+    FULL_ACCESS_REFUSED = 8

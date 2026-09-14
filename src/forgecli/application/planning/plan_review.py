@@ -137,8 +137,9 @@ def _upgraded_mode(mode: SessionMode) -> SessionMode | None:
     停在名义上仍要逐条问命令的那一档名实不符. FULL_ACCESS 仍在这条边之外 ——
     它放的是网络与跨工作区, 那种决定只能由人自己做.
 
-    在 accept_edits, auto 或 full_access 档批准一份计划不改档: 既不升也不降. 降档看起来
-    "更安全", 实际是替用户撤销了他自己做过的决定.
+    在 manual, accept_edits, auto 或 full_access 档批准一份计划不改档: 既不升也不降.
+    降档看起来"更安全", 实际是替用户撤销了他自己做过的决定; manual 不升是因为选它的人
+    要的正是每一步都看一眼, 一份计划改变不了这一点.
     """
     # 判据是隔离档: 计划被批准之后要能动手, 而只读档下动不了.
     return SessionMode.AUTO if mode.sandbox is SandboxLevel.READ_ONLY else None

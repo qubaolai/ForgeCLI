@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import ClassVar
 
 
 @dataclass(frozen=True)

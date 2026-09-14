@@ -30,7 +30,9 @@ __all__ = [
 # 4: ADR-0030 用围栏边界顶替模式能力预算. 旧规则绑的是"某模式允许某能力"这个口径,
 #    而现在的判据是"围栏兜不兜得住", 沿用等于拿旧口径去满足新裁决.
 # 5: accept_edits 不再自动执行通用 Shell. 旧规则若继续生效, 会绕过新增的人工确认.
-POLICY_VERSION = "5"
+# 6: 新增 manual 档与 FencePolicy.automatic_workspace_io (ADR-0052). 围栏多了一个字段,
+#    每一档的 policy_hash 都变了, 旧规则本来就对不上; 递增是把这件事写明.
+POLICY_VERSION = "6"
 
 
 class Decision(Enum):

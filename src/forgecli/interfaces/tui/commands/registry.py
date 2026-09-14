@@ -132,12 +132,13 @@ COMMANDS: tuple[Command, ...] = (
     ),
     Command(
         "/mode",
-        "隔离档与审批档",
+        "当前模式: 每一档决定 Forge 不问你就能做多少事",
         mode.cmd_mode,
         usage="/mode [预设名]",
         detail=(
-            "两个轴独立: 隔离档管围栏允许什么, 审批档管什么时候要你点头.\n"
-            "预设名 plan / accept_edits / auto / full_access 是常用组合的快捷方式.\n"
+            "预设名 manual / plan / accept_edits / auto / full_access, 从每事必问到"
+            "围栏内不问.\n"
+            "full_access 只在启动时带了 --allow-full-access 才可选.\n"
             "输入框里 Tab / Shift-Tab 也能沿这条梯度切档."
         ),
         category="运行",

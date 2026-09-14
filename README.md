@@ -37,7 +37,7 @@ forge 会直接拒绝启动 (退出码 4)，而不是挂在那里等一个永远
   菜单自己滚动。`/help` 列出全部，`/<命令> -h` 看某一条怎么用。
 - 这些命令与 Web 上的面板一一对应：`/mode`、`/model`、`/provider`、`/config`、`/dirs`、
   `/plan`、`/checkpoints` 等。`/config` 按前缀分类，`←→` 换分类。
-- 菜单没打开时 `Tab` / `Shift+Tab` 沿权限梯度切换模式，当前模式显示在输入框右下角。
+- 菜单没打开时 `Tab` / `Shift+Tab` 沿权限梯度切换模式 (manual -> plan -> accept_edits -> auto), 当前模式显示在输入框右下角. `full_access` 只在启动时带了 `--allow-full-access` 才可选, 第一次要在终端里确认一次; 应用级配置 `security.disable_full_access` 能把它锁死.
 - 各级菜单和审批卡片都能用 `↑↓` 选、数字键直选，`Esc` 退回上一层。
 - `Ctrl+J` 换行，`↑` 翻历史，`Ctrl-C` 停止当前一轮或取消当前这一步，空行连按两次退出。
 

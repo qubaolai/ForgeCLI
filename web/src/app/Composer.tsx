@@ -1,4 +1,4 @@
-/** 输入框那一块: 文本域, 姿态与模型两个菜单, 发送 / 停止。
+/** 输入框那一块: 文本域, 模式与模型两个菜单, 发送 / 停止.
  *
  * 输入法 (IME) 要单独挡一次: 中文输入按 Enter 是"选词", 不是"发送"。浏览器给的
  * `isComposing` 在部分输入法上不可靠, 所以另外用 composition 事件自己记一份。
@@ -11,7 +11,7 @@ import { shouldSendOnEnter } from "@/features/conversation/interaction";
 import { ModeMenu } from "@/features/chrome/ModeMenu";
 import { ModelMenu } from "@/features/chrome/ModelMenu";
 import type { ConnectionState } from "@/features/runEvents/useRunEvents";
-import type { Stance } from "@/shared/lib/stance";
+import type { ModePreset, Stance } from "@/shared/lib/stance";
 import type { ThinkingView } from "@/types/admin";
 
 export function Composer({
@@ -23,6 +23,7 @@ export function Composer({
   stopping,
   onCancel,
   stance,
+  presets,
   onStance,
   currentModel,
   models,
@@ -41,7 +42,8 @@ export function Composer({
   stopping: boolean;
   onCancel: () => void;
   stance: Stance;
-  onStance: (patch: Partial<Stance>) => void;
+  presets: ModePreset[];
+  onStance: (mode: string) => void;
   currentModel: string;
   models: string[];
   thinking: ThinkingView;
@@ -95,7 +97,7 @@ export function Composer({
       />
       <Flex align="center" gap={8} wrap className="composer-bar">
         <Flex align="center" gap={8} className="composer-menus">
-          <ModeMenu value={stance} disabled={busy} onChange={onStance} />
+          <ModeMenu value={stance} presets={presets} disabled={busy} onChange={onStance} />
           <ModelMenu
             current={currentModel}
             models={models}

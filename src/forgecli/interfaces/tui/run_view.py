@@ -72,20 +72,32 @@ class RunEventCollector(AgentRunEventSubscriber):
 
 
 class TurnMetrics:
-    """一轮的读数. 累加在这里而不是画笔里: 终态那一行要在事件流结束之后才打。"""
+    """一轮的读数. 累加在这里而不是画笔里: 终态那一行要在事件流结束之后才打。
+
+    四个 token 读数互不相交, 加起来就是 total: 供应商回的 input 含 cached, output 含
+    reasoning (口径见 domain/model/response 的 ModelUsage), 这里减出来再累加 —— 并排
+    打四个原始数, 读的人会把两个子集也当成加项.
+    """
 
     def __init__(self) -> None:
-        self.input_tokens = 0
-        self.output_tokens = 0
+        self.fresh_input_tokens = 0
+        self.cached_tokens = 0
+        self.plain_output_tokens = 0
         self.reasoning_tokens = 0
         self.total_tokens = 0
         self.estimated = False
 
     def add(self, usage: ModelUsagePayload) -> None:
-        self.input_tokens += usage.input_tokens
-        self.output_tokens += usage.output_tokens
-        self.reasoning_tokens += usage.reasoning_tokens
-        self.total_tokens += usage.total_tokens
+        cached = min(usage.cached_tokens, usage.input_tokens)
+        reasoning = min(usage.reasoning_tokens, usage.output_tokens)
+        self.fresh_input_tokens += usage.input_tokens - cached
+        self.cached_tokens += cached
+        self.plain_output_tokens += usage.output_tokens - reasoning
+        self.reasoning_tokens += reasoning
+        # 供应商没回 total 时按两者之和补, 否则这一行会打出 "0 tokens".
+        self.total_tokens += usage.total_tokens or (
+            usage.input_tokens + usage.output_tokens
+        )
         self.estimated = self.estimated or usage.estimated
 
 
@@ -343,10 +355,12 @@ class TerminalRunView:
             f"模型 {payload.model_calls} 次",
             f"工具 {payload.tool_calls} 次",
         ]
-        if self.metrics.input_tokens:
-            chips.append(f"输入 {self.metrics.input_tokens}")
-        if self.metrics.output_tokens:
-            chips.append(f"输出 {self.metrics.output_tokens}")
+        if self.metrics.fresh_input_tokens:
+            chips.append(f"输入 {self.metrics.fresh_input_tokens}")
+        if self.metrics.cached_tokens:
+            chips.append(f"缓存命中 {self.metrics.cached_tokens}")
+        if self.metrics.plain_output_tokens:
+            chips.append(f"输出 {self.metrics.plain_output_tokens}")
         if self.metrics.reasoning_tokens:
             chips.append(f"思考 {self.metrics.reasoning_tokens}")
         chips.append(

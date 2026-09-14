@@ -64,6 +64,14 @@ def _root(
         "--cli",
         help="进终端交互式会话，不启动 Web 控制面。",
     ),
+    allow_full_access: bool = typer.Option(
+        False,
+        "--allow-full-access",
+        help=(
+            "把 Full Access 档放进本次可选的模式；不带它时那一档不出现在任何菜单里。"
+            "第一次要在终端里确认一次，之后不再问。"
+        ),
+    ),
     port: int = typer.Option(
         DEFAULT_PORT,
         "--port",
@@ -84,17 +92,22 @@ def _root(
     ``--port`` 与 ``--open`` 只对 Web 有意义。终端会话不监听端口, 也没有可打开的
     页面, 所以带着它们进 ``--cli`` 是用法错误, 直接拒绝 —— 静默忽略会让人以为
     ``forge --cli --port 9000`` 起了一个监听 9000 的什么东西。
+
+    ``--allow-full-access`` 两条路都认 (ADR-0052): 它是进程级的事实, 由各自的启动路径在
+    装好日志之后过 ``interfaces/full_access_gate`` 的两道门, 这里只把参数交下去。
     """
     if cli:
         if open_browser or port != DEFAULT_PORT:
             console.print("[red]--cli 不接受 --port / --open[/]：终端会话不监听端口。")
             raise typer.Exit(2)
-        code = run_cli()
+        code = run_cli(allow_full_access=allow_full_access)
         if code != 0:
             raise typer.Exit(code)
         return
     # 服务没能开始时以非零码退出，让脚本与 CI 可判据；正常停止返回 0。
-    code = run_web(port=port, open_browser=open_browser)
+    code = run_web(
+        port=port, open_browser=open_browser, allow_full_access=allow_full_access
+    )
     if code != 0:
         raise typer.Exit(code)
 

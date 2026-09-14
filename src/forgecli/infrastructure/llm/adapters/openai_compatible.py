@@ -259,6 +259,11 @@ class OpenAICompatibleProvider(ModelProvider):
             payload.update(dict(options))
         if stream:
             payload["stream"] = True
+            # 不带这一项, OpenAI 官方与 OpenRouter 一类的服务在流式响应里根本不回
+            # usage, 于是每次调用都落到网关的本地估算, 合计前面永远带 "≈". DashScope,
+            # 智谱, DeepSeek 不看这个字段也会在末块回 usage, 多带一项对它们没有影响.
+            # setdefault: provider_options 里写了 stream_options 的以它为准.
+            payload.setdefault("stream_options", {"include_usage": True})
         return payload
 
     def _messages(self, request: ProviderRequest) -> list[dict[str, Any]]:

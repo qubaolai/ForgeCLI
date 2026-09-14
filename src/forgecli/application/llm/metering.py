@@ -35,11 +35,12 @@ class CostEstimator:
         )
 
     def estimate_cost(self, prices: UnitPrices, usage: ModelUsage) -> float | None:
-        """估算成本；input/output 任一单价缺失 -> None（价格未知，不阻塞调用）。
+        """估算成本; input/output 任一单价缺失 -> None (价格未知, 不阻塞调用).
 
-        口径（§11.2 / ADR-0012 §7）：cached input 按 cached 单价（缺失退化为
-        input 单价）；reasoning token 有专价用专价，缺失并入 output 计价
-        （多数供应商口径）。
+        口径 (§11.2 / ADR-0012 §7) 跟 `ModelUsage` 的定义走: cached 与 reasoning 都是
+        子集, 先从 input / output 里减出来, 再各按各的单价算; 专价缺失时退化为所属
+        那一项的单价. 早先 reasoning 分支写成 `output + reasoning`, 而供应商回的
+        `completion_tokens` 本来就含 reasoning, 于是没配 reasoning 单价时那部分算了两次.
         """
         if prices.input_per_1k is None or prices.output_per_1k is None:
             return None
@@ -50,17 +51,18 @@ class CostEstimator:
             if prices.cached_input_per_1k is not None
             else prices.input_per_1k
         )
-        if prices.reasoning_per_1k is not None:
-            reasoning_cost = usage.reasoning_tokens * prices.reasoning_per_1k
-            output_tokens = usage.output_tokens
-        else:
-            reasoning_cost = 0.0
-            output_tokens = usage.output_tokens + usage.reasoning_tokens
+        reasoning = min(usage.reasoning_tokens, usage.output_tokens)
+        plain_output = usage.output_tokens - reasoning
+        reasoning_price = (
+            prices.reasoning_per_1k
+            if prices.reasoning_per_1k is not None
+            else prices.output_per_1k
+        )
         return (
             fresh_input * prices.input_per_1k
             + cached * cached_price
-            + output_tokens * prices.output_per_1k
-            + reasoning_cost
+            + plain_output * prices.output_per_1k
+            + reasoning * reasoning_price
         ) / 1000.0
 
 

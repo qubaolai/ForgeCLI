@@ -22,6 +22,7 @@ from rich.console import Console
 from forgecli.infrastructure.config import config_dir
 from forgecli.infrastructure.project import ProjectLockedError
 from forgecli.interfaces.exit_codes import ExitCode
+from forgecli.interfaces.full_access_gate import FullAccessRefused, resolve_full_access
 from forgecli.interfaces.runtime.logging_wiring import start_observability
 from forgecli.interfaces.runtime.project_runtime import (
     ProjectRuntimeRegistry,
@@ -112,8 +113,13 @@ def run(
     *,
     port: int = DEFAULT_PORT,
     open_browser: bool = False,
+    allow_full_access: bool = False,
 ) -> int:
-    """只监听 loopback，并用一次性启动令牌打开控制面。"""
+    """只监听 loopback，并用一次性启动令牌打开控制面。
+
+    ``allow_full_access`` 在这里过门而不是在浏览器里 (ADR-0052): 一次性确认要有人在
+    终端里回答, 而起服务的那条命令行就是一个终端. 页面上只会看到"有没有这一档".
+    """
     console = Console()
     status = start_observability()
     _log.info(
@@ -126,8 +132,13 @@ def run(
         log_file=None if status.file is None else str(status.file),
         log_level=status.level,
     )
+    try:
+        full_access = resolve_full_access(console, requested=allow_full_access)
+    except FullAccessRefused as exc:
+        console.print(f"[red]{exc.message}[/]")
+        return ExitCode.FULL_ACCESS_REFUSED
     project_service = build_project_service()
-    registry = ProjectRuntimeRegistry(project_service)
+    registry = ProjectRuntimeRegistry(project_service, full_access_allowed=full_access)
     current = project_service.find_trusted(Path.cwd())
     if current is not None:
         try:

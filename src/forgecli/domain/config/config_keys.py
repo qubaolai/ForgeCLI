@@ -31,6 +31,7 @@ LOGGING_DIRECTORY = "logging.directory"
 LOGGING_MAX_VALUE_CHARS = "logging.max_value_chars"
 LOGGING_INCLUDE_HTTP = "logging.include_http"
 EXECUTION_ENV_INHERIT = "execution.env_inherit"
+SECURITY_DISABLE_FULL_ACCESS = "security.disable_full_access"
 # 项目级（forge.json）
 DEFAULT_MODEL_PROVIDER_KEY = "model.provider"
 DEFAULT_MODEL_NAME_KEY = "model.name"
@@ -195,6 +196,22 @@ SCHEMA: tuple[ConfigKey, ...] = (
         "none 一个都不继承。收紧会让工具链找不到自己的配置，只在需要跨机器复现时用。"
         "PATH 无论哪一档都会去掉工作区内的目录。",
         effect="下一次工具调用生效",
+    ),
+    # 应用级而**不是**项目级, 与 Claude Code 的 disableBypassPermissionsMode 只认
+    # 用户级 / 托管级设置同一个理由: 一个 clone 下来的仓库不能替用户决定跳过审批,
+    # 反过来它也不该能替用户把这一档锁死 —— 锁与放都只能是坐在这台机器前的人自己的
+    # 决定.
+    # 它只能收紧: 开着时 --allow-full-access 被拒绝; 关着不等于放开, 放开仍要带参数.
+    ConfigKey(
+        SECURITY_DISABLE_FULL_ACCESS,
+        ConfigLevel.APP,
+        ValueKind.BOOL,
+        default="false",
+        label="禁用 Full Access",
+        help="开着时 forge --allow-full-access 会被拒绝启动, Full Access 档在任何"
+        "会话里都进不去. 共用机器或 CI 上用它把这一档锁死; 关掉它不等于放开, "
+        "放开仍要在启动时带参数.",
+        effect="下次启动生效",
     ),
     # 项目级 → forge.json
     ConfigKey(

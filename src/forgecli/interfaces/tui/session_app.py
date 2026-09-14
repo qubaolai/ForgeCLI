@@ -18,7 +18,6 @@ from rich.text import Text
 
 from forgecli.domain.human_interaction.prompt import PromptAnswer
 from forgecli.domain.intents import (
-    MODE_PRESETS,
     PRESET_NAMES,
     InputOrigin,
     stance_label,
@@ -113,7 +112,6 @@ class SessionApp:
                 # 菜单里按 Ctrl-D 同理: 读一行的回退路径抛的是 EOFError.
                 self.console.print()
                 self.console.print(Text("已取消", style=STYLE_DIM))
-        self.console.print(Text("再见.", style=STYLE_DIM))
         return ExitCode.OK
 
     # ---- 输入框要的两个回调 ----
@@ -142,15 +140,19 @@ class SessionApp:
         return " · ".join(parts)
 
     def _step_mode(self, step: int) -> None:
-        """Tab / Shift-Tab: 沿预设的权限梯度切一档.
+        """Tab / Shift-Tab: 沿预设的自主性梯度切一档.
 
         两端截断不回绕: 从最松的一档再按一次 Tab 跳回最紧的, 是那种按下去才发现的
         意外 —— 而这一轴上的每一步都在改 Forge 能不动手做什么。
+
+        梯度取 `runtime.presets` 而不是 MODE_PRESETS 全表: Full Access 只在启动时带了
+        `--allow-full-access` 才在里面 (ADR-0052). 没放开时最松的一档就是 auto,
+        Tab 到那里停下, 不会撞到一个"点了才报错"的档.
         """
         runtime = self.registry.active
         if runtime is None or runtime.busy:
             return
-        names = [preset.value for preset in MODE_PRESETS]
+        names = [preset.value for preset in runtime.presets]
         current = runtime.session.current().mode
         index = next(
             (

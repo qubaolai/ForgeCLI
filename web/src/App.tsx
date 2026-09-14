@@ -286,6 +286,7 @@ function App() {
                           stopping={conversation.stopping}
                           onCancel={conversation.cancelTurn}
                           stance={conversation.stance}
+                          presets={conversation.presets}
                           onStance={conversation.changeStance}
                           currentModel={admin.currentModel}
                           models={configuredModels}

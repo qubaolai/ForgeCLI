@@ -26,13 +26,13 @@ export function RunMetrics({ metrics }: { metrics: ReturnType<typeof metricsFor>
   );
 }
 
-/** 悬停才看的明细给整数: 这一栏正是用来核对上面那个 k 是怎么来的。 */
+/** 悬停才看的明细给整数: 这一栏正是用来核对上面那个 k 是怎么来的, 四项相加就是它。 */
 function tokenBreakdown(metrics: ReturnType<typeof metricsFor>) {
   const parts = [
-    `输入 ${metrics.inputTokens}`,
-    `输出 ${metrics.outputTokens}`,
+    `输入 ${metrics.freshInputTokens}`,
+    `缓存命中 ${metrics.cachedTokens}`,
+    `输出 ${metrics.plainOutputTokens}`,
     `思考 ${metrics.reasoningTokens}`,
-    `缓存 ${metrics.cachedTokens}`,
   ];
   if (metrics.compactTokens > 0) parts.push(`其中上下文压缩 ${metrics.compactTokens}`);
   return parts.join(" · ");

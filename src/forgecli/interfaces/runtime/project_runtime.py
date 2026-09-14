@@ -53,7 +53,13 @@ from forgecli.domain.human_interaction.prompt import (
     PromptAnswer,
     PromptKind,
 )
-from forgecli.domain.intents import InputOrigin, SessionMode
+from forgecli.domain.intents import (
+    InputOrigin,
+    ModeUnavailableError,
+    SessionMode,
+    StanceOption,
+    available_presets,
+)
 from forgecli.domain.model.catalog import ModelCatalogEntry
 from forgecli.domain.model.model_ref import ModelRef
 from forgecli.domain.model.origin import RequestOrigin
@@ -106,8 +112,13 @@ class ProjectRuntime:
     def __init__(
         self,
         project: ProjectConfig,
+        *,
+        full_access_allowed: bool = False,
     ) -> None:
         self.project = project
+        # 启动时定下的事实 (`forge --allow-full-access`, ADR-0052), 整个进程不变.
+        # 缺省 False: 忘记传参的后果是少一档, 不是多一档.
+        self.full_access_allowed = full_access_allowed
         project_home = config_dir() / "projects" / project.project_id
         sessions_dir = project_home / "sessions"
         self.lock = ProcessLock(project_home / "forge.lock")
@@ -184,11 +195,11 @@ class ProjectRuntime:
         return tools
 
     def reload_llm(self) -> None:
-        """应用有效的模型/网关配置，同时保留会话、窗口与目录授权 (ADR-0048 决策 1)。
+        """应用有效的模型/网关配置，同时保留会话、窗口与目录授权 (ADR-0051 决策 5)。
 
         两条约束: **整套建成了才提交**, 中途失败时旧运行配置原样可用, 不留下半新半旧
-        的组合; **会话服务只重配置, 不重建**, 换模型的人还在同一个会话里, 轮次编号与
-        窗口内容都不该因为改了一项配置而消失。
+        的组合; **会话服务不重建也不重配置**, 它收的是读本对象当前字段的闭包, 换模型的
+        人还在同一个会话里, 轮次编号与窗口内容都不动。
 
         新模型窗口更小时不在这里处理: 那是 ``WindowManager`` 每轮开头按预算压缩的事
         (ADR-0041), 清空会话既解决不了问题, 也把用户的上文一起丢了。
@@ -208,14 +219,9 @@ class ProjectRuntime:
         # 到这里两件都建成了, 一起换上. 之前的顺序是先换 self.llm 再建工具栈, 于是
         # 工具栈建失败时进程停在"新网关 + 旧工具栈"上, 而没有任何东西会说它坏了。
         self.llm, self.tools = llm, tools
+        # 会话服务读的是上面两个字段的闭包 (ADR-0051 决策 5), 换完就指向新的. 窗口
+        # 管理器是循环规则那一份, 也读字段, 这里重建一个让它带上新网关与新计量.
         self._window_manager = self._build_window_manager()
-        self._agent_turn.reconfigure(
-            context_budget=self.llm.context_budget,
-            context=self._window_manager,
-            memory=self.tools.memory,
-            planning=self.tools.planning,
-            tools=self.tools.dispatcher,
-        )
 
     def _build_window_manager(self) -> WindowManager:
         # 计量器与循环共用同一个 (ADR-0037): 各建一个迟早会出现两套单价.
@@ -258,18 +264,19 @@ class ProjectRuntime:
                 git_repository=(Path(execution.cwd) / ".git").exists(),
             )
 
+        # 随模型配置换的几样以闭包交进去 (ADR-0051 决策 5): 读的是 self.llm / self.tools
+        # 当前的字段, reload_llm 换了字段, 下一次调用自然指向新的. 不再有 reconfigure.
         return AgentTurnService(
             self.session,
             loop_factory=new_loop,
             prompt_builder=SystemPromptBuilder(),
             runtime_facts=runtime_facts,
             instructions=FsProjectInstructionReader(),
-            context_budget=self.llm.context_budget,
-            context=self._window_manager,
-            memory=self.tools.memory,
-            planning=self.tools.planning,
+            context_budget=lambda: self.llm.context_budget(),
+            memory=lambda: self.tools.memory,
+            planning=lambda: self.tools.planning,
+            tools=lambda: self.tools.dispatcher,
             run_bus=self.event_bus,
-            tools=self.tools.dispatcher,
         )
 
     @property
@@ -569,9 +576,23 @@ class ProjectRuntime:
             self.start_turn(outcome.follow_up, origin=InputOrigin.PROGRAM)
         return outcome
 
+    @property
+    def presets(self) -> tuple[StanceOption, ...]:
+        """本进程能进的预设. Tab 循环, `/mode` 与 `GET /api/v1/modes` 都只列这些."""
+        return available_presets(full_access_allowed=self.full_access_allowed)
+
     def set_mode(self, mode: SessionMode) -> SessionSnapshot:
+        """切模式. 三条入口 (Tab, `/mode`, `POST /api/v1/mode`) 都经这里, 门只设一处.
+
+        计划评审的升档不走这个方法而直接调 `session.set_mode`: 它的终点写死是 AUTO
+        (`plan_review._upgraded_mode`), 从来碰不到 Full Access, 不需要过门.
+        """
         if self.busy:
             raise RuntimeError("turn 运行期间不能切换模式")
+        if mode.unrestricted and not self.full_access_allowed:
+            raise ModeUnavailableError(
+                "Full Access 没有在启动时放开: 带 --allow-full-access 重新启动 forge."
+            )
         return self.session.set_mode(mode)
 
     def grant_workspace(self, path: Path, *, write: bool) -> object:
@@ -735,8 +756,12 @@ class ProjectRuntime:
 class ProjectRuntimeRegistry:
     """本地服务只激活一个项目；项目中心本身仍可列出全部项目。"""
 
-    def __init__(self, projects: ProjectService) -> None:
+    def __init__(
+        self, projects: ProjectService, *, full_access_allowed: bool = False
+    ) -> None:
         self.projects = projects
+        # 进程级事实, 每个激活的 ProjectRuntime 都从这里拿 (ADR-0052).
+        self.full_access_allowed = full_access_allowed
         self._lock = threading.Lock()
         self._active: ProjectRuntime | None = None
 
@@ -758,7 +783,9 @@ class ProjectRuntimeRegistry:
             if current is not None:
                 self._active = None
                 current.close()
-            activated = ProjectRuntime(project)
+            activated = ProjectRuntime(
+                project, full_access_allowed=self.full_access_allowed
+            )
             self._active = activated
             return activated
 

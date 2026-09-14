@@ -40,7 +40,6 @@ from forgecli.domain.model.provider_spec import ProviderProtocol
 from forgecli.domain.model.thinking import (
     ModelThinkingCapabilities,
     ModelThinkingSettings,
-    SupportsStructuredOutput,
     ThinkingEffortName,
     ThinkingMode,
 )

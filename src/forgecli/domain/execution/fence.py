@@ -30,12 +30,17 @@ class FencePolicy:
     writable_roots: tuple[str, ...] = ()
     denied_read_paths: tuple[str, ...] = ()
     network_allowed: bool = False
+    # 读写工作区内的文件能否不问人: fs_read / search_text 的读, fs_apply_patch 的写,
+    # 以及 Shell 命令触达工作区路径时分析器算出的 WORKSPACE_READ / WORKSPACE_WRITE.
+    # manual 档为 False, 那一档的全部意义就是每一次读写都过人 (ADR-0052); 其余各档为
+    # True. 缺省 False 与其他字段一致: 没编译过的围栏按最严的办.
+    automatic_workspace_io: bool = False
     # 能否不问人就启动一条**已经解析清楚**的 Shell 命令: Forge 认得出每一个命令单元,
     # 且这次的目标集合已经封闭. `sed -i x README.md` 属于这一类, `npm test` 不属于.
     #
-    # 判据来自隔离档而不是审批档, 而这是这个字段唯一一处不按模块开头那条"自主性来自
-    # 审批档"走的地方: 它是**下界**不是自主性决定 —— read_only 档的语义就是只看不改,
-    # 在那里自动起子进程没有用例. 真正的自主性决定是下面那个字段.
+    # 下界来自隔离档: read_only 档的语义就是只看不改, 在那里自动起子进程没有用例.
+    # manual 档再把它关掉 —— 那一档连 `echo hi` 也问, 因为"起了一个子进程"本身就是
+    # 用户要逐次看的事. 真正区分 accept_edits 与 auto 的自主性决定是下面那个字段.
     automatic_shell: bool = False
     # 连 Forge **看不透要跑什么**的执行也不问人: 脚本正文, `java -jar`, `find -exec`,
     # 以及网络. 这是 accept_edits 与 auto 的分界 (ADR-0046).
@@ -96,13 +101,18 @@ def fence_for(
         writable = tuple(
             root for root in workspace_roots if root not in set(readonly_roots)
         )
+    manual = mode.approval is ApprovalPolicy.MANUAL
     return FencePolicy(
         writable_roots=writable,
         denied_read_paths=tuple(sorted(dict.fromkeys(protected_paths))),
         network_allowed=mode.sandbox is SandboxLevel.FULL_ACCESS,
-        automatic_shell=mode.sandbox is not SandboxLevel.READ_ONLY,
-        automatic_opaque_execution=mode.approval is not ApprovalPolicy.ALWAYS,
-        unrestricted=mode.approval is ApprovalPolicy.NEVER,
+        automatic_workspace_io=not manual,
+        automatic_shell=mode.sandbox is not SandboxLevel.READ_ONLY and not manual,
+        # 逐档点名而不是写 `is not ALWAYS`: 后者在 manual 加进来之后会把最严的一档
+        # 算成最松的.
+        automatic_opaque_execution=mode.approval
+        in (ApprovalPolicy.AUTO, ApprovalPolicy.NEVER),
+        unrestricted=mode.unrestricted,
         # 实例私有临时目录始终可写, 否则连 mktemp 都用不了, 而那会让绝大多数真实命令
         # 失败. 它不算"工作区可写", 所以不进 writable_roots.
         instance_temp_root=instance_temp_root,

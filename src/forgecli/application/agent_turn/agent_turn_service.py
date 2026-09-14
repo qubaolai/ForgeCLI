@@ -1,8 +1,12 @@
 """AgentTurnService：一轮自然语言对话的 application 用例（ADR-0010 §3 / §5）。
 
-2026-07-24 起本类驱动 AgentLoop（MVP 实现 BuiltinAgentLoop）：service 是唯一执行
-副作用的 application service——事件成对落盘、usage 草稿写入、观察回填都在这里；
-loop 只产出结构化意图（LoopAction / LoopStop）。
+本类是外层 (ADR-0051): 管一轮对话的生命周期. 记 user 消息, 把"执行一次工具"与"组一次
+上下文"两个函数交给循环, 让循环跑完这一次查询, 再记 assistant / usage / compaction.
+工具怎么执行、执行几次、上下文什么时候组, 是循环 (内层) 的事; 每次执行都经本类的
+`_run_tool` 走安全管线, 每次组都经本类的 `_assemble_context` 读计划, 记忆与目录.
+
+随模型配置一起换的几样东西 (预算, 记忆, 计划, 工具) 以"用时读"的函数收进来: 组合根
+`reload_llm` 换了自己的字段, 这里下一次调用自然指向新的, 不需要 reconfigure.
 
 约束（ADR-0003 / 概要设计 §6.5）：service 不依赖任何界面库；
 **所有事件落盘只经 SessionService 单一门面**，本类不持有 EventStore/StateStore。
@@ -20,13 +24,12 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from forgecli.application.agent_loop.builtin_loop import BuiltinAgentLoop
 from forgecli.application.agent_run.events import AgentRunEventBus
 from forgecli.application.context.assembler import ContextAssembler
 from forgecli.application.context.runtime_facts import RuntimeFacts
-from forgecli.application.context.window_manager import WindowManager
 from forgecli.application.memory.memory_service import MemoryService
 from forgecli.application.planning.planning_service import (
     PlanningService,
@@ -42,11 +45,10 @@ from forgecli.application.tool_request.dispatcher import (
 )
 from forgecli.application.tool_request.observations import ObservationKind
 from forgecli.domain.agent.actions import (
-    AnswerAction,
     LoopObservation,
-    LoopStop,
+    LoopResult,
     ObservationSource,
-    ToolRequestAction,
+    ToolRequest,
 )
 from forgecli.domain.agent.run_events import (
     AgentRunEventKind,
@@ -75,10 +77,6 @@ from forgecli.shared.observability.context import bind
 from forgecli.shared.observability.log import get_log
 
 _log = get_log(__name__)
-
-# 单轮驱动的安全步数上限. 工具调用开放后一轮会跑很多步 (每次工具调用都是一次
-# observe), 因此按循环自己的硬上限走, 这个常量只是兜底.
-_DEFAULT_MAX_LOOP_STEPS = 99999
 
 
 @dataclass(frozen=True)
@@ -115,75 +113,38 @@ class AgentTurnService:
         prompt_builder: SystemPromptBuilder,
         runtime_facts: Callable[[], RuntimeFacts],
         instructions: ProjectInstructionReader,
-        # 每轮现取, 与 runtime_facts 同一个形状: 用户可能刚 /model 换过模型, 上一轮的
-        # 窗口不作数. 返回 None 表示这一轮算不出窗口 (目录里没有这个模型), 那时不压缩
-        # 也不猜 —— 猜小了平白压掉内容, 猜大了等于没有这道防线
+        # 下面四个随模型配置一起换 (ADR-0051 决策 5), 所以是"用时读"的函数, 跟
+        # runtime_facts 与 loop_factory 一个形状: 读组合根当前字段的闭包. 组合根
+        # reload_llm 换了字段, 这里下一次调用就指向新的, 不需要 reconfigure.
+        #
+        # 预算返回 None 表示这一轮算不出窗口 (目录里没有这个模型), 那时不压缩也不猜.
         context_budget: Callable[[], ContextBudget | None],
-        # 与循环持有的是同一个实例. /compact 走的是这一份, 自动压缩走循环那一份,
-        # 但两条路必须用同一套判据与同一个 ArtifactStore.
-        context: WindowManager | None = None,
-        # 记忆的唯一入口. 给这里而不是给循环: 循环
-        # 不读写长期记忆, 而功能上也用不着 —— 读只发生在 _assemble_context 那一刻,
-        # 与 ProjectInstructionReader 和 PlanningService 完全同构.
-        memory: MemoryService | None = None,
-        planning: PlanningService | None = None,
+        # 记忆与计划返回 None 表示没接, 对应的提示词块整块不渲染, 链路照常工作.
+        memory: Callable[[], MemoryService | None] = lambda: None,
+        planning: Callable[[], PlanningService | None] = lambda: None,
+        # 没接工具时循环要执行工具会得到一条明确的"工具不可用", 而不是被静默忽略.
+        tools: Callable[[], CoordinatorToolDispatcher | None] = lambda: None,
         run_bus: AgentRunEventBus | None = None,
-        tools: CoordinatorToolDispatcher | None = None,
-        max_steps: int = _DEFAULT_MAX_LOOP_STEPS,
     ) -> None:
         self._session = session
-        # 组装走 ContextAssembler: 六层的取材规则只该有一份.
+        # 组装走 ContextAssembler: 取材规则只该有一份.
         self._assembler = ContextAssembler(prompt_builder)
-        # 每轮现取: 用户可能刚 /add-dir 加过根, 上一轮的事实不作数.
+        # 每次现取: 用户可能刚 /add-dir 加过根, 上一次的事实不作数.
         self._runtime_facts = runtime_facts
         self._instructions = instructions
         self._context_budget = context_budget
-        self._context = context
-        # 缺省为 None: 没接记忆时提示词块整块不渲染, 链路照常工作.
         self._memory = memory
-        # 计划与待办缺省为 None: 没接时两个提示词块整块不渲染, 链路照常工作.
         self._planning = planning
+        self._tools = tools
         # 计划与待办的运行事件发在这里: 服务独家持有 turn_id 且是唯一的
         # 驱动方. 换成协调器发, 就得让协调器认识"plan_write 这个名字意味着要发事件".
         self._run_bus = run_bus
         # 每 turn 经工厂取新 loop 实例（BuiltinAgentLoop 持有 per-turn 状态）。
         self._loop_factory = loop_factory
-        # 工具分发器缺省为 None: 没接工具时循环产出 ToolRequestAction 会得到一条明确的
-        # "工具不可用" observation, 而不是被静默忽略.
-        self._tools = tools
-        self._max_steps = max_steps
         self._turns = 0
         self._window = Window()
         # 正在跑的那一轮. 谁要给事件标归属就问它, 而不是去读日志上下文
         self._current_turn: TurnIdentity | None = None
-
-    def reconfigure(
-        self,
-        *,
-        context_budget: Callable[[], ContextBudget | None],
-        context: WindowManager | None = None,
-        memory: MemoryService | None = None,
-        planning: PlanningService | None = None,
-        tools: CoordinatorToolDispatcher | None = None,
-    ) -> None:
-        """换掉随模型与工具栈一起重建的协作件 (ADR-0048 决策 1).
-
-        换模型的人还在同一个会话里, 所以 ``_turns`` 与 ``_window`` 一个都不动: 轮次
-        身份和窗口是会话的状态, 不是模型的. 重建整个服务能达到同样的接线效果, 代价是
-        轮次归零、窗口清空 —— 而 ``resume()`` 也补不回来, 它从会话事件重建的窗口按
-        ``_rebuild_window`` 的说明本来就没有工具往返.
-
-        ``loop_factory`` 与 ``runtime_facts`` 不在这里: 它们是读组合根当前字段的闭包,
-        换掉 ``self.llm`` / ``self.tools`` 之后自己就指向新的了. 列在这里的五个则是在
-        装配那一刻取值的, 不换就会继续用旧网关算预算、往旧工具栈派发.
-
-        调用方必须整套传: 少传一个就会出现半旧半新的组合, 而那种组合不会报错.
-        """
-        self._context_budget = context_budget
-        self._context = context
-        self._memory = memory
-        self._planning = planning
-        self._tools = tools
 
     def resume(self, history: Iterable[SessionEvent]) -> None:
         """续写一段历史会话: 接回 turn 计数, 并从事件重建会话窗口."""
@@ -222,11 +183,12 @@ class AgentTurnService:
             window_messages=len(self._window.messages),
         )
         self._session.record_user_message(text, turn_id=turn_id, origin=origin)
-        if self._memory is not None:
+        memory = self._memory()
+        if memory is not None:
             # 记一次"当前是哪一轮", 供本轮内 memory_write 取来源 (ADR-0033 决策 7).
             # 工具的 perform 拿不到会话身份, 而把它塞进 normalized_input 会进
             # plan_hash, 破掉"内容相同的调用哈希相同"那条不变量.
-            self._memory.begin_turn(
+            memory.begin_turn(
                 session_id=self._session.current().session_id, turn_id=turn_id
             )
         # mode 从 session 快照读，单一真相（不再依赖 REPL 内存态）。
@@ -268,29 +230,33 @@ class AgentTurnService:
             pause=outcome.pause,
         )
 
-    # ---- 提示词 ----
+    # ---- 上下文 ----
 
     def _assemble_context(self, mode: SessionMode) -> AssembledContext:
-        """本轮上下文分层组装.
-        任一步都不调模型也不执行工具: 上下文必须在第一次模型调用之前就已经定死
-        三层的读取时机各不相同:
-        - 提示词只依赖应用版本与 FORGE.md, builder 内部按进程缓存内置五块;
-        - 运行事实每轮现取 —— 用户可能刚 /add-dir 加过可工作目录, 上一轮的事实需要废弃;
-        - 计划, 待办与记忆同样每轮现读.
+        """组一次调用的材料. 循环每次调模型前调它一次 (ADR-0051 决策 2).
+
+        不调模型也不执行工具. 每次都现读: 提示词块 builder 内部按进程缓存, FORGE.md,
+        运行事实, 工具目录, 计划, 待办, 记忆都是本地读取, 一次模型调用是几秒, 这点读取
+        看不见. 一轮里输入没变, 组出来的就是同样的字节; 模型自己改了 FORGE.md, 写了
+        记忆, 改了待办, 下一次调用就看到.
         """
         facts = self._runtime_facts()
+        memory = self._memory()
+        planning = self._planning()
+        tools = self._tools()
 
         assembled = self._assembler.assemble(
             mode=mode,
             facts=facts,
-            # 加载项目下的 FORGE.md, 新内容从下一轮生效
             instructions=self._instructions.read(facts.workspace_roots),
-            planning=None if self._planning is None else self._planning.load(),
-            memory=() if self._memory is None else self._memory.load(),
+            planning=None if planning is None else planning.load(),
+            memory=() if memory is None else memory.load(),
+            # 目录按**当前**模式现算. 没装工具时为空, 模型就没有任何可调用的工具.
+            tools=() if tools is None else tools.catalog_for(mode).to_model_schemas(),
             budget=self._context_budget(),
             # 真围栏, 不是 None: 不给的话"自动放行"那一行报的是保守基线, 比这一档真实的
             # 边界窄, 模型会以为每一步都得先问人.
-            fence=None if self._tools is None else self._tools.fence_for(mode),
+            fence=None if tools is None else tools.fence_for(mode),
         )
         policy = assembled.policy
         _log.info(
@@ -300,9 +266,10 @@ class AgentTurnService:
             policy_chars=len(policy.text),
             runtime_chars=len(assembled.runtime_context),
             state_chars=len(assembled.state_frame),
+            tools=[schema.name for schema in assembled.tools],
             cwd=facts.working_directory,
         )
-        # 整段只在 debug 下写: 它每轮几千字, info 级别会把日志淹掉, 而"模型到底看到了
+        # 整段只在 debug 下写: 它每次几千字, info 级别会把日志淹掉, 而"模型到底看到了
         # 什么"恰恰是最需要能翻出来的一件事.
         _log.debug("context.system_prompt", text=assembled.system_prompt)
         _log.debug("context.state_frame", text=assembled.state_frame)
@@ -353,73 +320,33 @@ class AgentTurnService:
             )
 
     def _run_loop(self, text: str, mode: SessionMode, turn_id: str) -> _TurnOutcome:
+        """组两个闭包, 让循环跑完这一次查询 (ADR-0051 决策 3)."""
         loop = self._loop_factory()
-        # 目录按**当前**模式现算: 用户可能刚用 Tab 切过档, 上一轮的目录不作数.
-        # 没装工具时为 None, 循环因此不会给模型任何可调用的工具.
-        #
-        # 只算一次: catalog_for 每次调用都会新建一个 ExecutionContext, 算两次可能得到
-        # 两份不同的快照, 而快照哈希进审计.
-        catalog = None if self._tools is None else self._tools.catalog_for(mode)
-        assembled = self._assemble_context(mode)
-        step = loop.start(
-            LoopInput(
-                turn_id=turn_id,
-                session_id=self._session.current().session_id,
-                mode=mode,
-                context=replace(
-                    assembled,
-                    initial_window=(
-                        *self._window.messages,
-                        ChatMessage(role=MessageRole.USER, content=(TextBlock(text),)),
-                    ),
-                ),
-                tool_catalog=catalog,
-            )
+        loop_input = LoopInput(
+            turn_id=turn_id,
+            session_id=self._session.current().session_id,
+            mode=mode,
+            initial_window=(
+                *self._window.messages,
+                ChatMessage(role=MessageRole.USER, content=(TextBlock(text),)),
+            ),
         )
-        answer: str | None = None
-        for _ in range(self._max_steps):
-            if isinstance(step, LoopStop):
-                return self._outcome_from_stop(step, answer, loop)
-            action = step
-            if isinstance(action, AnswerAction):
-                answer = action.text
-                step = loop.observe(
-                    LoopObservation(
-                        content="answer_delivered",
-                        source=ObservationSource.CONTEXT,
-                    )
-                )
-            elif isinstance(action, ToolRequestAction):
-                step = loop.observe(
-                    self._run_tool_and_watch_planning(action, text, mode, turn_id)
-                )
-            elif action is None:
-                # 纯反思步：无动作可执行，直接回喂空观察继续。
-                step = loop.observe(
-                    LoopObservation(content="noop", source=ObservationSource.CONTEXT)
-                )
-            else:
-                # LoopAction 只有 answer 与 request_tool 两种 (ADR-0043 决策 1):
-                # 审批走 ApprovalService, 压缩走 WindowManager, 提问走 ask_user 工具.
-                # 走到这里说明有人加了第三种动作却没接上驱动.
-                return _TurnOutcome(
-                    text=render_notice("stop.unsupported_action"),
-                    status=TurnStatus.FAILED,
-                    usage_drafts=loop.ledger.usage_drafts,
-                    compaction_drafts=loop.ledger.compaction_drafts,
-                    window=loop.window,
-                )
-        return _TurnOutcome(
-            text=render_notice("stop.loop_steps_exceeded"),
-            status=TurnStatus.FAILED,
-            usage_drafts=loop.ledger.usage_drafts,
-            compaction_drafts=loop.ledger.compaction_drafts,
-            window=loop.window,
+
+        def execute(request: ToolRequest) -> LoopObservation:
+            return self._run_tool_and_watch_planning(request, text, mode, turn_id)
+
+        def assemble() -> AssembledContext:
+            return self._assemble_context(mode)
+
+        # 循环拿到的只是这两个函数: execute 经 _run_tool 走安全管线, assemble 经
+        # _assemble_context 读计划, 记忆与目录. 循环认识不到 dispatcher 与各个服务.
+        return self._outcome_from_result(
+            loop.run(loop_input, execute=execute, assemble=assemble)
         )
 
     def _run_tool_and_watch_planning(
         self,
-        action: ToolRequestAction,
+        request: ToolRequest,
         user_text: str,
         mode: SessionMode,
         turn_id: str,
@@ -433,7 +360,7 @@ class AgentTurnService:
         服务本来就独家持有 turn_id 且是唯一的驱动方, 所以事件发在这里而不是协调器.
         """
         before = self._planning_revisions()
-        observation = self._run_tool(action, user_text, mode, turn_id)
+        observation = self._run_tool(request, user_text, mode, turn_id)
         self._emit_planning_changes(before, turn_id)
         return observation
 
@@ -444,9 +371,10 @@ class AgentTurnService:
 
         身份用 (id, revision): 换一份计划和改一份计划都要算作变化.
         """
-        if self._planning is None:
+        planning = self._planning()
+        if planning is None:
             return (None, None)
-        active = self._planning.load()
+        active = planning.load()
         plan = (
             None if active.plan is None else (active.plan.plan_id, active.plan.revision)
         )
@@ -460,9 +388,10 @@ class AgentTurnService:
         before: tuple[tuple[str, int] | None, tuple[str, int] | None],
         turn_id: str,
     ) -> None:
-        if self._planning is None:
+        planning = self._planning()
+        if planning is None:
             return
-        active = self._planning.load()
+        active = planning.load()
         previous_plan, previous_todo = before
         if active.plan is not None:
             current = (active.plan.plan_id, active.plan.revision)
@@ -534,17 +463,18 @@ class AgentTurnService:
 
     def _run_tool(
         self,
-        action: ToolRequestAction,
+        request: ToolRequest,
         user_text: str,
         mode: SessionMode,
         turn_id: str,
     ) -> LoopObservation:
         """把工具请求交给安全管线, 把结论作为 observation 回填.
 
-        这是 AgentLoop 触达真实世界的**唯一**路径: 服务本身不认识 ToolRegistry, 也
-        拿不到 ToolRuntime, 所以不存在"绕过协调器直接执行"这条分支.
+        这是 AgentLoop 触达真实世界的**唯一**路径: 循环只拿到这个方法, 服务本身不认识
+        ToolRegistry, 也拿不到 ToolRuntime, 所以不存在"绕过协调器直接执行"这条分支.
         """
-        if self._tools is None:
+        tools = self._tools()
+        if tools is None:
             return LoopObservation(
                 # 前缀取自 ObservationKind, 不手写: 手写一遍就是第二份会漂的格式.
                 content=(
@@ -554,8 +484,8 @@ class AgentTurnService:
                 source=ObservationSource.ERROR,
                 is_error=True,
             )
-        observation = self._tools.dispatch(
-            action.request,
+        observation = tools.dispatch(
+            request,
             mode=mode,
             session_id=self._session.current().session_id,
             turn_id=turn_id,
@@ -563,62 +493,43 @@ class AgentTurnService:
         )
         return observation.to_loop_observation()
 
-    def _outcome_from_stop(
-        self, stop: LoopStop, answer: str | None, loop: BuiltinAgentLoop
-    ) -> _TurnOutcome:
-        drafts = loop.ledger.usage_drafts
-        compactions = loop.ledger.compaction_drafts
+    def _outcome_from_result(self, result: LoopResult) -> _TurnOutcome:
+        stop = result.stop
+        answer = result.answer
+
+        def outcome(text: str, status: TurnStatus, **extra: object) -> _TurnOutcome:
+            return _TurnOutcome(
+                text=text,
+                status=status,
+                usage_drafts=result.usage_drafts,
+                compaction_drafts=result.compaction_drafts,
+                window=result.window,
+                stop_reason=stop.reason.value,
+                **extra,  # type: ignore[arg-type]
+            )
+
         if stop.reason is LoopStopReason.FINAL_ANSWER:
             if answer is None:
-                return _TurnOutcome(
-                    text=render_notice("stop.no_answer"),
-                    status=TurnStatus.FAILED,
-                    usage_drafts=drafts,
-                    compaction_drafts=compactions,
-                    window=loop.window,
-                    stop_reason=stop.reason.value,
-                )
-            return _TurnOutcome(
-                text=answer,
-                status=TurnStatus.COMPLETED,
-                usage_drafts=drafts,
-                compaction_drafts=compactions,
-                window=loop.window,
-                stop_reason=stop.reason.value,
-            )
+                return outcome(render_notice("stop.no_answer"), TurnStatus.FAILED)
+            return outcome(answer, TurnStatus.COMPLETED)
         if stop.reason is LoopStopReason.WAIT_PLAN_REVIEW:
             # 本轮是成功的: 模型交出了一份计划. 停下来是它主动要的, 不是出错.
             #
             # text 取模型这一轮说过的话 (通常是一句"我拟了个方案"), 计划正文由 CLI 从
             # PlanningService 现取 —— 让它跟着回复文本走, 就会有两份可能不一致的正文.
-            return _TurnOutcome(
-                text=answer or render_notice("stop.review_notice"),
-                status=TurnStatus.COMPLETED,
-                usage_drafts=drafts,
-                compaction_drafts=compactions,
-                window=loop.window,
-                stop_reason=stop.reason.value,
+            return outcome(
+                answer or render_notice("stop.review_notice"),
+                TurnStatus.COMPLETED,
                 pause=TurnPause.PLAN_REVIEW,
             )
         if stop.reason is LoopStopReason.USER_CANCELLED:
-            partial = loop.partial_answer or None
+            partial = result.partial_answer or None
             notice = render_notice("stop.cancel_notice")
-            text = f"{partial}\n{notice}" if partial else notice
-            return _TurnOutcome(
-                text=text,
-                status=TurnStatus.FAILED,
-                usage_drafts=drafts,
-                compaction_drafts=compactions,
-                window=loop.window,
-                stop_reason=stop.reason.value,
+            return outcome(
+                f"{partial}\n{notice}" if partial else notice, TurnStatus.FAILED
             )
-        return _TurnOutcome(
-            text=stop.message or render_notice("stop.model_call_failed"),
-            status=TurnStatus.FAILED,
-            usage_drafts=drafts,
-            compaction_drafts=compactions,
-            window=loop.window,
-            stop_reason=stop.reason.value,
+        return outcome(
+            stop.message or render_notice("stop.model_call_failed"), TurnStatus.FAILED
         )
 
     def _remember_turn(self, text: str, outcome: _TurnOutcome) -> None:

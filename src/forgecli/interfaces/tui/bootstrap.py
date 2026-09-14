@@ -15,6 +15,7 @@ from forgecli.application.project.project_service import ProjectService
 from forgecli.domain.workspace.project import ProjectConfig
 from forgecli.infrastructure.project import ProjectLockedError
 from forgecli.interfaces.exit_codes import ExitCode
+from forgecli.interfaces.full_access_gate import FullAccessRefused, resolve_full_access
 from forgecli.interfaces.runtime.logging_wiring import start_observability
 from forgecli.interfaces.runtime.project_runtime import (
     ProjectRuntimeRegistry,
@@ -29,7 +30,7 @@ from forgecli.shared.observability.log import get_log
 _log = get_log(__name__)
 
 
-def run() -> int:
+def run(*, allow_full_access: bool = False) -> int:
     """跑一个终端会话, 返回进程退出码."""
     console = make_console()
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -50,8 +51,15 @@ def run() -> int:
         log_file=None if status.file is None else str(status.file),
         log_level=status.level,
     )
+    # 先过 Full Access 的门再解析项目: 拒绝要发生在任何项目锁拿到之前, 而确认问句要
+    # 在进入会话之前问完 —— 会话一开始输入框就接管了终端.
+    try:
+        full_access = resolve_full_access(console, requested=allow_full_access)
+    except FullAccessRefused as exc:
+        console.print(f"[red]{exc.message}[/]")
+        return ExitCode.FULL_ACCESS_REFUSED
     projects = build_project_service()
-    registry = ProjectRuntimeRegistry(projects)
+    registry = ProjectRuntimeRegistry(projects, full_access_allowed=full_access)
     try:
         project = _resolve_project(console, projects)
         if project is not None:

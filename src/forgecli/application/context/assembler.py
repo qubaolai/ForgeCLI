@@ -1,15 +1,10 @@
-"""上下文组装: 把六层拼成一份 AssembledContext (ADR-0041 决策 1).
+"""上下文组装: 把一次调用的材料拼成一份 AssembledContext (ADR-0051 决策 2).
 
-对外唯一入口. 分层的顺序本身在 `AssembledContext` 里表达 —— 这里只负责**取材**:
-哪一层从哪儿读, 什么时候读.
+对外唯一入口. 请求的顺序在 `AssembledContext` 里表达 —— 这里只负责**取材**: 提示词块
+(builder 内部按进程缓存内置五块), FORGE.md, 运行事实, 工具目录, 计划, 待办, 记忆.
+外层每次调模型前调一次; 输入没变, 组出来的就是同样的字节, 供应商的前缀缓存照样命中.
 
-三层的读取时机不同, 而那正是它们分层的理由:
-
-- [2][3] 提示词只依赖包版本与 FORGE.md, builder 内部按进程缓存内置五块;
-- [4] 运行事实每轮现取 —— 用户可能刚 /add-dir 加过根, 上一轮的事实不作数;
-- [6] 计划, 待办与记忆同样每轮现读: 待办的价值就在于它反映**此刻**的执行状态.
-
-不碰窗口: 那是 `WindowManager` 的事. 一个负责"这一轮的上下文长什么样", 一个负责"窗口
+不碰窗口: 那是 `WindowManager` 的事. 一个负责"这次调用的上下文长什么样", 一个负责"窗口
 该不该淘汰", 合起来会让"为什么这一轮变贵了"再也说不清是哪一半干的.
 """
 
@@ -23,10 +18,10 @@ from forgecli.application.prompt.project_instruction_reader import ProjectInstru
 from forgecli.application.prompt.system_prompt_builder import SystemPromptBuilder
 from forgecli.domain.agent.state import AssembledContext
 from forgecli.domain.context.budget import ContextBudget
-from forgecli.domain.conversation.message import ChatMessage
 from forgecli.domain.execution.fence import FencePolicy
 from forgecli.domain.intents import SessionMode
 from forgecli.domain.memory.entry import MemoryEntry
+from forgecli.domain.tool.tool_call import ToolSchema
 
 __all__ = ["ContextAssembler"]
 
@@ -45,7 +40,7 @@ class ContextAssembler:
         instructions: tuple[ProjectInstruction, ...] = (),
         planning: ActivePlanning | None = None,
         memory: tuple[MemoryEntry, ...] = (),
-        window: tuple[ChatMessage, ...] = (),
+        tools: tuple[ToolSchema, ...] = (),
         budget: ContextBudget | None = None,
         fence: FencePolicy | None = None,
     ) -> AssembledContext:
@@ -54,6 +49,6 @@ class ContextAssembler:
             policy=self._builder.build(instructions),
             runtime_context=render_runtime_context(facts, mode=mode, fence=fence),
             state_frame=render_state_frame(planning or ActivePlanning(), memory),
-            initial_window=window,
+            tools=tools,
             budget=budget,
         )

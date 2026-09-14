@@ -1,6 +1,10 @@
-"""会话的列举, 新建, 恢复与正文读取, 以及会话姿态 (sandbox / approval)。
+"""会话的列举, 新建, 恢复与正文读取, 以及会话模式.
 
-姿态放在这里而不是配置里: 它是**这个会话**的状态, 随会话切换而变, 而配置是跨会话的。
+模式放在这里而不是配置里: 它是**这个会话**的状态, 随会话切换而变, 而配置是跨会话的.
+
+接口只认预设名 (ADR-0052): 隔离档与审批档两个轴仍是领域模型, 但界面不再按轴调, 于是
+`{"sandbox": ...}` 这种请求也不再收 —— 一个没有任何页面会发的请求形状, 留着只会让读
+路由的人以为前端还有那个入口.
 """
 
 from __future__ import annotations
@@ -8,8 +12,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 
-from forgecli.domain.intents import ApprovalPolicy, SandboxLevel, SessionMode
-from forgecli.interfaces.web.deps import active_runtime, idle_runtime
+from forgecli.domain.intents import (
+    PRESET_NAMES,
+    ModeUnavailableError,
+    available_presets,
+)
+from forgecli.interfaces.web.deps import active_runtime, idle_runtime, registry
 from forgecli.shared.errors import SessionStateError
 from forgecli.shared.serialization import to_jsonable
 
@@ -17,38 +25,35 @@ router = APIRouter(prefix="/api/v1")
 
 
 class ModeRequest(BaseModel):
-    """按轴设置姿态.
+    """`mode` 是预设名 (domain/intents 的 PRESET_NAMES 的键), 一次点击换整档."""
 
-    两个轴独立: 只给 `sandbox` 就只动隔离档, 审批档保持不变, 反之亦然. `mode` 是整档
-    预设的快捷方式 (也接受 `sandbox/approval` 形式的整串), 与另外两个字段互斥使用.
+    mode: str
+
+
+@router.get("/modes")
+async def list_modes(request: Request) -> dict[str, object]:
+    """本进程可选的预设, 按梯度排. 名字与说明来自 MODE_PRESETS, 前端不另写一份.
+
+    每一项带上它对应的两个轴: 会话快照里的 `mode` 是 `{sandbox, approval}`, 前端靠这
+    一对把当前模式对回预设名. Full Access 没在启动时放开时根本不在列表里, 与终端菜单
+    同一个做法.
+
+    从 registry 取而不是从当前 runtime: 放没放开是进程级事实, 页面在还没激活项目时
+    就要画得出这个菜单.
     """
-
-    mode: str = ""
-    sandbox: str = ""
-    approval: str = ""
-
-
-def _resolve_mode(body: ModeRequest, current: SessionMode) -> SessionMode:
-    """把一次请求折成目标姿态.
-
-    没给的那个轴保持不变 —— 这就是"正交"在接口上的样子: 调隔离档不该顺手把审批档也
-    改了. 早先两个轴压在一个四档枚举里, 想只动其中一件事是表达不出来的.
-    """
-    if body.mode:
-        try:
-            return SessionMode.from_value(body.mode)
-        except ValueError:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY, f"未知模式: {body.mode}"
-            ) from None
-    try:
-        sandbox = SandboxLevel(body.sandbox) if body.sandbox else current.sandbox
-        approval = ApprovalPolicy(body.approval) if body.approval else current.approval
-    except ValueError as error:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, f"未知取值: {error}"
-        ) from None
-    return SessionMode(sandbox=sandbox, approval=approval)
+    allowed = registry(request).full_access_allowed
+    return {
+        "items": [
+            {
+                "value": preset.value,
+                "label": preset.label,
+                "hint": preset.hint,
+                "sandbox": PRESET_NAMES[preset.value].sandbox.value,
+                "approval": PRESET_NAMES[preset.value].approval.value,
+            }
+            for preset in available_presets(full_access_allowed=allowed)
+        ]
+    }
 
 
 @router.get("/sessions")
@@ -115,9 +120,16 @@ async def transcript(session_id: str, request: Request) -> dict[str, object]:
 
 @router.post("/mode")
 async def set_mode(body: ModeRequest, request: Request) -> object:
+    target = PRESET_NAMES.get(body.mode)
+    if target is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, f"未知模式: {body.mode}"
+        )
+    runtime = active_runtime(request)
     try:
-        runtime = active_runtime(request)
-        target = _resolve_mode(body, runtime.session.current().mode)
         return to_jsonable(runtime.set_mode(target))
+    except ModeUnavailableError as exc:
+        # 与 409 分开: 那一个是"现在不行, 等 turn 跑完", 这一个是"这个进程就没有这档".
+        raise HTTPException(status.HTTP_403_FORBIDDEN, exc.message) from exc
     except RuntimeError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

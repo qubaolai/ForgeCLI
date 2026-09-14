@@ -1,24 +1,27 @@
-"""循环每次迭代的产出：LoopAction / LoopStop（ADR-0010 §4.3）。
+"""循环与外界交换的值对象 (ADR-0010 §4, ADR-0051).
 
-AgentLoop 每步只能产出这三类结果之一，且都**只表达意图**，不执行任何副作用——真实执行
-由 AgentTurnService 按 mode policy、approval、ToolRuntime 完成（§2 / §4.3 约束）。
-
-- LoopAction：描述「想做什么」，采用密封子类型（对齐 domain.intents / gateway
-  ContentBlock 的层次风格），每种动作一个类型，构造即有效。
-- LoopStop：退出 / 暂停 / 错误隔离的唯一出口，reason 取自 LoopStopReason，可恢复与否由
-  分类派生。
-
-今日（2026-07-23）只冻契约与字段位，不接循环体与执行。
+- ToolRequest: 循环请求执行一个工具. 必须经 dispatcher 走安全管线, 循环自己不执行.
+- LoopObservation: 一次工具执行的结论, 喂回循环. 只保存结论文本与处置意见, 不保存
+  raw chain-of-thought.
+- LoopStop: 一轮为什么停. reason 取自 LoopStopReason, 可恢复与否由分类派生.
+- LoopResult: 一轮跑完交给外层的全部产出.
+- ToolExecutor / ContextAssembly: 外层交给循环的两个函数 —— 执行一次工具, 组一次
+  上下文. 循环拿到的只是函数, 认识不到 dispatcher, 更认识不到注册表, 运行时与各个
+  服务; 单一入口由 dispatcher 的类型守着.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 
+from forgecli.domain.agent.state import AssembledContext
 from forgecli.domain.agent.stop import LoopStopReason
+from forgecli.domain.context.compaction import CompactionDraft
+from forgecli.domain.conversation.message import ChatMessage
+from forgecli.domain.model.usage import UsageRecordDraft
 from forgecli.domain.tool.result import ResultProvenance
 
 
@@ -91,25 +94,6 @@ class LoopObservation:
 
 
 @dataclass(frozen=True)
-class LoopAction:
-    """循环动作密封基类。只表达意图，不执行副作用。子类型见下。"""
-
-
-@dataclass(frozen=True)
-class AnswerAction(LoopAction):
-    """产出最终 assistant message（对应 LoopStopReason.FINAL_ANSWER 前的动作）。"""
-
-    text: str
-
-
-@dataclass(frozen=True)
-class ToolRequestAction(LoopAction):
-    """请求执行一个工具（由 AgentTurnService 裁决并分发）。"""
-
-    request: ToolRequest
-
-
-@dataclass(frozen=True)
 class LoopStop:
     """退出 / 暂停 / 错误隔离的唯一出口（§4.3 / §6）。
 
@@ -121,6 +105,23 @@ class LoopStop:
     message: str | None = None
 
 
-# 循环每步的产出：决策（含待执行动作）或终止。驱动方（AgentTurnService）据此
-# 执行动作、回填 observation，或结束本轮。
-LoopStepResult = LoopAction | LoopStop | None
+@dataclass(frozen=True)
+class LoopResult:
+    """一轮跑完交给外层的产出. 外层只读它, 不再持有循环实例."""
+
+    stop: LoopStop
+    # 模型最后那次回答的正文; 没走到回答就停的话为 None.
+    answer: str | None = None
+    # 流式中断时已累积的部分回答 (无则 None).
+    partial_answer: str | None = None
+    # 结束时的窗口, 外层接着往下攒 (ADR-0041 决策 4).
+    window: tuple[ChatMessage, ...] = ()
+    usage_drafts: tuple[UsageRecordDraft, ...] = ()
+    compaction_drafts: tuple[CompactionDraft, ...] = ()
+
+
+# 外层交给循环的"执行一次工具": AgentTurnService 那个经 dispatcher 走安全管线的方法.
+ToolExecutor = Callable[[ToolRequest], LoopObservation]
+
+# 外层交给循环的"组一次上下文". 循环每次调模型前调它一次 (ADR-0051 决策 2).
+ContextAssembly = Callable[[], AssembledContext]

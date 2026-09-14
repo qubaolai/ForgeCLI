@@ -30,7 +30,22 @@ class FinishReason(Enum):
 
 @dataclass(frozen=True)
 class ModelUsage:
-    """统一 token 用量；所有 provider 必须归一化到这里。"""
+    """统一 token 用量; 所有 provider 必须归一化到这里.
+
+    口径只在这里定一次, 按 OpenAI Chat Completions 的 `usage` 形状:
+
+    - `cached_input_tokens` 是 `input_tokens` 的**子集**
+      (`prompt_tokens_details.cached_tokens` ⊂ `prompt_tokens`), 不是另加的一笔;
+    - `reasoning_tokens` 是 `output_tokens` 的**子集**
+      (`completion_tokens_details.reasoning_tokens` ⊂ `completion_tokens`);
+    - `total_tokens == input_tokens + output_tokens`; 供应商没回 total 时为 0, 消费方按
+      两者之和补.
+
+    消费方 (成本估算, 事件载荷, 终端与网页的用量展示) 都以此为准. 早先这里没写口径,
+    于是成本估算把 reasoning 当成 output 之外的加项, 而网页把 cached 与 input 并排当成
+    两笔 —— 同一组数字, 三处三种读法. 接一个口径不同的供应商 (比如把 cache read 与 input
+    分开报的) 时, 在它的适配器里换算成这个形状, 不要改这里的定义.
+    """
 
     input_tokens: int
     output_tokens: int

@@ -25,6 +25,13 @@
 "围栏拦不住的那些要不要先问一次人", full_access 的回答是不问.
 
 **UNCONFINED 时这条不生效.** 没有围栏就没有"在边界内执行"这回事, 那一档退回逐项确认.
+
+## manual 档: 连 WORKSPACE_READ 也问 (ADR-0052)
+
+`fence.automatic_workspace_io` 为假时, 上面 `_ALWAYS` 里的 WORKSPACE_READ 退出自动集合,
+`_WORKSPACE_MUTATION` 也不再加进来. 留在自动集合里的只剩不碰工作区文件的那几类: 写计划,
+向人提问, 记忆, 读回自己落盘的输出, 以及已裁决过的子进程启动. 这一档的全部意义就是
+"每一次读写都过人", 所以它不看围栏立没立起来.
 """
 
 from __future__ import annotations
@@ -70,6 +77,9 @@ _ALWAYS = frozenset(
         Capability.SPAWN_PROCESS,
     }
 )
+
+# `_ALWAYS` 里唯一一项碰工作区文件的能力. manual 档把它摘出去 (见模块说明末节).
+_WORKSPACE_IO_ALWAYS = frozenset({Capability.WORKSPACE_READ})
 
 # 工作区内的改动. 可写围栏 + 写时复制快照兜底, 所以不需要逐次确认.
 _WORKSPACE_MUTATION = frozenset(
@@ -131,7 +141,11 @@ def fence_allowed_capabilities(
     if fence.unrestricted and confined:
         # full_access + 真围栏: 边界只剩围栏本身与 Hard Deny.
         return frozenset(Capability)
-    if not fence.read_only:
+    if not fence.automatic_workspace_io:
+        # manual: 读也问, 写也问. `automatic_shell` 在这一档同样为假, 所以下面的
+        # 两个 Shell 分支都进不去, 不必在这里再挡一次.
+        allowed -= _WORKSPACE_IO_ALWAYS
+    elif not fence.read_only:
         allowed |= _WORKSPACE_MUTATION
     if confined:
         allowed |= _NEEDS_FENCE

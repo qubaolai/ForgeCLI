@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar
 
+from forgecli.shared.errors import ForgeError
+
 __all__ = [
     "APPROVAL_OPTIONS",
     "MODE_PRESETS",
@@ -22,9 +24,11 @@ __all__ = [
     "SANDBOX_OPTIONS",
     "ApprovalPolicy",
     "InputOrigin",
+    "ModeUnavailableError",
     "SandboxLevel",
     "SessionMode",
     "StanceOption",
+    "available_presets",
     "stance_label",
 ]
 
@@ -74,8 +78,16 @@ class ApprovalPolicy(Enum):
 
     它管的是**裁决层的自主性**, 不是操作系统围栏 —— 围栏该拦的照拦, 这一轴只决定
     Forge 自己要不要在拦之前先问一次.
+
+    四档从紧到松: MANUAL, ALWAYS, AUTO, NEVER. 次序写在这里而不是靠声明顺序推断,
+    `domain/execution/fence` 按名字逐档编译, 不做大小比较.
     """
 
+    #: 每一次读写都要点头: fs_read / search_text 的读, fs_apply_patch 的写, 以及每一条
+    #: Shell 命令 —— 不管 Forge 看不看得清它. 只有不碰工作区文件的那几类调用 (写计划,
+    #: 向人提问, 记忆, 读回自己落盘的输出) 仍然自动. 对应 Claude Code 的 Manual 档,
+    #: 但比它更严: 那边读文件不问, 这边问.
+    MANUAL = "manual"
     #: 只放行 Forge 看得清的那一类: 命令解析完整, 目标集合封闭, 且触达的东西都在围栏内
     #: (ADR-0046). 看不透要跑什么的 —— 脚本正文, `npm test`, `find -exec`, 联网 ——
     #: 仍要点头. 判据是**这条命令碰了什么**, 不是"它是不是一次 shell 调用".
@@ -100,6 +112,7 @@ class SessionMode:
     sandbox: SandboxLevel
     approval: ApprovalPolicy
 
+    MANUAL: ClassVar[SessionMode]
     PLAN: ClassVar[SessionMode]
     ACCEPT_EDITS: ClassVar[SessionMode]
     AUTO: ClassVar[SessionMode]
@@ -110,12 +123,24 @@ class SessionMode:
         """两个轴拼成一个稳定字符串, 进日志, 事件载荷与规则持久化."""
         return f"{self.sandbox.value}/{self.approval.value}"
 
+    @property
+    def unrestricted(self) -> bool:
+        """围栏就是全部边界, 裁决侧除 Hard Deny 外不再另设闸 (ADR-0030 决策 4 修订).
+
+        这是唯一一个**启动时没声明就进不去**的姿态 (ADR-0052):
+        `forge --allow-full-access` 才把它放进可选预设, 否则 Tab 循环, `/mode` 与
+        `POST /api/v1/mode` 都拿不到它.
+        判据是审批档而不是预设名: 一个"围栏内不问"的姿态无论叫什么名字都该过这道门.
+        """
+        return self.approval is ApprovalPolicy.NEVER
+
     @classmethod
     def from_value(cls, raw: str) -> SessionMode:
-        """解析 `value`, 也认四个预设名.
+        """解析 `value`, 也认预设名.
 
-        预设名是**在用的接口快捷方式**, 不是遗留兼容: `POST /api/v1/mode` 收
-        `{"mode": "auto"}` 就是一次点击换整档, 而按轴调是 `{"sandbox": ...}`.
+        两种写法各有各的用途: 预设名是界面在用的 —— `/mode auto` 与 `POST /api/v1/mode`
+        的 `{"mode": "auto"}` 都是一次点击换整档; `sandbox/approval` 整串只出现在落盘的
+        学习规则里 (`json_learned_rules_store`), 界面不再按轴调 (ADR-0052).
 
         认不出就抛 ValueError. 已落盘的学习规则里可能存着更早的写法, 那时
         `json_learned_rules_store._rule_of` 会把那一条跳过 —— 后果是那条规则失效, 不是
@@ -128,6 +153,7 @@ class SessionMode:
         return cls(sandbox=SandboxLevel(sandbox), approval=ApprovalPolicy(approval))
 
 
+SessionMode.MANUAL = SessionMode(SandboxLevel.WORKSPACE_WRITE, ApprovalPolicy.MANUAL)
 SessionMode.PLAN = SessionMode(SandboxLevel.READ_ONLY, ApprovalPolicy.ALWAYS)
 SessionMode.ACCEPT_EDITS = SessionMode(
     SandboxLevel.WORKSPACE_WRITE, ApprovalPolicy.ALWAYS
@@ -135,14 +161,30 @@ SessionMode.ACCEPT_EDITS = SessionMode(
 SessionMode.AUTO = SessionMode(SandboxLevel.WORKSPACE_WRITE, ApprovalPolicy.AUTO)
 SessionMode.FULL_ACCESS = SessionMode(SandboxLevel.FULL_ACCESS, ApprovalPolicy.NEVER)
 
-# 预设的名字, 权限从紧到松. 次序是显式写出的而不是靠声明顺序: 安全相关的排序不该
-# 靠别处的巧合. ADR-0009 决策 13: 模式定义是代码级常量, 配置只能收紧, 不能放宽.
+# 预设的名字, 按**自主性**从低到高: 每一步都让 Forge 少问一类事. 次序是显式写出的而
+# 不是靠声明顺序: 安全相关的排序不该靠别处的巧合.
+#
+# manual 排在 plan 前面而不是后面, 虽然它的围栏 (工作区可写) 比 plan (只读) 宽: 这条
+# 梯度量的是"有多少事不问人就做了", manual 一件都不做. 与 Claude Code 的 Shift+Tab
+# 循环同一个次序 (Manual -> Accept edits -> Plan 的前两项), plan 放第二是因为它在
+# ForgeCLI 里是"只出方案"的起点档, 计划评审从它升到 auto (ADR-0038).
+#
+# 模式定义是代码级常量, 配置只能收紧 (`security.disable_full_access`), 不能放宽.
 PRESET_NAMES: dict[str, SessionMode] = {
+    "manual": SessionMode.MANUAL,
     "plan": SessionMode.PLAN,
     "accept_edits": SessionMode.ACCEPT_EDITS,
     "auto": SessionMode.AUTO,
     "full_access": SessionMode.FULL_ACCESS,
 }
+
+
+class ModeUnavailableError(ForgeError):
+    """要切的姿态没有在启动时放开 (ADR-0052). message 可直接展示."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
 
 
 @dataclass(frozen=True)
@@ -168,18 +210,36 @@ SANDBOX_OPTIONS: tuple[StanceOption, ...] = (
 )
 
 APPROVAL_OPTIONS: tuple[StanceOption, ...] = (
+    StanceOption(ApprovalPolicy.MANUAL.value, "逐次确认", "每一次读写都要你点头"),
     StanceOption(ApprovalPolicy.ALWAYS.value, "每次确认", "Shell 命令都要你点头"),
     StanceOption(ApprovalPolicy.AUTO.value, "围栏内自动", "越界的才问你"),
     StanceOption(ApprovalPolicy.NEVER.value, "不再确认", "围栏就是全部边界"),
 )
 
-# 常用组合的名字. 选中其中一个等于同时设两个轴; 次序与 PRESET_NAMES 一致, 从紧到松.
+# 预设在界面上的样子. 终端 `/mode`, Tab 循环与 Web 的模式菜单**只列这张表**, 两个轴
+# 不再单独露出 (ADR-0052): 四档预设已经覆盖了有用例的组合, 而"强隔离 + 全自动"这类
+# 自由组合在菜单里只是多一层要解释的东西. 次序与 PRESET_NAMES 一致.
 MODE_PRESETS: tuple[StanceOption, ...] = (
+    StanceOption("manual", "Manual", "每一次读写都先询问"),
     StanceOption("plan", "Plan", "只出方案, 先评审再动手"),
     StanceOption("accept_edits", "Accept Edits", "自动接受文件编辑"),
     StanceOption("auto", "Auto", "自动执行, 风险操作仍需审批"),
     StanceOption("full_access", "Full Access", "打断最少, 权限最大"),
 )
+
+
+def available_presets(*, full_access_allowed: bool) -> tuple[StanceOption, ...]:
+    """本进程能进的预设, 按 MODE_PRESETS 的次序.
+
+    `full_access_allowed` 是启动时定下的事实 (`forge --allow-full-access`, ADR-0052),
+    整个进程生命周期不变. 没放开时 Full Access 不出现在任何菜单里, 而不是出现了再拒绝:
+    一个点了会报错的选项比没有这个选项更让人困惑.
+    """
+    return tuple(
+        preset
+        for preset in MODE_PRESETS
+        if full_access_allowed or not PRESET_NAMES[preset.value].unrestricted
+    )
 
 
 def stance_label(mode: SessionMode) -> str:

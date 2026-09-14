@@ -47,6 +47,9 @@ class EffectiveConfig:
     # 从启动 shell 继承多少环境. 默认全继承 —— 等价性是主要需求, 见
     # `domain/execution/environment` 的模块说明. 收紧只在明确要求跨机器可复现时才有意义.
     environment_inheritance: EnvironmentInheritance
+    # Full Access 档的锁 (ADR-0052). 与 logging.* 一样在进程启动时读:
+    # `--allow-full-access` 要在任何项目激活之前就知道自己会不会被拒绝.
+    disable_full_access: bool
 
     @classmethod
     def from_overrides(cls, overrides: Mapping[str, str]) -> EffectiveConfig:
@@ -67,6 +70,9 @@ class EffectiveConfig:
             environment_inheritance=_read_inheritance(
                 value(config_keys.EXECUTION_ENV_INHERIT)
             ),
+            disable_full_access=_as_bool(
+                value(config_keys.SECURITY_DISABLE_FULL_ACCESS)
+            ),
         )
 
     def as_dict(self) -> dict[str, str]:
@@ -79,6 +85,7 @@ class EffectiveConfig:
             config_keys.LOGGING_MAX_VALUE_CHARS: self.logging_max_value_chars,
             config_keys.LOGGING_INCLUDE_HTTP: _text(self.logging_include_http),
             config_keys.EXECUTION_ENV_INHERIT: self.environment_inheritance.value,
+            config_keys.SECURITY_DISABLE_FULL_ACCESS: _text(self.disable_full_access),
         }
 
     def display(self, key: str) -> str:

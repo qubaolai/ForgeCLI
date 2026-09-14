@@ -1,7 +1,8 @@
 """Agent 主循环 (ADR-0010, ADR-0049): 受控 ReAct 内核与它的规则.
 
-本包是 application 下与 agent_turn 并列的编排内核层. 循环只产出结构化意图
-(LoopAction / LoopStop), 执行工具一律由 AgentTurnService 经安全管线完成. MVP 唯一实现是
+本包是 application 下与 agent_turn 并列的内层 (ADR-0051): 一次查询的完整生命周期,
+想, 做, 记, 直到模型不再要工具. 执行工具与组上下文都经外层交进来的两个函数
+(``execute`` / ``assemble``), 循环认识不到 dispatcher 与各个服务. MVP 唯一实现是
 ``builtin_loop.BuiltinAgentLoop``.
 
 循环内部按 ADR-0049 分成两层:

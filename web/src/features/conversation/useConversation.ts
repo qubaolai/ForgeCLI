@@ -13,7 +13,7 @@ import type { ResumePosition } from "@/features/runEvents/resumePosition";
 import type { RunSnapshot } from "@/shared/lib/run/events";
 import type { LocalTurn } from "@/shared/lib/run/turn";
 import { failUnboundTurn, finishLocalTurn, newLocalTurn, restoreTurn } from "@/shared/lib/run/turn";
-import type { Stance } from "@/shared/lib/stance";
+import type { ModePreset, Stance } from "@/shared/lib/stance";
 import type { Session, TranscriptEvent, TurnRunState } from "@/types/session";
 
 const DEFAULT_STANCE: Stance = { sandbox: "workspace_write", approval: "always" };
@@ -35,6 +35,8 @@ export function useConversation(
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [stance, setStance] = useState<Stance>(DEFAULT_STANCE);
+  // 可选的预设 (GET /modes). 进程级事实, 只在装入时取一次: forge 起来之后不会变.
+  const [presets, setPresets] = useState<ModePreset[]>([]);
   // 当前会话, 给事件回调用。回调建立时闭包住的那个值会过期, 而过期的作用域判断比
   // 不判断更糟: 它会把新会话的事件当成外来的丢掉 (ADR-0048 决策 2)。
   const sessionScopeRef = useRef("");
@@ -47,6 +49,14 @@ export function useConversation(
   useEffect(() => {
     if (!busy) setStopping(false);
   }, [busy]);
+
+  useEffect(() => {
+    api<{ items: ModePreset[] }>("/modes")
+      .then((result) => setPresets(result.items))
+      .catch((reason) => onError((reason as Error).message));
+    // 只装一次; onError 是稳定的横幅回调, 不作为重新拉取的理由.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const restoredByTurn = useMemo(() => {
     const live = new Set(localTurns.map((turn) => turn.turnId));
@@ -144,11 +154,16 @@ export function useConversation(
     }
   }
 
-  /** 只送要改的那一个轴; 另一个由后端保持不变。 */
-  async function changeStance(patch: Partial<Stance>) {
+  /**
+   * 送预设名一次换整档 (ADR-0052).
+   *
+   * 落地的模式取后端回的快照, 不在本地拼: 预设名对应哪两个轴由后端 PRESET_NAMES 说了算,
+   * 这里再算一遍就是第二份定义.
+   */
+  async function changeStance(mode: string) {
     try {
-      await api("/mode", { method: "POST", body: JSON.stringify(patch) });
-      setStance((current) => ({ ...current, ...patch }));
+      const snapshot = await api<Session>("/mode", { method: "POST", body: JSON.stringify({ mode }) });
+      setStance(snapshot.mode ?? DEFAULT_STANCE);
     } catch (reason) {
       onError((reason as Error).message);
     }
@@ -178,6 +193,7 @@ export function useConversation(
     setBusy,
     stopping,
     stance,
+    presets,
     sessionScopeRef,
     setLocalTurns,
 

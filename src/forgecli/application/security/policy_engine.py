@@ -132,7 +132,7 @@ def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
         return _Verdict(
             Decision.ASK,
             findings.requires_ask or DecisionReason.MODE_REQUIRES_APPROVAL,
-            message=f"围栏兜不住这些能力 (模式 {context.mode.value})",
+            message=_outside_fence_message(context),
             mandatory=findings.mandatory_ask,
             extra_facts=_capability_facts(outside_fence),
         )
@@ -143,6 +143,13 @@ def _verdict(findings: AnalysisFindings, context: PolicyContext) -> _Verdict:
         )
 
     return _Verdict(Decision.ALLOW, _allow_reason(capabilities, context))
+
+
+def _outside_fence_message(context: PolicyContext) -> str:
+    """manual 档下这句话要说对: 不是围栏兜不住, 是这一档本来就每次都问 (ADR-0052)."""
+    if context.fence is not None and not context.fence.automatic_workspace_io:
+        return f"这一档每一次读写都要你确认 (模式 {context.mode.value})"
+    return f"围栏兜不住这些能力 (模式 {context.mode.value})"
 
 
 def _only_hard_deny(context: PolicyContext) -> bool:
