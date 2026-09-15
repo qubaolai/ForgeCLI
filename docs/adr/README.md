@@ -91,6 +91,7 @@ YYYY-MM-DD-四位编号-中文决策标题.md
 - [ADR-0050: 采用显式状态机, Effect 执行器与有序 Stage 重构 Agent 主循环](2026-09-11-0050-采用显式状态机Effect执行器与有序Stage重构Agent主循环.md) (Superseded by ADR-0049)
 - [ADR-0051: 采用双层循环, 每次调用现组上下文, 外层用时读依赖](2026-09-14-0051-采用双层循环每次调用现组上下文外层用时读依赖.md)
 - [ADR-0052: Full Access 改成启动期声明的档位, 并增加 Manual 档](2026-09-14-0052-FullAccess改成启动期声明的档位并增加Manual档.md)
+- [ADR-0053: 按功能分包, 去掉 domain/application/infrastructure/interfaces 四层](2026-09-15-0053-按功能分包去掉四层.md)
 
 相关安全测试：
 
