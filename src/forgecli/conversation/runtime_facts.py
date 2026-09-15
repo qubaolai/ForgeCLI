@@ -25,15 +25,6 @@ from forgecli.core.execution.profile import ExecutionProfile, IsolationLevel
 
 __all__ = ["RuntimeFacts"]
 
-_ISOLATION_SUMMARY: dict[IsolationLevel, str] = {
-    IsolationLevel.HOST_CONFINED: (
-        "命令在围栏中运行: 工作区外不可写, 受保护路径不可读, 网络按模式放行"
-    ),
-    IsolationLevel.UNCONFINED: (
-        "命令直接在宿主上运行, 没有围栏; 跨工作区与网络操作一律需要人类确认"
-    ),
-}
-
 
 @dataclass(frozen=True)
 class RuntimeFacts:
@@ -49,10 +40,6 @@ class RuntimeFacts:
     def __post_init__(self) -> None:
         if not self.workspace_roots:
             raise ValueError("RuntimeFacts.workspace_roots 不能为空")
-
-    @property
-    def isolation_summary(self) -> str:
-        return _ISOLATION_SUMMARY[self.isolation_level]
 
     @classmethod
     def from_profile(

@@ -95,14 +95,6 @@ class FsRecoveryStore:
             mode=_FILE_MODE,
         )
 
-    def load_manifest(
-        self, workspace_id: str, checkpoint_id: str
-    ) -> RecoveryCheckpoint | None:
-        target = self._manifest_path(workspace_id, checkpoint_id)
-        if not target.exists():
-            return None
-        return _from_json(json.loads(target.read_text(encoding="utf-8")))
-
     def list_checkpoints(self, workspace_id: str) -> tuple[RecoveryCheckpoint, ...]:
         """按创建时间倒序列出."""
         directory = self._workspace_dir(workspace_id) / "manifests"

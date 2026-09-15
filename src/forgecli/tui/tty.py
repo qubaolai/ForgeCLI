@@ -33,7 +33,6 @@ from prompt_toolkit.key_binding.key_processor import KeyPress
 from prompt_toolkit.keys import Keys
 
 __all__ = [
-    "BACKSPACE_KEYS",
     "CONFIRM_KEYS",
     "KeyPress",
     "KeyReader",
@@ -44,9 +43,6 @@ __all__ = [
 
 # Enter 在原始终端上是 `\r` (ControlM); `\n` (ControlJ) 只在粘贴时出现. 两个都收.
 CONFIRM_KEYS = frozenset({Keys.ControlM, Keys.ControlJ})
-
-# 退格键在不同终端上发 0x7f 或 0x08, prompt-toolkit 把两者都归成 ControlH.
-BACKSPACE_KEYS = frozenset({Keys.ControlH})
 
 # 收到 ESC 之后再等多久, 才认定它是"单独的 Esc"而不是某个转义序列的开头.
 #

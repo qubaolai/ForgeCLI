@@ -46,7 +46,6 @@ from forgecli.common.observability.log import max_value_chars as current_max_val
 __all__ = [
     "LoggingStatus",
     "configure_logging",
-    "logging_status",
     "reset_logging",
 ]
 
@@ -107,11 +106,6 @@ class LoggingStatus:
 
 
 _status = LoggingStatus()
-
-
-def logging_status() -> LoggingStatus:
-    """当前日志装配 (未装配时 configured=False)."""
-    return _status
 
 
 def configure_logging(

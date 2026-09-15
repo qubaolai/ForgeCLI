@@ -20,13 +20,6 @@ class ThinkingMode(Enum):
     OFF = "off"
 
 
-class SupportsStructuredOutput(Enum):
-    """结构化输出开关"""
-
-    ON = "on"
-    OFF = "off"
-
-
 @dataclass(frozen=True, order=True)
 class ThinkingEffortName:
     """模型声明的思考强度名称，例如 low、max、xhigh。"""

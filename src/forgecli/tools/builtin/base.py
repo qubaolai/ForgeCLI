@@ -26,8 +26,6 @@ __all__ = [
     "MAX_GLOB_CANDIDATES",
     "EmittedText",
     "emit_text",
-    "int_or",
-    "limit_depth",
     "read_capability",
     "resolve_target",
     "validate_arguments",
@@ -42,44 +40,6 @@ __all__ = [
 # 仍然留在 base.py 而不是收进 search_text.py: 下一个走 expand_glob 的工具应当共用这个
 # 上限, 而不是各自再定一个.
 MAX_GLOB_CANDIDATES = 10_000
-
-
-def int_or(raw: object, fallback: int) -> int:
-    """schema 已经限死了取值范围, 这里只是把 `object` 收窄回 int."""
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) else fallback
-
-
-def limit_depth(
-    matches: Sequence[str], *, root: str, depth: int | None = None
-) -> tuple[str, ...]:
-    """把展开结果收窄到 root 下 depth 层以内.
-
-    原先这个函数还兼管忽略规则 (`filter_globbed`), 而那份规则是在展开**之后**才用上的
-    —— 于是 `.venv` 与 `.git` 会先把 `MAX_GLOB_CANDIDATES` 的额度吃光, 一次覆盖整个
-    仓库的展开报"结果不完整", 而漏掉的恰好是源码. 忽略规则已经下沉到
-    `OsFileSystemView.expand_glob` 的 `exclude`, 在遍历时剪枝; 这里只剩深度这一件事,
-    因为深度是**展开之后**才算得出来的相对层数.
-
-    过滤放在 prepare 而不是 perform: 目标集合要在裁决之前就封闭, 被过滤掉的路径根本
-    不该出现在 read_paths 里 —— 否则安全侧会为一堆我们压根不打算读的文件做判断.
-    """
-    if depth is None:
-        return tuple(matches)
-    kept: list[str] = []
-    normalized_root = root.replace("\\", "/").rstrip("/")
-    prefix = normalized_root + "/"
-    for path in matches:
-        normalized_path = path.replace("\\", "/")
-        relative = (
-            normalized_path[len(prefix) :]
-            if normalized_path.startswith(prefix)
-            else normalized_path
-        )
-        segments = tuple(part for part in relative.split("/") if part)
-        if len(segments) > depth:
-            continue
-        kept.append(path)
-    return tuple(kept)
 
 
 def validate_arguments(

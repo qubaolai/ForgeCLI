@@ -194,17 +194,6 @@ class OsFileSystemView:
             return _walk_glob(anchor, str(relative), max_results, skip_ignored)
         return _walk_glob(Path(root), pattern, max_results, skip_ignored)
 
-    def is_ignored(self, path: str, *, root: str) -> bool:
-        """这条路径是不是被忽略的生成物. 判断交给权威来源, 不由调用方列名单."""
-        normalized = path.replace("\\", "/")
-        base = root.replace("\\", "/").rstrip("/")
-        relative = (
-            normalized[len(base) + 1 :]
-            if normalized.startswith(f"{base}/")
-            else normalized
-        )
-        return ignore_predicate(base)(relative)
-
 
 def _resolved_parent(target: Path) -> str:
     """把不存在的对象锚到最近的已存在祖先上, 再拼回剩下的段.

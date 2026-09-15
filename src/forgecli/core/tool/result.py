@@ -124,11 +124,6 @@ class ResultProvenance:
     mutated_paths: tuple[str, ...] = ()
 
     @property
-    def dedupable(self) -> bool:
-        """能不能拿它判"这份内容我已经见过了"."""
-        return bool(self.source_path and self.source_state)
-
-    @property
     def archived(self) -> bool:
         """正文降级之后还取不取得回来."""
         return bool(self.artifact_id)

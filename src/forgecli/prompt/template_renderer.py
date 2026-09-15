@@ -40,8 +40,6 @@
 
 from __future__ import annotations
 
-import re
-from collections.abc import Iterator
 from functools import lru_cache
 from importlib import resources
 from importlib.resources.abc import Traversable
@@ -49,7 +47,6 @@ from importlib.resources.abc import Traversable
 from jinja2 import Environment, FunctionLoader, StrictUndefined
 
 from forgecli.core.prompt_blocks import PromptBlockId
-from forgecli.core.tool.hashing import digest_text
 
 __all__ = [
     "PROMPT_STATIC_BUDGET",
@@ -59,9 +56,7 @@ __all__ = [
     "render_notice",
     "render_runtime",
     "render_state",
-    "template_names",
     "template_source",
-    "templates_fingerprint",
 ]
 
 # 静态提示词 (blocks/ 下的五个内置块) 的 token 上限 (ADR-0042 决策 4).
@@ -77,34 +72,11 @@ PROMPT_STATIC_BUDGET = 994
 TEMPLATE_SUFFIX = ".md.j2"
 _ANCHOR = "forgecli.prompt"
 _DIRECTORY = "templates"
-_COMMENT = re.compile(r"\{#.*?#\}", re.DOTALL)
-
-
-def template_names() -> tuple[str, ...]:
-    """模板目录里的全部文件, 相对路径, 排序固定.
-
-    排序固定是因为它进指纹: 目录遍历顺序在不同文件系统上不一样, 拿它算哈希会让同样的
-    模板在不同机器上得出不同的指纹.
-    """
-    return tuple(sorted(_walk(_root(), "")))
 
 
 def template_source(name: str) -> str:
     """一份模板的正文. 走 importlib.resources, 与打包后的读法完全一致."""
     return _root().joinpath(*name.split("/")).read_text(encoding="utf-8")
-
-
-def templates_fingerprint() -> str:
-    """全部模板的指纹, 不含 `{# #}` 注释.
-
-    注释是给人读的, 一个字都不会进模型上下文; 把它算进去, 改一句"为什么这么措辞"也要升
-    版本重钉指纹, 而那种摩擦的唯一后果是没人再写注释.
-    """
-    parts = [
-        f"{name}\n{_COMMENT.sub('', template_source(name))}"
-        for name in template_names()
-    ]
-    return digest_text("\n".join(parts))
 
 
 def render_block(block_id: PromptBlockId, /, **context: object) -> str:
@@ -170,15 +142,6 @@ def _render(stem: str, context: dict[str, object]) -> str:
 
 def _root() -> Traversable:
     return resources.files(_ANCHOR).joinpath(_DIRECTORY)
-
-
-def _walk(directory: Traversable, prefix: str) -> Iterator[str]:
-    for entry in directory.iterdir():
-        name = f"{prefix}{entry.name}"
-        if entry.is_dir():
-            yield from _walk(entry, f"{name}/")
-        elif name.endswith(TEMPLATE_SUFFIX):
-            yield name
 
 
 @lru_cache(maxsize=1)

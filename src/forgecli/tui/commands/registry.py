@@ -289,10 +289,6 @@ def _category_order() -> tuple[str, ...]:
     return tuple(dict.fromkeys(item.category for item in COMMANDS))
 
 
-def command_names() -> tuple[str, ...]:
-    return tuple(_BY_NAME)
-
-
 def dispatch(context: CommandContext, line: str) -> None:
     """执行一条斜杠命令. 认不出就给最接近的几个, 不猜着执行一条."""
     name, _, argument = line.strip().partition(" ")

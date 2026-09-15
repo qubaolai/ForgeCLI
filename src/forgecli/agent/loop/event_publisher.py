@@ -75,9 +75,6 @@ class LoopEventPublisher:
         self._step += 1
         return self._step
 
-    def reset_step(self) -> None:
-        self._step = 0
-
     def elapsed_ms(self) -> float:
         return (self._timer() - self._started_at) * 1000.0
 
