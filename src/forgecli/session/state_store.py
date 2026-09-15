@@ -1,22 +1,18 @@
-"""状态快照存储抽象（由 infrastructure 实现）。
+"""``sessions/<session_id>/state.json`` 的读写.
 
-约定：写入走临时文件 + 原子替换；无文件时 read 返回 None，不抛异常；
-文件损坏由 infrastructure 翻成面向用户的 SessionStateError。
+约定: 写入走临时文件 + 原子替换; 无文件时 read 返回 None, 不抛异常; 文件损坏翻成面向
+用户的 SessionStateError, 这是 tui / web 的会话命令 catch 的那个类型.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from forgecli.common.json_io import read_json, write_json_atomic
+from forgecli.common.errors import ConfigReadError, SessionStateError
+from forgecli.common.json_io import read_document, write_document
 from forgecli.session.snapshot import SessionSnapshot
 
 
-# ---- 原 infrastructure/session/json_state_store.py ----
-# state.json 的原子写实现。
-#
-# 按 ``<sessions_dir>/<session_id>/state.json`` 落盘，读写都经 json_io
-# （原子替换 + 统一错误）。
 class JsonStateStore:
     """``sessions/<session_id>/state.json`` 的 JSON 实现。"""
 
@@ -28,11 +24,15 @@ class JsonStateStore:
 
     def write(self, snapshot: SessionSnapshot) -> None:
         """原子写出快照；首次写入会创建会话目录。"""
-        write_json_atomic(self._file(snapshot.session_id), snapshot.to_dict())
+        write_document(self._file(snapshot.session_id), snapshot.to_dict())
 
     def read(self, session_id: str) -> SessionSnapshot | None:
         """读取快照；不存在返回 None。"""
-        data = read_json(self._file(session_id))
-        if data is None:
+        path = self._file(session_id)
+        if not path.exists():
             return None
+        try:
+            data = read_document(path, label="会话状态文件")
+        except ConfigReadError as exc:
+            raise SessionStateError(str(exc)) from exc
         return SessionSnapshot.from_dict(data)

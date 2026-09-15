@@ -7,10 +7,14 @@
     - 一致的错误：解析 / IO 失败统一翻成面向用户的 ``ConfigReadError``，不漏 traceback。
     - 一致的落盘：先写临时文件再 rename，避免读到半截文件。
 
-会话状态另有 ``infrastructure/session/json_io``：它把失败翻成 ``SessionStateError``。
-两处的错误语义不同，合成一个模块只会让调用方分不清该 catch 什么；原子写这一半是共用的，
-就是这里的 ``write_atomic`` —— 计划正文、恢复 blob 与 artifact 也都走它，因为"先写临时
-文件再 rename"这件事一旦有第二份实现，给它加 fsync 的人就只会改到自己看见的那一份。
+原子写这一半人人共用, 就是这里的 ``write_atomic`` —— 计划正文, 恢复 blob 与 artifact
+也都走它, 因为"先写临时文件再 rename"这件事一旦有第二份实现, 给它加 fsync 的人就只会改到
+自己看见的那一份.
+
+会话的 state.json 原先另有一份 ``read_json`` / ``write_json_atomic``, 与这里只差"文件不
+存在时返回 None 还是 {}"和抛哪个异常. 现在只剩这一份: 缺文件由调用方先 ``exists()``,
+异常类型由 ``JsonStateStore`` 自己翻成 ``SessionStateError``, ``label`` 决定错误文案里
+把这份文件叫什么.
 """
 
 from __future__ import annotations
@@ -21,25 +25,29 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from forgecli.common.errors import ConfigReadError, SessionStateError
+from forgecli.common.errors import ConfigReadError
 
 __all__ = ["read_document", "write_atomic", "write_document"]
 
 
-def read_document(path: Path) -> dict[str, Any]:
-    """解析 JSON 对象；文件不存在返回空 dict；解析 / IO 失败抛 ConfigReadError。"""
+def read_document(path: Path, *, label: str = "配置文件") -> dict[str, Any]:
+    """解析 JSON 对象; 文件不存在返回空 dict; 解析 / IO 失败抛 ConfigReadError.
+
+    ``label`` 只进错误文案: 同一个函数读 forge.json 时说"配置文件", 读 state.json 时说
+    "会话状态文件", 用户看到的是他认得的那个名字.
+    """
     if not path.exists():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ConfigReadError(
-            f"配置文件存在语法错误，无法读取：{path}\n  原因：{exc}"
+            f"{label}存在语法错误，无法读取：{path}\n  原因：{exc}"
         ) from exc
     except (OSError, UnicodeDecodeError) as exc:
-        raise ConfigReadError(f"无法读取配置文件：{path}\n  原因：{exc}") from exc
+        raise ConfigReadError(f"无法读取{label}：{path}\n  原因：{exc}") from exc
     if not isinstance(data, dict):
-        raise ConfigReadError(f"配置文件格式不正确（应为 JSON 对象）：{path}")
+        raise ConfigReadError(f"{label}格式不正确（应为 JSON 对象）：{path}")
     return {str(key): value for key, value in data.items()}
 
 
@@ -66,28 +74,3 @@ def write_document(path: Path, document: Mapping[str, Any]) -> None:
     ``ensure_ascii=False`` + 缩进 2：这些文件是人机共编的，中文标题和路径要能直接读。
     """
     write_atomic(path, json.dumps(dict(document), ensure_ascii=False, indent=2) + "\n")
-
-
-# ---- 原 infrastructure/session/json_io.py ----
-# 会话 JSON 读写的统一入口（对标 infrastructure/json_io）。
-#
-# 收敛保证：
-#     - 一致的落盘：先写临时文件再 rename，避免读到半截文件（state.json 用）。
-#     - 一致的错误：解析 / IO 失败统一翻成面向用户的 SessionStateError，不漏 traceback。
-# events.jsonl 是 append-only 追加，不经本模块的原子整文件写。
-def read_json(path: Path) -> dict[str, object] | None:
-    """解析 JSON 对象；文件不存在返回 None；解析 / IO 失败抛 SessionStateError。"""
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
-        raise SessionStateError(f"无法读取会话状态文件：{path}\n  原因：{exc}") from exc
-    if not isinstance(data, dict):
-        raise SessionStateError(f"会话状态文件格式不正确（应为对象）：{path}")
-    return {str(key): value for key, value in data.items()}
-
-
-def write_json_atomic(path: Path, data: Mapping[str, object]) -> None:
-    """原子写出 JSON 对象（先临时文件再替换）。"""
-    write_atomic(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
