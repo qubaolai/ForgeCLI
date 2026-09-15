@@ -8,7 +8,7 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   build: {
-    outDir: "../src/forgecli/interfaces/web/static",
+    outDir: "../src/forgecli/web/static",
     emptyOutDir: true,
   },
   server: {

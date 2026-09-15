@@ -1,21 +1,23 @@
-"""依赖方向静态检查 (ADR-0002 轻量 DDD, ADR-0004 §13, ADR-0016 §2).
+"""依赖方向静态检查 (ADR-0053 按功能分包; 沿用 ADR-0004 §13, ADR-0016 §2 的互斥边界).
 
-为什么要一个脚本而不是靠自觉: 分层违规都是"能跑通"的 —— import 一个下层模块永远不会
+为什么要一个脚本而不是靠自觉: 分层违规都是"能跑通"的 —— import 一个上层模块永远不会
 报错, 只会在半年后变成一团解不开的环. 把方向写成可执行断言, 违规在 `make ci` 就停下.
 
-三类规则:
+四类规则:
 
-1. **层间方向**: domain 不认识任何人; application 只认识 domain; infrastructure 与
-   interfaces 可以向下, 但 infrastructure 不认识 interfaces.
-2. **框架隔离**: domain 与 application 不得 import Rich, prompt_toolkit 或任何供应商
-   SDK / HTTP 客户端. 终端与协议细节留在 interfaces / infrastructure.
-3. **工具与安全互不相识** (ADR-0004 §2): application/tools 不 import
-   application/security, 反之亦然; 唯一装配点是 application/tool_request.
+1. **包的层级** (LAYERS): 每个顶层包只能 import 比自己低的层. 层是从实际 import 图算出
+   来的拓扑序, 写死在这里是为了让新加的一条反向 import 立刻被认出来, 而不是等它把两
+   个包缠成一个环.
+2. **第三方归属** (THIRD_PARTY_HOMES): 终端渲染, HTTP 框架与供应商 SDK 各有唯一的家;
+   业务包里出现它们就是分层漏了.
+3. **同层互斥** (SIBLING_BANS): 工具与安全互不相识 (ADR-0004 §2), 记忆与上下文不参与
+   裁决 (ADR-0033, ADR-0041), 人机提示通道什么都不认识 (ADR-0043), 上游只认识 LlmGateway
+   与 ToolRunObserver 抽象而不认识实现 (ADR-0028 规则 A1).
 4. **无 import 环**: 模块级 import 图必须是有向无环的.
 
 第 4 条为什么值得一个检查: import 环不一定会炸. 只要有一条 import 顺序恰好把每个
 模块在被回头引用前初始化完, 环就一直静默存在 —— 直到有人动了某个 __init__ 或换了
-第一个 import 它的入口. 已经吃过两次: application/llm/config 与 application/llm/gateway
+第一个 import 它的入口. 已经吃过两次: 旧 application/llm/config 与 application/llm/gateway
 的包门面各自藏了一个环, 都是靠顺序活着的. 顺序是运气, 不是设计.
 
 环最常见的成因就是**急切转导出的包门面**: `a/__init__.py` import 了 `a.b`, 而 `a.c`
@@ -33,80 +35,109 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parent.parent / "src" / "forgecli"
 ROOT = "forgecli"
 
-# 每一层不允许 import 的层.
-LAYER_BANS: dict[str, tuple[str, ...]] = {
-    "domain": ("application", "infrastructure", "interfaces"),
-    "application": ("infrastructure", "interfaces"),
-    "infrastructure": ("interfaces",),
-    "interfaces": (),
+# 顶层包的层级, 低的在前. 一个包只能 import 比自己层级低的包 (同包内部不限).
+#
+# 这张表是 2026-09-15 迁移时从 import 图算出的拓扑序; `core` 是跨包共用的词汇, 它下面
+# 只有 `common`. 改动这张表要有理由: 把一个包往下挪等于承诺它不再认识上面的任何人.
+LAYERS: tuple[frozenset[str], ...] = (
+    frozenset({"common", "human_interaction"}),
+    frozenset({"core", "memory"}),
+    frozenset({"settings", "project", "prompt", "workspace", "planning"}),
+    frozenset({"llm", "security", "recovery"}),
+    frozenset({"conversation", "execution", "session"}),
+    frozenset({"tools"}),
+    frozenset({"agent"}),
+    frozenset({"runtime"}),
+    frozenset({"tui"}),
+    frozenset({"web"}),
+    frozenset({"cli"}),
+)
+LEVEL_OF: dict[str, int] = {
+    package: level for level, packages in enumerate(LAYERS) for package in packages
 }
 
-# domain 与 application 不得碰的第三方: 终端渲染, 交互输入, HTTP 与供应商 SDK.
-BANNED_THIRD_PARTY: tuple[str, ...] = (
-    "rich",
-    "prompt_toolkit",
-    "httpx",
-    "requests",
-    "openai",
-    "anthropic",
-)
-THIRD_PARTY_FREE_LAYERS = ("domain", "application")
+# 第三方顶层模块 -> 允许 import 它的包前缀. 不在表里的第三方不受限.
+# 空元组 = 任何地方都不许出现 (供应商 SDK 与备用 HTTP 客户端: 只走 llm.adapters 的 httpx).
+THIRD_PARTY_HOMES: dict[str, tuple[str, ...]] = {
+    "rich": ("tui", "web", "cli"),
+    "prompt_toolkit": ("tui",),
+    "typer": ("cli",),
+    "fastapi": ("web",),
+    "starlette": ("web",),
+    "sse_starlette": ("web",),
+    "uvicorn": ("web",),
+    "httpx": ("llm.adapters",),
+    "requests": (),
+    "openai": (),
+    "anthropic": (),
+}
 
-# 模块级互斥: (包前缀, 不得 import 的包前缀, 说明).
-SIBLING_BANS: tuple[tuple[str, str, str], ...] = (
+# 同层互斥: (包前缀, 不得 import 的包前缀, 豁免前缀, 说明).
+SIBLING_BANS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
     (
-        "application.tools",
-        "application.security",
+        "tools",
+        "security",
+        # 管线是唯一的装配点: 它串起机制, 安全, 审批与恢复 (ADR-0004 §5).
+        ("tools.pipeline",),
         "工具是机制层, 不做安全决策 (ADR-0004 §2)",
     ),
     (
-        "application.security",
-        "application.tools",
+        "security",
+        "tools",
+        (),
         "安全是策略层, 不认识任何具体工具实现 (ADR-0004 §2)",
     ),
-    # 上游只认识 LlmGateway 端口, 不认识网关实现 (ADR-0011 §3.1, ADR-0028 规则 A1).
-    # DefaultLlmGateway 拖着 provider 注册表, 凭证池, 重试环与治理件; 让 agent_loop
+    # 上游只认识 LlmGateway 抽象, 不认识网关实现 (ADR-0011 §3.1, ADR-0028 规则 A1).
+    # DefaultLlmGateway 拖着 provider 注册表, 凭证池, 重试环与治理件; 让 agent.loop
     # 直接 import 它, 一个循环用例就要装配整个 LLM 子系统.
-    #
-    # 2026-08-24: 原先还有一条 application.security -> llm.gateway.default_gateway,
-    # 理由是"一个分类器用例就要装配整个 LLM 子系统". ADR-0030 删掉了 LLM 安全分类器,
-    # security 现在零 llm 引用, 那条禁令的理由随之消失, 已删除 —— 留一条理由已经不成立
-    # 的规则, 下一个读它的人会照着那条不存在的依赖去理解架构.
     (
-        "application.agent_loop",
-        "application.llm.gateway.default_gateway",
-        "AgentLoop 只依赖 LlmGateway 端口, 不依赖网关实现 (ADR-0028 规则 A1)",
+        "agent.loop",
+        "llm.gateway.default_gateway",
+        (),
+        "AgentLoop 只依赖 LlmGateway 抽象, 不依赖网关实现 (ADR-0028 规则 A1)",
     ),
     (
-        "application.context",
-        "application.llm.gateway.default_gateway",
-        "上下文管理只依赖 LlmGateway 端口, 不依赖网关实现 (ADR-0028 规则 A1)",
+        "conversation",
+        "llm.gateway.default_gateway",
+        (),
+        "上下文管理只依赖 LlmGateway 抽象, 不依赖网关实现 (ADR-0028 规则 A1)",
+    ),
+    # 网关只认识 ModelProvider 抽象; 供应商 HTTP 适配由组合根注入. 这条边界是
+    # ModelProvider 这个 ABC 存在的理由 (check_abstractions.py A1).
+    (
+        "llm.gateway",
+        "llm.adapters",
+        (),
+        "网关只依赖 ModelProvider 抽象, 不依赖供应商适配 (ADR-0028 规则 A1)",
     ),
     # 记忆是模型可写且不经人确认的提示词输入. 它进不了裁决, 是整个 ADR-0033 敢做静默
     # 写入的承重理由 —— 所以这条边界必须是机器守得住的, 写在注释里不算.
     (
-        "application.memory",
-        "application.security",
+        "memory",
+        "security",
+        (),
         "记忆不参与任何安全裁决 (ADR-0033 决策 3)",
     ),
     # 上下文里装的东西有一半是模型自己写的 (记忆, 计划, 待办), 另一半是工具输出的转述.
     # 两者都不该有机会影响裁决 —— 与上面那条给记忆定的边界同一个理由, 只是范围更大.
     (
-        "application.context",
-        "application.security",
+        "conversation",
+        "security",
+        (),
         "上下文组装不参与任何安全裁决 (ADR-0041)",
     ),
     (
-        "application.agent_loop",
-        "application.memory",
+        "agent.loop",
+        "memory",
+        (),
         "AgentLoop 不读写长期记忆 (ADR-0010 §影响)",
     ),
-    # 工具链路只认识自己的输出端口, 不认识端口另一头的实现 (ADR-0028 规则 A1).
-    # 删掉它, ToolRunObserver 这个抽象就白留了 —— 协调器会顺着同层的 import 直接
-    # 认识事件总线.
+    # 工具链路只认识自己的输出抽象, 不认识另一头的实现 (ADR-0028 规则 A1).
+    # 删掉它, ToolRunObserver 这个抽象就白留了 —— 协调器会顺着 import 直接认识事件总线.
     (
-        "application.tool_request",
-        "application.agent_run",
+        "tools.pipeline",
+        "agent",
+        (),
         "工具链路不认识终端事件总线, 只发 ToolRunObserver (ADR-0016 §4.3)",
     ),
     # 人机提示通道是审批与 ask_user 共用的那一条队列 (ADR-0043 决策 3). 它承重的地方
@@ -115,23 +146,15 @@ SIBLING_BANS: tuple[tuple[str, str, str], ...] = (
     #
     # 这条边界必须是机器守得住的 —— 写在注释里的"请保持哑"挡不住任何一次顺手.
     (
-        "domain.human_interaction",
-        "domain.security",
+        "human_interaction",
+        "security",
+        (),
         "人机提示通道不认识授权词汇 (ADR-0043 决策 3 纪律 1)",
     ),
     (
-        "domain.human_interaction",
-        "domain.tool",
-        "人机提示通道不认识工具计划 (ADR-0043 决策 3 纪律 1)",
-    ),
-    (
-        "application.human_interaction",
-        "domain.security",
-        "人机提示通道不认识授权词汇 (ADR-0043 决策 3 纪律 1)",
-    ),
-    (
-        "application.human_interaction",
-        "domain.tool",
+        "human_interaction",
+        "core.tool",
+        (),
         "人机提示通道不认识工具计划 (ADR-0043 决策 3 纪律 1)",
     ),
 )
@@ -148,52 +171,68 @@ def _imported_modules(tree: ast.AST) -> list[tuple[str, int]]:
     return found
 
 
-def _layer_of(relative: Path) -> str:
-    return relative.parts[0]
-
-
 def _package_path(relative: Path) -> str:
-    """`application/tools/builtin/x.py` -> `application.tools.builtin.x`."""
-    return ".".join(relative.with_suffix("").parts)
+    """`tools/builtin/x.py` -> `tools.builtin.x`; `cli.py` -> `cli`."""
+    parts = relative.with_suffix("").parts
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def _within(package: str, prefix: str) -> bool:
+    return package == prefix or package.startswith(f"{prefix}.")
 
 
 def _check_file(path: Path) -> list[str]:
     relative = path.relative_to(SRC)
-    layer = _layer_of(relative)
-    if layer not in LAYER_BANS:
-        return []
     package = _package_path(relative)
+    if not package:
+        return []
+    top = package.split(".")[0]
+    if top not in LEVEL_OF:
+        return [f"{relative} 所在的顶层包 {top} 不在 LAYERS 里"]
     problems: list[str] = []
 
     for module, lineno in _imported_modules(ast.parse(path.read_text("utf-8"), path)):
         location = f"{relative}:{lineno}"
 
-        if module.startswith(f"{ROOT}."):
-            target_layer = module.split(".")[1]
-            if target_layer in LAYER_BANS[layer]:
+        if module == ROOT or module.startswith(f"{ROOT}."):
+            target = module[len(ROOT) + 1 :]
+            target_top = target.split(".")[0]
+            if not target_top:
+                continue
+            if target_top not in LEVEL_OF:
+                problems.append(f"{location} import 了不在 LAYERS 里的包: {module}")
+                continue
+            if target_top != top and LEVEL_OF[target_top] >= LEVEL_OF[top]:
                 problems.append(
-                    f"{location} {layer} 不能依赖 {target_layer}: import {module}"
+                    f"{location} {top} (L{LEVEL_OF[top]}) 不能依赖 "
+                    f"{target_top} (L{LEVEL_OF[target_top]}): import {module}"
                 )
-            target_package = module[len(ROOT) + 1 :]
-            for source_prefix, banned_prefix, why in SIBLING_BANS:
-                if package.startswith(source_prefix) and target_package.startswith(
-                    banned_prefix
-                ):
+            for source_prefix, banned_prefix, exempt, why in SIBLING_BANS:
+                if not _within(package, source_prefix):
+                    continue
+                if any(_within(package, prefix) for prefix in exempt):
+                    continue
+                if _within(target, banned_prefix):
                     problems.append(f"{location} {why}: import {module}")
             continue
 
-        if layer in THIRD_PARTY_FREE_LAYERS:
-            top = module.split(".")[0]
-            if top in BANNED_THIRD_PARTY:
-                problems.append(
-                    f"{location} {layer} 不能依赖第三方 {top}: import {module}"
-                )
+        head = module.split(".")[0]
+        homes = THIRD_PARTY_HOMES.get(head)
+        if homes is None:
+            continue
+        if not any(_within(package, home) for home in homes):
+            allowed = ", ".join(homes) or "任何地方"
+            problems.append(
+                f"{location} {head} 只许出现在 {allowed}, 这里是 {package}: import {module}"
+            )
 
     return problems
 
 
 def _module_name(relative: Path) -> str:
-    """`application/llm/gateway/__init__.py` -> `forgecli.application.llm.gateway`."""
+    """`llm/gateway/__init__.py` -> `forgecli.llm.gateway`."""
     parts = relative.with_suffix("").parts
     if parts[-1] == "__init__":
         parts = parts[:-1]
@@ -298,7 +337,7 @@ def main() -> int:
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         return 1
-    print("依赖方向检查通过.")
+    print(f"依赖方向检查通过 ({len(LAYERS)} 层, {len(SIBLING_BANS)} 条互斥).")
     return 0
 
 

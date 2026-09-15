@@ -228,4 +228,4 @@ __marimo__/
 
 # Web 构建产物: 由 `make web-build` 从 web/ 生成, 打包时由 `make package` 重建.
 # 入库的话, wheel 里的前端就是"碰巧提交进去的那一版" (ADR-0025 决策 29).
-src/forgecli/interfaces/web/static/
+src/forgecli/web/static/

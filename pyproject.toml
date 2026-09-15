@@ -61,8 +61,8 @@ dependencies = [
 # -----------------------------------------------------------------------------
 [project.scripts]
 # 安装后会生成 forge 命令。
-# 执行 forge 时，会调用 forgecli.interfaces.cli.app 模块中的 main 函数。
-forge = "forgecli.interfaces.app:main"
+# 执行 forge 时，会调用 forgecli.cli 模块中的 main 函数。
+forge = "forgecli.cli:main"
 
 # -----------------------------------------------------------------------------
 # Poetry 专用配置
@@ -73,10 +73,10 @@ packages = [
     { include = "forgecli", from = "src" },
 ]
 include = [
-    { path = "src/forgecli/interfaces/web/static", format = ["wheel", "sdist"] },
+    { path = "src/forgecli/web/static", format = ["wheel", "sdist"] },
     # 系统提示词模板 (ADR-0039). 它们是包内数据: 少了任何一份, 装出来的 forge 起不了
     # 会话, 而源码树里照样跑得起来 —— 打包清单漏了它不会有任何东西报错.
-    { path = "src/forgecli/application/prompt/templates", format = ["wheel", "sdist"] },
+    { path = "src/forgecli/prompt/templates", format = ["wheel", "sdist"] },
 ]
 
 # -----------------------------------------------------------------------------
