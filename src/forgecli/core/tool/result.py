@@ -101,7 +101,7 @@ class ResultProvenance:
     - ``source_path`` + ``source_state`` 让这条结果可以**去重**: 同一个路径在同一个
       状态下被读第二次, 后一次回一行引用就够了.
     - ``artifact_id`` 让这条结果可以**降级**: transcript 里的正文换成引用, 完整内容
-      仍在 ArtifactStore 里, 用 artifact_read 取回.
+      仍在 FsArtifactStore 里, 用 artifact_read 取回.
     - ``mutated_paths`` 让这条结果可以**作废别人**: 写文件的工具据此告诉上下文管理,
       前面那些读到的内容从此不代表当前状态了.
 

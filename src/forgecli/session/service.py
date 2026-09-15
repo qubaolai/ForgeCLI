@@ -29,10 +29,10 @@ from forgecli.core.model.request import ModelRequest, StructuredModelRequest
 from forgecli.core.turn import MessageRole, TurnStatus
 from forgecli.llm.gateway.errors import ModelResponseParseError
 from forgecli.llm.gateway.gateway import LlmGateway
-from forgecli.session.event_store import EventStore
+from forgecli.session.event_store import JsonlEventStore
 from forgecli.session.events import EventType, SessionEvent
 from forgecli.session.snapshot import SessionSnapshot
-from forgecli.session.state_store import StateStore
+from forgecli.session.state_store import JsonStateStore
 
 
 def _new_session_id() -> str:
@@ -108,8 +108,8 @@ class SessionService:
 
     def __init__(
         self,
-        event_store: EventStore,
-        state_store: StateStore,
+        event_store: JsonlEventStore,
+        state_store: JsonStateStore,
         workspace_root: str,
         gateway: LlmGateway,
         *,
@@ -244,7 +244,7 @@ class SessionService:
     ) -> SessionEvent:
         """记录一条工具侧会话事件 (目录授权, 计划与待办).
 
-        与 record_usage 同样的边界: 写入只经这一个门面, 协调器不持有 EventStore.
+        与 record_usage 同样的边界: 写入只经这一个门面, 协调器不持有 JsonlEventStore.
         payload 由调用方保证只含安全摘要.
         """
         body: dict[str, object] = dict(payload)

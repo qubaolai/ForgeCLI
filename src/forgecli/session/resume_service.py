@@ -6,17 +6,18 @@
     - list_sessions 供 GET /api/v1/sessions 的列表与关键字搜索；
       load_full 供恢复时一次读出快照 + 全部事件（用于 hydrate 计算，本切片不回放对话）。
 
-依赖三个会话存储抽象：SessionCatalog 枚举 id、StateStore 读快照、EventStore 读事件。
+依赖三个会话存储：FsSessionCatalog 枚举 id、JsonStateStore 读快照、JsonlEventStore
+读事件。
 """
 
 from __future__ import annotations
 
 from forgecli.common.errors import SessionStateError
-from forgecli.session.catalog import SessionCatalog
-from forgecli.session.event_store import EventStore
+from forgecli.session.catalog import FsSessionCatalog
+from forgecli.session.event_store import JsonlEventStore
 from forgecli.session.events import SessionEvent
 from forgecli.session.snapshot import SessionSnapshot
-from forgecli.session.state_store import StateStore
+from forgecli.session.state_store import JsonStateStore
 
 _DEFAULT_LIMIT = 20
 
@@ -26,9 +27,9 @@ class ResumeService:
 
     def __init__(
         self,
-        catalog: SessionCatalog,
-        state_store: StateStore,
-        event_store: EventStore,
+        catalog: FsSessionCatalog,
+        state_store: JsonStateStore,
+        event_store: JsonlEventStore,
     ) -> None:
         self._catalog = catalog
         self._states = state_store

@@ -1,4 +1,4 @@
-"""ArtifactStore: 工具输出的落盘位置 (ADR-0004 §8, ADR-0032 决策 6).
+"""FsArtifactStore: 工具输出的落盘位置 (ADR-0004 §8, ADR-0032 决策 6).
 
 内容不落在工作区: 一次跑测试产生的 20MB 日志写进用户仓库, 既污染工作区又会被下一次
 Agent 读回上下文. 它落在 Forge 状态目录, 事件里只留引用, 大小和哈希.
@@ -19,7 +19,6 @@ from __future__ import annotations
 import contextlib
 import re
 import time
-from abc import ABC, abstractmethod
 from pathlib import Path
 
 from forgecli.common.json_io import write_atomic
@@ -31,7 +30,6 @@ __all__ = [
     "ARTIFACT_RETENTION_SECONDS",
     "ArtifactMissing",
     "ArtifactRef",
-    "ArtifactStore",
     "FsArtifactStore",
     "valid_artifact_id",
 ]
@@ -45,7 +43,7 @@ __all__ = [
 ARTIFACT_ID_PATTERN = re.compile(r"^[0-9a-f]{16}$")
 
 # 多久没被引用就回收 (ADR-0032 决策 6). 写在端口这一侧而不是实现里: 它是决策不是实现
-# 细节, 换一个 ArtifactStore 实现不该顺带换掉保留期.
+# 细节, 换一个 FsArtifactStore 实现不该顺带换掉保留期.
 #
 # 3 天的取舍: 删掉的代价多数情况下是重读一次文件, 比磁盘无限涨好. 但有两类内容重读
 # 不回来 —— shell_run 的输出 (重跑不等于取回三天前那次, 而且会再执行一次子进程),
@@ -66,42 +64,9 @@ class ArtifactMissing(KeyError):
     """
 
 
-class ArtifactStore(ABC):
-    @abstractmethod
-    def write(self, *, invocation_id: str, name: str, data: str) -> ArtifactRef:
-        """落盘一段输出并返回引用. 内容寻址: 同一段内容只占一份空间."""
-
-    @abstractmethod
-    def read(
-        self,
-        artifact_id: str,
-        *,
-        offset: int | None = None,
-        limit: int | None = None,
-    ) -> str:
-        """读回内容. offset 是起始行 (从 1 起), limit 是行数, 都不给则读全文.
-
-        分段读不是锦上添花: 单份上限 32 MB, 整份读进内存正是要避免的事.
-        找不到时抛 ``ArtifactMissing``.
-        """
-
-    @abstractmethod
-    def exists(self, artifact_id: str) -> bool:
-        """内容还在不在. 降级占位据此选"可取回"还是"已过期回收"."""
-
-    @abstractmethod
-    def touch(self, artifact_id: str) -> None:
-        """把最后引用时间刷到现在. 不存在时静默返回 —— 续期一个已经被回收的内容
-        不是错误, 调用方接着会拿 ``exists`` 走"已过期"那条分支."""
-
-    @abstractmethod
-    def sweep(self, *, older_than_seconds: float) -> int:
-        """删掉超过给定时长没被引用过的内容, 返回删除数量."""
-
-
 # ---- 原 infrastructure/tools/fs_artifact_store.py ----
 # 内容寻址的 artifact 存储: 落在 Forge 状态目录, 不落在工作区.
-class FsArtifactStore(ArtifactStore):
+class FsArtifactStore:
     """按内容哈希寻址: 同一段输出反复溢写只占一份空间.
 
     **文件 mtime 就是"最后一次被引用的时间"** (ADR-0032 决策 6). ``write`` 在内容已经
@@ -113,6 +78,7 @@ class FsArtifactStore(ArtifactStore):
         self._root = root
 
     def write(self, *, invocation_id: str, name: str, data: str) -> ArtifactRef:
+        """落盘一段输出并返回引用. 内容寻址: 同一段内容只占一份空间."""
         content_hash = digest_text(data)
         artifact_id = content_hash.split(":", 1)[1][:16]
         target = self._path_of(artifact_id)
@@ -136,6 +102,11 @@ class FsArtifactStore(ArtifactStore):
         offset: int | None = None,
         limit: int | None = None,
     ) -> str:
+        """读回内容. offset 是起始行 (从 1 起), limit 是行数, 都不给则读全文.
+
+        分段读不是锦上添花: 单份上限 32 MB, 整份读进内存正是要避免的事.
+        找不到时抛 ``ArtifactMissing``.
+        """
         target = self._path_of(artifact_id)
         if not target.exists():
             raise ArtifactMissing(artifact_id)
@@ -145,11 +116,14 @@ class FsArtifactStore(ArtifactStore):
         return self._window(target, offset=offset, limit=limit)
 
     def exists(self, artifact_id: str) -> bool:
+        """内容还在不在. 降级占位据此选"可取回"还是"已过期回收"."""
         if not valid_artifact_id(artifact_id):
             return False
         return self._path_of(artifact_id).exists()
 
     def touch(self, artifact_id: str) -> None:
+        """把最后引用时间刷到现在. 不存在时静默返回 —— 续期一个已经被回收的内容
+        不是错误, 调用方接着会拿 ``exists`` 走"已过期"那条分支."""
         if not valid_artifact_id(artifact_id):
             return
         target = self._path_of(artifact_id)
@@ -186,7 +160,7 @@ class FsArtifactStore(ArtifactStore):
         ``artifact_id`` 到了 ADR-0032 决策 6.2 之后是**模型可控**的 (``artifact_read``
         的入参). 不校验的话, ``".."`` 会让 ``self._root / artifact_id[:2]`` 直接跳出
         artifacts 目录, 而这条路径绕开的恰好是受保护路径那道 Hard Deny —— 工具内部走
-        ArtifactStore, 不经 workspace_analyzer.
+        FsArtifactStore, 不经 workspace_analyzer.
         """
         if not valid_artifact_id(artifact_id):
             raise ArtifactMissing(artifact_id)

@@ -9,7 +9,6 @@ infrastructure. 端口在这里, 实现在 infrastructure/prompt.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,7 +21,6 @@ __all__ = [
     "MAX_INSTRUCTION_BYTES",
     "MAX_TOTAL_INSTRUCTION_BYTES",
     "ProjectInstruction",
-    "ProjectInstructionReader",
 ]
 
 INSTRUCTION_FILE_NAME = "FORGE.md"
@@ -51,17 +49,6 @@ class ProjectInstruction:
             raise ValueError("ProjectInstruction.source_id 不能为空")
 
 
-class ProjectInstructionReader(ABC):
-    """读取受信任根目录顶层的 FORGE.md."""
-
-    @abstractmethod
-    def read(self, workspace_roots: tuple[str, ...]) -> tuple[ProjectInstruction, ...]:
-        """按给定根的顺序读取. 读不到, 越界, 非 UTF-8 的一律跳过, 不抛错.
-
-        提示词是辅助机制: 一份读不了的 FORGE.md 不该让整个会话起不来 (ADR-0018 §11).
-        """
-
-
 # ---- 原 infrastructure/prompt/fs_project_instruction_reader.py ----
 # 受限读取每个受信任根目录的 FORGE.md
 #
@@ -73,8 +60,14 @@ class ProjectInstructionReader(ABC):
 #
 # 读不到, 越界, 非 UTF-8, 含 NUL 的一律**跳过**而不抛错: 提示词是辅助机制, 一份读不了的
 # FORGE.md 不该让整个会话起不来
-class FsProjectInstructionReader(ProjectInstructionReader):
+class FsProjectInstructionReader:
+    """读取受信任根目录顶层的 FORGE.md."""
+
     def read(self, workspace_roots: tuple[str, ...]) -> tuple[ProjectInstruction, ...]:
+        """按给定根的顺序读取. 读不到, 越界, 非 UTF-8 的一律跳过, 不抛错.
+
+        提示词是辅助机制: 一份读不了的 FORGE.md 不该让整个会话起不来 (ADR-0018 §11).
+        """
         found: list[ProjectInstruction] = []
         budget = MAX_TOTAL_INSTRUCTION_BYTES
         for index, root in enumerate(workspace_roots):

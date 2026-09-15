@@ -5,10 +5,9 @@
 
 一个 ABC / Protocol 只在满足以下任一条件时保留:
 
-- **A1 依赖倒置**: 删掉它会让上游包依赖一个更靠外的包. 跨层 (application ->
-  infrastructure / interfaces) 与跨包 (check_arch.py SIBLING_BANS 守住的
-  application 内部边界) 都算. 边界必须是机器守得住的 —— 只写在注释里的
-  "依赖方向"不构成 A1.
+- **A1 依赖倒置**: 删掉它会让上游包依赖一个更靠外的包. 跨顶层包 (抽象与实现在
+  check_arch.py LAYERS 的不同层) 与包内边界 (check_arch.py SIBLING_BANS 守住的那几条)
+  都算. 边界必须是机器守得住的 —— 只写在注释里的"依赖方向"不构成 A1.
 - **A2 多实现**: 有两个及以上真实运行时实现. `Null*` / `Noop*` 空实现不算 ——
   它表达的是"可选依赖", 用 `X | None` 或一个默认实例表达更直接.
 - **A3 开放扩展点**: 见 OPEN_EXTENSION_POINTS.
@@ -40,12 +39,13 @@ OPEN_EXTENSION_POINTS: frozenset[str] = frozenset(
     }
 )
 
-# A1 的跨包形态: 抽象所在包 -> 实现所在包, 两者之间有 check_arch.py 守住的 SIBLING_BAN.
+# A1 的包内形态: 抽象所在包 -> 实现所在包, 两者之间有 check_arch.py 守住的 SIBLING_BAN.
 # 列在这里的抽象即使实现同层, 也承担依赖倒置 —— 删掉它上游就要跨过那条边界.
 INVERTED_PACKAGE_BOUNDARIES: frozenset[str] = frozenset(
     {
-        "ToolRunObserver",
-        "LlmGateway",
+        "ToolRunObserver",  # tools.pipeline 不认识 agent
+        "LlmGateway",  # agent.loop 与 conversation 不认识 llm.gateway.default_gateway
+        "ModelProvider",  # llm.gateway 不认识 llm.adapters
     }
 )
 
@@ -121,7 +121,7 @@ def _signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> _Signature:
 
 
 def _collect(index: _Index, path: Path, relative: Path) -> ast.Module:
-    """第一遍: 类, 端口, 显式继承, 以及构造函数与模块级函数的形参注解."""
+    """第一遍: 类, 抽象, 显式继承, 以及构造函数与模块级函数的形参注解."""
     layer = relative.parts[0]
     tree = ast.parse(path.read_text("utf-8"), path)
     for node in ast.walk(tree):

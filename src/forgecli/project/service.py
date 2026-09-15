@@ -12,7 +12,7 @@ from pathlib import Path
 
 from forgecli.common.clock import now_iso
 from forgecli.core.boundary import is_within
-from forgecli.project.json_store import ProjectConfigStore, ProjectIndexStore
+from forgecli.project.json_store import JsonProjectConfigStore, JsonProjectIndexStore
 from forgecli.project.model import (
     IndexEntry,
     ProjectConfig,
@@ -35,8 +35,8 @@ class ProjectService:
 
     def __init__(
         self,
-        index_store: ProjectIndexStore,
-        config_store: ProjectConfigStore,
+        index_store: JsonProjectIndexStore,
+        config_store: JsonProjectConfigStore,
         clock: Callable[[], str] = now_iso,
     ) -> None:
         self._index = index_store

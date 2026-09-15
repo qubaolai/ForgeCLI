@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -31,18 +30,7 @@ from forgecli.security.vocabulary import ApprovalScope
 __all__ = [
     "JsonLearnedRuleStore",
     "LearnedRuleService",
-    "LearnedRuleStore",
 ]
-
-
-class LearnedRuleStore(ABC):
-    """学习规则的持久化出口. 规则跨会话有效, 所以必须落盘."""
-
-    @abstractmethod
-    def load(self) -> tuple[LearnedAllowRule, ...]: ...
-
-    @abstractmethod
-    def save(self, rules: tuple[LearnedAllowRule, ...]) -> None: ...
 
 
 def _new_rule_id() -> str:
@@ -54,7 +42,7 @@ class LearnedRuleService:
 
     def __init__(
         self,
-        store: LearnedRuleStore,
+        store: JsonLearnedRuleStore,
         *,
         workspace_id: str = "workspace",
         clock: Callable[[], float] = time.time,
@@ -221,7 +209,9 @@ _MATCH_FIELDS = (
 )
 
 
-class JsonLearnedRuleStore(LearnedRuleStore):
+class JsonLearnedRuleStore:
+    """学习规则的持久化出口. 规则跨会话有效, 所以必须落盘."""
+
     def __init__(self, path: Path) -> None:
         self._path = path
 

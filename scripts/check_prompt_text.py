@@ -5,7 +5,7 @@
 管辖, 也不在任何人复核 `domain/prompt/text.py` 时出现在视野里.
 
 规则: 送进模型上下文的参数里, 不得出现含中文的字符串字面量. 正文一律从
-`application/prompt/templates/` 渲染 —— 那里有版本, 有指纹快照, 有半角标点与无孤儿的
+`prompt/templates/` 渲染 —— 那里有版本, 有指纹快照, 有半角标点与无孤儿的
 用例盯着 (ADR-0039).
 
 **没有例外目录**. ADR-0031 那会儿 `domain/prompt/text.py` 自己全是中文字面量, 所以要在
@@ -94,7 +94,7 @@ def _check_file(path: Path) -> list[str]:
             for lineno, snippet in _cjk_literals(expr):
                 problems.append(
                     f"{relative}:{lineno} {label} 直接写了中文字面量 {snippet!r}; "
-                    "正文放 application/prompt/templates/ (ADR-0031, ADR-0039)"
+                    "正文放 prompt/templates/ (ADR-0031, ADR-0039)"
                 )
     return problems
 

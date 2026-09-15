@@ -39,8 +39,8 @@ from dataclasses import dataclass
 from forgecli.common.errors import SessionStateError
 from forgecli.common.observability.log import get_log
 from forgecli.recovery.coordinator import WorkspaceMutationCoordinator
-from forgecli.session.catalog import SessionCatalog, Tombstone
-from forgecli.session.state_store import StateStore
+from forgecli.session.catalog import FsSessionCatalog, Tombstone
+from forgecli.session.state_store import JsonStateStore
 
 __all__ = ["DeletedSession", "SessionDeletionService"]
 
@@ -64,8 +64,8 @@ class SessionDeletionService:
 
     def __init__(
         self,
-        catalog: SessionCatalog,
-        state_store: StateStore,
+        catalog: FsSessionCatalog,
+        state_store: JsonStateStore,
         *,
         workspace_id: str,
         recovery: WorkspaceMutationCoordinator | None = None,

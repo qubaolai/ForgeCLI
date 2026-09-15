@@ -21,7 +21,7 @@ from forgecli.core.execution.fence import FencePolicy
 from forgecli.core.execution.profile import ExecutionProfile
 from forgecli.core.tool.hashing import digest
 from forgecli.core.tool.plan import ExecutionContextRef, WorkspaceScope
-from forgecli.workspace.filesystem_view import FileSystemView
+from forgecli.workspace.filesystem_view import OsFileSystemView
 
 __all__ = ["ExecutionContext"]
 
@@ -38,7 +38,7 @@ class ExecutionContext:
     cwd: str
     workspace_roots: tuple[str, ...]
     environment: Mapping[str, str]
-    filesystem: FileSystemView
+    filesystem: OsFileSystemView
     profile: ExecutionProfile
     # workspace_roots 里**只授权了读**的那些 (`/add-dir` 不带 --write).
     # 它们仍然是 root (读得到), 但写入按区外处理.

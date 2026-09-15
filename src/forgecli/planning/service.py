@@ -32,7 +32,7 @@ from forgecli.planning.plan import (
     PlanStep,
     PlanSummary,
 )
-from forgecli.planning.plan_store import PlanStore
+from forgecli.planning.plan_store import FsPlanStore
 from forgecli.planning.plan_template import PLAN_TEMPLATE_VERSION, render_plan
 from forgecli.planning.todo import TodoItem, TodoList, TodoStatus
 
@@ -138,7 +138,7 @@ class StatusUpdate:
 class PlanningService:
     def __init__(
         self,
-        store: PlanStore,
+        store: FsPlanStore,
         *,
         clock: Callable[[], str] = now_iso,
     ) -> None:

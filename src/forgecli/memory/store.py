@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +20,6 @@ __all__ = [
     "JsonMemoryStore",
     "MAX_ENTRIES_PER_SCOPE",
     "MAX_VALUE_BYTES",
-    "MemoryStore",
 ]
 
 # 单条记忆的正文上限.
@@ -37,22 +35,6 @@ MAX_VALUE_BYTES = 512
 MAX_ENTRIES_PER_SCOPE = 32
 
 
-class MemoryStore(ABC):
-    """一个 scope 的记忆存储."""
-
-    @abstractmethod
-    def load(self) -> tuple[MemoryEntry, ...]:
-        """读出全部记忆. 读不到, 格式坏掉的一律当作空, 不抛错.
-
-        记忆是辅助机制: 一份读不了的 memory.json 不该让整个会话起不来 (与
-        ProjectInstructionReader 同一条理由).
-        """
-
-    @abstractmethod
-    def save(self, entries: tuple[MemoryEntry, ...]) -> None:
-        """整表写回."""
-
-
 # ---- 原 infrastructure/memory/json_memory_store.py ----
 # 记忆的 JSON 落盘.
 #
@@ -66,12 +48,19 @@ class MemoryStore(ABC):
 _ENTRIES = "entries"
 
 
-class JsonMemoryStore(MemoryStore):
+class JsonMemoryStore:
+    """一个 scope 的记忆存储."""
+
     def __init__(self, path: Path, scope: MemoryScope) -> None:
         self._path = path
         self._scope = scope
 
     def load(self) -> tuple[MemoryEntry, ...]:
+        """读出全部记忆. 读不到, 格式坏掉的一律当作空, 不抛错.
+
+        记忆是辅助机制: 一份读不了的 memory.json 不该让整个会话起不来 (与
+        FsProjectInstructionReader 同一条理由).
+        """
         raw = read_document(self._path).get(_ENTRIES, [])
         if not isinstance(raw, list):
             return ()
@@ -85,6 +74,7 @@ class JsonMemoryStore(MemoryStore):
         return tuple(loaded)
 
     def save(self, entries: tuple[MemoryEntry, ...]) -> None:
+        """整表写回."""
         document = read_document(self._path)
         document[_ENTRIES] = [_payload_of(entry) for entry in entries]
         write_document(self._path, document)

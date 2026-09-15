@@ -17,7 +17,7 @@ from forgecli.core.tool.hashing import digest
 from forgecli.core.tool.plan import WorkspaceScope
 from forgecli.core.tool.result import ArtifactRef, ContentPart, ResultProvenance
 from forgecli.core.tool.spec import ToolSpec
-from forgecli.tools.artifact_store import ArtifactStore
+from forgecli.tools.artifact_store import FsArtifactStore
 from forgecli.tools.resource_governor import ResourceGovernor, ResourceLimits
 from forgecli.workspace.execution_context import ExecutionContext
 from forgecli.workspace.filesystem_view import PathFacts
@@ -57,7 +57,7 @@ def limit_depth(
     原先这个函数还兼管忽略规则 (`filter_globbed`), 而那份规则是在展开**之后**才用上的
     —— 于是 `.venv` 与 `.git` 会先把 `MAX_GLOB_CANDIDATES` 的额度吃光, 一次覆盖整个
     仓库的展开报"结果不完整", 而漏掉的恰好是源码. 忽略规则已经下沉到
-    `FileSystemView.expand_glob` 的 `exclude`, 在遍历时剪枝; 这里只剩深度这一件事,
+    `OsFileSystemView.expand_glob` 的 `exclude`, 在遍历时剪枝; 这里只剩深度这一件事,
     因为深度是**展开之后**才算得出来的相对层数.
 
     过滤放在 prepare 而不是 perform: 目标集合要在裁决之前就封闭, 被过滤掉的路径根本
@@ -176,7 +176,7 @@ def emit_text(
     *,
     invocation_id: str,
     limits: ResourceLimits,
-    artifacts: ArtifactStore | None,
+    artifacts: FsArtifactStore | None,
     artifact_name: str = "output",
 ) -> EmittedText:
     """回填模型的内容片段 + 溢写产物.

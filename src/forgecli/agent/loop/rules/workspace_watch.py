@@ -29,7 +29,8 @@ from forgecli.core.tool.tool_call import ToolCall
 from forgecli.core.turn import MessageRole
 from forgecli.prompt.template_renderer import render_notice
 from forgecli.workspace.changes import WorkspaceChange, WorkspaceChangeSource
-from forgecli.workspace.monitor import WorkspaceChangeMonitor, WorkspaceSnapshotProvider
+from forgecli.workspace.monitor import WorkspaceChangeMonitor
+from forgecli.workspace.snapshot_provider import OsWorkspaceSnapshotProvider
 
 __all__ = ["WorkspaceWatchRule"]
 
@@ -37,7 +38,7 @@ _log = get_log(__name__)
 
 
 class WorkspaceWatchRule:
-    def __init__(self, provider: WorkspaceSnapshotProvider | None) -> None:
+    def __init__(self, provider: OsWorkspaceSnapshotProvider | None) -> None:
         # 没接快照就什么都不看. 第一次检查点只拍基线, 不产生变化.
         self._monitor = None if provider is None else WorkspaceChangeMonitor(provider)
         self._pending: list[WorkspaceChange] = []

@@ -25,8 +25,8 @@ from forgecli.recovery.mutation import (
     Operation,
 )
 from forgecli.recovery.path_state import directory_content_hash
-from forgecli.recovery.recovery_store import RecoveryStore
-from forgecli.recovery.snapshot_backend import SnapshotHandle, WorkspaceSnapshotBackend
+from forgecli.recovery.recovery_store import FsRecoveryStore
+from forgecli.recovery.snapshot_backend import CowSnapshotBackend, SnapshotHandle
 from forgecli.workspace.execution_context import ExecutionContext
 
 __all__ = ["RecoveryPreview", "RecoveryService", "RestoreOutcome", "RestorePlanItem"]
@@ -77,13 +77,13 @@ class RecoveryService:
 
     def __init__(
         self,
-        store: RecoveryStore,
+        store: FsRecoveryStore,
         *,
         writer: Callable[[str, bytes], None],
         remover: Callable[[str], None],
         directory_creator: Callable[[str, int], None] | None = None,
         mode_setter: Callable[[str, int], None] | None = None,
-        snapshots: WorkspaceSnapshotBackend | None = None,
+        snapshots: CowSnapshotBackend | None = None,
         clock: Callable[[], str] = lambda: "",
     ) -> None:
         self._store = store

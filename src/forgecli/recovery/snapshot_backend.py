@@ -23,14 +23,12 @@ import platform
 import shutil
 import subprocess
 import uuid
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
     "CowSnapshotBackend",
     "SnapshotHandle",
-    "WorkspaceSnapshotBackend",
     "probe_snapshot_backend",
 ]
 
@@ -50,31 +48,6 @@ class SnapshotHandle:
     file_count: int = 0
 
 
-class WorkspaceSnapshotBackend(ABC):
-    """整棵工作区的捕获与还原. 一次调用对应一份快照."""
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """进 manifest 的后端标识."""
-
-    @abstractmethod
-    def available_for(self, root: str) -> bool:
-        """这个工作区能不能用本后端做快照. 必须实测, 不能只看平台."""
-
-    @abstractmethod
-    def capture(self, root: str, snapshot_id: str) -> SnapshotHandle:
-        """捕获快照. 失败抛 OSError —— 调用方据此退回按文件保存 preimage."""
-
-    @abstractmethod
-    def restore(self, handle: SnapshotHandle, root: str) -> None:
-        """把工作区还原到快照那一刻."""
-
-    @abstractmethod
-    def discard(self, handle: SnapshotHandle) -> None:
-        """丢弃快照占用的空间. 保留期过后由清理流程调用."""
-
-
 # ---- 原 infrastructure/recovery/cow_snapshot_backend.py ----
 # 写时复制快照后端: APFS clonefile 与 btrfs / XFS reflink.
 #
@@ -91,12 +64,15 @@ _PROBE_TIMEOUT_SECONDS = 10.0
 _CAPTURE_TIMEOUT_SECONDS = 120.0
 
 
-class CowSnapshotBackend(WorkspaceSnapshotBackend):
+class CowSnapshotBackend:
+    """整棵工作区的捕获与还原. 一次调用对应一份快照."""
+
     def __init__(self, snapshot_root: Path) -> None:
         self._root = snapshot_root
 
     @property
     def name(self) -> str:
+        """进 manifest 的后端标识."""
         return "copy_on_write"
 
     def available_for(self, root: str) -> bool:
@@ -125,6 +101,7 @@ class CowSnapshotBackend(WorkspaceSnapshotBackend):
             shutil.rmtree(target, ignore_errors=True)
 
     def capture(self, root: str, snapshot_id: str) -> SnapshotHandle:
+        """捕获快照. 失败抛 OSError —— 调用方据此退回按文件保存 preimage."""
         location = self._root / snapshot_id
         location.parent.mkdir(parents=True, exist_ok=True)
         self._clone(Path(root), location, timeout=_CAPTURE_TIMEOUT_SECONDS)
@@ -166,6 +143,7 @@ class CowSnapshotBackend(WorkspaceSnapshotBackend):
                 item.unlink(missing_ok=True)
 
     def discard(self, handle: SnapshotHandle) -> None:
+        """丢弃快照占用的空间. 保留期过后由清理流程调用."""
         shutil.rmtree(handle.location, ignore_errors=True)
 
     def _clone(self, source: Path, target: Path, *, timeout: float) -> None:

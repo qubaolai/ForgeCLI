@@ -50,7 +50,7 @@ def artifacts_dir() -> Path:
 
 
 def recovery_dir() -> Path:
-    """RecoveryStore 根目录 (ADR-0015 §6). Agent 与 Shell 不得写入."""
+    """FsRecoveryStore 根目录 (ADR-0015 §6). Agent 与 Shell 不得写入."""
     return state_dir() / "recovery"
 
 

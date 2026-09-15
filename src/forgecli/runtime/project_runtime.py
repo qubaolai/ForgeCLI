@@ -207,8 +207,8 @@ class ProjectRuntime:
     def _build_window_manager(self) -> WindowManager:
         # 计量器与循环共用同一个 (ADR-0037): 各建一个迟早会出现两套单价.
         #
-        # 不再需要 ArtifactStore: 归档只在工具产出那一刻发生 (ADR-0041 决策 6), 窗口维护
-        # 这一层不再回头去问"这份内容还取不取得回来".
+        # 不再需要 FsArtifactStore: 归档只在工具产出那一刻发生 (ADR-0041 决策 6),
+        # 窗口维护这一层不再回头去问"这份内容还取不取得回来".
         return WindowManager(
             max_inline_bytes=self.tools.max_inline_bytes,
             gateway=self.llm.gateway,

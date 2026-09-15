@@ -7,22 +7,9 @@
 from __future__ import annotations
 
 import json
-from abc import ABC, abstractmethod
 from pathlib import Path
 
 from forgecli.session.events import SessionEvent
-
-
-class EventStore(ABC):
-    """``sessions/<session_id>/events.jsonl`` 的追加与读取。"""
-
-    @abstractmethod
-    def append(self, event: SessionEvent) -> None:
-        """追加一个事件（append-only）。首次写入会创建会话目录。"""
-
-    @abstractmethod
-    def read(self, session_id: str) -> list[SessionEvent]:
-        """按追加顺序读回全部事件；无文件返回 []。"""
 
 
 # ---- 原 infrastructure/session/jsonl_event_store.py ----
@@ -30,7 +17,7 @@ class EventStore(ABC):
 #
 # 每行一个独立 JSON event，按 ``<sessions_dir>/<session_id>/events.jsonl`` 落盘。
 # 追加用文件 ``"a"`` 模式，绝不重写既有行。
-class JsonlEventStore(EventStore):
+class JsonlEventStore:
     """``sessions/<session_id>/events.jsonl`` 的 JSONL 实现。
 
     构造时只给定 sessions 根目录，按 session_id 拼出每个会话的事件文件路径。
@@ -43,6 +30,7 @@ class JsonlEventStore(EventStore):
         return self._root / session_id / "events.jsonl"
 
     def append(self, event: SessionEvent) -> None:
+        """追加一个事件（append-only）。首次写入会创建会话目录。"""
         path = self._file(event.session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(event.to_dict(), ensure_ascii=False)
@@ -50,6 +38,7 @@ class JsonlEventStore(EventStore):
             handle.write(line + "\n")
 
     def read(self, session_id: str) -> list[SessionEvent]:
+        """按追加顺序读回全部事件；无文件返回 []。"""
         path = self._file(session_id)
         if not path.exists():
             return []

@@ -3,7 +3,7 @@
 **只注入 AgentTurnService 与记忆工具, 不注入 AgentLoop.** ADR-0010 §影响明写循环
 "不能直接写文件, 执行 shell, 写事件或读写长期记忆"; 把入口给它是字面违反. 功能上也
 用不着 —— 记忆是提示词块, 按 ADR-0018 每轮冻结, 读取只发生在 `_compile_prompt` 那
-一刻, 与 ProjectInstructionReader 和 PlanningService 完全同构. 于是循环对记忆的依赖
+一刻, 与 FsProjectInstructionReader 和 PlanningService 完全同构. 于是循环对记忆的依赖
 数是 0, 比给它一个端口解耦得更彻底.
 
 ## 为什么服务自己持有"当前是哪一轮"
@@ -32,7 +32,11 @@ from forgecli.memory.entry import (
     MemoryScope,
 )
 from forgecli.memory.secrets import looks_like_secret
-from forgecli.memory.store import MAX_ENTRIES_PER_SCOPE, MAX_VALUE_BYTES, MemoryStore
+from forgecli.memory.store import (
+    MAX_ENTRIES_PER_SCOPE,
+    MAX_VALUE_BYTES,
+    JsonMemoryStore,
+)
 
 __all__ = ["MemoryRejection", "MemoryService", "MemoryWrite"]
 
@@ -62,7 +66,7 @@ class MemoryWrite:
 class MemoryService:
     def __init__(
         self,
-        stores: dict[MemoryScope, MemoryStore],
+        stores: dict[MemoryScope, JsonMemoryStore],
         *,
         clock: Callable[[], str] = now_iso,
     ) -> None:

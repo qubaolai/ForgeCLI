@@ -283,7 +283,7 @@ def delete_targets(
 ) -> tuple[str, ...] | PreparationError:
     """递归列出目录、空目录和文件，符号链接一律拒绝。
 
-    走 FileSystemView 而不是直接 os.walk: 展开必须基于这次调用冻结的那一份视图, 否则
+    走 OsFileSystemView 而不是直接 os.walk: 展开必须基于这次调用冻结的那一份视图, 否则
     "审批时看到的清单"与"执行时真删的东西"可能不是一回事.
     """
     files: list[str] = []

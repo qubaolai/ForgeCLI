@@ -4,8 +4,8 @@ deepseek / mimo / openai / local 均走 OpenAI chat-completions 协议，本 ada
 按 provider 实例化（provider_id + base_url 不同）。约束（§3.2）：
 
     - 只做「统一请求 <-> OpenAI 协议」映射；不读写 session / 配置 / 事件 / 预算。
-    - 不读环境变量：凭证由 gateway 经 CredentialPool 注入 ProviderRequest.credential；
-      keyless（local）时无 Authorization 头。
+    - 不读环境变量：凭证由 gateway 经 InMemoryCredentialPool 注入
+      ProviderRequest.credential；keyless（local）时无 Authorization 头。
     - 错误归一化为统一 ModelGatewayError 类型（§12），消息只含安全摘要。
     - cancel_token（§8 / §9）：非流式在发送前检查；流式在读行间隙检查并
       close 在途响应，不等待自然超时。

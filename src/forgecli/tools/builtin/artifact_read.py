@@ -43,7 +43,7 @@ from forgecli.core.tool.spec import TargetDeclarationAbility, ToolSpec
 from forgecli.prompt.template_renderer import render_notice
 from forgecli.tools.artifact_store import (
     ArtifactMissing,
-    ArtifactStore,
+    FsArtifactStore,
     valid_artifact_id,
 )
 from forgecli.tools.builtin.base import validate_arguments
@@ -86,7 +86,7 @@ _SPEC = ToolSpec(
 
 
 class ArtifactReadTool(Tool):
-    def __init__(self, governor: ResourceGovernor, artifacts: ArtifactStore) -> None:
+    def __init__(self, governor: ResourceGovernor, artifacts: FsArtifactStore) -> None:
         self._governor = governor
         # 不是可选依赖: 没有存储的 artifact_read 只能永远回一句"取不到", 而模型会
         # 一直看到 transcript 里的归档引用. 装不出来就别注册这个工具.

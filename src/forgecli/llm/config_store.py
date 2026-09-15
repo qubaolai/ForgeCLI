@@ -11,70 +11,33 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import Any
 
 from forgecli.common.json_io import read_document, write_document
 
-
-class LlmConfigStore(ABC):
-    @abstractmethod
-    def load(self) -> dict[str, object]:
-        """读取 [llm] 段为嵌套 dict；无文件返回 {}，解析失败抛 ConfigReadError。"""
-
-    @abstractmethod
-    def upsert_model(
-        self,
-        provider_id: str,
-        model_id: str,
-        fields: Mapping[str, object],
-        *,
-        provider_defaults: Mapping[str, object],
-    ) -> None:
-        """新增 / 覆盖一个模型；provider 段不存在则用默认建立（round-trip）。"""
-
-    @abstractmethod
-    def remove_model(self, provider_id: str, model_id: str) -> None:
-        """删除一个模型；不存在时静默。round-trip 写。"""
-
-    @abstractmethod
-    def upsert_provider_field(
-        self,
-        provider_id: str,
-        field: str,
-        value: object,
-        *,
-        provider_defaults: Mapping[str, object],
-    ) -> None:
-        """设置供应商顶层字段(name/api_base 等)；段不存在则用默认建立（round-trip）。"""
-
-    @abstractmethod
-    def upsert_runtime_field(self, section: str, field: str, value: object) -> None:
-        """设置 [llm.<section>] 的一个应用级运行时字段。"""
-
-
 # ---- 原 infrastructure/llm/json_store.py ----
-# LlmConfigStore 的 JSON 实现：``.forge/llm.json``。
+# JsonLlmConfigStore 的 JSON 实现：``.forge/llm.json``。
 #
 # llm.json 是「人机共编」的文件——用户手写自定义模型与厂商超参，菜单又要能改单个值。
 # 读写都经 infrastructure/json_io（局部修改后整份原子写回，保留其余内容）。
 #
-# 行为对齐 application/llm/config/llm_config_store.LlmConfigStore：
+# 行为对齐 application/llm/config/llm_config_store.JsonLlmConfigStore：
 #     - load(): 返回 ``llm`` 段的 plain dict; 无文件返回 {}; 解析失败抛
 #       ConfigReadError.
 #     - upsert/remove: 读出文档 -> 局部修改 -> 原子写回。
 _SECTION = "llm"
 
 
-class JsonLlmConfigStore(LlmConfigStore):
+class JsonLlmConfigStore:
     def __init__(self, path: Path) -> None:
         self._path = path
 
     # ---- 读 ----
 
     def load(self) -> dict[str, object]:
+        """读取 [llm] 段为嵌套 dict；无文件返回 {}，解析失败抛 ConfigReadError。"""
         section = read_document(self._path).get(_SECTION)
         return dict(section) if isinstance(section, Mapping) else {}
 
@@ -88,6 +51,7 @@ class JsonLlmConfigStore(LlmConfigStore):
         *,
         provider_defaults: Mapping[str, object],
     ) -> None:
+        """新增 / 覆盖一个模型；provider 段不存在则用默认建立（round-trip）。"""
         document = read_document(self._path)
         provider = _ensure_provider(document, provider_id, provider_defaults)
         models = provider.setdefault("models", {})
@@ -98,6 +62,7 @@ class JsonLlmConfigStore(LlmConfigStore):
         write_document(self._path, document)
 
     def remove_model(self, provider_id: str, model_id: str) -> None:
+        """删除一个模型；不存在时静默。round-trip 写。"""
         document = read_document(self._path)
         section = document.get(_SECTION)
         providers = section.get("providers") if isinstance(section, Mapping) else None
@@ -117,6 +82,7 @@ class JsonLlmConfigStore(LlmConfigStore):
         *,
         provider_defaults: Mapping[str, object],
     ) -> None:
+        """设置供应商顶层字段(name/api_base 等)；段不存在则用默认建立（round-trip）。"""
         document = read_document(self._path)
         _ensure_provider(document, provider_id, provider_defaults)[field] = value
         write_document(self._path, document)

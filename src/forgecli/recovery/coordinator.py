@@ -39,8 +39,8 @@ from forgecli.recovery.mutation import (
     is_destructive,
 )
 from forgecli.recovery.path_state import directory_content_hash
-from forgecli.recovery.recovery_store import RecoveryStore
-from forgecli.recovery.snapshot_backend import SnapshotHandle, WorkspaceSnapshotBackend
+from forgecli.recovery.recovery_store import FsRecoveryStore
+from forgecli.recovery.snapshot_backend import CowSnapshotBackend, SnapshotHandle
 from forgecli.workspace.execution_context import ExecutionContext
 from forgecli.workspace.filesystem_view import PathKind
 
@@ -74,7 +74,7 @@ class MutationTransaction:
     def __init__(
         self,
         checkpoint: RecoveryCheckpoint,
-        store: RecoveryStore,
+        store: FsRecoveryStore,
         context: ExecutionContext,
         policy: RecoveryPolicy,
         *,
@@ -264,10 +264,10 @@ class WorkspaceMutationCoordinator:
 
     def __init__(
         self,
-        store: RecoveryStore,
+        store: FsRecoveryStore,
         *,
         policy: RecoveryPolicy | None = None,
-        snapshots: WorkspaceSnapshotBackend | None = None,
+        snapshots: CowSnapshotBackend | None = None,
         clock: Callable[[], str] = lambda: "",
         id_factory: Callable[[], str] = lambda: f"ckpt_{uuid.uuid4().hex[:12]}",
     ) -> None:

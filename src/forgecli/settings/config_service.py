@@ -1,10 +1,10 @@
 """ConfigService：统一的配置读取与更新用例（按 level 路由）。
 
 一个泛型 set/get/display：查 SCHEMA 拿到 ConfigKey 的 `level`，路由到该级对应的
-ConfigStore（应用级 → config.json，项目级 → forge.json）。"写哪个文件"由数据决定，
+JsonConfigStore（应用级 → config.json，项目级 → forge.json）。"写哪个文件"由数据决定，
 不再为某个配置项写专门的 setter——加配置项只需在 SCHEMA 加一条（满足开闭原则）。
 
-ConfigService 不感知 TOML / 文件路径，全部委托给 ConfigStore；校验由 SCHEMA 的
+ConfigService 不感知 TOML / 文件路径，全部委托给 JsonConfigStore；校验由 SCHEMA 的
 ConfigKey 负责。项目级 store 在装配时绑定当前项目的 forge.json；未绑定时对项目级键
 的访问会显式报错而不是误落应用文件。
 """
@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from forgecli.settings import keys as config_keys
-from forgecli.settings.config_store import ConfigStore
+from forgecli.settings.config_store import JsonConfigStore
 from forgecli.settings.effective import EffectiveConfig
 from forgecli.settings.errors import ConfigValidationError
 from forgecli.settings.keys import ConfigKey, ConfigLevel
@@ -32,13 +32,15 @@ class ConfigValueView:
 class ConfigService:
     """配置读取与更新用例；/config 与其他用例都依赖它。"""
 
-    def __init__(self, app: ConfigStore, project: ConfigStore | None = None) -> None:
+    def __init__(
+        self, app: JsonConfigStore, project: JsonConfigStore | None = None
+    ) -> None:
         # level -> store。项目级 store 可选：纯应用上下文（无项目）可不提供。
-        self._stores: dict[ConfigLevel, ConfigStore] = {ConfigLevel.APP: app}
+        self._stores: dict[ConfigLevel, JsonConfigStore] = {ConfigLevel.APP: app}
         if project is not None:
             self._stores[ConfigLevel.PROJECT] = project
 
-    def _store(self, key: ConfigKey) -> ConfigStore:
+    def _store(self, key: ConfigKey) -> JsonConfigStore:
         store = self._stores.get(key.level)
         if store is None:
             raise ConfigValidationError(

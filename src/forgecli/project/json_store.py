@@ -11,37 +11,11 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
 
 from forgecli.common.json_io import read_document, write_document
 from forgecli.project.model import IndexEntry, ProjectConfig
-
-
-class ProjectIndexStore(ABC):
-    """``projects/index.json`` 的读写。"""
-
-    @abstractmethod
-    def load(self) -> dict[str, IndexEntry]:
-        """规范路径 -> IndexEntry；无文件返回 {}。"""
-
-    @abstractmethod
-    def upsert(self, entry: IndexEntry) -> None:
-        """按 root 路径为 key 新增 / 覆盖一条信任记录。"""
-
-
-class ProjectConfigStore(ABC):
-    """``projects/<project-id>/forge.json`` 的读写。"""
-
-    @abstractmethod
-    def load(self, project_id: str) -> ProjectConfig | None:
-        """读取项目配置；不存在返回 None。"""
-
-    @abstractmethod
-    def save(self, project: ProjectConfig) -> None:
-        """持久化项目配置；首次写入会创建项目目录。"""
-
 
 # ---- 原 infrastructure/project/json_store.py ----
 # 项目索引与项目配置的 JSON 实现。
@@ -54,13 +28,14 @@ class ProjectConfigStore(ABC):
 _TRUSTED_ROOTS = "trusted_roots"
 
 
-class JsonProjectIndexStore(ProjectIndexStore):
+class JsonProjectIndexStore:
     """``projects/index.json`` 的 JSON 实现。"""
 
     def __init__(self, path: Path) -> None:
         self._path = path
 
     def load(self) -> dict[str, IndexEntry]:
+        """规范路径 -> IndexEntry；无文件返回 {}。"""
         roots = read_document(self._path).get(_TRUSTED_ROOTS, {})
         if not isinstance(roots, Mapping):
             return {}
@@ -77,6 +52,7 @@ class JsonProjectIndexStore(ProjectIndexStore):
         }
 
     def upsert(self, entry: IndexEntry) -> None:
+        """按 root 路径为 key 新增 / 覆盖一条信任记录。"""
         document = read_document(self._path)
         roots = document.get(_TRUSTED_ROOTS)
         if not isinstance(roots, dict):
@@ -91,7 +67,7 @@ class JsonProjectIndexStore(ProjectIndexStore):
         write_document(self._path, document)
 
 
-class JsonProjectConfigStore(ProjectConfigStore):
+class JsonProjectConfigStore:
     """``projects/<project-id>/forge.json`` 的 JSON 实现。
 
     构造时只给定 projects 根目录，按 project_id 拼出每个项目文件路径。
@@ -104,6 +80,7 @@ class JsonProjectConfigStore(ProjectConfigStore):
         return self._root / project_id / "forge.json"
 
     def load(self, project_id: str) -> ProjectConfig | None:
+        """读取项目配置；不存在返回 None。"""
         path = self._file(project_id)
         if not path.exists():
             return None
@@ -125,6 +102,7 @@ class JsonProjectConfigStore(ProjectConfigStore):
     def save(self, project: ProjectConfig) -> None:
         # 只写项目状态字段；forge.json 里的 logging 等配置偏好由 ConfigService 拥有，
         # 读出后局部修改再写回会原样保留，互不覆盖。
+        """持久化项目配置；首次写入会创建项目目录。"""
         path = self._file(project.project_id)
         document = read_document(path)
         document["project_id"] = project.project_id

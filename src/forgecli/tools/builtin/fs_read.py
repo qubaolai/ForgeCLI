@@ -29,7 +29,7 @@ from forgecli.core.tool.result import (
     ToolResultStatus,
 )
 from forgecli.core.tool.spec import ArtifactPolicy, TargetDeclarationAbility, ToolSpec
-from forgecli.tools.artifact_store import ArtifactStore
+from forgecli.tools.artifact_store import FsArtifactStore
 from forgecli.tools.builtin.base import (
     emit_text,
     path_state_token,
@@ -91,7 +91,7 @@ class ReadFileTool(Tool):
     def __init__(
         self,
         governor: ResourceGovernor,
-        artifacts: ArtifactStore | None = None,
+        artifacts: FsArtifactStore | None = None,
     ) -> None:
         self._governor = governor
         self._artifacts = artifacts

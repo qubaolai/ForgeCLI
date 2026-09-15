@@ -1,7 +1,8 @@
 """历史会话枚举与删除抽象（由 infrastructure 实现）。
 
-EventStore / StateStore 都按 session_id 寻址，无法回答「这个项目下有哪些会话」。
-SessionCatalog 补上这一能力：只负责列出 session id，具体落在哪、怎么扫描隔离在
+JsonlEventStore / JsonStateStore 都按 session_id 寻址，无法回答「这个项目下有哪些
+会话」。
+FsSessionCatalog 补上这一能力：只负责列出 session id，具体落在哪、怎么扫描隔离在
 infrastructure。约定：无 sessions 目录时返回 []，不抛异常。
 
 **删除分两步**，因为它们的耗时差着数量级 (ADR-0048 决策 7 的同一条判断: 别让一次
@@ -20,7 +21,6 @@ from __future__ import annotations
 
 import shutil
 import time
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,33 +37,8 @@ class Tombstone:
     session_id: str
 
 
-class SessionCatalog(ABC):
-    """枚举某项目 ``sessions/`` 下的全部会话 id。"""
-
-    @abstractmethod
-    def list_session_ids(self) -> list[str]:
-        """返回全部会话 id（顺序不保证，由上层排序）；无目录返回 []。"""
-
-    @abstractmethod
-    def begin_delete(self, session_id: str) -> Tombstone | None:
-        """把会话目录挪进回收位, 返回墓碑; 会话不存在返回 None。
-
-        整个目录一起挪, 不是逐个文件: 会话目录下不只有正文与快照, 还有处理过程与计划
-        待办 (它们本来就按会话分区, 见 ``paths.plans_dir``)。逐个删的写法会在新增一种
-        会话级数据时漏掉它, 而漏掉不会报错 —— 只会在项目目录里攒下没人认领的孤儿。
-        """
-
-    @abstractmethod
-    def purge(self, tombstone: Tombstone) -> None:
-        """真正删掉墓碑目录。已经不在了不算错 —— 清理可以被重复触发。"""
-
-    @abstractmethod
-    def tombstones(self) -> list[Tombstone]:
-        """还没清完的墓碑。进程没跑完就退出时留下的, 下次启动接着清。"""
-
-
 # ---- 原 infrastructure/session/fs_session_catalog.py ----
-# SessionCatalog 的文件系统实现：扫描 ``sessions/`` 下含 state.json 的子目录。
+# FsSessionCatalog 的文件系统实现：扫描 ``sessions/`` 下含 state.json 的子目录。
 #
 # 只把「有 state.json」当作一个可枚举的会话——半截创建（只有空目录、或只有
 # events.jsonl 还没写出快照）的不算，避免列出无法读取摘要的脏目录。
@@ -76,13 +51,14 @@ _TRASH = ".trash"
 _SEPARATOR = "__"
 
 
-class FsSessionCatalog(SessionCatalog):
+class FsSessionCatalog:
     """``<sessions_dir>/<session_id>/state.json`` 的目录枚举实现。"""
 
     def __init__(self, sessions_dir: Path) -> None:
         self._sessions_root = sessions_dir
 
     def list_session_ids(self) -> list[str]:
+        """返回全部会话 id（顺序不保证，由上层排序）；无目录返回 []。"""
         if not self._sessions_root.exists():
             return []
 
@@ -93,6 +69,12 @@ class FsSessionCatalog(SessionCatalog):
         ]
 
     def begin_delete(self, session_id: str) -> Tombstone | None:
+        """把会话目录挪进回收位, 返回墓碑; 会话不存在返回 None。
+
+        整个目录一起挪, 不是逐个文件: 会话目录下不只有正文与快照, 还有处理过程与计划
+        待办 (它们本来就按会话分区, 见 ``paths.plans_dir``)。逐个删的写法会在新增一种
+        会话级数据时漏掉它, 而漏掉不会报错 —— 只会在项目目录里攒下没人认领的孤儿。
+        """
         source = self._session_dir(session_id)
         if source is None or not source.is_dir():
             return None
@@ -103,6 +85,7 @@ class FsSessionCatalog(SessionCatalog):
         return Tombstone(id=name, session_id=session_id)
 
     def purge(self, tombstone: Tombstone) -> None:
+        """真正删掉墓碑目录。已经不在了不算错 —— 清理可以被重复触发。"""
         target = self._sessions_root / _TRASH / tombstone.id
         # 只删自己名下那一层, 且忽略"已经不在了": 上一次进程与这一次的清扫可能撞上,
         # 而两边都在删同一份垃圾不是错误。
@@ -111,6 +94,7 @@ class FsSessionCatalog(SessionCatalog):
         shutil.rmtree(target, ignore_errors=True)
 
     def tombstones(self) -> list[Tombstone]:
+        """还没清完的墓碑。进程没跑完就退出时留下的, 下次启动接着清。"""
         trash = self._sessions_root / _TRASH
         if not trash.is_dir():
             return []

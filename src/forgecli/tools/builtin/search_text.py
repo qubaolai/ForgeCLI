@@ -29,7 +29,7 @@ from forgecli.core.tool.result import (
     clip_for_summary,
 )
 from forgecli.core.tool.spec import TargetDeclarationAbility, ToolSpec
-from forgecli.tools.artifact_store import ArtifactStore
+from forgecli.tools.artifact_store import FsArtifactStore
 from forgecli.tools.builtin.base import (
     MAX_GLOB_CANDIDATES,
     emit_text,
@@ -254,7 +254,7 @@ class SearchTextTool(Tool):
     def __init__(
         self,
         governor: ResourceGovernor,
-        artifacts: ArtifactStore | None = None,
+        artifacts: FsArtifactStore | None = None,
     ) -> None:
         self._governor = governor
         self._artifacts = artifacts

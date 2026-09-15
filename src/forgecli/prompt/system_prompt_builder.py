@@ -65,7 +65,7 @@ def _static_blocks() -> tuple[PromptBlock, ...]:
     """五个内置块. 只依赖包版本, 所以一个进程编译一次 (ADR-0042 决策 1).
 
     预算校验放在这里而不是 `build` 里: 它查的是**静态**部分, 而 `FORGE.md` 是用户写的,
-    大小由 ProjectInstructionReader 自己的预算管. 放这里还顺带让校验只跑一次.
+    大小由 FsProjectInstructionReader 自己的预算管. 放这里还顺带让校验只跑一次.
     """
     blocks = (
         _block(PromptBlockId.CORE_IDENTITY),

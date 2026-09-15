@@ -17,14 +17,14 @@ from forgecli.llm import providers as provider_registry
 from forgecli.llm.config_service import LlmConfigService
 from forgecli.llm.errors import ConfigValidationError
 from forgecli.llm.gateway.errors import ModelBadRequestError
-from forgecli.llm.overrides_store import ModelOverridesStore
+from forgecli.llm.overrides_store import JsonModelOverridesStore
 
 
 class ModelOverridesService:
     """读取 / 校验 / 更新按用途覆盖；resolver 经 overrides() 现读。"""
 
     def __init__(
-        self, store: ModelOverridesStore, llm_config_service: LlmConfigService
+        self, store: JsonModelOverridesStore, llm_config_service: LlmConfigService
     ) -> None:
         self._store = store
         self._llm = llm_config_service

@@ -2,32 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Protocol
-
 from forgecli.workspace.changes import (
     WorkspaceChange,
     WorkspaceChangeKind,
     WorkspaceChangeSource,
     WorkspaceSnapshot,
 )
+from forgecli.workspace.snapshot_provider import OsWorkspaceSnapshotProvider
 
 __all__ = [
     "WorkspaceChangeMonitor",
-    "WorkspaceSnapshotProvider",
     "diff_workspace_snapshots",
 ]
-
-
-class WorkspaceSnapshotProvider(Protocol):
-    """取得当前工作区快照的端口。"""
-
-    def snapshot(self) -> WorkspaceSnapshot: ...
 
 
 class WorkspaceChangeMonitor:
     """保存上一个检查点，并把差异归类为 agent 或 external。"""
 
-    def __init__(self, provider: WorkspaceSnapshotProvider) -> None:
+    def __init__(self, provider: OsWorkspaceSnapshotProvider) -> None:
         self._provider = provider
         self._last: WorkspaceSnapshot | None = None
 

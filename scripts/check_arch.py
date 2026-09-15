@@ -17,8 +17,8 @@
 
 第 4 条为什么值得一个检查: import 环不一定会炸. 只要有一条 import 顺序恰好把每个
 模块在被回头引用前初始化完, 环就一直静默存在 —— 直到有人动了某个 __init__ 或换了
-第一个 import 它的入口. 已经吃过两次: 旧 application/llm/config 与 application/llm/gateway
-的包门面各自藏了一个环, 都是靠顺序活着的. 顺序是运气, 不是设计.
+第一个 import 它的入口. 已经吃过两次: 旧 application/llm/config 与
+application/llm/gateway 的包门面各自藏了一个环, 都是靠顺序活着的. 顺序是运气, 不是设计.
 
 环最常见的成因就是**急切转导出的包门面**: `a/__init__.py` import 了 `a.b`, 而 `a.c`
 import `a.b` —— 于是 import `a.c` 会先跑 `a/__init__`, 再回头要还没初始化完的 `a.c`.
@@ -57,7 +57,8 @@ LEVEL_OF: dict[str, int] = {
 }
 
 # 第三方顶层模块 -> 允许 import 它的包前缀. 不在表里的第三方不受限.
-# 空元组 = 任何地方都不许出现 (供应商 SDK 与备用 HTTP 客户端: 只走 llm.adapters 的 httpx).
+# 空元组 = 任何地方都不许出现 (供应商 SDK 与备用 HTTP 客户端: 只走 llm.adapters 的
+# httpx).
 THIRD_PARTY_HOMES: dict[str, tuple[str, ...]] = {
     "rich": ("tui", "web", "cli"),
     "prompt_toolkit": ("tui",),
@@ -225,7 +226,8 @@ def _check_file(path: Path) -> list[str]:
         if not any(_within(package, home) for home in homes):
             allowed = ", ".join(homes) or "任何地方"
             problems.append(
-                f"{location} {head} 只许出现在 {allowed}, 这里是 {package}: import {module}"
+                f"{location} {head} 只许出现在 {allowed}, 这里是 {package}: "
+                f"import {module}"
             )
 
     return problems

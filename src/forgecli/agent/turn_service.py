@@ -9,7 +9,8 @@
 `reload_llm` 换了自己的字段, 这里下一次调用自然指向新的, 不需要 reconfigure.
 
 约束（ADR-0003 / 概要设计 §6.5）：service 不依赖任何界面库；
-**所有事件落盘只经 SessionService 单一门面**，本类不持有 EventStore/StateStore。
+**所有事件落盘只经 SessionService 单一门面**，本类不持有 JsonlEventStore /
+JsonStateStore。
 
 一轮 = 一个 turn：成对写 user_message / assistant_message，共享 turn_id；
 turn 的终态写在 assistant_message 上（COMPLETED；异常与阻塞停止隔离为 FAILED）。
@@ -62,7 +63,7 @@ from forgecli.core.turn import (
 )
 from forgecli.memory.service import MemoryService
 from forgecli.planning.service import PlanningService
-from forgecli.prompt.project_instruction_reader import ProjectInstructionReader
+from forgecli.prompt.project_instruction_reader import FsProjectInstructionReader
 from forgecli.prompt.system_prompt_builder import SystemPromptBuilder
 from forgecli.prompt.template_renderer import render_notice
 from forgecli.session.events import EventType, SessionEvent
@@ -106,7 +107,7 @@ class AgentTurnService:
         # 不起来.
         prompt_builder: SystemPromptBuilder,
         runtime_facts: Callable[[], RuntimeFacts],
-        instructions: ProjectInstructionReader,
+        instructions: FsProjectInstructionReader,
         # 下面四个随模型配置一起换 (ADR-0051 决策 5), 所以是"用时读"的函数, 跟
         # runtime_facts 与 loop_factory 一个形状: 读组合根当前字段的闭包. 组合根
         # reload_llm 换了字段, 这里下一次调用就指向新的, 不需要 reconfigure.

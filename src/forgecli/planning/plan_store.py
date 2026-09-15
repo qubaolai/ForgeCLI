@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -29,49 +28,12 @@ from forgecli.planning.todo import TodoItem, TodoList, TodoStatus
 
 __all__ = [
     "FsPlanStore",
-    "PlanStore",
     "PlanStoreError",
 ]
 
 
 class PlanStoreError(RuntimeError):
     """写入失败. 读失败不用它 —— 那条路降级成空值."""
-
-
-class PlanStore(ABC):
-    """一个项目的计划与待办存储."""
-
-    @abstractmethod
-    def load_index(self) -> PlanIndex:
-        """活动指针与全部计划摘要. 文件缺失或损坏时返回空索引."""
-
-    @abstractmethod
-    def save_index(self, index: PlanIndex) -> None: ...
-
-    @abstractmethod
-    def load_plan(
-        self, plan_id: str, revision: int | None = None
-    ) -> PlanDocument | None:
-        """读某份计划. revision 为空时读最新的一版; 读不到返回 None."""
-
-    @abstractmethod
-    def save_plan(self, plan: PlanDocument, rendered: str) -> None:
-        """写一个 revision.
-
-        rendered 由调用方渲染后传入, 而不是让 store 自己调模板: 渲染规则属 application,
-        存储只负责把两份内容放到该放的位置.
-        """
-
-    @abstractmethod
-    def load_todo(self) -> TodoList | None:
-        """当前生效的待办清单; 没有或损坏时返回 None."""
-
-    @abstractmethod
-    def save_todo(self, todo: TodoList) -> None: ...
-
-    @abstractmethod
-    def archive_todo(self, todo: TodoList) -> None:
-        """把旧清单挪进归档. 归档不删文件 —— 换一份清单不该让上一份消失."""
 
 
 # ---- 原 infrastructure/planning/fs_plan_store.py ----
@@ -99,7 +61,7 @@ class PlanStore(ABC):
 _INDEX_SCHEMA_VERSION = 1
 
 
-class FsPlanStore(PlanStore):
+class FsPlanStore:
     """根路径**延迟求值**.
 
     计划目录按会话分区, 而组合根装配这个 store 时还没 session.start() —— 那时读 session
@@ -119,6 +81,7 @@ class FsPlanStore(PlanStore):
     # ---- 索引 ----
 
     def load_index(self) -> PlanIndex:
+        """活动指针与全部计划摘要. 文件缺失或损坏时返回空索引."""
         document = self._read(self._root / "index.json")
         if document is None:
             return PlanIndex()
@@ -160,6 +123,7 @@ class FsPlanStore(PlanStore):
     def load_plan(
         self, plan_id: str, revision: int | None = None
     ) -> PlanDocument | None:
+        """读某份计划. revision 为空时读最新的一版; 读不到返回 None."""
         directory = _plan_directory(self._root, plan_id)
         if directory is None:
             return None
@@ -180,6 +144,11 @@ class FsPlanStore(PlanStore):
             return None
 
     def save_plan(self, plan: PlanDocument, rendered: str) -> None:
+        """写一个 revision.
+
+        rendered 由调用方渲染后传入, 而不是让 store 自己调模板: 渲染规则属 application,
+        存储只负责把两份内容放到该放的位置.
+        """
         directory = _plan_directory(self._root, plan.plan_id)
         if directory is None:
             raise PlanStoreError(f"非法 plan_id: {plan.plan_id!r}")
@@ -208,6 +177,7 @@ class FsPlanStore(PlanStore):
     # ---- 待办 ----
 
     def load_todo(self) -> TodoList | None:
+        """当前生效的待办清单; 没有或损坏时返回 None."""
         document = self._read(self._root / "todo" / "current.json")
         if document is None:
             return None
@@ -227,6 +197,7 @@ class FsPlanStore(PlanStore):
         self._write(self._root / "todo" / "current.json", _todo_document(todo))
 
     def archive_todo(self, todo: TodoList) -> None:
+        """把旧清单挪进归档. 归档不删文件 —— 换一份清单不该让上一份消失."""
         todo_id = _safe_component(todo.todo_id)
         if todo_id is None:
             raise PlanStoreError(f"非法 todo_id: {todo.todo_id!r}")

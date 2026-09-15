@@ -54,7 +54,7 @@ from forgecli.execution.command_executor import (
     CommandOutcome,
     CommandRequest,
 )
-from forgecli.tools.artifact_store import ArtifactStore
+from forgecli.tools.artifact_store import FsArtifactStore
 from forgecli.tools.builtin.base import emit_text, validate_arguments
 from forgecli.tools.resource_governor import ResourceGovernor
 from forgecli.tools.tool import Tool, ToolInvocationRequest
@@ -132,7 +132,7 @@ class ShellRunTool(Tool):
         self,
         executor: CommandExecutor,
         governor: ResourceGovernor,
-        artifacts: ArtifactStore | None = None,
+        artifacts: FsArtifactStore | None = None,
     ) -> None:
         self._executor = executor
         self._governor = governor

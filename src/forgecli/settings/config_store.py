@@ -1,8 +1,8 @@
 """配置持久化端口（由 infrastructure 实现）。
 
-ConfigStore 把“配置存放在哪里、用什么格式”隔离在 application 之外。
+JsonConfigStore 把“配置存放在哪里、用什么格式”隔离在 application 之外。
 今天只有一个 JSON 文件来源（.forge/config.json）；将来要加用户级配置、环境变量、
-远程配置或多来源合并时，只需新增 / 组合 ConfigStore 实现，application 不变。
+远程配置或多来源合并时，只需新增 / 组合 JsonConfigStore 实现，application 不变。
 
 约定：
     - load() 返回扁平化的 dotted-key -> 规范字符串；无配置文件时返回空 dict。
@@ -13,7 +13,6 @@ ConfigStore 把“配置存放在哪里、用什么格式”隔离在 applicatio
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -21,24 +20,10 @@ from typing import Any
 from forgecli.common.json_io import read_document, write_document
 
 
-class ConfigStore(ABC):
-    @abstractmethod
-    def load(self) -> dict[str, str]:
-        """读取并扁平化已持久化的配置；无文件返回 {}，解析失败抛 ConfigReadError。"""
-
-    @abstractmethod
-    def save(self, values: Mapping[str, str]) -> None:
-        """持久化全部覆盖项（幂等、可复现）。"""
-
-    @abstractmethod
-    def remove(self, key: str) -> None:
-        """删除一个 dotted-key 覆盖；键不存在时保持幂等。"""
-
-
 # ---- 原 infrastructure/config/json_store.py ----
-# ConfigStore 的 JSON 实现：``.forge/config.json`` 与项目 ``forge.json``。
+# JsonConfigStore 的 JSON 实现：``.forge/config.json`` 与项目 ``forge.json``。
 #
-# 行为对齐 application/config/config_store.ConfigStore：
+# 行为对齐 application/config/config_store.JsonConfigStore：
 #     - load(): 把文档扁平化成 dotted-key -> 规范字符串；无文件返回 {}；
 #       嵌套对象 {"output": {"theme": ...}} 与扁平键 "output.theme" 都归一成
 #       "output.theme"，值统一为字符串（裸 bool -> "true"/"false"）。
@@ -61,20 +46,23 @@ def _flatten(data: Mapping[str, object], prefix: str = "") -> dict[str, str]:
     return flat
 
 
-class JsonConfigStore(ConfigStore):
+class JsonConfigStore:
     def __init__(self, path: Path) -> None:
         self._path = path
 
     def load(self) -> dict[str, str]:
+        """读取并扁平化已持久化的配置；无文件返回 {}，解析失败抛 ConfigReadError。"""
         return _flatten(read_document(self._path))
 
     def save(self, values: Mapping[str, str]) -> None:
+        """持久化全部覆盖项（幂等、可复现）。"""
         document = read_document(self._path)
         for dotted, value in values.items():
             _set(document, dotted.split("."), value)
         write_document(self._path, document)
 
     def remove(self, key: str) -> None:
+        """删除一个 dotted-key 覆盖；键不存在时保持幂等。"""
         document = read_document(self._path)
         if _remove(document, key.split(".")):
             write_document(self._path, document)

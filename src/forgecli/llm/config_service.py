@@ -47,7 +47,7 @@ from forgecli.llm.config import (
     explain_validation_error,
     parse_extra,
 )
-from forgecli.llm.config_store import LlmConfigStore
+from forgecli.llm.config_store import JsonLlmConfigStore
 from forgecli.llm.errors import ConfigValidationError
 
 
@@ -202,7 +202,7 @@ def _retry_settings(section: Mapping[str, object]) -> RetrySettings:
 class LlmConfigService:
     """读取 / 校验 / 更新 LLM 配置的用例；只有一个实现，故不设抽象基类。"""
 
-    def __init__(self, store: LlmConfigStore) -> None:
+    def __init__(self, store: JsonLlmConfigStore) -> None:
         self._store = store
 
     def config(self) -> LlmConfig:

@@ -32,7 +32,7 @@ from forgecli.common.observability.log import get_log
 from forgecli.core.model.credentials import Credential
 from forgecli.core.model.model_ref import ModelRef
 from forgecli.core.model.request import ModelRequest
-from forgecli.llm.gateway.credentials import CredentialPool
+from forgecli.llm.gateway.credentials import InMemoryCredentialPool
 from forgecli.llm.gateway.errors import (
     ModelAuthError,
     ModelCancelledError,
@@ -94,7 +94,7 @@ class CredentialRetryLoop:
 
     def __init__(
         self,
-        credential_pool: CredentialPool | None,
+        credential_pool: InMemoryCredentialPool | None,
         health: SlidingWindowHealthRegistry,
         *,
         sleeper: Callable[[float], None],

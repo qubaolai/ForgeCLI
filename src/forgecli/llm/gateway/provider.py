@@ -2,7 +2,7 @@
 
 ModelProvider 只描述「把统一请求映射到某供应商 API」的协议映射，约束（§2 / §3.2）：
     - 不读取 ForgeCLI session state，不写事件 / 配置，不做预算决策。
-    - 不直接读任意环境变量；凭证由 CredentialResolver 传入（§7，后续切片）。
+    - 不直接读任意环境变量；凭证由 EnvCredentialResolver 传入（§7，后续切片）。
     - 抛出的错误必须被 gateway 转成统一 ModelGatewayError。
 
 输入用 ProviderRequest 而非 ModelRequest：gateway 已解析 selection / 路由 / 预算 /
@@ -47,8 +47,8 @@ class ProviderRequest:
     model 为*已解析*的具体模型 id。
 
     §7 / §8 要求下发到 adapter 的三个执行要素（07-03 起补入）：
-        - credential：由 gateway 经 CredentialPool 租借后注入；adapter 不读环境变量、
-          不枚举或切换 key。keyless provider（如 local）为 None。
+        - credential：由 gateway 经 InMemoryCredentialPool 租借后注入；adapter 不读
+          环境变量、不枚举或切换 key。keyless provider（如 local）为 None。
         - cancel_token：取消信号传播到 adapter，由 adapter 中止在途 HTTP 请求，
           不靠等待自然超时。
         - timeout_seconds：gateway 按「请求级 > provider 默认」合并后的超时。

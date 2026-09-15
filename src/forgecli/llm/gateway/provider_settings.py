@@ -2,7 +2,7 @@
 
 gateway 发起调用前需要 provider 级的三项运行时参数：默认超时、重试上限与
 credential reference 列表。它们来自应用级 `[llm.providers.*]` 配置，但 gateway
-不解析 TOML（§4）——由 `ProviderSettingsSource` 端口提供现读视图，infrastructure
+不解析 TOML（§4）——由 `LlmConfigProviderSettingsSource` 端口提供现读视图，infrastructure
 侧实现从 LlmConfigService 读取（interfaces 装配时注入）。
 
 参数合并优先级（§5）：请求级 ModelParams / timeout > 按 origin 系统默认 >
@@ -11,7 +11,6 @@ provider 默认（timeout、max_retries）。本模块只承载 provider 默认�
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from forgecli.llm import providers as provider_registry
@@ -42,16 +41,8 @@ class ProviderRuntimeSettings:
             raise ValueError("ProviderRuntimeSettings.wait_threshold_seconds 不能为负")
 
 
-class ProviderSettingsSource(ABC):
-    """provider 运行时设置的现读端口；每次调用现读以反映会话中配置变更。"""
-
-    @abstractmethod
-    def settings_for(self, provider_id: str) -> ProviderRuntimeSettings:
-        """返回 provider 的运行时设置；未知 provider 抛 UnknownProvider。"""
-
-
 # ---- 原 infrastructure/llm/settings.py ----
-# ProviderSettingsSource 的 LlmConfigService 实现（ADR-0011 §5 / §7）。
+# LlmConfigProviderSettingsSource 的 LlmConfigService 实现（ADR-0011 §5 / §7）。
 #
 # 每次 settings_for 都现读 LlmConfigService（会话中 /config 修改立即生效）：
 #     - timeout / max_retries：取 provider 配置（服务解析时已填默认 60s / 2 次）。
@@ -65,13 +56,14 @@ _DEFAULT_TIMEOUT_SECONDS = 60.0
 _DEFAULT_MAX_RETRIES = 2
 
 
-class LlmConfigProviderSettingsSource(ProviderSettingsSource):
+class LlmConfigProviderSettingsSource:
     """从 LlmConfigService + 封闭注册表现读 provider 运行时设置。"""
 
     def __init__(self, llm_config_service: LlmConfigService) -> None:
         self._llm = llm_config_service
 
     def settings_for(self, provider_id: str) -> ProviderRuntimeSettings:
+        """返回 provider 的运行时设置；未知 provider 抛 UnknownProvider。"""
         spec = provider_registry.require_known_provider(provider_id)
         provider = self._llm.config().provider(provider_id)
         wait_threshold = self._llm.retry_settings().wait_threshold_seconds

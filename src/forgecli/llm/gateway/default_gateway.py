@@ -19,7 +19,7 @@ complete / stream / complete_structured 共用同一条治理管线，按 §8 �
 provider max_retries 约束；任何重试**不**切换 provider/model。重试摘要写入
 raw_metadata（credential_retries / transport_retries / wait_retries）。
 
-凭证不被独占（§7）：`CredentialPool.get_credential` 直接返回凭证，不做租借 /
+凭证不被独占（§7）：`InMemoryCredentialPool.get_credential` 直接返回凭证，不做租借 /
 占用，多个并发调用可拿到同一凭证的值；网关不对凭证做并发限制。凭证可用性只在
 mark_failed（401/429 冷却）或引用本身消失（配置/解析层面）时变化。
 
@@ -60,7 +60,7 @@ from forgecli.core.model.thinking import ThinkingMode
 from forgecli.core.token_estimator import ApproximateTokenEstimator
 from forgecli.llm.gateway import structured
 from forgecli.llm.gateway.cache import InMemoryResponseCache, structured_schema_digest
-from forgecli.llm.gateway.credentials import CredentialPool
+from forgecli.llm.gateway.credentials import InMemoryCredentialPool
 from forgecli.llm.gateway.errors import (
     ModelBadRequestError,
     ModelCancelledError,
@@ -81,8 +81,8 @@ from forgecli.llm.gateway.provider import (
 )
 from forgecli.llm.gateway.provider_registry import ProviderRegistry
 from forgecli.llm.gateway.provider_settings import (
+    LlmConfigProviderSettingsSource,
     ProviderRuntimeSettings,
-    ProviderSettingsSource,
 )
 from forgecli.llm.gateway.retry import CredentialRetryLoop, RetryCounts
 from forgecli.llm.selection import ConfigBackedSelectionResolver
@@ -105,8 +105,8 @@ class DefaultLlmGateway(LlmGateway):
         timer: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
         token_estimator: ApproximateTokenEstimator | None = None,
-        settings_source: ProviderSettingsSource | None = None,
-        credential_pool: CredentialPool | None = None,
+        settings_source: LlmConfigProviderSettingsSource | None = None,
+        credential_pool: InMemoryCredentialPool | None = None,
         health_registry: SlidingWindowHealthRegistry | None = None,
         cache: InMemoryResponseCache | None = None,
         structured_retry_limit: int = 1,

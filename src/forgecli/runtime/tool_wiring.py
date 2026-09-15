@@ -65,11 +65,7 @@ from forgecli.settings.paths import (
     recovery_dir,
     user_memory_file,
 )
-from forgecli.tools.artifact_store import (
-    ARTIFACT_RETENTION_SECONDS,
-    ArtifactStore,
-    FsArtifactStore,
-)
+from forgecli.tools.artifact_store import ARTIFACT_RETENTION_SECONDS, FsArtifactStore
 from forgecli.tools.builtin.artifact_read import ArtifactReadTool
 from forgecli.tools.builtin.ask_user import AskUserTool
 from forgecli.tools.builtin.fs_apply_patch import ApplyPatchTool
@@ -118,7 +114,7 @@ class ToolStack:
     #
     # 上下文管理不再需要它: 归档只在工具产出那一刻发生 (ADR-0041 决策 6), 窗口维护那一层
     # 不再回头去问"这份内容还取不取得回来".
-    artifacts: ArtifactStore
+    artifacts: FsArtifactStore
     # 单条工具结果的内联上限. 窗口水位的构建期判据要用它 (ADR-0041 决策 8), 而只有装配层
     # 同时看得见它和当前模型的窗口.
     max_inline_bytes: int
@@ -131,7 +127,7 @@ def build_tool_stack(
     session: SessionService,
     gateway: LlmGateway,
     prompts: HumanPromptService | None = None,
-    artifacts: ArtifactStore | None = None,
+    artifacts: FsArtifactStore | None = None,
     run_bus: AgentRunEventBus,
     environment_inheritance: EnvironmentInheritance = EnvironmentInheritance.ALL,
 ) -> ToolStack:

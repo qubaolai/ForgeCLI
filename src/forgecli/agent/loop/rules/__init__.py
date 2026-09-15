@@ -23,7 +23,7 @@ from forgecli.agent.loop.rules.repeat_call import RepeatCallRule
 from forgecli.agent.loop.rules.tools_closed import ToolsClosedRule
 from forgecli.agent.loop.rules.workspace_watch import WorkspaceWatchRule
 from forgecli.conversation.window_manager import WindowManager
-from forgecli.workspace.monitor import WorkspaceSnapshotProvider
+from forgecli.workspace.snapshot_provider import OsWorkspaceSnapshotProvider
 
 __all__ = ["builtin_rules"]
 
@@ -31,7 +31,7 @@ __all__ = ["builtin_rules"]
 def builtin_rules(
     *,
     context: WindowManager | None,
-    workspace_provider: WorkspaceSnapshotProvider | None,
+    workspace_provider: OsWorkspaceSnapshotProvider | None,
 ) -> RuleTable:
     # 挂了不止一个时机的几条先建好, 下面各列引用同一个对象.
     workspace = WorkspaceWatchRule(workspace_provider)

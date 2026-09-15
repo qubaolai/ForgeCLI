@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import os
 import time
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -28,7 +27,6 @@ from wcmatch import glob as wcglob
 from forgecli.workspace.ignore_oracle import ignore_predicate
 
 __all__ = [
-    "FileSystemView",
     "OsFileSystemView",
     "PathFacts",
     "PathKind",
@@ -74,64 +72,6 @@ class PathFacts:
         return self.kind is PathKind.FILE
 
 
-class FileSystemView(ABC):
-    """带实例版本的只读观察入口；不承诺冻结整个操作系统文件系统。"""
-
-    @property
-    @abstractmethod
-    def version(self) -> str:
-        """视图版本, 进 ExecutionContextRef.filesystem_view_version."""
-
-    @abstractmethod
-    def facts(self, path: str) -> PathFacts:
-        """读取路径身份事实. 路径不存在返回 kind=MISSING 而不是抛错."""
-
-    @abstractmethod
-    def read_text(self, path: str, *, max_bytes: int) -> str:
-        """读文本. 超过 max_bytes 时截断到上限, 不抛错 (调用方按需判断截断)."""
-
-    @abstractmethod
-    def is_ignored(self, path: str, *, root: str) -> bool:
-        """这条路径是不是被忽略的生成物. 判断交给权威来源, 不由调用方列名单."""
-
-    @abstractmethod
-    def read_text_if_text(self, path: str, *, max_bytes: int) -> str | None:
-        """文本内容; 判定为二进制时返回 None.
-
-        与 `read_text` 分开而不是让它自己返回空串: "空文件"和"二进制文件"对调用方是两件
-        事. `search_text` 靠这个区分把 `.class` / `.jar` 挡在扫描之外 —— 它有 2000 个
-        文件与 200 条命中的额度, 二进制解码出来的替换字符照样会产生命中, 于是额度被喂给
-        噪音, 而"这个词不在代码里"这个结论建立在没扫到源码上.
-        """
-
-    @abstractmethod
-    def read_bytes(self, path: str, *, max_bytes: int) -> bytes:
-        """读原始字节 (可执行文件哈希用)."""
-
-    @abstractmethod
-    def list_dir(self, path: str) -> tuple[str, ...]:
-        """列目录下的直接子项名 (不递归). 不是目录或不可读时返回空."""
-
-    @abstractmethod
-    def expand_glob(
-        self,
-        pattern: str,
-        *,
-        root: str,
-        max_results: int | None = None,
-        skip_ignored: bool = True,
-    ) -> tuple[str, ...]:
-        """按已冻结的视图展开 glob；max_results 用于限制枚举本身的资源消耗。
-
-        `skip_ignored` 让实现跳过被忽略的路径, 判断由实现自己去问权威来源 (git 仓库里
-        就是 git 自己). **必须在遍历时生效**, 不能展开完再过滤: max_results 数的是幸存
-        的候选, 而不是走过的目录项. 反过来做的话, `.venv` 与 `.git` 会先把额度吃光,
-        于是一次覆盖整个仓库的展开会报"结果不完整", 而被漏掉的恰好是源码.
-
-        调用方只说"要不要跳过", 不说"跳过哪些": 跳过哪些是环境事实, 属于 infrastructure.
-        """
-
-
 # ---- 原 infrastructure/workspace/os_filesystem_view.py ----
 # 基于真实文件系统的只读视图.
 #
@@ -141,15 +81,19 @@ class FileSystemView(ABC):
 #
 # realpath 一律解析: 受保护路径判定与目标集合封闭都依赖它, 字符串前缀匹配挡不住符号
 # 链接与 macOS 的 /private 别名.
-class OsFileSystemView(FileSystemView):
+class OsFileSystemView:
+    """带实例版本的只读观察入口；不承诺冻结整个操作系统文件系统。"""
+
     def __init__(self, *, version: str | None = None) -> None:
         self._version = version or f"fs-{time.time_ns()}"
 
     @property
     def version(self) -> str:
+        """视图版本, 进 ExecutionContextRef.filesystem_view_version."""
         return self._version
 
     def facts(self, path: str) -> PathFacts:
+        """读取路径身份事实. 路径不存在返回 kind=MISSING 而不是抛错."""
         target = Path(path)
         try:
             link_stat = target.lstat()
@@ -194,15 +138,24 @@ class OsFileSystemView(FileSystemView):
         )
 
     def read_text(self, path: str, *, max_bytes: int) -> str:
+        """读文本. 超过 max_bytes 时截断到上限, 不抛错 (调用方按需判断截断)."""
         return decode_text(self.read_bytes(path, max_bytes=max_bytes))
 
     def read_text_if_text(self, path: str, *, max_bytes: int) -> str | None:
+        """文本内容; 判定为二进制时返回 None.
+
+        与 `read_text` 分开而不是让它自己返回空串: "空文件"和"二进制文件"对调用方是两件
+        事. `search_text` 靠这个区分把 `.class` / `.jar` 挡在扫描之外 —— 它有 2000 个
+        文件与 200 条命中的额度, 二进制解码出来的替换字符照样会产生命中, 于是额度被喂给
+        噪音, 而"这个词不在代码里"这个结论建立在没扫到源码上.
+        """
         raw = self.read_bytes(path, max_bytes=max_bytes)
         if looks_binary(raw):
             return None
         return decode_text(raw)
 
     def read_bytes(self, path: str, *, max_bytes: int) -> bytes:
+        """读原始字节 (可执行文件哈希用)."""
         try:
             with Path(path).open("rb") as handle:
                 return handle.read(max_bytes)
@@ -210,6 +163,7 @@ class OsFileSystemView(FileSystemView):
             return b""
 
     def list_dir(self, path: str) -> tuple[str, ...]:
+        """列目录下的直接子项名 (不递归). 不是目录或不可读时返回空."""
         try:
             return tuple(sorted(entry.name for entry in Path(path).iterdir()))
         except OSError:
@@ -223,6 +177,15 @@ class OsFileSystemView(FileSystemView):
         max_results: int | None = None,
         skip_ignored: bool = True,
     ) -> tuple[str, ...]:
+        """按已冻结的视图展开 glob；max_results 用于限制枚举本身的资源消耗。
+
+        `skip_ignored` 让实现跳过被忽略的路径, 判断由实现自己去问权威来源 (git 仓库里
+        就是 git 自己). **必须在遍历时生效**, 不能展开完再过滤: max_results 数的是幸存
+        的候选, 而不是走过的目录项. 反过来做的话, `.venv` 与 `.git` 会先把额度吃光,
+        于是一次覆盖整个仓库的展开会报"结果不完整", 而被漏掉的恰好是源码.
+
+        调用方只说"要不要跳过", 不说"跳过哪些": 跳过哪些是环境事实, 属于 infrastructure.
+        """
         candidate = Path(pattern)
         if candidate.is_absolute():
             # 绝对 glob: 从根锚点展开, 保留用户写的那一段作为 pattern.
@@ -232,6 +195,7 @@ class OsFileSystemView(FileSystemView):
         return _walk_glob(Path(root), pattern, max_results, skip_ignored)
 
     def is_ignored(self, path: str, *, root: str) -> bool:
+        """这条路径是不是被忽略的生成物. 判断交给权威来源, 不由调用方列名单."""
         normalized = path.replace("\\", "/")
         base = root.replace("\\", "/").rstrip("/")
         relative = (
