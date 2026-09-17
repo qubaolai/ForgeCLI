@@ -10,39 +10,46 @@ from __future__ import annotations
 import threading
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 
 from forgecli.agent.loop.builtin_loop import BuiltinAgentLoop
 from forgecli.agent.loop.rules import builtin_rules
 from forgecli.agent.run_bus import AgentRunEventBus
 from forgecli.agent.run_events import AgentRunEventKind, HumanPromptPayload
+from forgecli.agent.run_log import RunEventLogger
 from forgecli.agent.run_store import JsonlRunStore
 from forgecli.agent.turn_cancellation import TurnCancelSource
 from forgecli.agent.turn_service import AgentTurnService
-from forgecli.common.clock import now_iso
 from forgecli.common.errors import SessionStateError
 from forgecli.common.observability.log import get_log
-from forgecli.conversation.runtime_facts import RuntimeFacts
+from forgecli.conversation.git_snapshot import read_git_snapshot
 from forgecli.conversation.window_manager import WindowManager
-from forgecli.core.mode import (
-    InputOrigin,
-    ModeUnavailableError,
-    SessionMode,
-    StanceOption,
-    available_presets,
-)
+from forgecli.core.mode import InputOrigin
 from forgecli.core.model.catalog import ModelCatalogEntry
 from forgecli.core.model.model_ref import ModelRef
 from forgecli.core.model.origin import RequestOrigin
 from forgecli.core.model.thinking import ThinkingEffortName, ThinkingMode
-from forgecli.core.serialization import to_jsonable
+from forgecli.core.permissions import (
+    AdditionalWorkingDirectory,
+    ModeOption,
+    PermissionBehavior,
+    PermissionMode,
+    PermissionRuleSource,
+    PermissionUpdate,
+    PermissionUpdateDestination,
+    PermissionUpdateType,
+    ToolPermissionContext,
+    available_modes,
+)
 from forgecli.core.turn import AssistantResponse, TurnIdentity, TurnPause, TurnStatus
 from forgecli.human_interaction.prompt import HumanPrompt, PromptAnswer, PromptKind
 from forgecli.llm.availability import EnvProviderAvailability
 from forgecli.llm.catalog_builder import build_catalog
 from forgecli.llm.config_service import LlmConfigService
 from forgecli.llm.config_store import JsonLlmConfigStore
+from forgecli.llm.gateway.provider_settings import LlmConfigProviderSettingsSource
 from forgecli.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.llm.transport_policy import ModelTransportPolicy
 from forgecli.planning.plan import PlanIndex
@@ -56,13 +63,16 @@ from forgecli.project.model import ProjectConfig
 from forgecli.project.process_lock import ProcessLock
 from forgecli.project.service import ProjectService
 from forgecli.prompt.project_instruction_reader import FsProjectInstructionReader
-from forgecli.prompt.system_prompt_builder import SystemPromptBuilder
-from forgecli.recovery.checkpoint import RecoveryCheckpoint
+from forgecli.prompt.session_facts import SessionFacts
 from forgecli.runtime.event_hub import RunEventHub
 from forgecli.runtime.human_prompt_broker import BlockingHumanPromptBroker
 from forgecli.runtime.llm_wiring import LlmRuntime, build_llm_runtime
 from forgecli.runtime.tool_wiring import ToolStack, build_tool_stack
-from forgecli.security.workspace_grants import GrantAccess
+from forgecli.security.permission_rule_parser import permission_rule_value_from_string
+from forgecli.security.permission_setup import (
+    PermissionCliArgs,
+    get_initial_permission_context,
+)
 from forgecli.session.catalog import FsSessionCatalog, Tombstone
 from forgecli.session.deletion_service import DeletedSession, SessionDeletionService
 from forgecli.session.event_store import JsonlEventStore
@@ -74,9 +84,13 @@ from forgecli.session.state_store import JsonStateStore
 from forgecli.settings.config_service import ConfigService
 from forgecli.settings.config_store import JsonConfigStore
 from forgecli.settings.paths import config_dir, config_file
+from forgecli.tools.file_history import FileHistorySnapshot, RewindOutcome
 from forgecli.workspace.snapshot_provider import OsWorkspaceSnapshotProvider
 
 _log = get_log(__name__)
+
+# 单条工具结果留在窗口里的上限 (ADR-0041 决策 8): 超过的由窗口维护裁掉正文.
+_MAX_INLINE_BYTES = 16 * 1024
 
 
 @dataclass(frozen=True)
@@ -122,7 +136,9 @@ class ProjectRuntime:
                 JsonLlmConfigStore(config_file("llm.json"))
             )
             self.thinking = ThinkingRuntimeState()
-            self.availability = EnvProviderAvailability()
+            self.availability = EnvProviderAvailability(
+                LlmConfigProviderSettingsSource(self.llm_config)
+            )
             self.llm: LlmRuntime = build_llm_runtime(
                 self.config,
                 self.llm_config,
@@ -137,6 +153,8 @@ class ProjectRuntime:
             )
             self.cancel_source = TurnCancelSource()
             self.event_bus = AgentRunEventBus()
+            # 结构化日志也是总线的一个订阅方: 工具链路只发事件, 不再自己写日志.
+            self.event_bus.subscribe(RunEventLogger())
             self.events = RunEventHub()
             self.event_bus.subscribe(self.events)
             # 处理过程落盘 (展示用, 不是恢复真相源). 内存缓冲只有 2048 条且随进程消失,
@@ -144,36 +162,55 @@ class ProjectRuntime:
             self.runs = JsonlRunStore(sessions_dir)
             self.event_bus.subscribe(self.runs)
             self.prompts = BlockingHumanPromptBroker(self._prompt_changed)
-            self.tools = self._build_tool_stack(self.llm)
+            self.tools = self._build_tool_stack(self._initial_permission())
             self._run_lock = threading.Lock()
             self._run: TurnRun | None = None
             self._thread: threading.Thread | None = None
             self.session.start()
+            self.session.set_mode(self.tools.permission.mode)
             self._agent_turn = self._build_agent_turn()
             self._sweep_tombstones()
         except BaseException:
             self.lock.release()
             raise
 
-    def _build_tool_stack(self, llm: LlmRuntime) -> ToolStack:
-        """主根原生可写；持久化的额外根在进程重启后保守恢复为只读。
-
-        ``llm`` 显式传入而不是读 ``self.llm``: 重载时要先把新的一整套建出来, 建成了
-        才提交 —— 读 ``self.llm`` 就必须先把它换掉, 而中途失败就再也回不去了。
-        """
-        tools = build_tool_stack(
+    def _build_tool_stack(self, permission: ToolPermissionContext) -> ToolStack:
+        """重载时要先把新的一整套建出来, 建成了才提交; 权限上下文 (模式, 会话规则,
+        额外目录) 原样带过去, 换模型的人还在同一个会话里."""
+        return build_tool_stack(
             workspace_roots=(self.project.primary_workspace_root,),
             workspace_id=self.project.project_id,
             session=self.session,
-            gateway=llm.gateway,
+            permission=permission,
             run_bus=self.event_bus,
             prompts=self.prompts,
             environment_inheritance=self.config.effective().environment_inheritance,
+            # auto 模式的分类器走同一个网关 (ADR-0058): 用途标签 permission_classifier,
+            # 用户可以像别的用途一样给它单独绑一个模型.
+            structured_query=self.llm.gateway.complete_structured,
         )
-        granted_at = now_iso()
+
+    def _initial_permission(self) -> ToolPermissionContext:
+        """启动期装一次权限上下文 (ADR-0055 决策 2): 设置文件里的规则, bypass 的可用性,
+        项目里信任的额外目录."""
+        context = get_initial_permission_context(
+            project_id=self.project.project_id,
+            cwd=self.project.primary_workspace_root,
+            cli=PermissionCliArgs(bypass_requested=self.full_access_allowed),
+            bypass_consented=self.full_access_allowed,
+            classifier_wired=True,
+        )
+        extra = list(context.additional_working_directories)
+        known = {item.path for item in extra}
         for root in self.project.workspace_roots[1:]:
-            tools.grants.grant(root, GrantAccess.READ, granted_at=granted_at)
-        return tools
+            resolved = str(Path(root).resolve())
+            if resolved not in known:
+                extra.append(
+                    AdditionalWorkingDirectory(
+                        path=resolved, source=PermissionRuleSource.PROJECT_SETTINGS
+                    )
+                )
+        return replace(context, additional_working_directories=tuple(extra))
 
     def reload_llm(self) -> None:
         """应用有效的模型/网关配置，同时保留会话、窗口与目录授权 (ADR-0051 决策 5)。
@@ -187,22 +224,21 @@ class ProjectRuntime:
         """
         if self.busy:
             raise RuntimeError("turn 运行期间不能重载模型配置")
-        grants = self.tools.grants.grants
         llm = build_llm_runtime(
             self.config,
             self.llm_config,
             self.forge_json,
             self.thinking,
         )
-        tools = self._build_tool_stack(llm)
-        for grant in grants:
-            tools.grants.grant(grant.path, grant.access, granted_at=grant.granted_at)
+        tools = self._build_tool_stack(self.tools.permission)
         # 到这里两件都建成了, 一起换上. 之前的顺序是先换 self.llm 再建工具栈, 于是
         # 工具栈建失败时进程停在"新网关 + 旧工具栈"上, 而没有任何东西会说它坏了。
         self.llm, self.tools = llm, tools
         # 会话服务读的是上面两个字段的闭包 (ADR-0051 决策 5), 换完就指向新的. 窗口
         # 管理器是循环规则那一份, 也读字段, 这里重建一个让它带上新网关与新计量.
         self._window_manager = self._build_window_manager()
+        # 模型与工具池可能都换了: 会话段重算, 工具清单的基线跟着重置 (ADR-0056 决策 7).
+        self._agent_turn.refresh_session_context("reload")
 
     def _build_window_manager(self) -> WindowManager:
         # 计量器与循环共用同一个 (ADR-0037): 各建一个迟早会出现两套单价.
@@ -210,7 +246,7 @@ class ProjectRuntime:
         # 不再需要 FsArtifactStore: 归档只在工具产出那一刻发生 (ADR-0041 决策 6),
         # 窗口维护这一层不再回头去问"这份内容还取不取得回来".
         return WindowManager(
-            max_inline_bytes=self.tools.max_inline_bytes,
+            max_inline_bytes=_MAX_INLINE_BYTES,
             gateway=self.llm.gateway,
             meter=self.llm.usage_meter,
         )
@@ -228,7 +264,7 @@ class ProjectRuntime:
                 rules=builtin_rules(
                     context=self._window_manager,
                     workspace_provider=OsWorkspaceSnapshotProvider(
-                        lambda: self.tools.context_factory().workspace_roots
+                        lambda: self.tools.working_directories()
                     ),
                 ),
                 cancel_token_factory=self.cancel_source.current,
@@ -236,13 +272,29 @@ class ProjectRuntime:
                 event_bus=self.event_bus,
             )
 
-        def runtime_facts() -> RuntimeFacts:
-            execution = self.tools.context_factory()
-            return RuntimeFacts.from_profile(
+        def session_facts() -> SessionFacts:
+            """会话段的事实 (ADR-0056 决策 7). 只在刷新点读一次, 含 git 快照."""
+            cwd = self.tools.cwd()
+            model = self.config.effective().default_model
+            return SessionFacts.from_profile(
                 self.tools.profile,
-                working_directory=execution.cwd,
-                workspace_roots=execution.workspace_roots,
-                git_repository=(Path(execution.cwd) / ".git").exists(),
+                working_directory=cwd,
+                workspace_roots=self.tools.working_directories(),
+                git_repository=(Path(cwd) / ".git").exists(),
+                sandboxed=self.tools.runner.sandboxed(),
+                model="" if model is None else str(model),
+                start_date=date.today().isoformat(),
+                git=read_git_snapshot(cwd),
+            )
+
+        def diagnostics_dir() -> str:
+            return str(
+                config_dir()
+                / "projects"
+                / self.project.project_id
+                / "sessions"
+                / self.session.current().session_id
+                / "diagnostics"
             )
 
         # 随模型配置换的几样以闭包交进去 (ADR-0051 决策 5): 读的是 self.llm / self.tools
@@ -250,14 +302,17 @@ class ProjectRuntime:
         return AgentTurnService(
             self.session,
             loop_factory=new_loop,
-            prompt_builder=SystemPromptBuilder(),
-            runtime_facts=runtime_facts,
+            session_facts=session_facts,
             instructions=FsProjectInstructionReader(),
+            diagnostics_dir=diagnostics_dir,
             context_budget=lambda: self.llm.context_budget(),
             memory=lambda: self.tools.memory,
             planning=lambda: self.tools.planning,
-            tools=lambda: self.tools.dispatcher,
+            tools=lambda: self.tools.runner,
             run_bus=self.event_bus,
+            # 与 new_loop 里挂到 ModelRequest 上的是同一个 token: 点一次停止, 模型
+            # 请求与工具执行一起看到.
+            cancel_token=self.cancel_source.current,
         )
 
     @property
@@ -426,13 +481,10 @@ class ProjectRuntime:
         self._purge_in_background(service, service.pending())
 
     def _deletion_service(self) -> SessionDeletionService:
-        """现建而不是存一份: 恢复点协作件随工具栈一起重建 (见 ``reload_llm``),
-        存下来的那份会在换过模型之后指向一个没人再用的实例。"""
         return SessionDeletionService(
             self._session_catalog,
             self._session_states,
             workspace_id=self.tools.workspace_id,
-            recovery=self.tools.mutations,
         )
 
     def resume(self, session_id: str) -> SessionSnapshot:
@@ -440,6 +492,8 @@ class ProjectRuntime:
             raise RuntimeError("turn 运行期间不能恢复其他会话")
         snapshot, history = self.resume_service.load_full(session_id)
         resumed = self.session.resume(snapshot, history)
+        # 模式是运行时状态, 不随会话恢复: 续上的会话沿用当前的权限上下文.
+        resumed = self.session.set_mode(self.tools.permission.mode)
         self._agent_turn = self._build_agent_turn()
         self._agent_turn.resume(history)
         with self._run_lock:
@@ -532,7 +586,11 @@ class ProjectRuntime:
         if active.plan is None:
             return None
         outcome = PlanReviewService(self.tools.planning).decide(
-            choice, active.plan, mode=self.session.current().mode, note=note
+            choice,
+            active.plan,
+            mode=self.tools.permission.mode,
+            pre_plan_mode=self.tools.permission.pre_plan_mode,
+            note=note,
         )
         self.session.record_tool_event(
             EventType.PLAN_REVIEWED,
@@ -546,7 +604,7 @@ class ProjectRuntime:
             },
         )
         if outcome.upgraded_mode is not None:
-            self.session.set_mode(outcome.upgraded_mode)
+            self.tools.set_mode(outcome.upgraded_mode)
         with self._run_lock:
             self._run = TurnRun(
                 run_id=run.run_id,
@@ -558,41 +616,110 @@ class ProjectRuntime:
         return outcome
 
     @property
-    def presets(self) -> tuple[StanceOption, ...]:
-        """本进程能进的预设. Tab 循环, `/mode` 与 `GET /api/v1/modes` 都只列这些."""
-        return available_presets(full_access_allowed=self.full_access_allowed)
+    def presets(self) -> tuple[ModeOption, ...]:
+        """本进程能进的模式. Tab 循环, `/mode` 与 `GET /api/v1/modes` 都只列这些."""
+        return available_modes(
+            bypass_available=self.tools.permission.is_bypass_permissions_mode_available,
+            auto_available=self.tools.permission.is_auto_mode_available,
+        )
 
-    def set_mode(self, mode: SessionMode) -> SessionSnapshot:
-        """切模式. 三条入口 (Tab, `/mode`, `POST /api/v1/mode`) 都经这里, 门只设一处.
-
-        计划评审的升档不走这个方法而直接调 `session.set_mode`: 它的终点写死是 AUTO
-        (`plan_review._upgraded_mode`), 从来碰不到 Full Access, 不需要过门.
-        """
+    def set_mode(self, mode: PermissionMode) -> SessionSnapshot:
+        """切模式. 三条入口 (Tab, `/mode`, `POST /api/v1/mode`) 都经这里, 门只设一处:
+        `transition_permission_mode` 会拒绝没放开的 bypass, 并记下进 plan 之前的档位."""
         if self.busy:
             raise RuntimeError("turn 运行期间不能切换模式")
-        if mode.unrestricted and not self.full_access_allowed:
-            raise ModeUnavailableError(
-                "Full Access 没有在启动时放开: 带 --allow-full-access 重新启动 forge."
-            )
-        return self.session.set_mode(mode)
+        self.tools.set_mode(mode)
+        return self.session.current()
 
-    def grant_workspace(self, path: Path, *, write: bool) -> object:
-        access = GrantAccess.WRITE if write else GrantAccess.READ
-        grant = self.tools.grants.grant(str(path), access, granted_at=now_iso())
+    def grant_workspace(self, path: Path, *, write: bool) -> AdditionalWorkingDirectory:
+        """`/add-dir`: 加一个额外工作目录 (本会话). Claude Code 的目录授权不分读写,
+        加进来就是可读可写; `write` 只进事件记录."""
+        resolved = str(path.resolve())
+        self._apply_permission_update(
+            PermissionUpdate(
+                type=PermissionUpdateType.ADD_DIRECTORIES,
+                destination=PermissionUpdateDestination.SESSION,
+                directories=(resolved,),
+            )
+        )
         self.session.record_tool_event(
             EventType.DIR_GRANT_CHANGED,
-            {"path": str(path), "access": access.value, "action": "grant"},
+            {
+                "path": resolved,
+                "access": "write" if write else "read",
+                "action": "grant",
+            },
         )
-        return grant
+        return AdditionalWorkingDirectory(
+            path=resolved, source=PermissionRuleSource.SESSION
+        )
 
     def revoke_workspace(self, path: Path) -> bool:
-        revoked = self.tools.grants.revoke(str(path))
-        if revoked:
-            self.session.record_tool_event(
-                EventType.DIR_GRANT_CHANGED,
-                {"path": str(path), "action": "revoke"},
+        resolved = str(path.resolve())
+        known = {
+            item.path for item in self.tools.permission.additional_working_directories
+        }
+        if resolved not in known:
+            return False
+        self._apply_permission_update(
+            PermissionUpdate(
+                type=PermissionUpdateType.REMOVE_DIRECTORIES,
+                destination=PermissionUpdateDestination.SESSION,
+                directories=(resolved,),
             )
-        return revoked
+        )
+        self.session.record_tool_event(
+            EventType.DIR_GRANT_CHANGED, {"path": resolved, "action": "revoke"}
+        )
+        return True
+
+    def _apply_permission_update(self, update: PermissionUpdate) -> None:
+        permission = self.tools.applier.apply(update, self.tools.permission)
+        self.tools.app_state.set_permission(permission)
+
+    def permission_rules(self) -> dict[str, dict[str, list[str]]]:
+        """三张规则表按来源分组 (/permissions 与 GET /api/v1/permissions)."""
+        permission = self.tools.permission
+        tables = {
+            "allow": permission.always_allow_rules,
+            "deny": permission.always_deny_rules,
+            "ask": permission.always_ask_rules,
+        }
+        result: dict[str, dict[str, list[str]]] = {}
+        for behavior, table in tables.items():
+            result[behavior] = {
+                source.value: list(rules) for source, rules in table.items() if rules
+            }
+        return result
+
+    def remove_permission_rule(self, behavior: str, source: str, rule: str) -> bool:
+        """删一条规则. policy 来源只读, 删不掉."""
+        try:
+            kind = PermissionBehavior(behavior)
+            origin = PermissionRuleSource(source)
+        except ValueError:
+            return False
+        destinations = {
+            PermissionRuleSource.USER_SETTINGS: (
+                PermissionUpdateDestination.USER_SETTINGS
+            ),
+            PermissionRuleSource.PROJECT_SETTINGS: (
+                PermissionUpdateDestination.PROJECT_SETTINGS
+            ),
+            PermissionRuleSource.SESSION: PermissionUpdateDestination.SESSION,
+        }
+        destination = destinations.get(origin)
+        if destination is None:
+            return False
+        self._apply_permission_update(
+            PermissionUpdate(
+                type=PermissionUpdateType.REMOVE_RULES,
+                destination=destination,
+                rules=(permission_rule_value_from_string(rule),),
+                behavior=kind,
+            )
+        )
+        return True
 
     # ---- 模型选择 ----
 
@@ -686,27 +813,14 @@ class ProjectRuntime:
             "busy": self.busy,
         }
 
-    def recovery_status(self) -> dict[str, object]:
-        """恢复层状态 (GET /api/v1/recovery): 恢复点总数与未收尾事务。"""
-        recovery = self.tools.recovery
-        pending = recovery.crash_recovery_candidates(self.tools.workspace_id)
-        return {
-            "checkpoint_count": len(self.list_checkpoints()),
-            "pending": [to_jsonable(item) for item in pending],
-        }
+    def rewind_points(self) -> tuple[FileHistorySnapshot, ...]:
+        """文件历史的快照 (`/rewind`): 每条 assistant 消息一个 (ADR-0054 决策 5)."""
+        return tuple(self.tools.file_history.snapshots)
 
-    def list_checkpoints(self) -> tuple[RecoveryCheckpoint, ...]:
-        return self.tools.recovery.list_checkpoints(self.tools.workspace_id)
-
-    def checkpoint(self, checkpoint_id: str) -> RecoveryCheckpoint | None:
-        return next(
-            (
-                item
-                for item in self.list_checkpoints()
-                if checkpoint_id in (item.checkpoint_id, item.tool_invocation_id)
-            ),
-            None,
-        )
+    def rewind(self, message_id: str) -> RewindOutcome:
+        if self.busy:
+            raise RuntimeError("turn 运行期间不能回退文件")
+        return self.tools.file_history.rewind(message_id)
 
     def list_sessions(self) -> list[SessionSnapshot]:
         return self.resume_service.list_sessions(limit=100)
@@ -728,6 +842,7 @@ class ProjectRuntime:
         self.cancel()
         self.prompts.close()
         self.events.close()
+        self.tools.close()
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)

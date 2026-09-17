@@ -7,7 +7,7 @@ from forgecli.agent.loop.verdicts import Continue
 from forgecli.common.observability.log import get_log
 from forgecli.core.agent.actions import LoopStop
 from forgecli.core.agent.stop import LoopStopReason
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 
 __all__ = ["DEFAULT_MAX_MODEL_CALLS", "ModelBudgetRule"]
 
@@ -31,5 +31,5 @@ class ModelBudgetRule:
         _log.warning("loop.model_budget_exhausted", limit=self._limit)
         return LoopStop(
             LoopStopReason.BUDGET_EXHAUSTED,
-            render_notice("stop.model_budget", limit=self._limit),
+            prompts.stop_model_budget(self._limit),
         )

@@ -33,7 +33,7 @@ from forgecli.core.tool.tool_call import ToolCall
 from forgecli.core.turn import MessageRole
 from forgecli.llm.gateway.gateway import LlmGateway
 from forgecli.llm.metering import UsageMeter
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 
 __all__ = ["Summary", "summarize"]
 
@@ -103,10 +103,7 @@ def summarize(
             ChatMessage(
                 role=MessageRole.USER,
                 content=(
-                    TextBlock(
-                        f"{render_notice("context.compaction_instruction")}\n\n"
-                        f"{_flatten(plan.dropped)}"
-                    ),
+                    TextBlock(f"{prompts.COMPACT_PROMPT}\n\n{_flatten(plan.dropped)}"),
                 ),
             ),
         ),
@@ -120,7 +117,7 @@ def summarize(
     # 草稿在这里就建好: 下面那条"没摘出东西"的返回路径同样要带着它. 请求已经发出去了,
     # 这笔钱花没花与摘要好不好用无关.
     usage = None if meter is None else meter.build_draft(request, response)
-    text = response.content.strip()
+    text = prompts.extract_compact_summary(response.content)
     if not text:
         # 摘不出东西也照样淘汰: 窗口撞了高水位, 不淘汰这一轮就发不出去.
         return (_verbatim_block(plan), *plan.kept), Summary(
@@ -145,8 +142,7 @@ def _summary_block(plan: EvictionPlan, text: str) -> ChatMessage:
         role=MessageRole.USER,
         content=(
             TextBlock(
-                f"{render_notice("context.compaction_header")}\n\n{text}"
-                f"{_verbatim_section(plan)}"
+                f"{prompts.COMPACTION_HEADER}\n\n{text}{_verbatim_section(plan)}"
             ),
         ),
     )
@@ -161,15 +157,11 @@ def _verbatim_block(plan: EvictionPlan) -> ChatMessage:
         role=MessageRole.USER,
         content=(
             TextBlock(
-                f"{render_notice("context.compaction_header")}\n\n"
-                f"{_verbatim_section(plan).strip() or _nothing_kept()}"
+                f"{prompts.COMPACTION_HEADER}\n\n"
+                f"{_verbatim_section(plan).strip() or prompts.COMPACTION_NOTHING_KEPT}"
             ),
         ),
     )
-
-
-def _nothing_kept() -> str:
-    return render_notice("context.compaction_nothing_kept")
 
 
 def _verbatim_section(plan: EvictionPlan) -> str:
@@ -188,7 +180,7 @@ def _verbatim_section(plan: EvictionPlan) -> str:
     body = "\n".join(line for line in lines if line.strip())
     if not body:
         return ""
-    return f"\n\n{render_notice("context.compaction_user_verbatim")}\n{body}"
+    return f"\n\n{prompts.COMPACTION_USER_VERBATIM}\n{body}"
 
 
 def _flatten(messages: tuple[ChatMessage, ...]) -> str:
@@ -216,8 +208,7 @@ def _flatten(messages: tuple[ChatMessage, ...]) -> str:
     flat = "\n\n".join(lines)
     if len(flat) <= _MAX_FLATTENED_CHARS:
         return flat
-    notice = render_notice("context.compaction_input_clipped")
-    return f"{notice}\n\n{flat[-_MAX_FLATTENED_CHARS:]}"
+    return f"{prompts.COMPACTION_INPUT_CLIPPED}\n\n{flat[-_MAX_FLATTENED_CHARS:]}"
 
 
 def _call_line(call: ToolCall) -> str:

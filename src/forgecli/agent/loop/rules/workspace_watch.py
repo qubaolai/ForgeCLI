@@ -23,11 +23,11 @@ from forgecli.agent.loop.rule import (
 )
 from forgecli.agent.loop.verdicts import Continue, Reask, Rewrite
 from forgecli.common.observability.log import get_log
+from forgecli.conversation.notices import KIND_WORKSPACE_CHANGED, notice
 from forgecli.core.agent.actions import LoopObservation
-from forgecli.core.message import ChatMessage, TextBlock
+from forgecli.core.message import ChatMessage
 from forgecli.core.tool.tool_call import ToolCall
-from forgecli.core.turn import MessageRole
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 from forgecli.workspace.changes import WorkspaceChange, WorkspaceChangeSource
 from forgecli.workspace.monitor import WorkspaceChangeMonitor
 from forgecli.workspace.snapshot_provider import OsWorkspaceSnapshotProvider
@@ -95,5 +95,10 @@ class WorkspaceWatchRule:
                 for change in changes
             ],
         )
-        notice = render_notice("loop.workspace_changed", changes=changes)
-        return ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),))
+        text = prompts.notice_workspace_changed(
+            (change.source_label, change.kind_label, change.display_path)
+            for change in changes
+        )
+        return notice(
+            KIND_WORKSPACE_CHANGED, ",".join(change.path for change in changes), text
+        )

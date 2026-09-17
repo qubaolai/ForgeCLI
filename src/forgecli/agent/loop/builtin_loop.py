@@ -3,8 +3,8 @@
 一轮的形状:
 
     while True:
-        ctx = assemble()                 # 每次调模型前现组: 提示词, 工具, 状态帧, 预算
-        规则 -> 调模型 -> 规则 -> 写 assistant 消息
+        ctx = assemble(window)           # 每次调模型前现组: 提示词, 工具, 通知, 预算
+        追加 ctx.notices -> 规则 (压缩了就再组一次) -> 调模型 -> 规则 -> 写 assistant
         没有 tool_calls -> 停 (FINAL_ANSWER, 带回答)
         for call in 这批:
             规则 -> execute(call) -> 回填工具结果 -> 规则 (停 / 收工具 / 攒提醒)
@@ -16,8 +16,8 @@
   CoordinatorToolDispatcher 走完整条安全管线的方法, `assemble` 是它读计划, 记忆, 目录,
   FORGE.md 组一份材料的方法. 循环拿不到 dispatcher, 拿不到 ToolRegistry, 也拿不到
   ToolRuntime 与各个服务 —— 单一入口由 dispatcher 的类型守着 (ADR-0051).
-- **一次只执行一个工具调用.** 模型一口气要了三个工具时, 后两个排队等前一个的结果.
-  并行需要知道冲突域 (ADR-0004 §10), 而那是安全层的知识, 循环没有.
+- **整批交给执行链.** 模型一口气要了三个工具时, 三个一起交出去; 按只读性分批并发
+  是执行链的事 (ADR-0054 决策 4), 循环只看到一批进一批出.
 - **工具目录来自 assemble().** 循环不自己算"哪些工具可见", 那是 mode 能力门的事.
   目录一旦被规则收掉, 后面每次 assemble 带回来的目录都不再发给模型.
 
@@ -31,7 +31,7 @@
 
 运行事件按 ADR-0016 发布到 AgentRunEventBus. 分工: 循环拥有 turn 生命周期, 步骤切换,
 模型调用和"模型请求了哪个工具" (TOOL_QUEUED); 工具真正被裁决与执行之后的事件由
-ToolRequestCoordinator 发布 —— 循环看不见裁决与执行, 编不出那些事实. 规则只交回一句
+执行链 (tools/execution.py) 发布 —— 循环看不见裁决与执行, 编不出那些事实. 规则只交回一句
 摘要, 事件由循环在执行处置时发; 规则自己看见的事实 (压缩发生了) 经账本报出去.
 
 读这个文件只需要跟着 run -> _think_and_act -> _run_batch -> _execute -> _stop 这条线走.
@@ -61,24 +61,23 @@ from forgecli.agent.run_bus import AgentRunEventBus
 from forgecli.common.cancellation import CancelToken
 from forgecli.common.observability.context import update as update_run_context
 from forgecli.common.observability.log import get_log
+from forgecli.conversation.notices import guidance
 from forgecli.core.agent.actions import (
     ContextAssembly,
     LoopObservation,
     LoopResult,
     LoopStop,
     ToolExecutor,
-    ToolRequest,
 )
 from forgecli.core.agent.phase import LoopPhase
 from forgecli.core.agent.state import AssembledContext, LoopInput
 from forgecli.core.agent.stop import LoopStopReason
 from forgecli.core.context.window import Window
 from forgecli.core.message import ChatMessage, TextBlock, ToolResultBlock
-from forgecli.core.mode import SessionMode
 from forgecli.core.model.origin import RequestOrigin
 from forgecli.core.model.params import ModelParams
 from forgecli.core.model.request import ModelRequest
-from forgecli.core.tool.result import ResultProvenance
+from forgecli.core.permissions import PermissionMode
 from forgecli.core.tool.tool_call import ToolCall, ToolSchema
 from forgecli.core.turn import MessageRole
 from forgecli.llm.error_hints import actionable_message
@@ -90,7 +89,7 @@ from forgecli.llm.gateway.errors import (
 from forgecli.llm.gateway.gateway import LlmGateway
 from forgecli.llm.metering import UsageMeter
 from forgecli.llm.transport_policy import ModelTransportPolicy
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 
 _log = get_log(__name__)
 
@@ -132,7 +131,7 @@ class BuiltinAgentLoop:
         self._phase = LoopPhase.NOT_STARTED
         self._turn_id: str | None = None
         self._session_id = ""
-        self._mode: SessionMode | None = None
+        self._mode: PermissionMode | None = None
         # 本轮的会话窗口: 每次模型调用都基于它, 工具结果按 §10 写回这里.
         #
         # 存 Window 而不是裸元组, 是因为 `evicted_count` 必须跨调用累计 —— 淘汰要靠它
@@ -171,7 +170,10 @@ class BuiltinAgentLoop:
         self._turn_id = loop_input.turn_id
         self._session_id = loop_input.session_id
         self._mode = loop_input.mode
-        self._window = Window(messages=loop_input.initial_window)
+        self._window = Window(
+            messages=loop_input.initial_window,
+            evicted_count=loop_input.evicted_count,
+        )
         self._events.start_turn(session_id=self._session_id, turn_id=self._turn_id)
         # 本轮的标识就位, 上一轮的清零. `update` 没有还原点, 所以由每一轮自己把
         # step / req / tool 归零 —— 否则 loop.start 那一行会带着上一轮的步号.
@@ -194,6 +196,7 @@ class BuiltinAgentLoop:
             answer=self._answer,
             partial_answer=self._invoker.partial_answer,
             window=self._messages,
+            evicted_count=self._window.evicted_count,
             usage_drafts=self._ledger.usage_drafts,
             compaction_drafts=self._ledger.compaction_drafts,
         )
@@ -216,7 +219,7 @@ class BuiltinAgentLoop:
         return LoopView(
             session_id=self._session_id,
             turn_id=self._turn_id or "",
-            mode=self._mode if self._mode is not None else SessionMode.PLAN,
+            mode=self._mode if self._mode is not None else PermissionMode.PLAN,
             phase=self._phase,
             window=self._window,
             tools=self._tools,
@@ -247,16 +250,15 @@ class BuiltinAgentLoop:
         回到 while 顶上, 不递归.
         """
         while True:
-            self._context = assemble()
-            _log.debug(
-                "loop.context",
-                prompt_fingerprint=self._context.policy.fingerprint,
-                tools=[schema.name for schema in self._tools],
-                state_chars=len(self._context.state_frame),
-            )
+            self._assemble(assemble)
+            evicted_before = self._window.evicted_count
             stop = self._rules.before_model(self._view, self._apply_rewrite)
             if isinstance(stop, LoopStop):
                 return self._stop(stop)
+            if self._window.evicted_count != evicted_before:
+                # 刚压缩过: 旧通知随被淘汰的那段一起没了, 再组一次, 该重注入的这次会带
+                # 回来 (ADR-0056 决策 9). 会话段也在这一次重算.
+                self._assemble(assemble)
 
             outcome = self._call_model()
             if isinstance(outcome, LoopStop):
@@ -285,6 +287,23 @@ class BuiltinAgentLoop:
             if batch_stop is not None:
                 return batch_stop
             # 这批做完了 (或者目录收了), 回去让模型接着想.
+
+    def _assemble(self, assemble: ContextAssembly) -> None:
+        """组一次材料, 把这次新出的通知追加进窗口.
+
+        通知只在这里进窗口: 一批工具结果已经全部回填, 或者用户消息刚进来. 不会插在
+        tool call 与它的 tool result 之间.
+        """
+        self._context = assemble(self._window)
+        if self._context.notices:
+            self._append(*self._context.notices)
+        _log.debug(
+            "loop.context",
+            static_sha=self._context.fingerprints.static[:12],
+            session_sha=self._context.fingerprints.session[:12],
+            tools=[schema.name for schema in self._tools],
+            notices=[item.notice_kind for item in self._context.notices],
+        )
 
     def _call_model(self) -> ModelOutcome | LoopStop | Reask | Rewrite:
         """组请求, 发出去, 把出错的路交给规则."""
@@ -350,35 +369,40 @@ class BuiltinAgentLoop:
     def _run_batch(
         self, calls: tuple[ToolCall, ...], execute: ToolExecutor
     ) -> LoopStop | None:
-        """把模型这次要的工具一个一个做完. 一次一个, 不并行.
+        """把模型这次要的工具整批交给执行链, 结果按请求序回填.
+
+        分批与并发在执行链里 (ADR-0054 决策 4), 循环只看到"一批进, 一批出". 规则仍然
+        逐个看: before_dispatch 先把要挡的挡掉, 剩下的整批执行, 再逐个 after_observe.
 
         返回 None 表示这批做完了, 该回去调模型; 返回 LoopStop 表示本轮到此为止.
         """
         self._pending_calls = list(calls)
-        # 模型这一轮请求的调用已经全部确定. 先把整批意图发给观察端, 再做第一个,
-        # 页面才能在任何工具真正启动之前画出完整队列. 裁决与执行事实仍由协调器发布,
-        # 这里不会把"模型请求了"说成"必然会执行".
+        # 模型这一轮请求的调用已经全部确定. 先把整批意图发给观察端, 页面才能在任何
+        # 工具真正启动之前画出完整队列.
         self._events.tool_batch(calls)
-        while self._pending_calls:
-            call = self._pending_calls.pop(0)
+        to_run: list[ToolCall] = []
+        for call in calls:
             verdict = self._rules.before_dispatch(call, self._view())
             if isinstance(verdict, LoopStop):
                 return self._stop(verdict)
             if isinstance(verdict, Deny):
+                self._pending_calls.remove(call)
                 self._deny(call, verdict)
                 continue
-            observation = self._execute(call, execute)
+            to_run.append(call)
+        observations = self._execute(tuple(to_run), execute)
+        # 执行过的调用结果先全部回填: 协议要求每个 tool_call 都有配对的结果, 规则的
+        # 处置 (停, 收工具) 不能让已经执行了的调用没有结果.
+        self._pending_calls = []
+        for call, observation in zip(to_run, observations, strict=True):
             self._append(
                 _tool_result(
                     call,
                     labelled(call, observation.content),
                     is_error=observation.is_error,
-                    provenance=observation.provenance,
                 )
             )
-            # 这里不发 TOOL_COMPLETED: 执行结果的权威事实在协调器那边 (状态, 耗时,
-            # 退出码, 是否改了文件). 循环只拿到一段回填文本, 用它冒充执行结论会让终端
-            # 显示的"完成"与真正发生的事脱节.
+        for call, observation in zip(to_run, observations, strict=True):
             after = self._rules.after_observe(call, observation, self._view())
             if isinstance(after, LoopStop):
                 return self._stop(after)
@@ -395,38 +419,37 @@ class BuiltinAgentLoop:
         self._deferred = []
         return None
 
-    def _execute(self, call: ToolCall, execute: ToolExecutor) -> LoopObservation:
-        """交给外层执行一个工具, 拿回结论. 循环只认识 `execute` 这一个函数."""
-        self._tool_calls += 1
-        update_run_context(step=self._events.next_step(), tool=call.name)
-        # 入参**原样**写进日志, 与发给终端的 scrub_arguments 是两条路: 屏幕上要防的是
-        # 一屏 base64 把过程刷没, 而排查一次"工具为什么这么干"必须看到它真正收到了什么.
-        _log.info(
-            "tool.requested",
-            tool=call.name,
-            tool_call_id=call.tool_call_id,
-            arguments=call.arguments,
-            queued=len(self._pending_calls),
-            tool_call_index=self._tool_calls,
-        )
-        observation = execute(
-            ToolRequest(
-                name=call.name,
-                arguments=call.arguments,
+    def _execute(
+        self, calls: tuple[ToolCall, ...], execute: ToolExecutor
+    ) -> tuple[LoopObservation, ...]:
+        """交给外层执行一批工具, 拿回同样多的结论. 循环只认识 `execute` 这一个函数."""
+        if not calls:
+            return ()
+        for call in calls:
+            self._tool_calls += 1
+            update_run_context(step=self._events.next_step(), tool=call.name)
+            # 入参**原样**写进日志, 与发给终端的 scrub_arguments 是两条路: 屏幕上要防的
+            # 是一屏 base64 把过程刷没, 而排查一次"工具为什么这么干"必须看到它真正收到
+            # 了什么.
+            _log.info(
+                "tool.requested",
+                tool=call.name,
                 tool_call_id=call.tool_call_id,
+                arguments=call.arguments,
+                tool_call_index=self._tool_calls,
             )
-        )
-        _log.info(
-            "tool.observed",
-            tool=call.name,
-            is_error=observation.is_error,
-            disposition=observation.disposition.value,
-            chars=len(observation.content),
-        )
-        # 回填正文单独走 debug: info 级别无条件打整段, 一次带正文的读取就是几 KB.
-        if _log.enabled_for_debug():
-            _log.debug("tool.observed.content", content=observation.content)
-        return observation
+        observations = execute(calls)
+        for call, observation in zip(calls, observations, strict=True):
+            _log.info(
+                "tool.observed",
+                tool=call.name,
+                is_error=observation.is_error,
+                disposition=observation.disposition.value,
+                chars=len(observation.content),
+            )
+            if _log.enabled_for_debug():
+                _log.debug("tool.observed.content", content=observation.content)
+        return observations
 
     def _deny(self, call: ToolCall, verdict: Deny) -> None:
         """规则挡下了这一个调用: 不执行, 把规则给的那段文字当它的工具结果回填.
@@ -451,9 +474,7 @@ class BuiltinAgentLoop:
         self._abandon_pending(notice)
         self._deferred = []
         self._tools_closed = True
-        self._append(
-            ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)),
-        )
+        self._append(guidance(notice))
         self._events.decision(notice)
 
     def _abandon_pending(self, notice: str) -> None:
@@ -463,7 +484,7 @@ class BuiltinAgentLoop:
         下一次请求就是残缺的, 供应商会拒. 所以是"标记为未执行", 不是"当作没发生过".
         """
         for call in self._pending_calls:
-            detail = render_notice("loop.abandoned_call", notice=notice)
+            detail = prompts.loop_abandoned_call(notice)
             self._append(_tool_result(call, detail, is_error=True))
             self._events.tool_abandoned(call, notice=detail)
         self._pending_calls = []
@@ -497,12 +518,8 @@ class BuiltinAgentLoop:
                 # 带工具目录的调用属于 act 阶段; 纯对话仍记 chat (ADR-0011 §3.3).
                 RequestOrigin.TOOL_CALL if self._tools else RequestOrigin.CHAT
             ),
-            # 窗口 + 状态帧. 顺序在 AssembledContext 里定, 这里不自己拼.
-            messages=(
-                self._messages
-                if self._context is None
-                else self._context.to_request_messages(self._messages)
-            ),
+            # 窗口就是全部: 通知已经在里面 (ADR-0056 决策 2), 没有额外要拼的帧.
+            messages=self._messages,
             params=ModelParams(),
             system_prompt=(
                 self._context.system_prompt if self._context is not None else None
@@ -516,9 +533,9 @@ class BuiltinAgentLoop:
         if self._pending_calls:
             # 计划评审是今天唯一带着队列停下的路; 其余停止发生在队列排空之后.
             notice = (
-                render_notice("loop.review_abandon")
+                prompts.loop_review_abandon()
                 if stop.reason is LoopStopReason.WAIT_PLAN_REVIEW
-                else render_notice("loop.abandoned_call", notice=stop.reason.value)
+                else prompts.loop_abandoned_call(stop.reason.value)
             )
             self._abandon_pending(notice)
         # 停下来之后的行不该还挂着本轮最后一步的标识. session / turn 由外层
@@ -543,22 +560,13 @@ class BuiltinAgentLoop:
         return stop
 
 
-def _tool_result(
-    call: ToolCall,
-    content: str,
-    *,
-    is_error: bool,
-    provenance: ResultProvenance | None = None,
-) -> ChatMessage:
+def _tool_result(call: ToolCall, content: str, *, is_error: bool) -> ChatMessage:
     """一条配对的工具结果消息. 三处写法只该有一份."""
     return ChatMessage(
         role=MessageRole.TOOL,
         content=(
             ToolResultBlock(
-                tool_call_id=call.tool_call_id,
-                content=content,
-                is_error=is_error,
-                provenance=provenance,
+                tool_call_id=call.tool_call_id, content=content, is_error=is_error
             ),
         ),
     )

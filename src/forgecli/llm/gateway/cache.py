@@ -9,8 +9,8 @@ Prompt 缓存（降低重复前缀成本）：
 
     早先这里有一个 `CacheHint`（两个布尔）供请求侧标注可缓存前缀，但**没有任何地方
     构造它**。接 Anthropic 这类需要显式 cache_control breakpoint 的 adapter 时，
-    按那时的真实需要设计字段形状再接线 —— 两个布尔也表达不了「断点在第几块之后」，
-    而那正是 PromptSnapshot 里已经有的信息。
+    按那时的真实需要设计字段形状再接线 —— 断点该打在静态段与会话段的边界
+    (prompts.SYSTEM_PROMPT_DYNAMIC_BOUNDARY) 与最后一条消息上 (ADR-0056 决策 2)。
 
 响应缓存（可选，默认关闭）：
     对确定性、幂等的内部调用按归一化请求指纹缓存响应。指纹排除易变字段

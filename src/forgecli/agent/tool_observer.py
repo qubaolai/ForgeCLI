@@ -1,12 +1,10 @@
-"""把工具链路的运行观察翻译成 AgentRunEvent (ADR-0016 §4.3).
+"""把执行链的运行观察翻译成 AgentRunEvent (ADR-0016 §4.3).
 
-放在 agent_run 而不是 tool_request: 依赖方向是"观察者实现认识事件总线", 反过来会让
-工具链路知道终端时间线的存在.
+放在 agent 而不是 tools: 依赖方向是"观察者实现认识事件总线", 反过来会让执行链知道
+终端时间线的存在.
 """
 
 from __future__ import annotations
-
-from collections.abc import Mapping
 
 from forgecli.agent.run_bus import AgentRunEventBus
 from forgecli.agent.run_events import (
@@ -19,36 +17,10 @@ from forgecli.agent.run_events import (
     ToolPreparedPayload,
     ToolStartedPayload,
 )
-from forgecli.agent.scrubbing import scrub_arguments, scrub_text
-from forgecli.core.tool.plan import ToolPlan
-from forgecli.core.tool.result import ToolResult
-from forgecli.security.decision import AuthorizationDecision
-from forgecli.security.vocabulary import ApprovalScope
-from forgecli.tools.pipeline.run_observer import ToolRunObserver
+from forgecli.agent.scrubbing import scrub_text
+from forgecli.core.tool.observer import ToolRunObserver
 
 __all__ = ["EventBusToolRunObserver"]
-
-
-# 一次调用最多逐条列出多少个目标. 超了只列前若干个并让 target_count 说出完整数量 ——
-# 一次递归删除可能有几千个路径, 全塞进事件既没人看得完, 也会把 SSE 帧撑大.
-_MAX_LISTED_TARGETS = 40
-
-
-def _targets_of(plan: ToolPlan) -> tuple[str, ...]:
-    paths = (*plan.effects.mutating_targets, *plan.effects.read_paths)
-    return tuple(paths[:_MAX_LISTED_TARGETS])
-
-
-def _summary_of(result: ToolResult) -> str:
-    """机制摘要, 不含工具输出本身."""
-    parts = [f"{result.metrics.bytes_out} 字节"]
-    if result.metrics.exit_code is not None:
-        parts.append(f"退出码 {result.metrics.exit_code}")
-    if result.artifacts:
-        parts.append(f"{len(result.artifacts)} 个产物")
-    if any(part.truncated for part in result.content_parts):
-        parts.append("输出已截断")
-    return " · ".join(parts)
 
 
 class EventBusToolRunObserver(ToolRunObserver):
@@ -61,130 +33,139 @@ class EventBusToolRunObserver(ToolRunObserver):
         self._session_id = session_id
         self._turn_id = turn_id
 
-    def tool_prepared(
-        self, plan: ToolPlan, *, invocation_id: str, arguments: Mapping[str, object]
+    def tool_validated(
+        self,
+        tool_name: str,
+        *,
+        tool_use_id: str,
+        activity: str,
+        arguments: tuple[tuple[str, str], ...],
+        elapsed_ms: float,
     ) -> None:
         self._publish(
             AgentRunEventKind.TOOL_PREPARED,
             ToolPreparedPayload(
-                tool_name=plan.tool_name,
-                capabilities=tuple(sorted(item.value for item in plan.capabilities)),
-                target_count=len(plan.effects.mutating_targets)
-                + len(plan.effects.read_paths),
-                target_resolution=plan.target_resolution.value,
-                arguments=scrub_arguments(arguments),
-                targets=_targets_of(plan),
-                workspace_scope=plan.workspace_scope.value,
+                tool_name=tool_name,
+                activity=activity,
+                arguments=tuple((name, scrub_text(value)) for name, value in arguments),
+                elapsed_ms=elapsed_ms,
             ),
-            invocation_id=invocation_id,
+            invocation_id=tool_use_id,
         )
 
-    def policy_resolved(
-        self, decision: AuthorizationDecision, *, invocation_id: str
+    def permission_decided(
+        self,
+        tool_name: str,
+        *,
+        tool_use_id: str,
+        behavior: str,
+        reason: str,
+        message: str,
+        elapsed_ms: float,
     ) -> None:
         self._publish(
             AgentRunEventKind.POLICY_RESOLVED,
             PolicyResolvedPayload(
-                tool_name=decision.effective_plan.tool_name,
-                decision=decision.decision.value,
-                reason=decision.reason.value,
-                mandatory=decision.mandatory,
-                matched_rule_id=decision.matched_rule_id or "",
-                risk_facts=tuple(fact.code for fact in decision.risk_facts),
-                detail=scrub_text(decision.message),
+                tool_name=tool_name,
+                decision=behavior,
+                reason=reason,
+                detail=message,
+                elapsed_ms=elapsed_ms,
             ),
-            invocation_id=invocation_id,
+            invocation_id=tool_use_id,
         )
 
-    def approval_requested(
-        self, tool_name: str, *, invocation_id: str, mandatory: bool, target_count: int
+    def permission_prompted(
+        self,
+        tool_name: str,
+        *,
+        tool_use_id: str,
+        prompt_id: str,
+        message: str,
+        suggestions: tuple[str, ...],
     ) -> None:
         self._publish(
             AgentRunEventKind.APPROVAL_REQUESTED,
             ApprovalRequestedPayload(
-                tool_name=tool_name, mandatory=mandatory, target_count=target_count
+                tool_name=tool_name,
+                prompt_id=prompt_id,
+                reason=message,
+                suggestions=suggestions,
             ),
-            invocation_id=invocation_id,
+            invocation_id=tool_use_id,
         )
 
-    def approval_resolved(
+    def permission_answered(
         self,
         tool_name: str,
         *,
-        invocation_id: str,
+        tool_use_id: str,
+        prompt_id: str,
         outcome: str,
-        scope: ApprovalScope | None = None,
+        choice: str,
+        note: str,
     ) -> None:
         self._publish(
             AgentRunEventKind.APPROVAL_RESOLVED,
             ApprovalResolvedPayload(
                 tool_name=tool_name,
                 outcome=outcome,
-                scope="" if scope is None else scope.value,
+                prompt_id=prompt_id,
+                choice=choice,
+                note=note,
             ),
-            invocation_id=invocation_id,
+            invocation_id=tool_use_id,
         )
 
-    def tool_started(self, tool_name: str, *, invocation_id: str) -> None:
+    def tool_started(self, tool_name: str, *, tool_use_id: str) -> None:
         self._publish(
             AgentRunEventKind.TOOL_STARTED,
             ToolStartedPayload(tool_name=tool_name),
-            invocation_id=invocation_id,
+            invocation_id=tool_use_id,
         )
 
-    def tool_rejected(
-        self, tool_name: str, *, invocation_id: str, reason_code: str, message: str
+    def tool_completed(
+        self,
+        tool_name: str,
+        *,
+        tool_use_id: str,
+        status: str,
+        elapsed_ms: float,
+        result_summary: str,
+        error_summary: str,
+        bytes_out: int,
+        persisted: bool,
+        executed: bool,
     ) -> None:
-        # 复用 TOOL_COMPLETED: 对展示层来说这就是这次调用的终态, 只是没有执行过。
         self._publish(
             AgentRunEventKind.TOOL_COMPLETED,
             ToolCompletedPayload(
                 tool_name=tool_name,
-                status=reason_code,
-                elapsed_ms=0.0,
-                error_summary=scrub_text(message),
-                error_code=reason_code,
-                executed=False,
-            ),
-            invocation_id=invocation_id,
-        )
-
-    def tool_completed(
-        self, result: ToolResult, *, invocation_id: str, elapsed_ms: float
-    ) -> None:
-        self._publish(
-            AgentRunEventKind.TOOL_COMPLETED,
-            ToolCompletedPayload(
-                tool_name=result.tool_name,
-                status=result.status.value,
+                status=status,
                 elapsed_ms=elapsed_ms,
-                # 只报机制摘要: 字节数, 退出码, 产物数. 完整 stdout / 文件内容默认
-                # 不回显, 由 artifact 承载 (ADR-0016 §7.2).
-                result_summary=_summary_of(result),
-                error_summary="" if result.error is None else result.error.message,
-                error_code="" if result.error is None else result.error.code,
-                exit_code=result.metrics.exit_code,
-                bytes_out=result.metrics.bytes_out,
-                artifact_count=len(result.artifacts),
-                truncated=any(part.truncated for part in result.content_parts),
+                result_summary=scrub_text(result_summary),
+                error_summary=scrub_text(error_summary),
+                bytes_out=bytes_out,
+                persisted=persisted,
+                executed=executed,
             ),
-            invocation_id=invocation_id,
+            invocation_id=tool_use_id,
         )
 
     def tool_cancelled(
-        self, tool_name: str, *, invocation_id: str, side_effect_unknown: bool
+        self, tool_name: str, *, tool_use_id: str, elapsed_ms: float
     ) -> None:
         self._publish(
             AgentRunEventKind.TOOL_CANCELLED,
             ToolCompletedPayload(
                 tool_name=tool_name,
                 status="cancelled",
+                elapsed_ms=elapsed_ms,
                 # 不幂等的调用被打断时, "没成功"与"没发生"是两回事: 终端不能显示成
                 # 普通失败 (ADR-0016 §10.1).
-                side_effect_unknown=side_effect_unknown,
-                error_code="cancelled",
+                side_effect_unknown=True,
             ),
-            invocation_id=invocation_id,
+            invocation_id=tool_use_id,
         )
 
     def _publish(
@@ -195,8 +176,8 @@ class EventBusToolRunObserver(ToolRunObserver):
         invocation_id: str,
     ) -> None:
         if not self._turn_id or not self._session_id:
-            # 没绑定轮次说明这次调用不在任何 turn 里 (slash command 直接调用之类):
-            # 与其发一条归属不明的事件, 不如不发.
+            # 没绑定轮次说明这次调用不在任何 turn 里: 与其发一条归属不明的事件,
+            # 不如不发.
             return
         self._bus.publish(
             kind,

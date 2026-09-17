@@ -3,11 +3,11 @@
 一条待答提示可能是一次安全审批, 也可能是模型的一次提问 —— 它们走同一条队列, 在这里按
 ``kind`` 分两个渲染分支.
 
-审批分支画的是与 Web 同一份 ``ApprovalView.to_payload()`` (躺在 ``detail`` 里): 用户在
-两条入口看到的目标, 脚本正文与可选范围必须逐字一致 —— 各画各的话, 同一次调用在终端上
-少列一个目标, 而两边都不会报错.
+审批分支画的是与 Web 同一份 ``detail`` (security/interactive.py 组的): 工具名, 入参,
+裁决的理由与建议. 用户在两条入口看到的必须逐字一致 —— 各画各的话, 同一次调用在终端上
+少列一个字段, 而两边都不会报错.
 
-选项文案也不在这里写死: 它随提示一起来自 ``ApprovalService``, 否则同一个选项在
+选项文案也不在这里写死: 它随提示一起来自 ``make_can_use_tool``, 否则同一个选项在
 终端与 Web 上会叫两个名字.
 
 **不设等待超时**, 与通道的语义一致: 终止条件只有用户做决定, 用户停止这一轮, 进程退出
@@ -44,7 +44,8 @@ _MAX_SOURCE_LINES = 40
 _SUMMARY_TARGETS = 4
 _SUMMARY_SOURCE_LINES = 8
 
-# 自己写一句. 与任何一个后端选项都不会撞: 后端的 value 来自 ApprovalScope 或模型给的
+# 自己写一句. 与任何一个后端选项都不会撞: 后端的 value 是 yes / suggestion_N / no
+# 或模型给的
 # 选项值, 两者都不会是这个形状.
 _FREE_TEXT = "__text__"
 _DETAILS = "__details__"
@@ -74,46 +75,31 @@ def _render_question(console: Console, prompt: Mapping[str, object]) -> None:
 
 
 def _render_approval(console: Console, view: Mapping[str, object]) -> None:
-    """一次待决议的调用."""
-    mandatory = bool(view.get("mandatory"))
+    """一次待决议的调用: 工具, 入参, 为什么要问, 有什么建议."""
     tool_name = str(view.get("tool_name", ""))
     console.print()
     header = Text(f"{ASK} 需要你确认  ", style=f"bold {STYLE_WARN}")
     header.append(tool_name, style=f"bold {STYLE_ACCENT}")
-    if mandatory:
-        # Mandatory Ask 只能一次性批准 (ADR-0013 §4.1). 不标出来的话, 用户会把"这次
-        # 没有始终允许"当成界面漏了一个选项.
-        header.append("  必须逐次确认", style=STYLE_WARN)
+    activity = str(view.get("activity", ""))
+    if activity:
+        header.append(f"  {activity}", style=STYLE_DIM)
+    if view.get("destructive"):
+        header.append("  不可逆操作", style=STYLE_ERROR)
     console.print(header)
 
     rows: list[tuple[str, str]] = []
-    raw_command = str(view.get("raw_command", ""))
-    if raw_command:
-        rows.append(("命令", raw_command))
-    counts = _counts(view.get("counts"))
-    if counts:
-        rows.append(("目标", counts))
-    resolution = str(view.get("target_resolution", ""))
-    if resolution:
-        rows.append(("封闭度", resolution))
-    unresolved = view.get("unresolved_reason")
-    if unresolved:
-        rows.append(("未封闭", str(unresolved)))
-    roots = view.get("workspace_roots")
-    if isinstance(roots, list) and roots:
-        rows.append(("工作区", " ".join(display_path(str(item)) for item in roots)))
-    mode = str(view.get("mode", ""))
-    if mode:
-        rows.append(("模式", mode))
+    message = str(view.get("message", ""))
+    if message:
+        rows.append(("原因", message))
+    reason = str(view.get("reason", ""))
+    if reason and reason != message:
+        rows.append(("裁决", reason))
+    blocked = str(view.get("blocked_path", ""))
+    if blocked:
+        rows.append(("路径", display_path(blocked)))
     if rows:
         console.print(Padding(kv_table(rows), (0, 0, 0, 2)))
-
-    _render_details(
-        console,
-        view,
-        target_limit=_SUMMARY_TARGETS,
-        source_limit=_SUMMARY_SOURCE_LINES,
-    )
+    _render_input(console, view.get("input"), limit=_SUMMARY_SOURCE_LINES)
     console.print(Text("  可在决议菜单中查看更多详情；默认焦点为拒绝", style=STYLE_DIM))
 
 
@@ -144,11 +130,6 @@ def ask_decision(
     ]
     free_text = bool(prompt.get("free_text"))
     console.print()
-    if not question:
-        blocked = str(view.get("learn_blocked_reason", ""))
-        if blocked and not any(item.key == "workspace" for item in options):
-            # 界面不自己推这句话: 只看得到少了一档, 看不到少的是哪一条判据.
-            console.print(Text(f"  不能选 [始终允许]: {blocked}", style=STYLE_DIM))
     console.print(Text("  Esc / Ctrl-C 停止这一轮", style=STYLE_DIM))
     if question and not options:
         # 只收自由文本的提问: 摆一个只有一项的菜单是在让人多按一次回车.
@@ -294,15 +275,6 @@ def _typed_answer(console: Console) -> tuple[str, str] | None:
         console.print(Text("写一句再回车, 或按 Ctrl-C 停止这一轮", style=STYLE_ERROR))
 
 
-def _counts(raw: object) -> str:
-    items = _as_list(raw)
-    parts: list[str] = []
-    for item in items:
-        if isinstance(item, Mapping):
-            parts.append(f"{item.get('label', '')} {item.get('count', 0)}")
-    return " · ".join(parts)
-
-
 def _render_details(
     console: Console,
     view: Mapping[str, object],
@@ -310,60 +282,31 @@ def _render_details(
     target_limit: int,
     source_limit: int,
 ) -> None:
-    _render_targets(console, view.get("target_groups"), limit=target_limit)
-    _render_scripts(console, view.get("script_snapshots"), limit=source_limit)
-    _render_previews(console, view.get("content_previews"), limit=source_limit)
-
-
-def _render_targets(
-    console: Console, raw: object, *, limit: int = _MAX_TARGETS
-) -> None:
-    for group in _as_list(raw):
-        if not isinstance(group, Mapping):
-            continue
-        paths = [str(item) for item in _as_list(group.get("paths"))]
-        if not paths:
-            continue
-        label = str(group.get("label", ""))
-        console.print(Padding(Text(label, style=STYLE_DIM), (0, 0, 0, 2)))
-        shown = paths[:limit]
-        for path in shown:
-            console.print(Padding(Text(path), (0, 0, 0, 4)))
-        if len(paths) > len(shown):
+    _render_input(console, view.get("input"), limit=source_limit)
+    for item in _as_list(view.get("suggestions")):
+        if isinstance(item, Mapping):
             console.print(
                 Padding(
-                    Text(f"另有 {len(paths) - len(shown)} 个", style=STYLE_DIM),
-                    (0, 0, 0, 4),
+                    Text(f"建议: {item.get('label', '')}", style=STYLE_DIM),
+                    (0, 0, 0, 2),
                 )
             )
 
 
-def _render_scripts(
+def _render_input(
     console: Console, raw: object, *, limit: int = _MAX_SOURCE_LINES
 ) -> None:
-    for snapshot in _as_list(raw):
-        if not isinstance(snapshot, Mapping):
-            continue
-        origin = str(snapshot.get("origin", ""))
-        language = str(snapshot.get("language", ""))
-        path = str(snapshot.get("path", "") or "")
-        title = " · ".join(item for item in (language, origin, path) if item)
-        console.print(Padding(Text(f"脚本 {title}", style=STYLE_DIM), (0, 0, 0, 2)))
-        _render_source(console, str(snapshot.get("source", "")), limit=limit)
-
-
-def _render_previews(
-    console: Console, raw: object, *, limit: int = _MAX_SOURCE_LINES
-) -> None:
-    for preview in _as_list(raw):
-        if not isinstance(preview, Mapping):
-            continue
-        path = str(preview.get("path", ""))
-        suffix = " (已截断)" if preview.get("truncated") else ""
-        console.print(
-            Padding(Text(f"写入 {path}{suffix}", style=STYLE_DIM), (0, 0, 0, 2))
-        )
-        _render_source(console, str(preview.get("content", "")), limit=limit)
+    """逐字列入参: 参数里可能出现什么, 用户就该看到什么. 多行的值 (content,
+    new_string, command) 按行列, 超出的明说还有多少行."""
+    if not isinstance(raw, Mapping):
+        return
+    for key, value in raw.items():
+        text = value if isinstance(value, str) else str(value)
+        if "\n" in text or len(text) > 120:
+            console.print(Padding(Text(f"{key}:", style=STYLE_DIM), (0, 0, 0, 2)))
+            _render_source(console, text, limit=limit)
+        else:
+            console.print(Padding(Text(f"{key}: {truncate(text, 160)}"), (0, 0, 0, 2)))
 
 
 def _render_source(

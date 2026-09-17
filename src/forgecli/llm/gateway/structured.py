@@ -15,7 +15,7 @@ from dataclasses import replace
 
 from forgecli.common.json_schema import validate_json_schema
 from forgecli.core.model.request import ModelRequest, StructuredModelRequest
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 
 __all__ = ["parse", "strip_code_fence", "with_instruction"]
 
@@ -28,10 +28,7 @@ def with_instruction(
     接在后面而不是替换: 前面那段是身份与安全边界, 换掉它等于为了拿一段 JSON 把模型的
     约束一起摘了。
     """
-    schema_text = json.dumps(dict(request.schema), ensure_ascii=False, sort_keys=True)
-    instruction = render_notice(
-        "prompt.schema_instruction", name=request.schema_name, schema=schema_text
-    )
+    instruction = prompts.schema_instruction(request.schema_name, request.schema)
     system_prompt = (
         f"{base.system_prompt}\n\n{instruction}" if base.system_prompt else instruction
     )

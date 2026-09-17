@@ -1,22 +1,17 @@
-"""/mode: 列出预设, 选一个.
+"""/mode: 列出模式, 选一个 (ADR-0055 决策 1).
 
-菜单只有一层, 只列预设 (ADR-0052): 隔离档与审批档两个轴仍是领域模型 (domain/intents),
-但不再单独露给人调. 早先这里是"整档预设 / 隔离 / 审批"三块的两级菜单, 于是同一个问题
-在两处能得到不同答案 —— 预设里选了 Auto, 再去审批那一块看到的却是"围栏内自动"这个
-轴上的名字, 用户要自己把两套词对上.
-
-列的是 `runtime.presets`, 不是 MODE_PRESETS 全表: Full Access 只在启动时带了
+菜单只有一层, 列的是 `runtime.presets`: Bypass Permissions 只在启动时带了
 `--allow-full-access` 才在里面. 没放开就不列, 而不是列出来再拒绝.
 """
 
 from __future__ import annotations
 
-from forgecli.core.mode import (
-    PRESET_NAMES,
+from forgecli.core.permissions import (
+    MODE_OPTIONS,
+    ModeOption,
     ModeUnavailableError,
-    SessionMode,
-    StanceOption,
-    stance_label,
+    PermissionMode,
+    parse_permission_mode,
 )
 from forgecli.tui.chooser import Option, choose
 from forgecli.tui.commands.context import CommandContext
@@ -24,44 +19,46 @@ from forgecli.tui.console import error, ok
 
 
 def cmd_mode(context: CommandContext, argument: str) -> None:
-    """`/mode <预设名>` 直接切; 裸 `/mode` 弹菜单, Esc 退回提示符."""
+    """`/mode <名字>` 直接切; 裸 `/mode` 弹菜单, Esc 退回提示符."""
     if not context.require_idle():
         return
     runtime = context.runtime
     raw = argument.strip()
     if raw:
-        target = PRESET_NAMES.get(raw)
-        if target is None:
+        try:
+            target = parse_permission_mode(raw)
+        except ValueError:
             error(context.console, f"认不出这一档: {raw}")
             return
         _apply(context, target)
         return
 
     current = runtime.session.current().mode
-    picked = choose(
-        context.console, _options(runtime.presets), current=_preset_name(current)
-    )
+    picked = choose(context.console, _options(runtime.presets), current=current.value)
     if picked is not None:
-        _apply(context, PRESET_NAMES[picked.key])
+        _apply(context, PermissionMode(picked.key))
 
 
-def _options(items: tuple[StanceOption, ...]) -> list[Option]:
+def _options(items: tuple[ModeOption, ...]) -> list[Option]:
     return [Option(item.value, item.label, item.hint) for item in items]
 
 
-def _preset_name(mode: SessionMode) -> str:
-    return next((name for name, preset in PRESET_NAMES.items() if preset == mode), "")
+def mode_label(mode: PermissionMode) -> str:
+    for option in MODE_OPTIONS:
+        if option.value == mode.value:
+            return option.label
+    return mode.value
 
 
-def _apply(context: CommandContext, target: SessionMode) -> None:
+def _apply(context: CommandContext, target: PermissionMode) -> None:
     try:
         context.runtime.set_mode(target)
     except ModeUnavailableError as exc:
-        # `/mode full_access` 没放开时走到这里: 参数形式绕过了菜单的过滤, 门在
-        # ProjectRuntime.set_mode 上, 三条入口都拦得住.
+        # `/mode bypass_permissions` 没放开时走到这里: 参数形式绕过了菜单的过滤, 门在
+        # transition_permission_mode 上, 三条入口都拦得住.
         error(context.console, exc.message)
         return
     except RuntimeError as exc:
         error(context.console, str(exc))
         return
-    ok(context.console, f"模式: {stance_label(target)} ({target.value})")
+    ok(context.console, f"模式: {mode_label(target)} ({target.value})")

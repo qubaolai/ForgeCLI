@@ -80,8 +80,20 @@ class FsProjectInstructionReader:
             budget -= len(instruction.text.encode("utf-8"))
         return tuple(found)
 
+    def read_nested(self, directory: str) -> ProjectInstruction | None:
+        """某个子目录顶层的 FORGE.md (ADR-0056 决策 7): 首次触达该目录下的文件时以通知
+        发一次. 同样的大小与编码限制, source_id 是目录路径."""
+        return self._read_one(
+            directory, primary=False, budget=MAX_INSTRUCTION_BYTES, source_id=directory
+        )
+
     def _read_one(
-        self, root: str, *, primary: bool, budget: int
+        self,
+        root: str,
+        *,
+        primary: bool,
+        budget: int,
+        source_id: str = "",
     ) -> ProjectInstruction | None:
         try:
             root_real = Path(root).resolve()
@@ -108,7 +120,8 @@ class FsProjectInstructionReader:
         if truncated:
             text = f"{text}\n{TRUNCATION_NOTICE}"
         return ProjectInstruction(
-            source_id=f"{'primary' if primary else 'added'}:{INSTRUCTION_FILE_NAME}",
+            source_id=source_id
+            or f"{'primary' if primary else 'added'}:{INSTRUCTION_FILE_NAME}",
             text=text,
             digest=digest_text(text),
         )

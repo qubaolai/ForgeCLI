@@ -12,7 +12,7 @@ from forgecli.agent.loop.verdicts import Continue, Replace
 from forgecli.common.observability.log import get_log
 from forgecli.core.agent.actions import LoopStop
 from forgecli.core.agent.stop import LoopStopReason
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 
 __all__ = ["ToolsClosedRule"]
 
@@ -30,5 +30,5 @@ class ToolsClosedRule:
             has_text=has_text,
         )
         if not has_text:
-            return LoopStop(LoopStopReason.POLICY_DENIED, render_notice("stop.halt"))
+            return LoopStop(LoopStopReason.POLICY_DENIED, prompts.STOP_HALT)
         return Replace(ModelOutcome(text=outcome.text))

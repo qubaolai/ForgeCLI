@@ -294,54 +294,51 @@ class ToolQueuedPayload(RunEventPayload):
 
 @dataclass(frozen=True)
 class ToolPreparedPayload(RunEventPayload):
-    """归一化后的计划摘要, 外加本次调用的入参.
+    """schema 与 validate_input 都过了 (ADR-0054 决策 3 的第 3 / 4 步).
 
-    arguments 是模型请求的原始入参, 逐字展示. 参数里可能出现什么, 用户就该看到什么 ——
-    终端是他判断"要不要让这次调用发生"的唯一依据.
+    arguments 是补过派生字段之后工具听成的那一份入参, 逐字展示 (经 scrub): 参数里可能
+    出现什么, 用户就该看到什么 —— 终端是他判断"要不要让这次调用发生"的唯一依据.
+    activity 是工具自己给的一句现在时说明 ("Reading src/x.py").
     """
 
     tool_name: str
-    capabilities: tuple[str, ...] = ()
-    target_count: int = 0
-    target_resolution: str = ""
+    activity: str = ""
     arguments: tuple[tuple[str, str], ...] = ()
-    # 归一化后**真正会碰到**的路径 (超出上限时截断, target_count 仍是完整计数).
-    # 只报个数的话, "影响 12 个目标"这句话没法核对: 用户要看的是哪 12 个.
-    targets: tuple[str, ...] = ()
-    workspace_scope: str = ""
+    elapsed_ms: float = 0.0
 
 
 @dataclass(frozen=True)
 class PolicyResolvedPayload(RunEventPayload):
-    """展示用的裁决摘要.
+    """裁决摘要 (ADR-0055 决策 4). decision 是 allow / deny / ask, reason 是带类型的
+    理由.
 
-    它是给人看的那一份: 页面显示了"已允许"说的是裁决结论, 不是执行已经发生
-    (§4.3).
+    页面显示了"已允许"说的是裁决结论, 不是执行已经发生.
     """
 
     tool_name: str
     decision: str
-    reason: str
-    mandatory: bool = False
-    # 命中了哪条规则, 认定了哪些风险事实, 以及裁决自己给的那句话. 少了这三项, 一次
-    # ask 或 deny 在页面上只有一个 reason 枚举值, 排查时看不出是规则还是分析器判的.
-    matched_rule_id: str = ""
-    risk_facts: tuple[str, ...] = ()
+    reason: str = ""
     detail: str = ""
+    elapsed_ms: float = 0.0
 
 
 @dataclass(frozen=True)
 class ApprovalRequestedPayload(RunEventPayload):
+    """裁决是 ask, 卡片摆出来了."""
+
     tool_name: str
-    mandatory: bool = False
-    target_count: int = 0
+    prompt_id: str = ""
+    reason: str = ""
+    suggestions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class ApprovalResolvedPayload(RunEventPayload):
     tool_name: str
     outcome: str
-    scope: str = ""
+    prompt_id: str = ""
+    choice: str = ""
+    note: str = ""
 
 
 @dataclass(frozen=True)
@@ -363,13 +360,10 @@ class ToolCompletedPayload(RunEventPayload):
     result_summary: str = ""
     error_summary: str = ""
     side_effect_unknown: bool = False
-    # 结构化的机制事实. result_summary 是给人一眼看的那一行, 这几项是给排查用的 ——
-    # 从一句"1024 字节 · 退出码 1"里再解析出退出码, 是把展示格式当成了数据接口.
-    error_code: str = ""
-    exit_code: int | None = None
     bytes_out: int = 0
-    artifact_count: int = 0
-    truncated: bool = False
+    # 结果超过工具的 max_result_size_chars, 全文落盘了, 模型只拿到预览
+    # (ADR-0054 决策 5).
+    persisted: bool = False
     # 这次调用有没有真的执行过. 工具不存在, prepare 失败, 被拒或没等到批准都会走到
     # 终态, 但它们与"执行了然后失败了"是两回事 (ADR-0004 §8).
     executed: bool = True

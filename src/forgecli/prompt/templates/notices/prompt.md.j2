@@ -1,9 +1,0 @@
-{#
-提示词自己要用的两段.
-#}
-{% macro instruction_escaped_line(line) %}
-[已转义] {{ line }}
-{% endmacro %}
-{% macro schema_instruction(name, schema) %}
-你必须只输出一个符合 JSON Schema '{{ name }}' 的 JSON 对象, 不得输出任何其他文本或代码块外说明. Schema: {{ schema }}
-{% endmacro %}

@@ -17,7 +17,7 @@ from forgecli.agent.loop.verdicts import CloseTools, Continue
 from forgecli.common.observability.log import get_log
 from forgecli.core.agent.actions import LoopObservation, ObservationDisposition
 from forgecli.core.tool.tool_call import ToolCall
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 
 __all__ = ["MAX_BLOCKED_CALLS", "RefusalRule"]
 
@@ -36,12 +36,12 @@ class RefusalRule:
     ) -> AfterObserveVerdict:
         if observation.disposition is ObservationDisposition.HALT:
             _log.warning("loop.halt", reason="user_refused")
-            return CloseTools(render_notice("loop.halt"))
+            return CloseTools(prompts.loop_halt())
         if observation.disposition is ObservationDisposition.BLOCKED:
             self._blocked += 1
             _log.warning(
                 "loop.blocked_call", blocked=self._blocked, limit=MAX_BLOCKED_CALLS
             )
             if self._blocked >= MAX_BLOCKED_CALLS:
-                return CloseTools(render_notice("loop.blocked", count=self._blocked))
+                return CloseTools(prompts.loop_blocked(self._blocked))
         return Continue()

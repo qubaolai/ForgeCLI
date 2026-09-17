@@ -26,6 +26,7 @@ import {
   buildInitialModelParams,
   modelPlaceholder,
   providerAvailabilityCopy,
+  providerReady,
 } from "@/shared/lib/modelParams";
 import { ProviderAvatar } from "@/features/settings/models/ProviderAvatar";
 import type { KnownProvider, Provider } from "@/types/admin";
@@ -65,7 +66,7 @@ export function AddModelDrawer({
   const makeDefault = Form.useWatch("makeDefault", form);
   const selected = knownProviders.find((item) => item.id === providerId);
   const selectedSettings = providerSettings.find((item) => item.id === providerId);
-  const ready = selected?.available || !selected?.api_key_env;
+  const ready = selected ? providerReady(selected) : false;
 
   async function submit(values: ModelDraft) {
     let params: Record<string, unknown>;
@@ -134,7 +135,7 @@ export function AddModelDrawer({
                   <Space>
                     <ProviderAvatar providerId={provider.id} label={provider.label} size="small" />
                     <Typography.Text strong>{provider.label}</Typography.Text>
-                    <Tag color={provider.available || !provider.api_key_env ? "green" : "default"}>
+                    <Tag color={providerReady(provider) ? "green" : "default"}>
                       {providerAvailabilityCopy(provider)}
                     </Tag>
                   </Space>

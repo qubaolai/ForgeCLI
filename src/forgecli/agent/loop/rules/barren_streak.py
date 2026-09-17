@@ -13,11 +13,10 @@ from __future__ import annotations
 from forgecli.agent.loop.rule import AfterObserveVerdict, LoopView
 from forgecli.agent.loop.verdicts import Continue, Inject
 from forgecli.common.observability.log import get_log
+from forgecli.conversation.notices import guidance
 from forgecli.core.agent.actions import LoopObservation
-from forgecli.core.message import ChatMessage, TextBlock
 from forgecli.core.tool.tool_call import ToolCall
-from forgecli.core.turn import MessageRole
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 
 __all__ = ["MAX_BARREN_OBSERVATIONS", "BarrenStreakRule"]
 
@@ -30,16 +29,12 @@ MAX_BARREN_OBSERVATIONS = 3
 class BarrenStreakRule:
     def __init__(self) -> None:
         self._streak = 0
-        self._last: tuple[str, str] | None = None
+        self._last: str | None = None
 
     def after_observe(
         self, call: ToolCall, observation: LoopObservation, view: LoopView
     ) -> AfterObserveVerdict:
         """判据两条, 满足其一就算没有新信息: 内容为空, 或与上一次的摘要加句柄完全相同.
-
-        比的是 (content, handle) 而不是只比 content: ADR-0041 把正文移出窗口之后
-        content 短了很多, 两次不同的调用更容易撞出同一段文字 —— 而句柄是内容寻址的,
-        正文不一样句柄就不一样.
 
         失败的观察不参与计数: 它们有专门的规则 (refusal). 两个计数器数同一件事, 事后
         就说不清到底是哪条规则停的.
@@ -47,7 +42,7 @@ class BarrenStreakRule:
         if observation.is_error:
             return Continue()
         content = observation.content.strip()
-        fingerprint = (content, observation.handle)
+        fingerprint = content
         if not content or fingerprint == self._last:
             self._streak += 1
         else:
@@ -59,10 +54,7 @@ class BarrenStreakRule:
         count = self._streak
         self._streak = 0
         _log.warning("loop.barren_streak", count=count)
-        notice = render_notice("loop.barren", count=count)
         return Inject(
-            messages=(
-                ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)),
-            ),
+            messages=(guidance(prompts.loop_barren(count)),),
             summary=f"连续 {count} 次调用没有新信息",
         )

@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-from forgecli.core.model.provider_spec import ProviderSpec
 from forgecli.core.serialization import to_jsonable
 from forgecli.llm import providers as provider_registry
 from forgecli.runtime.project_runtime import ProjectRuntime
@@ -15,30 +14,17 @@ from forgecli.tui.chooser import Option
 
 
 def availability(runtime: ProjectRuntime, provider_id: str) -> str:
-    """只看环境变量在不在, 不读它的值 (application/llm/availability)."""
-    spec = spec_of(runtime, provider_id)
-    if spec is not None and not spec.api_key_env:
+    """只看环境变量在不在, 不读它的值 (llm/availability).
+
+    "缺少"后面列的是凭证池里的全部名字: 配了两把 key 而一把都没设的时候, 用户要知道
+    设哪一个都行.
+    """
+    refs = runtime.availability.credential_refs(provider_id)
+    if not refs:
         return "无需密钥"
     if runtime.availability.is_available(provider_id):
         return "已就绪"
-    env = spec.api_key_env if spec is not None else ""
-    return f"缺少 {env}" if env else "缺少密钥"
-
-
-def spec_of(runtime: ProjectRuntime, provider_id: str) -> ProviderSpec | None:
-    """内置的用注册表那一份; 用户自建的按配置现造一个等价视图."""
-    builtin = provider_registry.REGISTRY.get(provider_id)
-    if builtin is not None:
-        return builtin
-    provider = runtime.llm_config.config().provider(provider_id)
-    if provider is None:
-        return None
-    return ProviderSpec(
-        id=provider.id,
-        label=provider.name or provider.id,
-        default_api_base=provider.api_base,
-        api_key_env=provider.api_key_env or "",
-    )
+    return f"缺少 {' / '.join(refs)}"
 
 
 def model_options(runtime: ProjectRuntime) -> list[Option]:

@@ -93,14 +93,6 @@ def plans_dir(project_id: str, session_id: str) -> Path:
     return projects_dir() / project_id / "sessions" / session_id / "plans"
 
 
-def learned_rules_file(workspace_id: str) -> Path:
-    """学习规则文件 (ADR-0013 §5.1). 按项目分开, workspace 范围的规则不跨项目.
-
-    落在 Forge 状态目录: Agent 与它起的子进程都不该能改自己的授权规则.
-    """
-    return state_dir() / "rules" / f"{workspace_id}.json"
-
-
 # ---- 原 infrastructure/platform_paths.py ----
 # 不信任进程环境变量的本机平台目录探测。
 _CSIDL = {

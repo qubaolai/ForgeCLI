@@ -61,6 +61,12 @@ class EventType(Enum):
     # 记录说明不了比"进程在等待时退出了"更多的东西 (ADR-0028 规则 C).
     USER_QUESTION_ANSWERED = "user_question_answered"
 
+    # -- Forge 注入窗口的通知 (ADR-0056 决策 6 / 决策 11) --
+    #
+    # payload 含正文: 通知是模型当时看到的内容, 恢复时按原位置回放, 通知的增量与节流
+    # 就从窗口里推. 不是 USER_MESSAGE: 界面的会话回放只显示用户与助手说的话.
+    HARNESS_NOTICE = "harness_notice"
+
 
 @dataclass(frozen=True)
 class SessionEvent:

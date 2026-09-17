@@ -4,7 +4,8 @@
 在屏幕上长什么样". 一百多行的 payload 拼装夹在控制流中间, 读循环的人要反复跳过它们。
 
 **分工不在这里**: 循环拥有 turn 生命周期, 步骤切换, 模型调用和"模型请求了哪个工具";
-工具真正被裁决与执行之后的事件由 ToolRequestCoordinator 发布 —— 循环看不见裁决与执行,
+工具真正被裁决与执行之后的事件由执行链 (tools/execution.py) 发布 —— 循环看不见
+裁决与执行,
 编不出那些事实 (ADR-0016 §4.3). 这个类不会因为拿到了总线就多发几条。
 
 步骤序号也归它: 它只有两个消费方, 事件信封与日志上下文, 两个都是可观测性。
@@ -203,8 +204,7 @@ class LoopEventPublisher:
             ToolCompletedPayload(
                 tool_name=call.name,
                 status=status,
-                error_summary=notice,
-                error_code=code,
+                error_summary=f"{code}: {notice}" if code else notice,
                 executed=False,
             ),
             tool_call_id=call.tool_call_id,

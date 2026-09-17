@@ -26,7 +26,6 @@ from forgecli.runtime.project_runtime import (
     ProjectRuntimeRegistry,
     build_project_service,
 )
-from forgecli.security.workspace_grants import GrantError
 from forgecli.web.routers import ROUTERS
 from forgecli.web.security import LocalControlPlaneGuard, SecurityState
 
@@ -72,12 +71,6 @@ def create_app(
 
     @app.exception_handler(WorkspaceError)
     async def workspace_error(_request: Request, exc: WorkspaceError) -> JSONResponse:
-        return JSONResponse(
-            {"detail": exc.message}, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
-        )
-
-    @app.exception_handler(GrantError)
-    async def grant_error(_request: Request, exc: GrantError) -> JSONResponse:
         return JSONResponse(
             {"detail": exc.message}, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
         )

@@ -15,8 +15,8 @@ export type Session = {
   title: string;
   updated_at: string;
   status: string;
-  /** 两个轴, 见 Stance。历史会话可能没有这一项。 */
-  mode?: { sandbox: string; approval: string };
+  /** 模式名, 见 Stance。历史会话可能没有这一项。 */
+  mode?: string;
 };
 
 export type TranscriptEvent = {

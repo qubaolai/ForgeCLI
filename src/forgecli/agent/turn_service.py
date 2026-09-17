@@ -26,6 +26,7 @@ from __future__ import annotations
 import traceback
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import date
 
 from forgecli.agent.loop.builtin_loop import BuiltinAgentLoop
 from forgecli.agent.run_bus import AgentRunEventBus
@@ -36,15 +37,15 @@ from forgecli.agent.run_events import (
     TodoUpdatedPayload,
     TurnFinishedPayload,
 )
+from forgecli.common.cancellation import CancelToken
 from forgecli.common.observability.context import bind
 from forgecli.common.observability.log import get_log
-from forgecli.conversation.assembler import ContextAssembler
-from forgecli.conversation.runtime_facts import RuntimeFacts
+from forgecli.conversation.assembler import AssemblyInputs, ContextAssembler
+from forgecli.conversation.notices import notice
 from forgecli.core.agent.actions import (
     LoopObservation,
     LoopResult,
     ObservationSource,
-    ToolRequest,
 )
 from forgecli.core.agent.state import AssembledContext, LoopInput
 from forgecli.core.agent.stop import LoopStopReason
@@ -52,8 +53,11 @@ from forgecli.core.context.budget import ContextBudget
 from forgecli.core.context.compaction import CompactionDraft, CompactionLevel
 from forgecli.core.context.window import Window
 from forgecli.core.message import ChatMessage, TextBlock
-from forgecli.core.mode import InputOrigin, SessionMode
+from forgecli.core.mode import InputOrigin
 from forgecli.core.model.usage import UsageRecordDraft
+from forgecli.core.permissions import PermissionMode
+from forgecli.core.tool.hashing import digest_text
+from forgecli.core.tool.tool_call import ToolCall
 from forgecli.core.turn import (
     AssistantResponse,
     MessageRole,
@@ -63,13 +67,16 @@ from forgecli.core.turn import (
 )
 from forgecli.memory.service import MemoryService
 from forgecli.planning.service import PlanningService
-from forgecli.prompt.project_instruction_reader import FsProjectInstructionReader
-from forgecli.prompt.system_prompt_builder import SystemPromptBuilder
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
+from forgecli.prompt.project_instruction_reader import (
+    INSTRUCTION_FILE_NAME,
+    FsProjectInstructionReader,
+    ProjectInstruction,
+)
+from forgecli.prompt.session_facts import SessionFacts
 from forgecli.session.events import EventType, SessionEvent
 from forgecli.session.service import SessionService
-from forgecli.tools.pipeline.dispatcher import CoordinatorToolDispatcher
-from forgecli.tools.pipeline.observations import ObservationKind
+from forgecli.tools.runner import ToolRunner, observation_of
 
 _log = get_log(__name__)
 
@@ -86,6 +93,7 @@ class _TurnOutcome:
     # _remember_assistant 把每次模型输出都写了进去. 驱动抛错那条路上循环没交出来,
     # 那时为空, 由 _remember_turn 退回"至少把用户这句话记下"的兜底.
     window: tuple[ChatMessage, ...] = ()
+    evicted_count: int = 0
     stop_reason: str | None = None
     # 完整 traceback. 只进事件日志, 不上屏 —— 终端一行摘要就够,
     # 但排查时必须找得回来.
@@ -102,14 +110,12 @@ class AgentTurnService:
         session: SessionService,
         *,
         loop_factory: Callable[[], BuiltinAgentLoop],
-        # 提示词三件套是必填: 缺提示词的主 Agent 不知道自己是谁, 有哪些工具, 也不
-        # 知道自己在什么平台上. 执行 shell 时, 模型不知道当前平台, 给出的命令可能跑
-        # 不起来.
-        prompt_builder: SystemPromptBuilder,
-        runtime_facts: Callable[[], RuntimeFacts],
+        # 会话事实与 FORGE.md 是必填: 缺了它们的主 Agent 不知道自己在什么平台上, 执行
+        # shell 时给出的命令可能跑不起来. 事实只在会话刷新点重读 (ADR-0056 决策 7).
+        session_facts: Callable[[], SessionFacts],
         instructions: FsProjectInstructionReader,
         # 下面四个随模型配置一起换 (ADR-0051 决策 5), 所以是"用时读"的函数, 跟
-        # runtime_facts 与 loop_factory 一个形状: 读组合根当前字段的闭包. 组合根
+        # session_facts 与 loop_factory 一个形状: 读组合根当前字段的闭包. 组合根
         # reload_llm 换了字段, 这里下一次调用就指向新的, 不需要 reconfigure.
         #
         # 预算返回 None 表示这一轮算不出窗口 (目录里没有这个模型), 那时不压缩也不猜.
@@ -118,19 +124,33 @@ class AgentTurnService:
         memory: Callable[[], MemoryService | None] = lambda: None,
         planning: Callable[[], PlanningService | None] = lambda: None,
         # 没接工具时循环要执行工具会得到一条明确的"工具不可用", 而不是被静默忽略.
-        tools: Callable[[], CoordinatorToolDispatcher | None] = lambda: None,
+        tools: Callable[[], ToolRunner | None] = lambda: None,
         run_bus: AgentRunEventBus | None = None,
+        # 当前这一轮的取消令牌, 与循环挂在 ModelRequest 上的是同一个 (组合根传
+        # TurnCancelSource.current). 执行链拿到它才能在"停止"之后不再起新工具, 让跑着
+        # 的 Bash 与分类器请求收到取消. 用时读: 每轮的 token 都是新的.
+        cancel_token: Callable[[], CancelToken | None] = lambda: None,
+        today: Callable[[], str] = lambda: date.today().isoformat(),
+        # 缓存断裂的 diff 写到哪 (ADR-0056 决策 12). 没给就只记日志.
+        diagnostics_dir: Callable[[], str] | None = None,
     ) -> None:
         self._session = session
         # 组装走 ContextAssembler: 取材规则只该有一份.
-        self._assembler = ContextAssembler(prompt_builder)
-        # 每次现取: 用户可能刚 /add-dir 加过根, 上一次的事实不作数.
-        self._runtime_facts = runtime_facts
+        self._assembler = ContextAssembler(
+            instructions=instructions, diagnostics_dir=diagnostics_dir
+        )
+        self._session_facts = session_facts
         self._instructions = instructions
+        self._today = today
+        # 会话段里那份事实与 FORGE.md 的快照: 只在刷新点重读 (ADR-0056 决策 7).
+        self._facts: SessionFacts | None = None
+        self._project_instructions: tuple[ProjectInstruction, ...] = ()
+        self._evicted_seen = 0
         self._context_budget = context_budget
         self._memory = memory
         self._planning = planning
         self._tools = tools
+        self._cancel_token = cancel_token
         # 计划与待办的运行事件发在这里: 服务独家持有 turn_id 且是唯一的
         # 驱动方. 换成协调器发, 就得让协调器认识"plan_write 这个名字意味着要发事件".
         self._run_bus = run_bus
@@ -146,6 +166,13 @@ class AgentTurnService:
         events = list(history)
         self._turns = sum(1 for e in events if e.type == EventType.USER_MESSAGE)
         self._window = _rebuild_window(events)
+        self.refresh_session_context("resume")
+
+    def refresh_session_context(self, reason: str) -> None:
+        """会话刷新点 (ADR-0056 决策 7): 下一次组装重读事实, FORGE.md 与记忆."""
+        _log.info("context.refresh", reason=reason)
+        self._facts = None
+        self._assembler.refresh(reason)
 
     def current_turn(self) -> TurnIdentity | None:
         """正在跑的那一轮的身份; 没有在跑时为 None."""
@@ -188,6 +215,7 @@ class AgentTurnService:
             )
         # mode 从 session 快照读，单一真相（不再依赖 REPL 内存态）。
         mode = self._session.current().mode
+        self._refresh_if_instructions_changed()
         with _log.span("turn", mode=mode.value) as span:
             outcome = self._obtain_outcome(text, mode, turn_id)
             span.set(
@@ -199,6 +227,14 @@ class AgentTurnService:
                 pause=None if outcome.pause is None else outcome.pause.value,
             )
         _log.info("turn.answer", text=outcome.text)
+        # 通知先于助手回复落盘: 回放时它们就落在用户消息与回复之间, 与本轮里的位置一致.
+        for message in _new_notices(self._window.messages, outcome.window):
+            self._session.record_notice(
+                kind=message.notice_kind,
+                revision=message.notice_revision,
+                text=_text_of(message),
+                turn_id=turn_id,
+            )
         self._session.record_assistant_message(
             outcome.text,
             turn_id=turn_id,
@@ -227,53 +263,77 @@ class AgentTurnService:
 
     # ---- 上下文 ----
 
-    def _assemble_context(self, mode: SessionMode) -> AssembledContext:
-        """组一次调用的材料. 循环每次调模型前调它一次 (ADR-0051 决策 2).
+    def _assemble_context(
+        self, window: Window, mode: PermissionMode
+    ) -> AssembledContext:
+        """组一次调用的材料. 循环每次调模型前调它一次 (ADR-0056 决策 2 / 决策 10).
 
-        不调模型也不执行工具. 每次都现读: 提示词块 builder 内部按进程缓存, FORGE.md,
-        运行事实, 工具目录, 计划, 待办, 记忆都是本地读取, 一次模型调用是几秒, 这点读取
-        看不见. 一轮里输入没变, 组出来的就是同样的字节; 模型自己改了 FORGE.md, 写了
-        记忆, 改了待办, 下一次调用就看到.
+        不调模型也不执行工具. 每次现读的只有计划, 待办, 记忆与工具目录 (本地读取, 一次
+        模型调用是几秒, 这点读取看不见); 会话事实与 FORGE.md 只在刷新点重读. 组装器自己
+        按窗口推出这次要发哪些通知.
         """
-        facts = self._runtime_facts()
+        if window.evicted_count != self._evicted_seen:
+            # 刚压缩过: 会话事实 (git 快照) 与 FORGE.md 跟着重读 (决策 7). 组装器自己
+            # 也按 evicted_count 认出这一次, 重算会话段并重注入.
+            self._evicted_seen = window.evicted_count
+            self._facts = None
+        if self._facts is None:
+            self._facts = self._session_facts()
+            self._project_instructions = self._instructions.read(
+                self._facts.workspace_roots
+            )
         memory = self._memory()
         planning = self._planning()
         tools = self._tools()
+        return self._assembler.assemble(
+            AssemblyInputs(
+                window=window,
+                mode=mode,
+                facts=self._facts,
+                today=self._today(),
+                instructions=self._project_instructions,
+                planning=None if planning is None else planning.load(),
+                memory=() if memory is None else memory.load(),
+                # 工具池按**当前**权限上下文现算 (deny 规则摘掉的工具不出现); schema
+                # 在 ToolRunner 里按会话锁定 (决策 8). 没装工具时为空.
+                tools=() if tools is None else tools.tool_schemas(),
+                budget=self._context_budget(),
+                read_files=None if tools is None else tools.read_file_state,
+            )
+        )
 
-        assembled = self._assembler.assemble(
-            mode=mode,
-            facts=facts,
-            instructions=self._instructions.read(facts.workspace_roots),
-            planning=None if planning is None else planning.load(),
-            memory=() if memory is None else memory.load(),
-            # 目录按**当前**模式现算. 没装工具时为空, 模型就没有任何可调用的工具.
-            tools=() if tools is None else tools.catalog_for(mode).to_model_schemas(),
-            budget=self._context_budget(),
-            # 真围栏, 不是 None: 不给的话"自动放行"那一行报的是保守基线, 比这一档真实的
-            # 边界窄, 模型会以为每一步都得先问人.
-            fence=None if tools is None else tools.fence_for(mode),
-        )
-        policy = assembled.policy
-        _log.info(
-            "context.assembled",
-            fingerprint=policy.fingerprint,
-            blocks=len(policy.blocks),
-            policy_chars=len(policy.text),
-            runtime_chars=len(assembled.runtime_context),
-            state_chars=len(assembled.state_frame),
-            tools=[schema.name for schema in assembled.tools],
-            cwd=facts.working_directory,
-        )
-        # 整段只在 debug 下写: 它每次几千字, info 级别会把日志淹掉, 而"模型到底看到了
-        # 什么"恰恰是最需要能翻出来的一件事.
-        _log.debug("context.system_prompt", text=assembled.system_prompt)
-        _log.debug("context.state_frame", text=assembled.state_frame)
-        return assembled
+    def _refresh_if_instructions_changed(self) -> None:
+        """用户在编辑器里改了 FORGE.md: 下一回合开始重读会话段 (ADR-0056 决策 7).
+
+        模型自己 Edit 的不算: 它刚在 tool_result 里看过自己写的内容. 判据是"模型读过的
+        那份与磁盘上的一致": read_file_state 里有这个文件且内容相同, 就是模型改的.
+        """
+        if self._facts is None:
+            return
+        current = self._instructions.read(self._facts.workspace_roots)
+        if tuple(item.digest for item in current) == tuple(
+            item.digest for item in self._project_instructions
+        ):
+            return
+        tools = self._tools()
+        if tools is not None:
+            cache = tools.read_file_state
+            seen = {
+                digest_text(state.content)
+                for path in cache.keys()  # noqa: SIM118 - FileStateCache 不是 dict
+                if path.endswith(INSTRUCTION_FILE_NAME)
+                and (state := cache.get(path)) is not None
+            }
+            if all(item.digest in seen for item in current):
+                # 模型自己写的, 它已经看过.
+                self._project_instructions = current
+                return
+        self.refresh_session_context("forge_md_changed")
 
     # ---- 内部 ----
 
     def _obtain_outcome(
-        self, text: str, mode: SessionMode, turn_id: str
+        self, text: str, mode: PermissionMode, turn_id: str
     ) -> _TurnOutcome:
         try:
             return self._run_loop(text, mode, turn_id)
@@ -314,7 +374,7 @@ class AgentTurnService:
                 ),
             )
 
-    def _run_loop(self, text: str, mode: SessionMode, turn_id: str) -> _TurnOutcome:
+    def _run_loop(self, text: str, mode: PermissionMode, turn_id: str) -> _TurnOutcome:
         """组两个闭包, 让循环跑完这一次查询 (ADR-0051 决策 3)."""
         loop = self._loop_factory()
         loop_input = LoopInput(
@@ -325,13 +385,14 @@ class AgentTurnService:
                 *self._window.messages,
                 ChatMessage(role=MessageRole.USER, content=(TextBlock(text),)),
             ),
+            evicted_count=self._window.evicted_count,
         )
 
-        def execute(request: ToolRequest) -> LoopObservation:
-            return self._run_tool_and_watch_planning(request, text, mode, turn_id)
+        def execute(calls: tuple[ToolCall, ...]) -> tuple[LoopObservation, ...]:
+            return self._run_tools_and_watch_planning(calls, turn_id)
 
-        def assemble() -> AssembledContext:
-            return self._assemble_context(mode)
+        def assemble(window: Window) -> AssembledContext:
+            return self._assemble_context(window, mode)
 
         # 循环拿到的只是这两个函数: execute 经 _run_tool 走安全管线, assemble 经
         # _assemble_context 读计划, 记忆与目录. 循环认识不到 dispatcher 与各个服务.
@@ -339,25 +400,21 @@ class AgentTurnService:
             loop.run(loop_input, execute=execute, assemble=assemble)
         )
 
-    def _run_tool_and_watch_planning(
-        self,
-        request: ToolRequest,
-        user_text: str,
-        mode: SessionMode,
-        turn_id: str,
-    ) -> LoopObservation:
-        """跑一次工具, 顺带比对计划与待办的 revision, 变了就发事件.
+    def _run_tools_and_watch_planning(
+        self, calls: tuple[ToolCall, ...], turn_id: str
+    ) -> tuple[LoopObservation, ...]:
+        """跑一批工具, 顺带比对计划与待办的 revision, 变了就发事件.
 
         **按 revision 比对, 不按工具名判断** (ADR-0022 §7). 换成"看到 plan_write 就发
         PLAN_CREATED"的话, 这一层就认识了工具名, 而将来任何一条别的路径改了计划 (斜杠
         命令, 恢复, 将来的子 Agent) 都不会有事件.
 
-        服务本来就独家持有 turn_id 且是唯一的驱动方, 所以事件发在这里而不是协调器.
+        服务本来就独家持有 turn_id 且是唯一的驱动方, 所以事件发在这里而不是执行链.
         """
         before = self._planning_revisions()
-        observation = self._run_tool(request, user_text, mode, turn_id)
+        observations = self._run_tools(calls, turn_id)
         self._emit_planning_changes(before, turn_id)
-        return observation
+        return observations
 
     def _planning_revisions(
         self,
@@ -456,37 +513,31 @@ class AgentTurnService:
             payload=payload,
         )
 
-    def _run_tool(
-        self,
-        request: ToolRequest,
-        user_text: str,
-        mode: SessionMode,
-        turn_id: str,
-    ) -> LoopObservation:
-        """把工具请求交给安全管线, 把结论作为 observation 回填.
+    def _run_tools(
+        self, calls: tuple[ToolCall, ...], turn_id: str
+    ) -> tuple[LoopObservation, ...]:
+        """把一批工具请求交给执行链, 把结论作为 observation 回填.
 
         这是 AgentLoop 触达真实世界的**唯一**路径: 循环只拿到这个方法, 服务本身不认识
-        ToolRegistry, 也拿不到 ToolRuntime, 所以不存在"绕过协调器直接执行"这条分支.
+        工具池, 所以不存在"绕过执行链直接执行"这条分支.
         """
         tools = self._tools()
         if tools is None:
-            return LoopObservation(
-                # 前缀取自 ObservationKind, 不手写: 手写一遍就是第二份会漂的格式.
-                content=(
-                    f"[{ObservationKind.TOOL_UNAVAILABLE.value}] "
-                    f"{render_notice("loop.tools_not_wired")}"
-                ),
-                source=ObservationSource.ERROR,
-                is_error=True,
+            notice = prompts.loop_tools_not_wired()
+            return tuple(
+                LoopObservation(
+                    content=notice, source=ObservationSource.ERROR, is_error=True
+                )
+                for _ in calls
             )
-        observation = tools.dispatch(
-            request,
-            mode=mode,
+        outcomes = tools.run(
+            calls,
             session_id=self._session.current().session_id,
             turn_id=turn_id,
-            user_intent_summary=user_text,
+            messages=self._window.messages,
+            cancel=self._cancel_token(),
         )
-        return observation.to_loop_observation()
+        return tuple(observation_of(outcome) for outcome in outcomes)
 
     def _outcome_from_result(self, result: LoopResult) -> _TurnOutcome:
         stop = result.stop
@@ -499,13 +550,14 @@ class AgentTurnService:
                 usage_drafts=result.usage_drafts,
                 compaction_drafts=result.compaction_drafts,
                 window=result.window,
+                evicted_count=result.evicted_count,
                 stop_reason=stop.reason.value,
                 **extra,  # type: ignore[arg-type]
             )
 
         if stop.reason is LoopStopReason.FINAL_ANSWER:
             if answer is None:
-                return outcome(render_notice("stop.no_answer"), TurnStatus.FAILED)
+                return outcome(prompts.STOP_NO_ANSWER, TurnStatus.FAILED)
             return outcome(answer, TurnStatus.COMPLETED)
         if stop.reason is LoopStopReason.WAIT_PLAN_REVIEW:
             # 本轮是成功的: 模型交出了一份计划. 停下来是它主动要的, 不是出错.
@@ -513,18 +565,18 @@ class AgentTurnService:
             # text 取模型这一轮说过的话 (通常是一句"我拟了个方案"), 计划正文由 CLI 从
             # PlanningService 现取 —— 让它跟着回复文本走, 就会有两份可能不一致的正文.
             return outcome(
-                answer or render_notice("stop.review_notice"),
+                answer or prompts.STOP_REVIEW_NOTICE,
                 TurnStatus.COMPLETED,
                 pause=TurnPause.PLAN_REVIEW,
             )
         if stop.reason is LoopStopReason.USER_CANCELLED:
             partial = result.partial_answer or None
-            notice = render_notice("stop.cancel_notice")
+            notice = prompts.STOP_CANCEL_NOTICE
             return outcome(
                 f"{partial}\n{notice}" if partial else notice, TurnStatus.FAILED
             )
         return outcome(
-            stop.message or render_notice("stop.model_call_failed"), TurnStatus.FAILED
+            stop.message or prompts.STOP_MODEL_CALL_FAILED, TurnStatus.FAILED
         )
 
     def _remember_turn(self, text: str, outcome: _TurnOutcome) -> None:
@@ -544,8 +596,10 @@ class AgentTurnService:
         所以这里按"末条是不是已经是这句话"判, 而不是无条件追加 —— 无条件追加会让每一轮
         的回答在跨轮窗口里出现两次, 越往后重复越多.
         """
+        evicted = self._window.evicted_count
         if outcome.window:
             messages = outcome.window
+            evicted = outcome.evicted_count
         else:
             # 驱动抛错时循环没交出窗口. 至少把用户这句话记下来, 否则下一轮它就不见了.
             messages = (
@@ -559,7 +613,7 @@ class AgentTurnService:
                     role=MessageRole.ASSISTANT, content=(TextBlock(outcome.text),)
                 ),
             )
-        self._window = self._window.replace_messages(messages)
+        self._window = Window(messages=messages, evicted_count=evicted)
 
 
 def _ends_with_assistant_text(messages: tuple[ChatMessage, ...], text: str) -> bool:
@@ -590,6 +644,9 @@ def _rebuild_window(events: list[SessionEvent]) -> Window:
     唯一的例外是 ask_user 的回答 (ADR-0043 决策 12): 那是人写的字, 不可复现, 丢了就再也
     找不回来. 它在会话内是一条 tool result, 这里换成一条用户消息 —— 形状不一致, 但比丢掉
     强.
+
+    通知按原位置回放 (ADR-0056 决策 11): 它们是模型当时看到的内容, 而通知的增量与节流
+    就从窗口里推 —— 不回放, 恢复后的第一次调用会把每一条都当成没发过.
     """
     transcript: list[ChatMessage] = []
     for event in events:
@@ -599,15 +656,25 @@ def _rebuild_window(events: list[SessionEvent]) -> Window:
                     role=MessageRole.USER,
                     content=(
                         TextBlock(
-                            render_notice(
-                                "ask_user.answer_replay",
-                                question=str(event.payload.get("question", "")),
-                                answer=str(event.payload.get("answer", "")),
+                            prompts.ask_user_answer_replay(
+                                str(event.payload.get("question", "")),
+                                str(event.payload.get("answer", "")),
                             )
                         ),
                     ),
                 )
             )
+            continue
+        if event.type == EventType.HARNESS_NOTICE:
+            text = str(event.payload.get("text", ""))
+            if text:
+                transcript.append(
+                    notice(
+                        str(event.payload.get("kind", "")),
+                        str(event.payload.get("revision", "")),
+                        text,
+                    )
+                )
             continue
         if event.type == EventType.CONTEXT_COMPACTED:
             summary = _summary_of(event)
@@ -616,9 +683,7 @@ def _rebuild_window(events: list[SessionEvent]) -> Window:
                     ChatMessage(
                         role=MessageRole.USER,
                         content=(
-                            TextBlock(
-                                f"{render_notice("context.compaction_header")}\n\n{summary}"
-                            ),
+                            TextBlock(f"{prompts.COMPACTION_HEADER}\n\n{summary}"),
                         ),
                     )
                 ]
@@ -635,6 +700,25 @@ def _rebuild_window(events: list[SessionEvent]) -> Window:
                 ChatMessage(role=MessageRole.ASSISTANT, content=(TextBlock(text),))
             )
     return Window(messages=tuple(transcript))
+
+
+def _new_notices(
+    before: tuple[ChatMessage, ...], after: tuple[ChatMessage, ...]
+) -> tuple[ChatMessage, ...]:
+    """这一轮新进窗口的通知. 窗口只追加, 所以 before 是 after 的前缀; 压缩过时不是,
+    那时按 id 去重."""
+    if after[: len(before)] == before:
+        fresh = after[len(before) :]
+    else:
+        seen = {id(message) for message in before}
+        fresh = tuple(message for message in after if id(message) not in seen)
+    return tuple(message for message in fresh if message.meta and message.notice_kind)
+
+
+def _text_of(message: ChatMessage) -> str:
+    return "".join(
+        block.text for block in message.content if isinstance(block, TextBlock)
+    )
 
 
 def _summary_of(event: SessionEvent) -> str:

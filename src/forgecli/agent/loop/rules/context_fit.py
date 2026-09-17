@@ -13,7 +13,7 @@ from forgecli.conversation.window_manager import WindowManager
 from forgecli.core.agent.actions import LoopStop
 from forgecli.core.agent.stop import LoopStopReason
 from forgecli.llm.gateway.errors import ModelContextOverflowError, ModelGatewayError
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 
 __all__ = ["ContextFitRule"]
 
@@ -60,7 +60,7 @@ class ContextFitRule:
             _log.error("window.over_allowance", messages=len(result.window.messages))
             return LoopStop(
                 LoopStopReason.CONTEXT_COMPACTION_REQUIRED,
-                render_notice("context.compaction_failed"),
+                prompts.COMPACTION_FAILED,
             )
         if result.drafts:
             return Rewrite(result.window)
@@ -106,5 +106,5 @@ class ContextFitRule:
     def _compaction_required() -> LoopStop:
         return LoopStop(
             LoopStopReason.CONTEXT_COMPACTION_REQUIRED,
-            render_notice("context.compaction_failed"),
+            prompts.COMPACTION_FAILED,
         )

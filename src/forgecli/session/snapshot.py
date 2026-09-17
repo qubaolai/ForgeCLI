@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from forgecli.core.mode import SessionMode
+from forgecli.core.permissions import PermissionMode
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,7 @@ class SessionSnapshot:
     # transcript 走的是事件流本身, 不依赖这个字段.
     last_compaction_event_id: str | None = None
     # 运行时字段，不序列化：排在末尾并带默认值，好让 from_dict 无须为它取值。
-    mode: SessionMode = SessionMode.ACCEPT_EDITS
+    mode: PermissionMode = PermissionMode.DEFAULT
 
     def to_dict(self) -> dict[str, object]:
         """序列化为可 JSON 落盘的纯字典（mode 落字符串值，键名对齐 §4.3）。"""

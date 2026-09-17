@@ -27,7 +27,7 @@ from forgecli.core.agent.actions import LoopObservation, LoopStop
 from forgecli.core.agent.phase import LoopPhase
 from forgecli.core.context.budget import ContextBudget
 from forgecli.core.context.window import Window
-from forgecli.core.mode import SessionMode
+from forgecli.core.permissions import PermissionMode
 from forgecli.core.tool.tool_call import ToolCall, ToolSchema
 from forgecli.llm.gateway.errors import ModelGatewayError
 
@@ -60,7 +60,7 @@ class LoopView:
 
     session_id: str
     turn_id: str
-    mode: SessionMode
+    mode: PermissionMode
     phase: LoopPhase
     window: Window
     tools: tuple[ToolSchema, ...]

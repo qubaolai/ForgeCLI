@@ -12,15 +12,14 @@ import { useCallback, useState } from "react";
 import { api } from "@/shared/api/client";
 import { indexTools } from "@/shared/lib/run/tools";
 import type {
-  Checkpoint,
   FieldSpec,
   KnownProvider,
-  LearnedRule,
   LlmRuntimeSettings,
   ModelsResponse,
+  PermissionRules,
   Provider,
   ProviderProtocol,
-  RecoveryStatus,
+  RewindPoint,
   StatusView,
   ThinkingView,
   WorkspaceRoot,
@@ -42,8 +41,8 @@ export type Administration = ReturnType<typeof useAdministration>;
 
 export function useAdministration(onError: (message: string) => void, reloadProjects: () => Promise<void>) {
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRoot[]>([]);
-  const [rules, setRules] = useState<LearnedRule[]>([]);
-  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
+  const [permissions, setPermissions] = useState<PermissionRules | null>(null);
+  const [rewindPoints, setRewindPoints] = useState<RewindPoint[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [knownProviders, setKnownProviders] = useState<KnownProvider[]>([]);
   const [providerProtocols, setProviderProtocols] = useState<ProviderProtocol[]>([]);
@@ -60,7 +59,6 @@ export function useAdministration(onError: (message: string) => void, reloadProj
   // 就是这个语义), 而历史事件里的调用可能发生在换模式之前.
   const [toolDirectory, setToolDirectory] = useState<ToolDirectory>({});
   const [statusView, setStatusView] = useState<StatusView | null>(null);
-  const [recovery, setRecovery] = useState<RecoveryStatus | null>(null);
 
   const fail = useCallback((reason: unknown) => onError((reason as Error).message), [onError]);
 
@@ -91,21 +89,19 @@ export function useAdministration(onError: (message: string) => void, reloadProj
   }, []);
 
   const loadAll = useCallback(async () => {
-    const [roots, ruleList, checkpointList, toolList, status, recoveryState] = await Promise.all([
+    const [roots, permissionRules, rewindList, toolList, status] = await Promise.all([
       api<{ items: WorkspaceRoot[] }>("/workspace-roots"),
-      api<{ items: LearnedRule[] }>("/rules"),
-      api<{ items: Checkpoint[] }>("/checkpoints"),
+      api<PermissionRules>("/permissions"),
+      api<{ items: RewindPoint[] }>("/rewind"),
       api<ToolsResponse>("/tools"),
       api<StatusView>("/status"),
-      api<RecoveryStatus>("/recovery"),
     ]);
     setWorkspaceRoots(roots.items);
-    setRules(ruleList.items);
-    setCheckpoints(checkpointList.items);
+    setPermissions(permissionRules);
+    setRewindPoints(rewindList.items);
     setTools(toolList.items);
     setToolDirectory(indexTools(toolList.all));
     setStatusView(status);
-    setRecovery(recoveryState);
     await loadModels();
   }, [loadModels]);
 
@@ -145,8 +141,8 @@ export function useAdministration(onError: (message: string) => void, reloadProj
 
   return {
     workspaceRoots,
-    rules,
-    checkpoints,
+    permissions,
+    rewindPoints,
     providers,
     knownProviders,
     providerProtocols,
@@ -161,7 +157,6 @@ export function useAdministration(onError: (message: string) => void, reloadProj
     tools,
     toolDirectory,
     statusView,
-    recovery,
 
     loadAll,
     loadModels,
@@ -177,16 +172,15 @@ export function useAdministration(onError: (message: string) => void, reloadProj
         () => api(`/workspace-roots?path=${encodeURIComponent(path)}`, { method: "DELETE" }),
         withProjects,
       ),
-    revokeRule: (id: string) => write(() => api(`/rules/${id}`, { method: "DELETE" })),
-    pruneRules: () => write(() => api("/rules/prune", { method: "POST" })),
-    restoreCheckpoint: (id: string) =>
+    removeRule: (behavior: string, source: string, rule: string) =>
       write(() =>
-        api(`/checkpoints/${id}/restore`, {
+        api("/permissions/remove", {
           method: "POST",
-          body: JSON.stringify({ force_conflicts: false }),
+          body: JSON.stringify({ behavior, source, rule }),
         }),
       ),
-    undoLatest: () => write(() => api("/undo", { method: "POST" })),
+    rewindTo: (messageId: string) =>
+      write(() => api(`/rewind/${encodeURIComponent(messageId)}`, { method: "POST" })),
 
     addProvider: (body: ProviderDraft) =>
       write(() => api("/providers", { method: "POST", body: JSON.stringify(body) })),
@@ -250,16 +244,6 @@ export function useAdministration(onError: (message: string) => void, reloadProj
         setThinking(result.thinking);
       } catch (reason) {
         fail(reason);
-      }
-    },
-
-    /** 预览把失败也当成内容返回: 它渲染在一个折叠区里, 弹错误横幅太重。 */
-    previewCheckpoint: async (id: string): Promise<string> => {
-      try {
-        const result = await api<Record<string, unknown>>(`/checkpoints/${id}/preview`);
-        return JSON.stringify(result, null, 2);
-      } catch (reason) {
-        return (reason as Error).message;
       }
     },
   };

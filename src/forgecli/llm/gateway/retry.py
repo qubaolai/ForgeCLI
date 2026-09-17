@@ -8,17 +8,28 @@ except 分支, 计数器与冷却逻辑完全相同, 差别只在"这一次尝�
 不会有任何东西报错 —— 它只会让两条路在同样的故障下表现不同, 而这种偏差要撞上真实的
 供应商故障才看得见。现在两条路走同一个 ``run``, 差异由传进来的 ``attempt`` 表达。
 
-错误分类表 (§12):
+错误分类表 (§12, ADR-0059):
 
-===================  =========================================================
-ModelCancelledError  直接上抛, 不重试 —— 用户已经不要这个结果了
-ModelRateLimitError  带 retry_after 且不超阈值: 原地等, **同一凭证**重试
-                     否则: 冷却这把凭证, 换下一把
-ModelAuthError       冷却这把凭证, 换下一把; keyless 时无凭证可换, 上抛
-Timeout/Unavailable  同凭证有限重试, 记一次 transport 失败
-其余 ModelGatewayError  上抛, 不重试
-其余任何异常          归一化成 ModelProviderInternalError 上抛
-===================  =========================================================
+=========================  ===================================================
+ModelCancelledError        直接上抛, 不重试 —— 用户已经不要这个结果了
+ModelQuotaExhaustedError   这把 key 没额度了: 长冷却 (小时级, 落盘), 换下一把
+ModelRateLimitError        带 retry_after 且不超阈值: 原地等, **同一凭证**重试
+                           否则: 冷却这把凭证, 换下一把
+ModelAuthError             冷却这把凭证, 换下一把; keyless 时无凭证可换, 上抛
+Timeout/Unavailable        同凭证有限重试, 记一次 transport 失败
+其余 ModelGatewayError     上抛, 不重试
+其余任何异常               归一化成 ModelProviderInternalError 上抛
+=========================  ===================================================
+
+两条互不相干的界 (ADR-0059 决策 3):
+
+- **换凭证**以凭证池为界: 每把 key 在一次调用里最多被冷却一次, 全部冷却过就把最后
+  那个 provider 错误上抛. 配了几把 key 就能试几把, 不看 ``max_retries``.
+- **同凭证重试** (429 短等, 超时 / 连接失败) 以 ``max_retries`` 为界, 两类共用一份
+  预算. 换 key 对这两类没有帮助 —— 超时是服务的事, 不是 key 的事.
+
+原先两类都计入 ``max_retries`` (默认 2), 于是配了五把 key 也只轮到前三把, 而那一条
+限制在配置界面上看不出来.
 """
 
 from __future__ import annotations
@@ -38,6 +49,7 @@ from forgecli.llm.gateway.errors import (
     ModelCancelledError,
     ModelGatewayError,
     ModelProviderInternalError,
+    ModelQuotaExhaustedError,
     ModelRateLimitError,
     ModelTimeoutError,
     ModelUnavailableError,
@@ -120,20 +132,45 @@ class CredentialRetryLoop:
         要等整条流走完才算好用, 由调用方在收尾处自己调 ``mark_succeeded``。
         """
         last_error: ModelGatewayError | None = None
-        for _ in range(settings.max_retries + 1):
+        # 同凭证重试的预算: 短等与传输失败共用. 换凭证不花它.
+        retries_left = settings.max_retries
+        # 本次调用里已经冷却过的 key. 凭证池按冷却截止时刻选 key, 而截止时刻可能在
+        # 我们试别的 key 的这几秒里过去 (Retry-After: 0 甚至立刻过去) —— 于是同一把
+        # key 会被再选一次, 环就没有界了. 这张表让"每把 key 至多一次"不依赖时钟.
+        cooled: set[str] = set()
+        while True:
             raise_if_cancelled(request, ref)
             try:
                 credential = self.credential_for(request, ref, settings)
-            except ModelAuthError:
+            except ModelGatewayError:
                 if last_error is not None:
                     # 凭证池耗尽（全部冷却 / 失败）：上抛最后一次 provider 错误。
                     raise last_error from None
                 raise
+            if credential is not None and credential.ref in cooled:
+                assert last_error is not None
+                raise last_error from None
 
             try:
                 result = attempt(credential)
             except ModelCancelledError:
                 raise
+            except ModelQuotaExhaustedError as exc:
+                last_error = with_context(exc, ref, request)
+                _log.warning(
+                    "llm.quota_exhausted",
+                    provider=ref.provider,
+                    model=ref.model,
+                    cooldown_seconds=settings.quota_cooldown_seconds,
+                    message=str(exc),
+                    **credential_fields(credential),
+                )
+                if credential is None:
+                    raise last_error from exc  # keyless：无凭证可换
+                self._exhaust(credential, settings.quota_cooldown_seconds)
+                cooled.add(credential.ref)
+                counts.credential += 1
+                continue
             except ModelRateLimitError as exc:
                 last_error = with_context(exc, ref, request)
                 _log.warning(
@@ -144,9 +181,10 @@ class CredentialRetryLoop:
                     message=str(exc),
                     **credential_fields(credential),
                 )
-                if _should_wait(exc, settings):
+                if _should_wait(exc, settings) and retries_left > 0:
                     # 429 短等重试（ADR-0012 §2）：本地等待后同一凭证重试；
                     # 等待经注入 sleeper，计入 latency，不计 provider 计费。
+                    retries_left -= 1
                     counts.wait += 1
                     assert exc.retry_after is not None
                     self._sleeper(exc.retry_after)
@@ -154,6 +192,7 @@ class CredentialRetryLoop:
                 if credential is None:
                     raise last_error from exc  # keyless：无凭证可换
                 self._cool_down(credential, exc, exc.retry_after)
+                cooled.add(credential.ref)
                 counts.credential += 1
                 continue
             except ModelAuthError as exc:
@@ -169,12 +208,16 @@ class CredentialRetryLoop:
                 if credential is None:
                     raise last_error from exc
                 self._cool_down(credential, exc, None)
+                cooled.add(credential.ref)
                 counts.credential += 1
                 continue
             except (ModelTimeoutError, ModelUnavailableError) as exc:
                 # 连接 / 超时：同凭证有限重试（§12 处理表）。
                 self._health.record_failure(ref)
                 last_error = with_context(exc, ref, request)
+                if retries_left == 0:
+                    raise last_error from exc
+                retries_left -= 1
                 counts.transport += 1
                 _log.warning(
                     "llm.transport_retry",
@@ -207,8 +250,6 @@ class CredentialRetryLoop:
                 if mark_success:
                     self.mark_succeeded(credential)
                 return result
-        assert last_error is not None
-        raise last_error
 
     # ---- 凭证 ----
 
@@ -220,7 +261,9 @@ class CredentialRetryLoop:
     ) -> Credential | None:
         """获取本次调用凭证；keyless（无 refs）或未接凭证池时为 None。
 
-        未配置凭证时在此抛 ModelAuthError——**不发起任何网络请求**（§7 / §19）。
+        未配置凭证时在此抛 ModelAuthError, 全部冷却时抛 ModelRateLimitError /
+        ModelQuotaExhaustedError (见 InMemoryCredentialPool.get_credential) ——
+        **不发起任何网络请求**（§7 / §19）。
         凭证不被独占：并发调用可拿到同一凭证，网关不做凭证维度并发限制。
         """
         if self._credentials is None or not settings.credential_refs:
@@ -243,6 +286,10 @@ class CredentialRetryLoop:
             self._credentials.mark_failed(
                 credential.ref, type(exc).__name__, retry_after
             )
+
+    def _exhaust(self, credential: Credential, cooldown: float) -> None:
+        if self._credentials is not None:
+            self._credentials.mark_exhausted(credential.ref, cooldown)
 
 
 def _should_wait(exc: ModelRateLimitError, settings: ProviderRuntimeSettings) -> bool:

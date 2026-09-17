@@ -29,7 +29,6 @@ from forgecli.core.execution.environment import (
 )
 from forgecli.core.execution.profile import ExecutionProfile, IsolationLevel
 from forgecli.execution.sandbox.wsl2 import wsl2_bubblewrap_available
-from forgecli.security.executable_resolver import EXECUTABLE_RESOLUTION_VERSION
 from forgecli.settings.paths import windows_known_directory
 
 __all__ = ["build_execution_environment", "probe_execution_profile"]
@@ -63,7 +62,7 @@ def probe_execution_profile(
         environment_inheritance=inheritance,
         controlled_environment=_controlled_environment(is_windows),
         protected_roots_hash=protected_roots_hash,
-        executable_resolution_version=EXECUTABLE_RESOLUTION_VERSION,
+        executable_resolution_version="2",
         path_separator=separator,
     )
 

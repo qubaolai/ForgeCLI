@@ -28,7 +28,7 @@ from forgecli.llm.gateway.gateway import LlmGateway
 from forgecli.llm.gateway.streaming import StreamAccumulator
 from forgecli.llm.metering import UsageMeter
 from forgecli.llm.transport_policy import ModelTransportMode
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 
 __all__ = ["AgentModelInvoker", "ModelOutcome"]
 
@@ -136,10 +136,8 @@ class AgentModelInvoker:
             #
             # 这次模型调用确实失败了, 所以照常收尾; 但本轮不一定要结束, 所以抛而不是
             # return —— 由循环的统一处理决定重试还是中止, 与非流式路径走同一条判断.
-            self._failed(
-                request, "partial_tool_call", render_notice("stop.partial_tool_call")
-            )
-            raise MalformedToolCallError(render_notice("stop.partial_tool_call"))
+            self._failed(request, "partial_tool_call", prompts.STOP_PARTIAL_TOOL_CALL)
+            raise MalformedToolCallError(prompts.STOP_PARTIAL_TOOL_CALL)
 
         tool_calls = accumulator.tool_calls()
         self._finished(
@@ -159,10 +157,10 @@ class AgentModelInvoker:
         不收尾的话终端的活动区会停在"正在思考"上等一个永远不来的结束事件 (ADR-0016 §5)。
         """
         if tail.finish_reason is FinishReason.USER_CANCELLED:
-            notice = render_notice("stop.cancelled")
+            notice = prompts.STOP_CANCELLED
             self._failed(request, "user_cancelled", notice, retryable=True)
             return LoopStop(LoopStopReason.USER_CANCELLED, message=notice)
-        notice = render_notice("stop.stream_interrupted")
+        notice = prompts.STOP_STREAM_INTERRUPTED
         self._failed(request, "stream_interrupted", notice)
         return LoopStop(LoopStopReason.MODEL_ERROR_BLOCKING, message=notice)
 

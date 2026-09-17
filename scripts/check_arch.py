@@ -75,18 +75,14 @@ THIRD_PARTY_HOMES: dict[str, tuple[str, ...]] = {
 
 # 同层互斥: (包前缀, 不得 import 的包前缀, 豁免前缀, 说明).
 SIBLING_BANS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
-    (
-        "tools",
-        "security",
-        # 管线是唯一的装配点: 它串起机制, 安全, 审批与恢复 (ADR-0004 §5).
-        ("tools.pipeline",),
-        "工具是机制层, 不做安全决策 (ADR-0004 §2)",
-    ),
+    # ADR-0054 之后工具认识权限 (每个工具自己实现 check_permissions, 与 Claude Code 同),
+    # 所以 tools -> security 是允许的; 反方向仍然禁止: 权限逻辑只认识 core 里的 Tool
+    # 协议, 不认识任何具体工具实现.
     (
         "security",
         "tools",
         (),
-        "安全是策略层, 不认识任何具体工具实现 (ADR-0004 §2)",
+        "权限逻辑只依赖 core 里的 Tool 协议, 不认识具体工具实现 (ADR-0055)",
     ),
     # 上游只认识 LlmGateway 抽象, 不认识网关实现 (ADR-0011 §3.1, ADR-0028 规则 A1).
     # DefaultLlmGateway 拖着 provider 注册表, 凭证池, 重试环与治理件; 让 agent.loop
@@ -133,17 +129,18 @@ SIBLING_BANS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
         (),
         "AgentLoop 不读写长期记忆 (ADR-0010 §影响)",
     ),
-    # 工具链路只认识自己的输出抽象, 不认识另一头的实现 (ADR-0028 规则 A1).
-    # 删掉它, ToolRunObserver 这个抽象就白留了 —— 协调器会顺着 import 直接认识事件总线.
+    # 执行链只认识自己的输出抽象, 不认识另一头的实现 (ADR-0028 规则 A1).
+    # 删掉它, ToolRunObserver 这个抽象就白留了 —— 执行链会顺着 import 直接认识事件总线.
     (
-        "tools.pipeline",
+        "tools",
         "agent",
         (),
-        "工具链路不认识终端事件总线, 只发 ToolRunObserver (ADR-0016 §4.3)",
+        "执行链不认识终端事件总线, 只发 ToolRunObserver (ADR-0016 §4.3)",
     ),
     # 人机提示通道是审批与 ask_user 共用的那一条队列 (ADR-0043 决策 3). 它承重的地方
-    # 恰恰是**它什么都不认识**: 一旦 HumanPrompt 里出现 ApprovalScope 或 ToolPlan,
-    # 下一次给审批加字段就会顺手让提问也拿到它, 而那个字段可能正是一档授权范围.
+    # 恰恰是**它什么都不认识**: 一旦 HumanPrompt 里出现 PermissionUpdate 或
+    # PermissionResult, 下一次给审批加字段就会顺手让提问也拿到它, 而那个字段可能正是
+    # 一条放行规则.
     #
     # 这条边界必须是机器守得住的 —— 写在注释里的"请保持哑"挡不住任何一次顺手.
     (

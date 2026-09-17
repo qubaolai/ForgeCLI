@@ -29,6 +29,8 @@ class RequestOrigin(Enum):
     SUMMARY = "summary"
     COMPACT = "compact"
     STRUCTURED_CLASSIFICATION = "structured_classification"
+    # auto 模式的安全分类器 (ADR-0058): 一次工具调用该不该拦.
+    PERMISSION_CLASSIFIER = "permission_classifier"
 
 
 # 哪些用途**不需要**思考 (ADR-0011 §3.3 明写 origin 用于"参数默认").
@@ -56,6 +58,9 @@ def _register_thinking_defaults() -> None:
         RequestOrigin.SUMMARY,
         RequestOrigin.COMPACT,
         RequestOrigin.STRUCTURED_CLASSIFICATION,
+        # 分类器要的是一个快而稳的判断, 提示词里已经把判据写死; 思考预算花在这里只会
+        # 让每一次工具调用多等几秒.
+        RequestOrigin.PERMISSION_CLASSIFIER,
     }
     missing = set(RequestOrigin) - thinks - mechanical
     if missing:

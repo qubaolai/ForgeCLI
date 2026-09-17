@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
-from forgecli.core.serialization import to_jsonable
+from forgecli.core.tool.tool import PromptOptions
 from forgecli.web.deps import active_runtime
 
 router = APIRouter(prefix="/api/v1")
@@ -14,29 +14,29 @@ router = APIRouter(prefix="/api/v1")
 async def tools(request: Request) -> dict[str, object]:
     """两份清单, 因为界面上有两个问题.
 
-    `items` 是**当前模式下模型可见的**工具, 管理面板照这个语义展示 —— 换模式这份
-    就该跟着变.
-
-    `all` 是全部已注册工具的展示名与动作, 与模式无关: 运行过程视图要把历史事件里的
-    工具名翻成中文, 而那些调用可能发生在换模式之前, 按当前模式过滤的那份里没有它们.
-    前端曾经为此自带一张手抄表, 于是 `artifact_read` 在后端叫"读回已归档的输出",
-    在界面上叫"读取产物".
+    `items` 是**当前权限上下文下模型可见的**工具 (deny 规则摘掉的不在), 管理面板照这个
+    语义展示. `all` 是全部内置工具, 与规则无关: 运行过程视图要把历史事件里的工具名翻成
+    说明, 而那些调用可能发生在规则改变之前.
     """
     runtime = active_runtime(request)
-    catalog = runtime.tools.dispatcher.catalog_for(runtime.session.current().mode)
+    runner = runtime.tools.runner
+    pool = runner.pool()
+    options = PromptOptions(tools=pool, get_app_state=runner.get_app_state)
     return {
-        "items": [to_jsonable(item) for item in catalog.entries],
+        "items": [
+            {
+                "name": tool.name,
+                "description": tool.prompt(options),
+                "parameters": dict(tool.input_schema),
+            }
+            for tool in pool
+        ],
         "all": [
             {
-                "name": spec.name,
-                "title": spec.title,
-                # 归类按能力, 不按另立的分类字段: 能力是安全层已经在消费的真相
-                # (catalog_predicates 就按它过滤目录), 而原先那个 action 只有
-                # 展示这一个消费方 (ADR-0042 决策 6).
-                "capabilities": sorted(
-                    item.value for item in spec.declared_capabilities
-                ),
+                "name": tool.name,
+                "title": tool.prompt(options).strip().splitlines()[0][:80],
+                "read_only": tool.is_read_only({}),
             }
-            for spec in runtime.tools.registry.describe_all()
+            for tool in runner.base_tools
         ],
     }

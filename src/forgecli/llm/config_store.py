@@ -87,6 +87,16 @@ class JsonLlmConfigStore:
         _ensure_provider(document, provider_id, provider_defaults)[field] = value
         write_document(self._path, document)
 
+    def drop_provider_field(self, provider_id: str, field: str) -> None:
+        """删掉供应商的一个顶层字段; 段或字段本来就没有时什么都不写."""
+        document = read_document(self._path)
+        providers = document.get(_SECTION, {}).get("providers", {})
+        provider = providers.get(provider_id) if isinstance(providers, dict) else None
+        if not isinstance(provider, dict) or field not in provider:
+            return
+        del provider[field]
+        write_document(self._path, document)
+
     def upsert_runtime_field(self, section: str, field: str, value: object) -> None:
         """写入应用级 ``llm.<section>`` 配置，保留其他段。"""
         document = read_document(self._path)

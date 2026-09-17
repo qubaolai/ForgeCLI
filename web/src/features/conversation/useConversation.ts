@@ -16,7 +16,7 @@ import { failUnboundTurn, finishLocalTurn, newLocalTurn, restoreTurn } from "@/s
 import type { ModePreset, Stance } from "@/shared/lib/stance";
 import type { Session, TranscriptEvent, TurnRunState } from "@/types/session";
 
-const DEFAULT_STANCE: Stance = { sandbox: "workspace_write", approval: "always" };
+const DEFAULT_STANCE: Stance = "default";
 
 export type Conversation = ReturnType<typeof useConversation>;
 

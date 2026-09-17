@@ -3,7 +3,7 @@
 安全审批与 ``ask_user`` 共用它. **共用的是等待, 不是语义** —— 通道交回一个
 ``PromptAnswer`` 就结束了, "这个回答意味着什么"由各自的适配器决定:
 ``ApprovalService`` 把 ``choice`` 映射回 ``ApprovalOutcome`` 与
-``ApprovalScope``, ``AskUserTool`` 把 ``text`` 原样当成工具结果.
+要施加的建议, ``AskUserQuestionTool`` 把 ``text`` 原样当成工具结果.
 
 **不设等待超时.** 正确的终止条件只有三个: 人做出决定, 人停止这一轮, 进程退出. 挂钟到点
 就把提示判成"没人答", 等于让用户去泡杯咖啡的功夫决定这次调用的命运 —— 而审批那侧收到

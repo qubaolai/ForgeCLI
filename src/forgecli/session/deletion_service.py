@@ -38,7 +38,6 @@ from dataclasses import dataclass
 
 from forgecli.common.errors import SessionStateError
 from forgecli.common.observability.log import get_log
-from forgecli.recovery.coordinator import WorkspaceMutationCoordinator
 from forgecli.session.catalog import FsSessionCatalog, Tombstone
 from forgecli.session.state_store import JsonStateStore
 
@@ -68,13 +67,10 @@ class SessionDeletionService:
         state_store: JsonStateStore,
         *,
         workspace_id: str,
-        recovery: WorkspaceMutationCoordinator | None = None,
     ) -> None:
         self._catalog = catalog
         self._states = state_store
         self._workspace_id = workspace_id
-        # 缺省为 None: 没接恢复层时照常删会话目录, 只是没有恢复点要清。
-        self._recovery = recovery
 
     def begin(self, session_id: str) -> tuple[DeletedSession, Tombstone]:
         """把会话挪进回收位并返回墓碑; 不存在抛 SessionStateError。
@@ -91,20 +87,13 @@ class SessionDeletionService:
         return DeletedSession(session_id=session_id, title=snapshot.title), tombstone
 
     def purge(self, tombstone: Tombstone) -> int:
-        """真正清掉一个墓碑: 恢复点先走, 再删目录。返回清掉的恢复点数。
-
-        顺序有意义: **先清恢复点, 再删墓碑目录**。反过来的话, 中途失败会留下一批恢复
-        点, 而记着它们归属的那个墓碑已经不在了 —— 谁也不会再去清它们。
+        """真正清掉一个墓碑目录. 文件历史的备份在会话目录里, 随目录一起删.
 
         整个过程吞异常并如实记日志: 它跑在后台, 抛出去没有人接得住; 而清不干净的后果
         是占着磁盘, 不是数据不对 —— 下一次启动的扫描还会再试一遍。
         """
         removed = 0
         try:
-            if self._recovery is not None:
-                removed = self._recovery.discard_session(
-                    self._workspace_id, tombstone.session_id
-                )
             self._catalog.purge(tombstone)
         except Exception as error:  # noqa: BLE001 - 后台边界, 见 docstring
             _log.exception(

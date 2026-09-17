@@ -130,9 +130,9 @@ COMMANDS: tuple[Command, ...] = (
         mode.cmd_mode,
         usage="/mode [预设名]",
         detail=(
-            "预设名 manual / plan / accept_edits / auto / full_access, 从每事必问到"
-            "围栏内不问.\n"
-            "full_access 只在启动时带了 --allow-full-access 才可选.\n"
+            "模式名 default / accept_edits / plan / bypass_permissions / auto.\n"
+            "auto 把需要确认的操作交给安全分类器, 只拦有害与越界的; "
+            "bypass_permissions 只在启动时带了 --allow-full-access 才可选.\n"
             "输入框里 Tab / Shift-Tab 也能沿这条梯度切档."
         ),
         category="运行",
@@ -203,26 +203,22 @@ COMMANDS: tuple[Command, ...] = (
         keywords=("工具", "权限"),
     ),
     Command(
-        "/rules",
-        "学习到的放行规则",
-        security.cmd_rules,
-        usage="/rules [prune]",
+        "/permissions",
+        "权限规则: allow / deny / ask 三张表",
+        security.cmd_permissions,
         detail=(
-            '人类明确选过"本工作区始终允许"才会有规则; 模型不能创建或扩大它们.\n'
-            "prune 清掉过期或不再匹配当前执行画像的那些."
+            "规则写法与 Claude Code 同: Bash(git commit:*), Edit(src/**).\n"
+            "内置来源只读; 用户与项目来源在设置文件里, 本会话来源随会话消失."
         ),
         category="安全",
-        keywords=("规则", "授权"),
+        keywords=("规则", "授权", "权限"),
     ),
     Command(
         "/dirs",
         "工作区目录与读写授权",
         security.cmd_dirs,
         usage="/dirs [路径]",
-        detail=(
-            "额外目录重启后一律按只读恢复: 项目配置只存路径, 不存写授权.\n"
-            "要写就在这里重新升一次 —— 安全上宁可多问一次."
-        ),
+        detail="加进来的目录读写都自动放行; 项目配置只存路径, 重启后照样在.",
         category="安全",
         keywords=("目录", "读写", "授权"),
     ),
@@ -250,26 +246,13 @@ COMMANDS: tuple[Command, ...] = (
         keywords=("待办",),
     ),
     Command(
-        "/checkpoints",
-        "恢复点: 预览与还原",
-        recovery.cmd_checkpoints,
-        detail="冲突项默认跳过, 不静默覆盖: 恢复点之后的改动不在任何恢复点里.",
+        "/rewind",
+        "回到某条消息之前的文件状态",
+        recovery.cmd_rewind,
+        usage="/rewind [消息 id]",
+        detail="只覆盖 Edit / Write 改过的文件; Bash 改的不在历史里.",
         category="恢复",
-        keywords=("恢复点", "还原"),
-    ),
-    Command(
-        "/undo",
-        "还原最近一次改动",
-        recovery.cmd_undo,
-        category="恢复",
-        keywords=("撤销",),
-    ),
-    Command(
-        "/recovery",
-        "恢复层状态与未收尾事务",
-        recovery.cmd_recovery,
-        category="恢复",
-        keywords=("恢复", "事务"),
+        keywords=("回退", "撤销", "还原"),
     ),
     Command(
         "/clear",

@@ -1,14 +1,12 @@
-/** 工具清单与工具目录的响应形状。 */
+/** 工具清单的响应形状 (GET /tools)。 */
 
 export type ToolSpec = {
   name: string;
-  title: string;
   description: string;
-  declared_capabilities: string[];
-  default_timeout_seconds: number;
+  parameters: Record<string, unknown>;
 };
 
-/** `/tools` 的 `all`: 与模式无关的全量展示名, 见后端那个路由的说明。 */
-export type ToolDirectoryItem = { name: string; title: string; capabilities: string[] };
+/** `/tools` 的 `all`: 全部内置工具的展示名, 与规则无关, 见后端那个路由的说明。 */
+export type ToolDirectoryItem = { name: string; title: string; read_only: boolean };
 
 export type ToolsResponse = { items: ToolSpec[]; all: ToolDirectoryItem[] };

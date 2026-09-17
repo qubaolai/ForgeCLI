@@ -177,8 +177,7 @@ function describeCall(
   // prepare 归一化过的入参更贴近真正执行的东西; 但连 prepare 都没走到的调用只有排队时
   // 那一份, 而那正是最需要看参数的场合 —— 工具名写错时, 参数是唯一的线索。
   const args = prepared ? argumentsOf(prepared) : argumentsOf(queued);
-  const targets = Array.isArray(prepared?.payload.targets) ? prepared.payload.targets.map(stringValue) : [];
-  const targetCount = numberValue(prepared?.payload.target_count);
+  const activity = stringValue(prepared?.payload.activity);
   const state = stateOfTool(events, turnStatus);
   const summary = completed
     ? stringValue(completed.payload.error_summary) || stringValue(completed.payload.result_summary)
@@ -196,10 +195,8 @@ function describeCall(
   return {
     key,
     tool: toolActionLabel(name, directory),
-    // 目标优先于入参: 它是裁决层解析出来的结果, 比模型写进去的那一份准。
-    subject: targets.length
-      ? targets.slice(0, 3).join(", ") + (targetCount > targets.length ? ` 等 ${targetCount} 个` : "")
-      : args.map(([field, value]) => `${field}=${clip(value)}`).join(" "),
+    // 工具自己给的一句说明优先于入参: 它说的是"要做什么", 入参说的是"传了什么"。
+    subject: activity || args.map(([field, value]) => `${field}=${clip(value)}`).join(" "),
     state,
     stateText: toolState(latest, completed, awaiting, state),
     elapsedMs: completed ? numberValue(completed.payload.elapsed_ms) : 0,
@@ -218,18 +215,9 @@ function argumentsOf(event: RunEvent | undefined): Array<[string, string]> {
 
 function policyNote(event: RunEvent): { text: string; tone: Tone } {
   const decision = stringValue(event.payload.decision);
-  const facts = Array.isArray(event.payload.risk_facts) ? event.payload.risk_facts.map(stringValue) : [];
-  const rule = stringValue(event.payload.matched_rule_id);
+  const reason = stringValue(event.payload.reason);
   const detail = stringValue(event.payload.detail);
-  const text = [
-    `安全裁决 ${decision}`,
-    event.payload.reason ? stringValue(event.payload.reason) : "",
-    rule ? `规则 ${rule}` : "",
-    facts.length > 0 ? `风险 ${facts.join(", ")}` : "",
-    detail,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const text = [`裁决 ${decision}`, reason, detail && detail !== reason ? detail : ""].filter(Boolean).join(" · ");
   return { text, tone: decision === "allow" ? "secondary" : "warning" };
 }
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-__all__ = ["CancelToken"]
+__all__ = ["CancelToken", "CancelledError"]
 
 
 @dataclass(eq=False)
@@ -26,3 +26,7 @@ class CancelToken:
     @property
     def cancelled(self) -> bool:
         return self._cancelled
+
+
+class CancelledError(Exception):
+    """被取消方发现 token 已取消时抛出, 让调用链一路退到能收拾现场的地方."""

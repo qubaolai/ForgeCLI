@@ -59,7 +59,7 @@ class WindowManager:
         estimator: ApproximateTokenEstimator | None = None,
         meter: UsageMeter | None = None,
     ) -> None:
-        # 单条工具结果的内联上限, 由装配层从 ResourceGovernor 取. 必填而不是给个缺省:
+        # 单条工具结果的内联上限, 由装配层给. 必填而不是给个缺省:
         # 缺省值与真实配置对不上的话, 那条水位判据查的就是另一套数, 而它不会报错.
         self._max_inline_bytes = max_inline_bytes
         # gateway 缺省为 None: 没接时照常淘汰, 只是被丢掉那一段没有交接说明 ——

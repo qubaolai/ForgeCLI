@@ -128,7 +128,10 @@ async def models(request: Request) -> dict[str, object]:
                 "id": spec.id,
                 "label": spec.label,
                 "api_key_env": spec.api_key_env,
-                # 只看环境变量在不在, 不读它的值 (application/llm/availability).
+                # 网关真正会用的环境变量名 (credential_refs, 或由 api_key_env 派生):
+                # "缺少 XXX"要列它们, 而不是注册表里那个默认名.
+                "credential_refs": list(runtime.availability.credential_refs(spec.id)),
+                # 只看环境变量在不在, 不读它的值 (llm/availability).
                 "available": runtime.availability.is_available(spec.id),
                 # 哪几家是内置的由后端说. 前端手抄一份清单的话, 加一家内置供应商就
                 # 会让它出现在"自建"那一组下, 而不会有任何东西报错.

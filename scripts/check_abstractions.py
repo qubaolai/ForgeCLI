@@ -32,18 +32,13 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parent.parent / "src" / "forgecli"
 
 # A3: 开放扩展点. 实现数量本身就是它们存在的理由, 新增实现不该改任何既有代码.
-OPEN_EXTENSION_POINTS: frozenset[str] = frozenset(
-    {
-        "Tool",
-        "CapabilityAnalyzer",
-    }
-)
+OPEN_EXTENSION_POINTS: frozenset[str] = frozenset({"Tool"})
 
 # A1 的包内形态: 抽象所在包 -> 实现所在包, 两者之间有 check_arch.py 守住的 SIBLING_BAN.
 # 列在这里的抽象即使实现同层, 也承担依赖倒置 —— 删掉它上游就要跨过那条边界.
 INVERTED_PACKAGE_BOUNDARIES: frozenset[str] = frozenset(
     {
-        "ToolRunObserver",  # tools.pipeline 不认识 agent
+        "ToolRunObserver",  # tools 不认识 agent
         "LlmGateway",  # agent.loop 与 conversation 不认识 llm.gateway.default_gateway
         "ModelProvider",  # llm.gateway 不认识 llm.adapters
     }

@@ -1,21 +1,19 @@
-/** 管理面的响应形状: 供应商, 模型, 网关, 工作区根, 学习规则, 恢复点与状态。 */
+/** 管理面的响应形状: 供应商, 模型, 网关, 工作区根, 权限规则, 文件历史与状态。 */
 
 export type WorkspaceRoot = { path: string; access: string };
 
-export type LearnedRule = {
-  rule_id: string;
-  label: string;
-  scope: string;
-  revoked: boolean;
-  match: { mode: string };
+/** GET /permissions: 三张表按来源分组 (ADR-0055 决策 2). */
+export type PermissionRules = {
+  mode: string;
+  rules: Record<string, Record<string, string[]>>;
+  additional_directories: Array<{ path: string; source: string }>;
 };
 
-export type Checkpoint = {
-  checkpoint_id: string;
-  status: string;
-  snapshot_strategy: string;
+/** GET /rewind 的一项: 一条 assistant 消息之前的文件快照 (ADR-0054 决策 5). */
+export type RewindPoint = {
+  message_id: string;
   created_at: string;
-  mutations: { entries?: unknown[] };
+  files: string[];
 };
 
 export type Model = {
@@ -38,6 +36,7 @@ export type Provider = {
   name: string;
   api_base: string;
   api_key_env?: string;
+  credential_refs?: string[];
   timeout: number;
   max_retries: number;
   models: Model[];
@@ -47,6 +46,7 @@ export type KnownProvider = {
   id: string;
   label: string;
   api_key_env?: string;
+  credential_refs?: string[];
   available: boolean;
   builtin?: boolean;
 };
@@ -71,11 +71,6 @@ export type StatusView = {
   busy: boolean;
 };
 
-export type RecoveryStatus = {
-  checkpoint_count: number;
-  pending: Array<{ checkpoint_id: string; status: string; created_at: string }>;
-};
-
 export type FieldSpec = { name: string; label: string; kind: string };
 
 export type ModelsResponse = {
@@ -97,5 +92,5 @@ export type ModelsResponse = {
 export type LlmRuntimeSettings = {
   cache: { enabled: boolean; ttl_seconds?: number; max_entries: number; origins: string[] };
   circuit_breaker: { enabled: boolean; failure_threshold: number; cooldown_seconds: number };
-  retry: { wait_threshold_seconds: number };
+  retry: { wait_threshold_seconds: number; quota_cooldown_seconds: number };
 };

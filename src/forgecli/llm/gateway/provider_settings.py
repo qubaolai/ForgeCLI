@@ -29,6 +29,8 @@ class ProviderRuntimeSettings:
     # 429 短等重试阈值（ADR-0012 §2）：retry_after <= 阈值时本地等待后同凭证重试，
     # 超过阈值则冷却换下一凭证。来自应用级 [llm.retry]。
     wait_threshold_seconds: float = 5.0
+    # 配额耗尽的冷却时长 (ADR-0059): 同样来自应用级 [llm.retry], 所有 provider 共用.
+    quota_cooldown_seconds: float = 3600.0
 
     def __post_init__(self) -> None:
         if not self.provider_id.strip():
@@ -39,6 +41,8 @@ class ProviderRuntimeSettings:
             raise ValueError("ProviderRuntimeSettings.max_retries 不能为负")
         if self.wait_threshold_seconds < 0:
             raise ValueError("ProviderRuntimeSettings.wait_threshold_seconds 不能为负")
+        if self.quota_cooldown_seconds < 0:
+            raise ValueError("ProviderRuntimeSettings.quota_cooldown_seconds 不能为负")
 
 
 # ---- 原 infrastructure/llm/settings.py ----
@@ -49,7 +53,8 @@ class ProviderRuntimeSettings:
 #     - credential_refs：显式 `credential_refs` 数组优先；缺省时用 api_key_env
 #       作为单条引用；api_key_env 也为空（如 local）→ keyless（空元组）。credential
 #       reference 即环境变量名，不带前缀（2026-07-17 复核，见 ADR-0011 §7）。
-#     - wait_threshold_seconds：应用级 [llm.retry]（ADR-0012 §2），所有 provider 共用。
+#     - wait_threshold_seconds / quota_cooldown_seconds：应用级 [llm.retry]
+#       （ADR-0012 §2, ADR-0059），所有 provider 共用。
 #
 # 明文 key 永不出现在这里——本模块只搬运环境变量名。
 _DEFAULT_TIMEOUT_SECONDS = 60.0
@@ -64,9 +69,11 @@ class LlmConfigProviderSettingsSource:
 
     def settings_for(self, provider_id: str) -> ProviderRuntimeSettings:
         """返回 provider 的运行时设置；未知 provider 抛 UnknownProvider。"""
-        spec = provider_registry.require_known_provider(provider_id)
+        # 先读配置再查注册表: 用户自建的供应商是读配置那一刻登记进注册表的, 顺序反了
+        # 会让一家配好的供应商在本进程第一次读配置之前被判成"未知".
         provider = self._llm.config().provider(provider_id)
-        wait_threshold = self._llm.retry_settings().wait_threshold_seconds
+        spec = provider_registry.require_known_provider(provider_id)
+        retry = self._llm.retry_settings()
         refs: tuple[str, ...]
         if provider is None:
             # 未配置 provider 段：用注册表默认（api_key_env 即环境变量名引用）。
@@ -76,7 +83,8 @@ class LlmConfigProviderSettingsSource:
                 timeout_seconds=_DEFAULT_TIMEOUT_SECONDS,
                 max_retries=_DEFAULT_MAX_RETRIES,
                 credential_refs=refs,
-                wait_threshold_seconds=wait_threshold,
+                wait_threshold_seconds=retry.wait_threshold_seconds,
+                quota_cooldown_seconds=retry.quota_cooldown_seconds,
             )
         if provider.credential_refs:
             refs = provider.credential_refs
@@ -89,5 +97,6 @@ class LlmConfigProviderSettingsSource:
             timeout_seconds=float(provider.timeout),
             max_retries=provider.max_retries,
             credential_refs=refs,
-            wait_threshold_seconds=wait_threshold,
+            wait_threshold_seconds=retry.wait_threshold_seconds,
+            quota_cooldown_seconds=retry.quota_cooldown_seconds,
         )

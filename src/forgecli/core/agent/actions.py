@@ -1,6 +1,7 @@
 """循环与外界交换的值对象 (ADR-0010 §4, ADR-0051).
 
-- ToolRequest: 循环请求执行一个工具. 必须经 dispatcher 走安全管线, 循环自己不执行.
+- ToolExecutor: 循环把模型这一轮要的整批 ToolCall 交出去, 拿回同样多的 LoopObservation.
+  执行链 (tools/execution.py) 在外层, 循环自己不执行.
 - LoopObservation: 一次工具执行的结论, 喂回循环. 只保存结论文本与处置意见, 不保存
   raw chain-of-thought.
 - LoopStop: 一轮为什么停. reason 取自 LoopStopReason, 可恢复与否由分类派生.
@@ -12,36 +13,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
-from types import MappingProxyType
 
 from forgecli.core.agent.state import AssembledContext
 from forgecli.core.agent.stop import LoopStopReason
 from forgecli.core.context.compaction import CompactionDraft
+from forgecli.core.context.window import Window
 from forgecli.core.message import ChatMessage
 from forgecli.core.model.usage import UsageRecordDraft
-from forgecli.core.tool.result import ResultProvenance
-
-
-@dataclass(frozen=True)
-class ToolRequest:
-    """一次工具调用意图（§4.3）。必须经 Tool Registry 执行，不能携带可执行匿名代码块。
-
-    tool_call_id 关联模型侧 tool call 与后续 tool result；arguments 为未执行的原始入参，
-    执行前仍须经 schema 校验与 mode policy 裁决，不可直接信任。
-    """
-
-    name: str
-    arguments: Mapping[str, object] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    tool_call_id: str | None = None
-
-    def __post_init__(self) -> None:
-        if not self.name.strip():
-            raise ValueError("ToolRequest.name 不能为空")
+from forgecli.core.tool.tool_call import ToolCall
 
 
 class ObservationSource(Enum):
@@ -84,13 +66,6 @@ class LoopObservation:
     source: ObservationSource = ObservationSource.CONTEXT
     is_error: bool = False
     disposition: ObservationDisposition = ObservationDisposition.CONTINUE
-    # 这条观察对应的工具结果是"什么东西的快照" (ADR-0032). 循环原样转写到
-    # ToolResultBlock 上, 供上下文管理判断能不能去重与降级. 循环自己不读它 ——
-    # 它只是个传递者, 判断在 application/context.
-    provenance: ResultProvenance | None = None
-    # 这条结果正文的归档句柄, 空串表示没有归档. 循环拿它判"这次有没有带回新信息" ——
-    # 句柄是内容寻址的, 所以正文不同则句柄不同, 比比对渲染文本准.
-    handle: str = ""
 
 
 @dataclass(frozen=True)
@@ -116,12 +91,17 @@ class LoopResult:
     partial_answer: str | None = None
     # 结束时的窗口, 外层接着往下攒 (ADR-0041 决策 4).
     window: tuple[ChatMessage, ...] = ()
+    # 累计淘汰过几条, 跨轮单调递增: 组装器靠它认出"刚压缩过" (ADR-0056 决策 9), 淘汰
+    # 靠它认出"头一条是不是上一份交接说明".
+    evicted_count: int = 0
     usage_drafts: tuple[UsageRecordDraft, ...] = ()
     compaction_drafts: tuple[CompactionDraft, ...] = ()
 
 
-# 外层交给循环的"执行一次工具": AgentTurnService 那个经 dispatcher 走安全管线的方法.
-ToolExecutor = Callable[[ToolRequest], LoopObservation]
+# 外层交给循环的"执行一批工具": AgentTurnService 那个经 run_tools 走执行链的方法.
+# 一批进一批出, 顺序对应; 分批并发在执行链里做 (ADR-0054 决策 4), 循环不认识.
+ToolExecutor = Callable[[tuple[ToolCall, ...]], tuple[LoopObservation, ...]]
 
-# 外层交给循环的"组一次上下文". 循环每次调模型前调它一次 (ADR-0051 决策 2).
-ContextAssembly = Callable[[], AssembledContext]
+# 外层交给循环的"组一次上下文". 循环每次调模型前调它一次, 把当前窗口交过去: 通知的
+# 增量与节流从窗口里推 (ADR-0056 决策 6), 组装方不另存计数器.
+ContextAssembly = Callable[[Window], AssembledContext]

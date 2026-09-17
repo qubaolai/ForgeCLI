@@ -13,9 +13,13 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 
 from forgecli.common.errors import SessionStateError
-from forgecli.core.mode import PRESET_NAMES, ModeUnavailableError, available_presets
+from forgecli.core.permissions import (
+    ModeUnavailableError,
+    available_modes,
+    parse_permission_mode,
+)
 from forgecli.core.serialization import to_jsonable
-from forgecli.web.deps import active_runtime, idle_runtime, registry
+from forgecli.web.deps import active_runtime, idle_runtime
 
 router = APIRouter(prefix="/api/v1")
 
@@ -37,17 +41,14 @@ async def list_modes(request: Request) -> dict[str, object]:
     从 registry 取而不是从当前 runtime: 放没放开是进程级事实, 页面在还没激活项目时
     就要画得出这个菜单.
     """
-    allowed = registry(request).full_access_allowed
+    runtime = active_runtime(request)
     return {
         "items": [
-            {
-                "value": preset.value,
-                "label": preset.label,
-                "hint": preset.hint,
-                "sandbox": PRESET_NAMES[preset.value].sandbox.value,
-                "approval": PRESET_NAMES[preset.value].approval.value,
-            }
-            for preset in available_presets(full_access_allowed=allowed)
+            {"value": preset.value, "label": preset.label, "hint": preset.hint}
+            for preset in available_modes(
+                bypass_available=runtime.tools.permission.is_bypass_permissions_mode_available,
+                auto_available=runtime.tools.permission.is_auto_mode_available,
+            )
         ]
     }
 
@@ -116,11 +117,12 @@ async def transcript(session_id: str, request: Request) -> dict[str, object]:
 
 @router.post("/mode")
 async def set_mode(body: ModeRequest, request: Request) -> object:
-    target = PRESET_NAMES.get(body.mode)
-    if target is None:
+    try:
+        target = parse_permission_mode(body.mode)
+    except ValueError as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, f"未知模式: {body.mode}"
-        )
+        ) from exc
     runtime = active_runtime(request)
     try:
         return to_jsonable(runtime.set_mode(target))

@@ -1,8 +1,7 @@
 """同一个工具加同一份参数, 一轮里做够了就不再做.
 
 这条是给"模型卡住"准备的, 与总预算是两回事: 总预算拦的是"活干得多", 它拦的是"同一件事
-重复做". 见过 fs_find 用相同参数被连着调上百次 —— 每次结果都一样, 模型却读不出该换个
-做法, 总预算再大也只是让它多转几百圈.
+重复做".
 
 拒绝之后回填而不是静默跳过: 模型必须知道"你在重复", 否则它只会原样再要一次.
 """
@@ -14,7 +13,7 @@ from forgecli.agent.loop.transcript import render_call
 from forgecli.agent.loop.verdicts import Continue, Deny
 from forgecli.common.observability.log import get_log
 from forgecli.core.tool.tool_call import ToolCall
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 
 __all__ = ["MAX_IDENTICAL_CALLS", "RepeatCallRule", "signature_of"]
 
@@ -27,7 +26,7 @@ _log = get_log(__name__)
 #
 # 真正的漏网之鱼是**参数每次都变**的原地打转 (8 个 grep 变体各不相同), 它按签名判身份
 # 本来就拦不住, 由 barren_streak 那条接手.
-MAX_IDENTICAL_CALLS = 2
+MAX_IDENTICAL_CALLS = 5
 
 
 def signature_of(call: ToolCall) -> str:
@@ -56,8 +55,6 @@ class RepeatCallRule:
             seen=seen,
         )
         return Deny(
-            notice=render_notice(
-                "loop.repeat_call", call=render_call(call), limit=MAX_IDENTICAL_CALLS
-            ),
+            notice=prompts.loop_repeat_call(render_call(call), MAX_IDENTICAL_CALLS),
             code="repeated_call",
         )

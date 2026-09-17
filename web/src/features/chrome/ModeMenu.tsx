@@ -1,11 +1,8 @@
-/** 模式菜单: 只列预设, 点一个换整档.
+/** 模式菜单: 列模式, 点一个换档 (ADR-0055 决策 1).
  *
- * 与终端 /mode 同一个形状 (interfaces/tui/commands/mode.py, ADR-0052): 隔离档与审批档
- * 两个轴不再单独露出. 早先这里是"预设 / 隔离 / 审批"三块, 于是同一个问题在两处能得到
- * 不同答案 —— 预设里选了 Auto, 审批那一块看到的却是轴上的另一个名字.
- *
- * 列表来自 GET /modes: Full Access 只在 forge 启动时带了 --allow-full-access 才在里面,
- * 没放开就不画, 而不是画出来再报错.
+ * 与终端 /mode 同一个形状 (tui/commands/mode.py). 列表来自 GET /modes: Bypass
+ * Permissions 只在 forge 启动时带了 --allow-full-access 才在里面, 没放开就不画,
+ * 而不是画出来再报错.
  */
 
 import { Button, Dropdown, Flex, Typography } from "antd";

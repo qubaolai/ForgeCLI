@@ -1,29 +1,26 @@
-/** 会话模式: 后端的两个轴与给人选的预设.
+/** 会话模式 (ADR-0055 决策 1, ADR-0058): 与 Claude Code 同一组, 六档.
  *
- * 轴的取值来自后端 domain/intents. 预设列表**不在这里写死**, 由 GET /modes 给
- * (ADR-0052): 名字, 说明, 以及每个预设对应的两个轴都是后端 MODE_PRESETS / PRESET_NAMES
- * 的事实, 这里再写一份就是第二份定义 —— 而且 Full Access 在不在列表里取决于 forge
- * 启动时带没带 --allow-full-access, 那是页面自己不知道的事.
+ * 模式列表**不在这里写死**, 由 GET /modes 给: 名字, 说明都是后端 MODE_OPTIONS 的事实,
+ * 这里再写一份就是第二份定义 —— 而且 Bypass Permissions 在不在列表里取决于 forge 启动时
+ * 带没带 --allow-full-access, 那是页面自己不知道的事.
  */
 
-/** 会话快照里的 `mode`: 隔离档 x 审批档. 界面不按轴调, 只用它对回预设. */
-export type Stance = { sandbox: string; approval: string };
+/** 会话快照里的 `mode`: 模式名 (default / plan / accept_edits / bypass_permissions / dont_ask / auto). */
+export type Stance = string;
 
-/** GET /modes 的一项. `value` 是 POST /mode 要发的预设名. */
+/** GET /modes 的一项. `value` 是 POST /mode 要发的模式名. */
 export type ModePreset = {
   value: string;
   label: string;
   hint: string;
-  sandbox: string;
-  approval: string;
 };
 
-/** 当前两个轴恰好是哪个预设; 不是任何预设时为 undefined. */
+/** 当前模式对应的菜单项; 不在菜单里 (dont_ask) 时为 undefined. */
 export function presetOf(stance: Stance, presets: ModePreset[]) {
-  return presets.find((item) => item.sandbox === stance.sandbox && item.approval === stance.approval);
+  return presets.find((item) => item.value === stance);
 }
 
-/** 命中预设就用预设名, 否则把两个轴拼出来 —— 不编一个不存在的档位名. */
+/** 命中菜单项就用它的名字, 否则原样显示模式名 —— 不编一个不存在的档位名. */
 export function stanceLabel(stance: Stance, presets: ModePreset[]) {
-  return presetOf(stance, presets)?.label ?? `${stance.sandbox} · ${stance.approval}`;
+  return presetOf(stance, presets)?.label ?? stance;
 }

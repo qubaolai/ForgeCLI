@@ -49,6 +49,11 @@ export function GatewayView({ admin }: { admin: Administration }) {
               label: "429 等待阈值（秒）",
               value: String(runtime.retry.wait_threshold_seconds),
             },
+            {
+              key: "retry.quota_cooldown_seconds",
+              label: "配额耗尽冷却（秒）",
+              value: String(runtime.retry.quota_cooldown_seconds),
+            },
           ]}
           onSave={admin.saveLlmRuntime}
         />

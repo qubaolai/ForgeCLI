@@ -1,7 +1,19 @@
 export type ProviderAvailability = {
   api_key_env?: string;
+  credential_refs?: string[];
   available: boolean;
 };
+
+/** 网关会用的环境变量名: 配了凭证池就是池, 否则是 api_key_env 那一个; 都没有就是免密钥。 */
+function credentialRefs(provider: ProviderAvailability): string[] {
+  if (provider.credential_refs?.length) return provider.credential_refs;
+  return provider.api_key_env ? [provider.api_key_env] : [];
+}
+
+/** 就绪 = 密钥在, 或者本来就不需要密钥。三个页面共用这一句, 别各自再算一遍。 */
+export function providerReady(provider: ProviderAvailability): boolean {
+  return provider.available || credentialRefs(provider).length === 0;
+}
 
 const modelExamples: Record<string, string> = {
   deepseek: "例如 deepseek-chat",
@@ -25,9 +37,10 @@ export function modelPlaceholder(providerId: string): string {
 }
 
 export function providerAvailabilityCopy(provider: ProviderAvailability): string {
-  if (!provider.api_key_env) return "无需密钥";
+  const refs = credentialRefs(provider);
+  if (refs.length === 0) return "无需密钥";
   if (provider.available) return "密钥已就绪";
-  return `缺少 ${provider.api_key_env}`;
+  return `缺少 ${refs.join(" / ")}`;
 }
 
 function optionalPositiveInteger(raw: string, label: string): number | undefined {

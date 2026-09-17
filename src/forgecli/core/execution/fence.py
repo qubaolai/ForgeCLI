@@ -1,23 +1,22 @@
-"""围栏策略: 子进程能否自动启动, 能写哪里, 不能读哪里, 能不能联网 (ADR-0030 决策 1 / 4).
+"""围栏策略: 子进程能写哪里, 不能读哪里, 能不能联网 (ADR-0030 决策 1; ADR-0055 决策 7).
 
-围栏是**运行期**强制的, 不是执行前推导的. 所以这里只有模式边界, 没有任何命令正文
-知识 ---- `rm -rf $DIR` 和 `ls` 在这个模块眼里没有区别, 两者的差异由分析器算成能力集合,
-再由 `domain/security/budget` 拿这份边界去减.
+围栏是**运行期**强制的, 不是执行前推导的. 这里只有边界, 没有任何命令正文知识: `rm -rf
+$DIR` 和 `ls` 在这个模块眼里没有区别. ADR-0055 之后它由沙箱设置 (`core/sandbox.py`)
+与工作目录编译, 不再由模式编译 —— 模式说"什么时候问人", 沙箱说"子进程能碰什么".
 
 两条边界的形态不对称, 这是实测出来的 (ADR-0030 实测记录第二节):
 
 - **写**: allowlist. `(deny file-write*)` + 逐项 allow 工作区, 实测通过.
 - **读**: 只能 denylist. Seatbelt 下 `(deny default)` 与 `(deny file-read*)` + 系统
   allowlist 两种形态都会让子进程 SIGABRT, 连 `/bin/sh` 都起不来. 所以受保护路径仍然
-  要逐条列举, 漏一条就是凭证暴露 —— 这条风险本 ADR 没能消除, 只在 Linux 上由
-  bubblewrap 的 mount namespace 解决.
+  要逐条列举, 漏一条就是凭证暴露.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from forgecli.core.mode import ApprovalPolicy, SandboxLevel, SessionMode
+from forgecli.core.sandbox import SandboxSettings
 from forgecli.core.tool.hashing import digest
 
 __all__ = ["FencePolicy", "fence_for"]
@@ -30,32 +29,6 @@ class FencePolicy:
     writable_roots: tuple[str, ...] = ()
     denied_read_paths: tuple[str, ...] = ()
     network_allowed: bool = False
-    # 读写工作区内的文件能否不问人: fs_read / search_text 的读, fs_apply_patch 的写,
-    # 以及 Shell 命令触达工作区路径时分析器算出的 WORKSPACE_READ / WORKSPACE_WRITE.
-    # manual 档为 False, 那一档的全部意义就是每一次读写都过人 (ADR-0052); 其余各档为
-    # True. 缺省 False 与其他字段一致: 没编译过的围栏按最严的办.
-    automatic_workspace_io: bool = False
-    # 能否不问人就启动一条**已经解析清楚**的 Shell 命令: Forge 认得出每一个命令单元,
-    # 且这次的目标集合已经封闭. `sed -i x README.md` 属于这一类, `npm test` 不属于.
-    #
-    # 下界来自隔离档: read_only 档的语义就是只看不改, 在那里自动起子进程没有用例.
-    # manual 档再把它关掉 —— 那一档连 `echo hi` 也问, 因为"起了一个子进程"本身就是
-    # 用户要逐次看的事. 真正区分 accept_edits 与 auto 的自主性决定是下面那个字段.
-    automatic_shell: bool = False
-    # 连 Forge **看不透要跑什么**的执行也不问人: 脚本正文, `java -jar`, `find -exec`,
-    # 以及网络. 这是 accept_edits 与 auto 的分界 (ADR-0046).
-    #
-    # 分成两个字段而不是一个, 是因为原先那一个把"它是不是一次 shell 调用"当成了判据,
-    # 于是 `cat README.md` 与 `rm -rf /tmp` 在 accept_edits 下得到同一个结论 —— 分析器
-    # 明明已经把两者的能力集合算得清清楚楚 (前者 workspace_read, 后者 external_write),
-    # 那份精度被一个与命令内容无关的项盖掉了.
-    automatic_opaque_execution: bool = False
-    # full_access: 围栏就是全部边界, 裁决侧除 Hard Deny 外不再另设闸 (ADR-0030 决策 4
-    # 的 2026-08-28 修订). 它进 policy_hash, 所以切模式会让旧授权失效.
-    #
-    # 放在围栏上而不是让裁决侧自己看 SessionMode: "把模式编译成边界"就是这个模块的
-    # 职责, 多一个地方解释模式, 就多一处会和它不一致.
-    unrestricted: bool = False
     # 实例私有临时目录. 单独一个字段而**不是**并进 writable_roots: 并进去之后
     # `read_only` 会永远是 False, 而 plan 档的全部意义就是那个 True.
     instance_temp_root: str = ""
@@ -78,41 +51,27 @@ class FencePolicy:
 
 
 def fence_for(
-    mode: SessionMode,
+    sandbox: SandboxSettings,
     *,
     workspace_roots: tuple[str, ...],
     readonly_roots: tuple[str, ...] = (),
     protected_paths: tuple[str, ...] = (),
     instance_temp_root: str = "",
 ) -> FencePolicy:
-    """把模式编译成围栏策略 (ADR-0030 决策 4).
+    """把沙箱设置与工作目录编译成围栏策略.
 
-    这个函数顶替了 `domain/security/modes.py` 的能力预算表. 差别在判据: 预算表问的是
-    "这次调用请求了哪些 Capability", 而那要靠分析器从命令串里推导; 这里直接表达
-    "这个姿态能否自动启动 Shell, 允许触达哪些路径", 与命令内容无关.
-
-    `readonly_roots` 来自不带 `--write` 的 `/add-dir`: 它们读得到但写不进, 所以进
-    工作区根却不进可写集合.
+    `readonly_roots` 是只读的额外目录: 读得到但写不进, 所以进工作区根却不进可写集合.
+    `sandbox.allow_write` 是设置里额外放开的可写路径 (对应
+    sandbox.filesystem.allowWrite).
     """
-    # 两个轴各管各的: 可写与联网来自隔离档, 自主性来自审批档. 早先它们都从同一个四档
-    # 枚举里读, 于是改任一件事都要动另一件.
-    writable: tuple[str, ...] = ()
-    if mode.sandbox is not SandboxLevel.READ_ONLY:
-        writable = tuple(
-            root for root in workspace_roots if root not in set(readonly_roots)
-        )
-    manual = mode.approval is ApprovalPolicy.MANUAL
+    writable = tuple(
+        root for root in workspace_roots if root not in set(readonly_roots)
+    )
+    extra = tuple(path for path in sandbox.allow_write if path not in writable)
     return FencePolicy(
-        writable_roots=writable,
+        writable_roots=writable + extra,
         denied_read_paths=tuple(sorted(dict.fromkeys(protected_paths))),
-        network_allowed=mode.sandbox is SandboxLevel.FULL_ACCESS,
-        automatic_workspace_io=not manual,
-        automatic_shell=mode.sandbox is not SandboxLevel.READ_ONLY and not manual,
-        # 逐档点名而不是写 `is not ALWAYS`: 后者在 manual 加进来之后会把最严的一档
-        # 算成最松的.
-        automatic_opaque_execution=mode.approval
-        in (ApprovalPolicy.AUTO, ApprovalPolicy.NEVER),
-        unrestricted=mode.unrestricted,
+        network_allowed=sandbox.network_allowed,
         # 实例私有临时目录始终可写, 否则连 mktemp 都用不了, 而那会让绝大多数真实命令
         # 失败. 它不算"工作区可写", 所以不进 writable_roots.
         instance_temp_root=instance_temp_root,

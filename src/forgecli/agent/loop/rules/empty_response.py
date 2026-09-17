@@ -8,7 +8,7 @@ from forgecli.agent.loop.verdicts import Continue
 from forgecli.common.observability.log import get_log
 from forgecli.core.agent.actions import LoopStop
 from forgecli.core.agent.stop import LoopStopReason
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 
 __all__ = ["EmptyResponseRule"]
 
@@ -22,5 +22,5 @@ class EmptyResponseRule:
         _log.warning("model.empty_response")
         return LoopStop(
             LoopStopReason.MODEL_ERROR_BLOCKING,
-            render_notice("stop.empty_response"),
+            prompts.STOP_EMPTY_RESPONSE,
         )

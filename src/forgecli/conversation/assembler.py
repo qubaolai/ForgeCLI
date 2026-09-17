@@ -1,8 +1,11 @@
-"""上下文组装: 把一次调用的材料拼成一份 AssembledContext (ADR-0051 决策 2).
+"""上下文组装: 把一次调用的材料拼成一份 AssembledContext (ADR-0056 决策 2 / 3 / 7 / 12).
 
-对外唯一入口. 请求的顺序在 `AssembledContext` 里表达 —— 这里只负责**取材**: 提示词块
-(builder 内部按进程缓存内置五块), FORGE.md, 运行事实, 工具目录, 计划, 待办, 记忆.
-外层每次调模型前调一次; 输入没变, 组出来的就是同样的字节, 供应商的前缀缓存照样命中.
+对外唯一入口. 三件事:
+
+- system prompt: 静态段每次现算 (纯函数, 便宜), 会话段按名缓存, 只在刷新点重算.
+- 通知: 交给 NoticeAssembler 按窗口推增量, 这里只把结果放进 AssembledContext.
+- 可观测: 三个位置各一个 sha256; 两次组装之间没有刷新点而指纹变了, warn 并把 diff 写到
+  会话目录 —— 用来抓"谁又把每轮变的东西放进了前缀".
 
 不碰窗口: 那是 `WindowManager` 的事. 一个负责"这次调用的上下文长什么样", 一个负责"窗口
 该不该淘汰", 合起来会让"为什么这一轮变贵了"再也说不清是哪一半干的.
@@ -10,45 +13,216 @@
 
 from __future__ import annotations
 
-from forgecli.conversation.runtime_facts import RuntimeFacts
-from forgecli.conversation.runtime_view import render_runtime_context
-from forgecli.conversation.state_view import render_state_frame
-from forgecli.core.agent.state import AssembledContext
+import difflib
+import json
+import os
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from forgecli.common.observability.log import get_log
+from forgecli.conversation.notices import (
+    NoticeAssembler,
+    NoticeInputs,
+    memory_digest,
+)
+from forgecli.core.agent.state import AssembledContext, ContextFingerprints
 from forgecli.core.context.budget import ContextBudget
-from forgecli.core.execution.fence import FencePolicy
-from forgecli.core.mode import SessionMode
+from forgecli.core.context.window import Window
+from forgecli.core.permissions import PermissionMode
+from forgecli.core.token_estimator import ApproximateTokenEstimator
+from forgecli.core.tool.file_state import FileStateCache
+from forgecli.core.tool.hashing import digest_text
 from forgecli.core.tool.tool_call import ToolSchema
 from forgecli.memory.entry import MemoryEntry
 from forgecli.planning.service import ActivePlanning
-from forgecli.prompt.project_instruction_reader import ProjectInstruction
-from forgecli.prompt.system_prompt_builder import SystemPromptBuilder
+from forgecli.prompt import prompts
+from forgecli.prompt.project_instruction_reader import (
+    FsProjectInstructionReader,
+    ProjectInstruction,
+)
+from forgecli.prompt.sections import SectionCache
+from forgecli.prompt.session_facts import SessionFacts
 
-__all__ = ["ContextAssembler"]
+__all__ = ["AssemblyInputs", "ContextAssembler"]
+
+_log = get_log(__name__)
+
+
+@dataclass(frozen=True)
+class AssemblyInputs:
+    """一次组装的材料. 全部由 AgentTurnService 现读, 这里不碰服务."""
+
+    window: Window
+    mode: PermissionMode
+    facts: SessionFacts
+    today: str
+    instructions: tuple[ProjectInstruction, ...] = ()
+    planning: ActivePlanning | None = None
+    memory: tuple[MemoryEntry, ...] = ()
+    tools: tuple[ToolSchema, ...] = ()
+    budget: ContextBudget | None = None
+    read_files: FileStateCache | None = None
 
 
 class ContextAssembler:
-    """无状态. 每次从传进来的事实重新组装."""
+    """会话级. 一个 AgentTurnService 一份."""
 
-    def __init__(self, builder: SystemPromptBuilder | None = None) -> None:
-        self._builder = builder or SystemPromptBuilder()
-
-    def assemble(
+    def __init__(
         self,
         *,
-        mode: SessionMode,
-        facts: RuntimeFacts,
-        instructions: tuple[ProjectInstruction, ...] = (),
-        planning: ActivePlanning | None = None,
-        memory: tuple[MemoryEntry, ...] = (),
-        tools: tuple[ToolSchema, ...] = (),
-        budget: ContextBudget | None = None,
-        fence: FencePolicy | None = None,
-    ) -> AssembledContext:
-        return AssembledContext(
-            # 加载内置的几乎不变化的提示词块
-            policy=self._builder.build(instructions),
-            runtime_context=render_runtime_context(facts, mode=mode, fence=fence),
-            state_frame=render_state_frame(planning or ActivePlanning(), memory),
-            tools=tools,
-            budget=budget,
+        instructions: FsProjectInstructionReader,
+        diagnostics_dir: Callable[[], str] | None = None,
+        estimator: ApproximateTokenEstimator | None = None,
+    ) -> None:
+        self._sections = SectionCache()
+        self._notices = NoticeAssembler(instructions=instructions)
+        self._diagnostics_dir = diagnostics_dir
+        self._estimator = estimator or ApproximateTokenEstimator()
+        # 会话段里那份记忆快照的摘要. 通知拿它判断"记忆是不是被别的进程改了".
+        self._memory_baseline = ""
+        self._start_date = ""
+        self._refresh_pending = "session_start"
+        self._evicted_seen = 0
+        self._previous: ContextFingerprints | None = None
+        self._previous_text: tuple[str, str] = ("", "")
+
+    def refresh(self, reason: str) -> None:
+        """会话刷新点 (决策 7): 下一次组装重算会话段, 通知的基线跟着重置."""
+        self._refresh_pending = reason
+
+    def assemble(self, inputs: AssemblyInputs) -> AssembledContext:
+        after_compaction = inputs.window.evicted_count > self._evicted_seen
+        if after_compaction:
+            self._evicted_seen = inputs.window.evicted_count
+            self.refresh("compaction")
+        refreshed = self._refresh_pending
+        if refreshed:
+            self._sections.clear()
+            self._memory_baseline = memory_digest(inputs.memory)
+            self._start_date = inputs.facts.start_date
+            self._refresh_pending = ""
+
+        tool_names = frozenset(schema.name for schema in inputs.tools)
+        sections = prompts.get_system_prompt(
+            tool_names=tool_names,
+            facts=inputs.facts,
+            instructions=inputs.instructions,
+            memory=inputs.memory,
+            cache=self._sections,
         )
+        if refreshed:
+            self._notices.reset_baselines(tool_names)
+        static_text, session_text = prompts.split_system_prompt(sections)
+        fingerprints = ContextFingerprints(
+            static=digest_text(static_text),
+            session=digest_text(session_text),
+            tools=digest_text(_tools_canonical(inputs.tools)),
+        )
+        self._detect_cache_break(fingerprints, static_text, session_text, refreshed)
+
+        notices = self._notices.build(
+            NoticeInputs(
+                window=inputs.window,
+                mode=inputs.mode,
+                today=inputs.today,
+                start_date=self._start_date,
+                memory_baseline=self._memory_baseline,
+                tool_names=tool_names,
+                planning=inputs.planning or ActivePlanning(),
+                memory=inputs.memory,
+                read_files=inputs.read_files,
+                workspace_roots=inputs.facts.workspace_roots,
+                after_compaction=after_compaction,
+            )
+        )
+        context = AssembledContext(
+            system_prompt=prompts.system_prompt_text(sections),
+            fingerprints=fingerprints,
+            tools=inputs.tools,
+            budget=inputs.budget,
+            notices=notices,
+        )
+        _log.info(
+            "context.assembled",
+            static_sha=fingerprints.static[:12],
+            session_sha=fingerprints.session[:12],
+            tools_sha=fingerprints.tools[:12],
+            refreshed=refreshed or None,
+            static_tokens=self._estimator.estimate_text(static_text),
+            session_tokens=self._estimator.estimate_text(session_text),
+            session_sections=self._sections.sizes(),
+            tools=[schema.name for schema in inputs.tools],
+            notices=[item.notice_kind for item in notices],
+        )
+        # 整段只在 debug 下写: 它每次几千字, info 级别会把日志淹掉, 而"模型到底看到了
+        # 什么"恰恰是最需要能翻出来的一件事.
+        _log.debug("context.system_prompt", text=context.system_prompt)
+        return context
+
+    def _detect_cache_break(
+        self,
+        current: ContextFingerprints,
+        static_text: str,
+        session_text: str,
+        refreshed: str,
+    ) -> None:
+        previous = self._previous
+        self._previous = current
+        previous_text = self._previous_text
+        self._previous_text = (static_text, session_text)
+        if previous is None or refreshed:
+            return
+        changed = [
+            name
+            for name in ("static", "session")
+            if getattr(previous, name) != getattr(current, name)
+        ]
+        if not changed:
+            return
+        diff_path = self._write_diff(previous_text, (static_text, session_text))
+        _log.warning(
+            "context.cache_break",
+            changed=changed,
+            diff=diff_path,
+        )
+
+    def _write_diff(
+        self, before: tuple[str, str], after: tuple[str, str]
+    ) -> str | None:
+        if self._diagnostics_dir is None:
+            return None
+        lines = list(
+            difflib.unified_diff(
+                "\n\n".join(before).splitlines(),
+                "\n\n".join(after).splitlines(),
+                fromfile="previous",
+                tofile="current",
+                lineterm="",
+            )
+        )
+        try:
+            directory = self._diagnostics_dir()
+            os.makedirs(directory, exist_ok=True)
+            stamp = self._previous.static[:8] if self._previous else "x"
+            path = os.path.join(directory, f"cache-break-{stamp}.diff")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines))
+            return path
+        except OSError:
+            return None
+
+
+def _tools_canonical(tools: tuple[ToolSchema, ...]) -> str:
+    return json.dumps(
+        [
+            {
+                "name": schema.name,
+                "description": schema.description,
+                "parameters": dict(schema.parameters),
+            }
+            for schema in tools
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )

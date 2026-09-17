@@ -1,189 +1,48 @@
-"""内置工具的共用零件.
-
-只放**机制**: schema 校验, 路径规范化, 输出溢写, 可执行文件定位. 任何"要不要做"的判断
-都不在这里 —— 那是安全模块的事, 而且 scripts/check_arch.py 会拦住往这里 import 策略.
-"""
+"""内置工具共用的小函数: 取入参, 展开路径, 拼结果块."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import replace
-from typing import NamedTuple
+import os
+from collections.abc import Mapping
 
-from forgecli.common.json_schema import validate_json_schema
-from forgecli.core.tool.capability import Capability
-from forgecli.core.tool.errors import PreparationError, PreparationErrorCode
-from forgecli.core.tool.hashing import digest
-from forgecli.core.tool.plan import WorkspaceScope
-from forgecli.core.tool.result import ArtifactRef, ContentPart, ResultProvenance
-from forgecli.core.tool.spec import ToolSpec
-from forgecli.tools.artifact_store import FsArtifactStore
-from forgecli.tools.resource_governor import ResourceGovernor, ResourceLimits
-from forgecli.workspace.execution_context import ExecutionContext
-from forgecli.workspace.filesystem_view import PathFacts
+from forgecli.core.message import ToolResultBlock
 
 __all__ = [
-    "MAX_GLOB_CANDIDATES",
-    "EmittedText",
-    "emit_text",
-    "read_capability",
-    "resolve_target",
-    "validate_arguments",
-    "path_state_token",
+    "expand_input_path",
+    "int_of",
+    "str_of",
+    "text_block",
 ]
 
 
-# glob 展开的候选上限. 原先是三个工具 (fs_find, search_text, find_definition) 共用的
-# 同一条展开路径, 剩下的只有 search_text —— 另外两个的活由 shell_run 的 find 与 grep
-# 接了过去, 而它们的上限由围栏与超时管, 不由这个常量管.
-#
-# 仍然留在 base.py 而不是收进 search_text.py: 下一个走 expand_glob 的工具应当共用这个
-# 上限, 而不是各自再定一个.
-MAX_GLOB_CANDIDATES = 10_000
+def str_of(input: Mapping[str, object], key: str, default: str = "") -> str:
+    value = input.get(key)
+    if isinstance(value, str):
+        return value
+    return default
 
 
-def validate_arguments(
-    spec: ToolSpec, arguments: Mapping[str, object]
-) -> PreparationError | None:
-    """按 ToolSpec.input_schema 强制校验入参 (ADR-0004 §3)."""
-    errors = validate_json_schema(dict(arguments), spec.input_schema)
-    if not errors:
+def int_of(input: Mapping[str, object], key: str) -> int | None:
+    value = input.get(key)
+    if isinstance(value, bool):
         return None
-    return PreparationError(
-        code=PreparationErrorCode.INVALID_INPUT,
-        message="; ".join(errors[:5]),
-    )
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
 
 
-def path_state_token(facts: PathFacts) -> str:
-    """生成执行前可复核的路径状态令牌。
-
-    工具计划与实际写入之间可能隔着审批。只记路径不够：期间文件可能已被用户或另一个
-    进程替换。令牌故意只含可稳定序列化的事实，perform 必须在副作用前重新读取并比较。
-    """
-    return digest(
-        {
-            "exists": facts.exists,
-            "realpath": facts.realpath,
-            "kind": facts.kind.value,
-            "is_symlink": facts.is_symlink,
-            "link_target": facts.link_target,
-            "file_identity": facts.file_identity,
-            "size": facts.size,
-            "mtime_ns": facts.mtime_ns,
-            "mode": facts.mode,
-        }
-    )
+def expand_input_path(path: str, cwd: str) -> str:
+    """`~` 展开, 相对路径按 cwd 补齐, 归一化. 与 security/filesystem.expand_path 同义,
+    工具这边不 import 那个模块以免把权限逻辑拖进来."""
+    expanded = os.path.expanduser(path)
+    if not os.path.isabs(expanded):
+        expanded = os.path.join(cwd, expanded)
+    return os.path.normpath(expanded)
 
 
-def resolve_target(
-    raw: object, context: ExecutionContext, *, field_path: str = "path"
-) -> tuple[str, PathFacts] | PreparationError:
-    """把入参里的路径规范化为绝对路径并读取身份事实.
-
-    只读: 不创建目录, 不跟随写入. 路径不存在时给结构化错误而不是异常, 因为"文件不存在"
-    是模型可以自己改正的普通失败, 不该走安全裁决.
-    """
-    if not isinstance(raw, str) or not raw.strip():
-        return PreparationError(
-            code=PreparationErrorCode.INVALID_INPUT,
-            message="路径必须是非空字符串",
-            field_path=field_path,
-        )
-    absolute = context.resolve(raw)
-    facts = context.filesystem.facts(absolute)
-    if not facts.exists:
-        return PreparationError(
-            code=PreparationErrorCode.TARGET_NOT_FOUND,
-            message=f"路径不存在: {absolute}",
-            field_path=field_path,
-        )
-    return absolute, facts
-
-
-def read_capability(scope: WorkspaceScope) -> Capability:
-    """读取哪一档路径决定声明哪种能力.
-
-    工作区内与用户显式 /add-dir 授权过的目录算 WORKSPACE_READ; 其余是 EXTERNAL_READ,
-    它在 full_access 之外的模式都要人类确认 —— 读凭证文件走的就是这条路径.
-    """
-    if scope is WorkspaceScope.OUTSIDE:
-        return Capability.EXTERNAL_READ
-    return Capability.WORKSPACE_READ
-
-
-class EmittedText(NamedTuple):
-    """emit_text 的产出.
-
-    三项一起返回而不是让调用方各算各的: bytes_out 漏填的后果是终端进度行上每个工具都
-    显示 `0 字节`, 而这条线正是用户判断"工具到底有没有拿回内容"的唯一依据. 见过
-    fs_read 读完一个 Java 文件显示 0 字节, 模型却在回答里引用了里面的代码.
-
-    bytes_out 是**截断前**的完整字节数, 不是 parts 里那一段. 前者回答"这次产出了多少",
-    后者只是塞进上下文的部分 —— 溢写进 artifact 的内容不该因此从计数里消失.
-    """
-
-    parts: tuple[ContentPart, ...]
-    artifacts: tuple[ArtifactRef, ...]
-    bytes_out: int
-    # 这次输出的归档位置与大小 (ADR-0032). 知道来源路径的工具再用 replace 补上
-    # source_path / source_state —— emit_text 只看得见一段文本, 看不见它从哪来.
-    provenance: ResultProvenance = ResultProvenance()
-
-
-def emit_text(
-    text: str,
-    *,
-    invocation_id: str,
-    limits: ResourceLimits,
-    artifacts: FsArtifactStore | None,
-    artifact_name: str = "output",
-) -> EmittedText:
-    """回填模型的内容片段 + 溢写产物.
-
-    超过阈值时**不静默截断**: 回填部分带显式截断标记与产物 id, 完整内容落 artifact.
-    """
-    encoded = text.encode("utf-8")
-    total = len(encoded)
-    truncated = total > limits.max_inline_bytes
-    inline = (
-        encoded[: limits.max_inline_bytes].decode("utf-8", errors="ignore")
-        if truncated
-        else text
-    )
-    if artifacts is None:
-        return EmittedText(
-            (ContentPart(text=inline, truncated=truncated),),
-            (),
-            total,
-        )
-    # 全量落盘 (ADR-0032 决策 6): 没超阈值的也要存. 一级降级要把 transcript 里的正文
-    # 换成引用, 而那要求内容确实在某处 —— 只存溢出部分的话, 占最多数的那批中小输出
-    # 根本没得降. max_inline_bytes 从此只决定回填多少, 不决定存不存.
-    stored, artifact_truncated = ResourceGovernor.clamp(text, limits.max_artifact_bytes)
-    ref = artifacts.write(invocation_id=invocation_id, name=artifact_name, data=stored)
-    if artifact_truncated:
-        ref = replace(ref, truncated=True)
-    # **artifacts 与 provenance 说的不是同一件事**, 所以只有截断时才进 artifacts:
-    #
-    # - ``artifacts`` 的意思是"你看到的输出被切了, 剩下的在这里". 它进观察 payload,
-    #   也进终端那行"N 个产物". 全量落盘之后要是把每次调用都算进去, 读一个 20 行的
-    #   文件也会显示"1 个产物" —— 而用户看这个数字, 正是想知道有没有东西被切掉.
-    # - ``provenance.artifact_id`` 的意思是"完整内容留了一份, 压缩时可以拿它顶替正文".
-    #   它没有展示方, 只有 application/context 读.
-    return EmittedText(
-        (
-            ContentPart(
-                text=inline,
-                truncated=truncated,
-                artifact_id=ref.artifact_id,
-            ),
-        ),
-        (ref,) if truncated else (),
-        total,
-        ResultProvenance(artifact_id=ref.artifact_id, byte_size=total),
-    )
-
-
-def joined(lines: Sequence[str]) -> str:
-    return "\n".join(lines)
+def text_block(
+    tool_use_id: str, text: str, *, is_error: bool = False
+) -> ToolResultBlock:
+    return ToolResultBlock(tool_call_id=tool_use_id, content=text, is_error=is_error)

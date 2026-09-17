@@ -1,7 +1,7 @@
-"""循环的输入与一次调用的材料 (ADR-0010 §4.1, ADR-0051 决策 2).
+"""循环的输入与一次调用的材料 (ADR-0010 §4.1, ADR-0056 决策 2 / 决策 8).
 
 不保存 raw chain-of-thought; window 只保存工具结果 / 用户反馈 / 错误 / 安全摘要 /
-context 信息.
+通知.
 """
 
 from __future__ import annotations
@@ -9,26 +9,33 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from forgecli.core.context.budget import ContextBudget
-from forgecli.core.message import ChatMessage, TextBlock
-from forgecli.core.mode import SessionMode
-from forgecli.core.prompt_blocks import PromptSnapshot
+from forgecli.core.message import ChatMessage
+from forgecli.core.permissions import PermissionMode
 from forgecli.core.tool.tool_call import ToolSchema
-from forgecli.core.turn import MessageRole
+
+
+@dataclass(frozen=True)
+class ContextFingerprints:
+    """三个位置各一个 sha256 (ADR-0056 决策 12). 连续两次调用之间没有刷新点时它们
+    必须相同; 变了而没有理由, 就是有人把每轮变的东西放进了前缀."""
+
+    static: str
+    session: str
+    tools: str
 
 
 @dataclass(frozen=True)
 class AssembledContext:
     """一次模型调用的材料. 每次调模型前由外层现组, 循环拿来组请求.
 
-    请求的顺序是**稳的在前, 变的在后**, 因为供应商按字节前缀命中缓存::
+    请求的形状 (ADR-0056 决策 2)::
 
-        ModelRequest.system_prompt   policy (策略块 + FORGE.md) + runtime_context
-        ModelRequest.tools           tools
-        ModelRequest.messages        窗口 + state_frame
+        ModelRequest.tools           tools                 会话内字节锁定
+        ModelRequest.system_prompt   静态段 + 会话段       只在刷新点重算
+        ModelRequest.messages        窗口 (含通知)         只追加
 
-    一轮里输入没变, 前面那段每次组出来都是同样的字节, 缓存照样命中; 模型真改了
-    FORGE.md 或记忆, 那一次不命中, 应该的. 状态帧 (计划, 待办, 记忆) 是最后一块, 后面
-    没有东西会被它作废, 所以它每次都能是新的.
+    没有状态帧: 计划, 待办, 记忆, 模式的变化以 ``notices`` 进窗口, 由循环在组请求之前
+    追加. 通知一旦进了窗口就不再改, 所以每次组装只带**这次新要发的**几条.
 
     prompt 是必填而不是可选: 缺提示词时主模型调用必须被阻止, 而"可选字段 + 运行期
     检查"意味着漏传的后果是一次静默降级 —— 模型照常回答, 只是没有身份, 没有安全边界,
@@ -38,41 +45,20 @@ class AssembledContext:
     等于没有这道防线.
     """
 
-    policy: PromptSnapshot
-    runtime_context: str = ""
-    state_frame: str = ""
+    system_prompt: str
+    fingerprints: ContextFingerprints
     # 模型这次能看到的工具. 目录为空表示本档不暴露任何工具.
     tools: tuple[ToolSchema, ...] = ()
     budget: ContextBudget | None = None
+    # 这次要追加进窗口的通知 (决策 6). 全部 meta, 全部 <system-reminder> 包着.
+    notices: tuple[ChatMessage, ...] = ()
 
-    @property
-    def system_prompt(self) -> str:
-        """策略块 + FORGE.md 与运行上下文拼成一条 system 消息.
-
-        运行上下文接在静态策略之后: 前面那段几十轮不变, 后面这段换档才变, 而缓存只认从头
-        开始的前缀.
-        """
-        if not self.runtime_context:
-            return self.policy.text
-        return f"{self.policy.text}\n\n{self.runtime_context}"
-
-    def to_request_messages(
-        self, window: tuple[ChatMessage, ...]
-    ) -> tuple[ChatMessage, ...]:
-        """窗口 + 状态帧.
-
-        "状态帧永远在最后"这条只在这一个函数里成立 —— 循环那边拼一次, 上下文管理那边
-        再拼一次, 迟早有一处漏掉.
-
-        状态帧不进窗口: 它每次重建, 进了窗口就意味着历史里躺着一份过时的副本, 而摘掉它
-        又是一次中段改写.
-        """
-        if not self.state_frame:
-            return window
-        frame = ChatMessage(
-            role=MessageRole.USER, content=(TextBlock(text=self.state_frame),)
-        )
-        return (*window, frame)
+    def __post_init__(self) -> None:
+        if not self.system_prompt.strip():
+            raise ValueError("AssembledContext.system_prompt 不能为空")
+        for notice in self.notices:
+            if not notice.meta:
+                raise ValueError("AssembledContext.notices 只能装 meta 通知")
 
 
 @dataclass(frozen=True)
@@ -81,8 +67,10 @@ class LoopInput:
 
     turn_id: str
     session_id: str
-    mode: SessionMode
+    mode: PermissionMode
     initial_window: tuple[ChatMessage, ...] = ()
+    # 上一轮结束时的累计淘汰数, 本轮接着数.
+    evicted_count: int = 0
 
     def __post_init__(self) -> None:
         if not self.turn_id.strip():

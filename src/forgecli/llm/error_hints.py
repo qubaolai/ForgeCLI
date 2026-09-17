@@ -11,6 +11,7 @@ from forgecli.llm.gateway.errors import (
     ModelCancelledError,
     ModelContextOverflowError,
     ModelGatewayError,
+    ModelQuotaExhaustedError,
     ModelRateLimitError,
     ModelTimeoutError,
     ModelUnavailableError,
@@ -21,6 +22,12 @@ def actionable_message(exc: ModelGatewayError) -> str:
     """归一化错误 -> 一行可行动提示（§12 处理规则）。只含安全摘要。"""
     if isinstance(exc, ModelAuthError):
         hint = "认证失败：请检查对应供应商的 API Key 环境变量。"
+    elif isinstance(exc, ModelQuotaExhaustedError):
+        # 先于 ModelRateLimitError: 它是子类. 这一种等多久都不会好, 不说"稍后重试".
+        hint = (
+            "配额已用尽：请充值，或在该供应商的 credential_refs 里"
+            "配置另一个账号的 API Key。"
+        )
     elif isinstance(exc, ModelRateLimitError):
         wait = f"（建议 {exc.retry_after:.0f}s 后重试）" if exc.retry_after else ""
         hint = f"触发限流{wait}：请稍后重试。"

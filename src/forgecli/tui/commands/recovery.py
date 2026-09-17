@@ -1,4 +1,7 @@
-"""/checkpoints, /undo, /recovery: 恢复点的列出, 预览与还原."""
+"""/rewind: 回到某条 assistant 消息之前的文件状态 (ADR-0054 决策 5).
+
+文件历史只记 Edit / Write 改过的文件, Bash 改的不在里面 —— 与 Claude Code 同.
+"""
 
 from __future__ import annotations
 
@@ -6,42 +9,28 @@ from rich.text import Text
 
 from forgecli.tui.chooser import Option, choose, confirm
 from forgecli.tui.commands.context import CommandContext
-from forgecli.tui.console import (
-    STYLE_DIM,
-    STYLE_WARN,
-    error,
-    kv_table,
-    listing,
-    ok,
-    rule,
-    truncate,
-    warn,
-)
+from forgecli.tui.console import STYLE_DIM, error, listing, ok, rule, warn
 
 
-def cmd_checkpoints(context: CommandContext, argument: str) -> None:
+def cmd_rewind(context: CommandContext, argument: str) -> None:
+    if not context.require_idle():
+        return
     runtime = context.runtime
-    checkpoints = runtime.list_checkpoints()
-    if not checkpoints:
-        context.console.print(Text("还没有恢复点", style=STYLE_DIM))
+    snapshots = runtime.rewind_points()
+    if not snapshots:
+        context.console.print(Text("还没有可回退的快照", style=STYLE_DIM))
         return
     raw = argument.strip()
     if raw:
-        _restore(context, raw)
+        _rewind(context, raw)
         return
-    rule(context.console, "恢复点")
+    rule(context.console, "文件历史")
     context.console.print(
         listing(
-            ("恢复点", "创建于", "状态", "策略", "改动"),
+            ("消息", "创建于", "文件数"),
             (
-                (
-                    item.checkpoint_id,
-                    item.created_at,
-                    item.status.value,
-                    item.snapshot_strategy.value,
-                    str(len(item.mutations.entries)),
-                )
-                for item in checkpoints
+                (item.message_id, item.created_at, str(len(item.backups)))
+                for item in snapshots
             ),
         )
     )
@@ -49,88 +38,32 @@ def cmd_checkpoints(context: CommandContext, argument: str) -> None:
         context.console,
         [
             Option(
-                item.checkpoint_id,
-                item.checkpoint_id,
-                f"{item.created_at} · {len(item.mutations.entries)} 处改动",
+                item.message_id,
+                item.message_id,
+                f"{item.created_at} · {len(item.backups)} 个文件",
             )
-            for item in checkpoints
+            for item in snapshots
         ],
     )
     if picked is not None:
-        _restore(context, picked.key)
+        _rewind(context, picked.key)
 
 
-def cmd_undo(context: CommandContext, _argument: str) -> None:
-    """还原最近一次, 与 Web 的撤销按钮同一个动作: 取列表第一条."""
+def _rewind(context: CommandContext, message_id: str) -> None:
     runtime = context.runtime
-    checkpoints = runtime.list_checkpoints()
-    if not checkpoints:
-        warn(context.console, "没有可撤销的操作")
+    if not runtime.tools.file_history.can_restore(message_id):
+        error(context.console, f"没有这条消息的快照: {message_id}")
         return
-    _restore(context, checkpoints[0].checkpoint_id)
-
-
-def cmd_recovery(context: CommandContext, _argument: str) -> None:
-    """恢复层状态: 恢复点总数与未收尾的事务."""
-    runtime = context.runtime
-    status = runtime.recovery_status()
-    rule(context.console, "恢复层")
-    context.console.print(
-        kv_table([("恢复点", str(status.get("checkpoint_count", 0)))])
-    )
-    pending = status.get("pending")
-    if isinstance(pending, list) and pending:
-        context.console.print(
-            Text(f"有 {len(pending)} 个未收尾的事务", style=STYLE_WARN)
-        )
-        for item in pending:
-            context.console.print(
-                Text(f"  {truncate(str(item), 110)}", style=STYLE_DIM)
-            )
-
-
-def _restore(context: CommandContext, checkpoint_id: str) -> None:
-    if not context.require_idle():
+    if not confirm(context.console, "回退会覆盖这些文件此后的全部改动, 继续?"):
         return
-    runtime = context.runtime
-    checkpoint = runtime.checkpoint(checkpoint_id)
-    if checkpoint is None:
-        error(context.console, f"恢复点不存在: {checkpoint_id}")
+    try:
+        outcome = runtime.rewind(message_id)
+    except RuntimeError as exc:
+        error(context.console, str(exc))
         return
-    preview = runtime.tools.recovery.preview(
-        checkpoint, runtime.tools.context_factory()
-    )
-    rule(context.console, f"预览 {checkpoint.checkpoint_id}")
-    context.console.print(
-        listing(
-            ("路径", "动作", "冲突", "说明"),
-            (
-                (item.relative_path, item.action, item.conflict.value, item.detail)
-                for item in preview.items
-            ),
-        )
-    )
-    conflicted = preview.conflicted
-    if conflicted:
-        # 冲突项默认跳过, 不静默覆盖: 恢复点建立之后有人又改过这些文件, 覆盖等于把
-        # 那次改动一起抹掉, 而它不在任何恢复点里.
-        context.console.print(
-            Text(f"{len(conflicted)} 处与当前工作区冲突, 默认跳过", style=STYLE_WARN)
-        )
-    if not confirm(context.console, f"还原 {checkpoint.checkpoint_id}?"):
-        return
-    force = bool(conflicted) and confirm(
-        context.console, "连冲突项一起覆盖?", default=False
-    )
-    outcome = runtime.tools.recovery.restore(
-        checkpoint, runtime.tools.context_factory(), force_conflicts=force
-    )
     ok(
         context.console,
-        f"已还原 {len(outcome.restored)} 项, 跳过 {len(outcome.skipped)} 项"
-        + (
-            f"; 新恢复点 {outcome.new_checkpoint_id}"
-            if outcome.new_checkpoint_id
-            else ""
-        ),
+        f"已回退: 还原 {len(outcome.restored)} 个, 删除 {len(outcome.removed)} 个",
     )
+    if outcome.failed:
+        warn(context.console, "有文件没能还原: " + ", ".join(outcome.failed))

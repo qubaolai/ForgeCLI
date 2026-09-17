@@ -301,8 +301,6 @@ class TerminalRunView:
         self._entry(
             f"裁决 {payload.tool_name}", f"{payload.decision} · {detail}", style
         )
-        if payload.risk_facts:
-            self._sub("风险: " + ", ".join(payload.risk_facts))
 
     def _tool_started(
         self, tool_call_id: str | None, payload: ToolStartedPayload

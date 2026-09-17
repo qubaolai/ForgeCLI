@@ -28,6 +28,7 @@ class ModelTransportPolicy:
                 | RequestOrigin.COMPACT
                 | RequestOrigin.SUMMARY
                 | RequestOrigin.STRUCTURED_CLASSIFICATION
+                | RequestOrigin.PERMISSION_CLASSIFIER
             ):
                 return ModelTransportMode.COMPLETE
             case _:

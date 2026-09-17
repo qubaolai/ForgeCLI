@@ -18,12 +18,11 @@ from forgecli.agent.loop.rule import AfterModelVerdict, LoopView, ModelErrorVerd
 from forgecli.agent.loop.transcript import protocol_markup_in
 from forgecli.agent.loop.verdicts import Continue, Reask
 from forgecli.common.observability.log import get_log
+from forgecli.conversation.notices import guidance
 from forgecli.core.agent.actions import LoopStop
 from forgecli.core.agent.stop import LoopStopReason
-from forgecli.core.message import ChatMessage, TextBlock
-from forgecli.core.turn import MessageRole
 from forgecli.llm.gateway.errors import MalformedToolCallError, ModelGatewayError
-from forgecli.prompt.template_renderer import render_notice
+from forgecli.prompt import prompts
 
 __all__ = ["MAX_MALFORMED_RESPONSES", "MalformedOutputRule"]
 
@@ -56,9 +55,7 @@ class MalformedOutputRule:
                 marker=marker,
                 arguments=call.arguments,
             )
-            return self._retry(
-                render_notice("loop.malformed_detail", tool=call.name, marker=marker)
-            )
+            return self._retry(prompts.loop_malformed_detail(call.name, marker))
         return Continue()
 
     def on_bad_json(
@@ -84,12 +81,9 @@ class MalformedOutputRule:
         if self._count > MAX_MALFORMED_RESPONSES:
             return LoopStop(
                 LoopStopReason.MODEL_ERROR_BLOCKING,
-                render_notice("stop.malformed", count=self._count),
+                prompts.stop_malformed(self._count),
             )
-        notice = render_notice("loop.malformed", detail=detail)
         return Reask(
-            messages=(
-                ChatMessage(role=MessageRole.USER, content=(TextBlock(notice),)),
-            ),
+            messages=(guidance(prompts.loop_malformed(detail)),),
             summary=f"工具调用格式损坏, 重试: {detail}",
         )

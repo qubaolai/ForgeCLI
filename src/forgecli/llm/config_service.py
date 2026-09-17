@@ -196,6 +196,10 @@ def _retry_settings(section: Mapping[str, object]) -> RetrySettings:
             "wait_threshold_seconds",
             section.get("wait_threshold_seconds", defaults.wait_threshold_seconds),
         ),
+        quota_cooldown_seconds=_as_nonneg_number(
+            "quota_cooldown_seconds",
+            section.get("quota_cooldown_seconds", defaults.quota_cooldown_seconds),
+        ),
     )
 
 
@@ -427,6 +431,10 @@ class LlmConfigService:
     def set_provider_field(self, provider_id: str, field: str, raw: str) -> None:
         provider_id = self._canonical(provider_id)
         value = coerce_provider_field(field, raw)
+        if value == []:
+            # 列表字段留空即清除: 不把 `[]` 固化进文件, 与模型字段"默认值不回写"同一条.
+            self._store.drop_provider_field(provider_id, field)
+            return
         self._store.upsert_provider_field(
             provider_id, field, value, provider_defaults=self._defaults(provider_id)
         )
@@ -491,7 +499,10 @@ class LlmConfigService:
                     f"{section}.{field} 必须是数字，收到: {raw!r}"
                 ) from None
             value = _as_positive_number(f"{section}.{field}", parsed_number)
-        elif key == ("retry", "wait_threshold_seconds"):
+        elif key in {
+            ("retry", "wait_threshold_seconds"),
+            ("retry", "quota_cooldown_seconds"),
+        }:
             try:
                 parsed_number = float(raw.strip())
             except ValueError:
@@ -620,7 +631,8 @@ class LlmConfigService:
             "name": body.get("name", spec.label),
             "api_base": body.get("api_base", spec.default_api_base),
             "api_key_env": str(api_key_env) if api_key_env else None,
-            "protocol": str(body.get("protocol", spec.protocol.value)),
+            # 缺键或空串都回落到注册表那一份, 与 _register_user_providers 同一条规则.
+            "protocol": str(body.get("protocol") or spec.protocol.value),
             "models": tuple(models),
         }
         for optional in ("timeout", "max_retries", "credential_refs"):
@@ -651,8 +663,14 @@ def _register_user_providers(section: Mapping[str, object]) -> None:
         if not api_base:
             # 没有端点就发不出请求. 登记它只会让它出现在列表里然后每次调用都失败.
             continue
+        # 缺键或空串按 ProviderConfig 的缺省 (OpenAI 兼容) 算: 解析那一侧就是这么认的,
+        # 登记这一侧原先要求显式写出, 于是手写配置漏了这个键的自建供应商在文件里好好的,
+        # 注册表里却没有它 —— 界面上看得见, 一调用就"未知供应商".
+        raw_protocol = str(body.get("protocol") or "").strip()
         try:
-            protocol = ProviderProtocol(str(body.get("protocol", "")).strip())
+            protocol = ProviderProtocol(
+                raw_protocol or ProviderProtocol.OPENAI_COMPATIBLE.value
+            )
         except ValueError:
             # 手改配置写了个认不出的协议. 跳过它而不是抛 —— 抛会让整个配置读不出来,
             # 而后果是所有供应商一起消失, 包括内置的.

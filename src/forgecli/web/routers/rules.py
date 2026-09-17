@@ -1,37 +1,41 @@
-"""学习到的授权规则: 列举, 撤销, 清理过期。
+"""权限规则 (ADR-0055 决策 2): 三张表按来源列出, 删一条.
 
-只回当前工作区的规则 —— workspace 范围的规则不能跨项目命中, 列出来也无从撤销。
+内置 (policy) 来源只读; 用户与项目来源写回设置文件, 本会话来源随会话消失.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, status
+from pydantic import BaseModel, Field
 
-from forgecli.core.serialization import to_jsonable
 from forgecli.web.deps import active_runtime
 
-router = APIRouter(prefix="/api/v1/rules")
+router = APIRouter(prefix="/api/v1/permissions")
+
+
+class RemoveRuleRequest(BaseModel):
+    behavior: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    rule: str = Field(min_length=1)
 
 
 @router.get("")
-async def rules(request: Request) -> dict[str, object]:
+async def permissions(request: Request) -> dict[str, object]:
     runtime = active_runtime(request)
+    permission = runtime.tools.permission
     return {
-        "items": [
-            to_jsonable(rule)
-            for rule in runtime.tools.learned.rules
-            if rule.match.workspace_id == runtime.tools.workspace_id
-        ]
+        "mode": permission.mode.value,
+        "rules": runtime.permission_rules(),
+        "additional_directories": [
+            {"path": item.path, "source": item.source.value}
+            for item in permission.additional_working_directories
+        ],
     }
 
 
-@router.delete("/{rule_id}")
-async def revoke_rule(rule_id: str, request: Request) -> dict[str, bool]:
-    if not active_runtime(request).tools.learned.revoke(rule_id):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "学习规则不存在")
-    return {"revoked": True}
-
-
-@router.post("/prune")
-async def prune_rules(request: Request) -> dict[str, int]:
-    return {"removed": active_runtime(request).tools.learned.prune()}
+@router.post("/remove")
+async def remove_rule(body: RemoveRuleRequest, request: Request) -> dict[str, bool]:
+    runtime = active_runtime(request)
+    if not runtime.remove_permission_rule(body.behavior, body.source, body.rule):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "规则不存在或不可删除")
+    return {"removed": True}

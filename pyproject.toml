@@ -36,7 +36,6 @@ dependencies = [
     "httpx (>=0.28,<0.29)",
     "fastapi (>=0.135,<0.136)",
     "uvicorn (>=0.41,<0.42)",
-    "jinja2 (>=3.1,<4.0)",
     # 源码直接 import 了它们, 所以它们必须直接写在这里 —— 而不是靠 fastapi 顺手带进来.
     # 传递依赖是别人的实现细节: fastapi 哪天把 starlette 换成别的, 我们的 import 就在
     # 升级那一刻断掉, 而 pyproject 上一个字都没改. scripts/check_deps.py 守这条 (ADR-0040 决策 11).
@@ -44,9 +43,7 @@ dependencies = [
     "starlette (>=1.6,<2.0)",
     "wcmatch (>=11.0.1,<12.0.0)",
     "charset-normalizer (>=3.5.1,<4.0.0)",
-    "regex (>=2026.7.19,<2027.0.0)",
     "jsonschema (>=4.26.0,<5.0.0)",
-    "rapidfuzz (>=3.14.5,<4.0.0)",
     "pygit2 (>=1.20.0,<2.0.0)",
     "filelock (>=3.20,<4.0)",
     "sse-starlette (>=3.1,<4.0)",
@@ -74,9 +71,6 @@ packages = [
 ]
 include = [
     { path = "src/forgecli/web/static", format = ["wheel", "sdist"] },
-    # 系统提示词模板 (ADR-0039). 它们是包内数据: 少了任何一份, 装出来的 forge 起不了
-    # 会话, 而源码树里照样跑得起来 —— 打包清单漏了它不会有任何东西报错.
-    { path = "src/forgecli/prompt/templates", format = ["wheel", "sdist"] },
 ]
 
 # -----------------------------------------------------------------------------
@@ -89,7 +83,6 @@ ruff = "^0.8.0"
 # 静态类型检查。
 mypy = "^1.0.0"
 types-jsonschema = "^4.26.0.20260518"
-types-regex = "^2026.7.19.20260720"
 
 # 测试。
 pytest = "^8.0.0"
@@ -132,6 +125,13 @@ select = ["E", "F", "I", "B", "UP", "SIM"]
 
 # 如果需要忽略某些规则，可以添加：
 # ignore = ["E501"]
+
+# 给模型的工具说明是整段英文原文 (ADR-0054 决策 7), 按 Claude Code 的 prompt.ts 逐字
+# 翻译, 不按 88 列折行: 折了模型看到的就不是同一段话.
+[tool.ruff.lint.per-file-ignores]
+"src/forgecli/tools/builtin/*/prompt.py" = ["E501"]
+# 同一条理由: 提示词正文按句写, 不按 88 列折 (ADR-0056 决策 1).
+"src/forgecli/prompt/prompts.py" = ["E501"]
 
 # -----------------------------------------------------------------------------
 # mypy 类型检查配置

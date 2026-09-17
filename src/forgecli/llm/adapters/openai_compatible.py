@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable, Iterator, Mapping
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -33,6 +35,7 @@ from forgecli.llm.gateway.errors import (
     ModelCancelledError,
     ModelContextOverflowError,
     ModelProviderInternalError,
+    ModelQuotaExhaustedError,
     ModelRateLimitError,
     ModelResponseParseError,
     ModelTimeoutError,
@@ -501,6 +504,16 @@ class OpenAICompatibleProvider(ModelProvider):
             summary=summary,
             body=response.text,
         )
+        # 配额耗尽先于按状态码分流: 它在 HTTP 上没有自己的状态码 —— 阿里云回 429 与
+        # 403, DeepSeek 回 402, OpenAI 回 429 —— 只有错误体说得清. 按状态码先分的话,
+        # 同一件事 (这把 key 没额度了) 会落进三个不同的分支, 冷却与提示各不相同.
+        if status == 402 or (
+            status in (403, 429) and _is_quota_exhausted(response.text)
+        ):
+            raise ModelQuotaExhaustedError(
+                f"provider 配额耗尽（{status}）: {summary}",
+                retry_after=self._retry_after(response),
+            )
         if status in (401, 403):
             raise ModelAuthError(f"provider 认证失败（{status}）: {summary}")
         if status == 429:
@@ -528,13 +541,25 @@ class OpenAICompatibleProvider(ModelProvider):
 
     @staticmethod
     def _retry_after(response: httpx.Response) -> float | None:
+        """Retry-After 头 -> 秒. 两种写法 (RFC 9110 §10.2.3) 都认: 秒数, 或 HTTP 日期.
+
+        日期形式折成"距现在多少秒", 过去的时刻算 0 而不是负数: 负的等待时长传到重试环
+        里会被当成"不必等"直接放过阈值判断, 而供应商的本意是"现在就可以了".
+        """
         raw = response.headers.get("retry-after")
         if raw is None:
             return None
         try:
             return float(raw)
         except ValueError:
+            pass
+        try:
+            when = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, IndexError):
             return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        return max(0.0, (when - datetime.now(UTC)).total_seconds())
 
     # ---- 取消 ----
 
@@ -563,3 +588,29 @@ _CONTEXT_OVERFLOW_MARKERS = (
 def _is_context_overflow(body: str) -> bool:
     lowered = body.lower()
     return any(marker in lowered for marker in _CONTEXT_OVERFLOW_MARKERS)
+
+
+# 各家对"这把 key 没额度了"的说法 (ADR-0059). 同样只能靠措辞: OpenAI 与阿里云的
+# `insufficient_quota` 是 error.code, 阿里云免费额度用完是 403 `AllocationQuota.*`,
+# 欠费是 `Arrearage`, DeepSeek 只有一句 "Insufficient Balance", 智谱说中文.
+#
+# 刻意不收单独的 "quota": 有些供应商的**限流**消息也带这个词 ("quota per minute"),
+# 而限流退避几秒就过去, 归成配额耗尽会让一把好 key 被冷却一小时.
+_QUOTA_EXHAUSTED_MARKERS = (
+    "insufficient_quota",
+    "insufficient balance",
+    "insufficient_balance",
+    "quota exhausted",
+    "exceeded your current quota",
+    "exceeded_current_quota",
+    "allocationquota",
+    "arrearage",
+    "欠费",
+    "余额不足",
+    "额度已用完",
+)
+
+
+def _is_quota_exhausted(body: str) -> bool:
+    lowered = body.lower()
+    return any(marker in lowered for marker in _QUOTA_EXHAUSTED_MARKERS)

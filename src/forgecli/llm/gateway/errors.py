@@ -43,7 +43,7 @@ class ModelAuthError(ModelGatewayError):
 
 
 class ModelRateLimitError(ModelGatewayError):
-    """触发限流 / 配额（429）。retry_after 为供应商建议的冷却秒数（若有）。"""
+    """触发限流（429）。retry_after 为供应商建议的冷却秒数（若有）。"""
 
     def __init__(
         self,
@@ -56,6 +56,19 @@ class ModelRateLimitError(ModelGatewayError):
     ) -> None:
         super().__init__(message, provider=provider, model=model, request_id=request_id)
         self.retry_after = retry_after
+
+
+class ModelQuotaExhaustedError(ModelRateLimitError):
+    """这把 key 的配额用完了: 免费额度耗尽, 余额不足, 欠费 (ADR-0059).
+
+    从 ModelRateLimitError 分出来是因为**等多久都不会好**. 限流是"这一秒发得太多",
+    退避几秒就过去; 配额耗尽是"这个账号今天 / 这个月没有了", 要么充值, 要么换一个
+    账号的 key. 两者在 HTTP 上长得一样 (供应商多半也回 429, 也有回 402 / 403 的),
+    区别只在错误体的 code / message 里, 由 adapter 认出来.
+
+    仍然继承 ModelRateLimitError: 上层"这是不是一个该换凭证的错误"的判断不变, 变的
+    只有冷却多久 (小时级而不是秒级) 与给用户的提示 (充值 / 换账号, 而不是稍后重试).
+    """
 
 
 class ModelTimeoutError(ModelGatewayError):

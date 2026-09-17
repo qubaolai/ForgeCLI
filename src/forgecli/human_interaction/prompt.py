@@ -1,20 +1,20 @@
 """人机提示: 挂起一个调用者, 等一个人回一句话 (ADR-0043 决策 3).
 
-Forge 里有两种"问人": 安全策略判出 ASK 时问"这次调用许不许可", 模型缺业务信息时问
-"你想要哪一种". 两者的**语义毫无共同之处** —— 前者的回答会经重验签出
-``ExecutionAuthorization``, 后者的回答只是一段文本 —— 但**等待的形状完全一样**: 挂起
+Forge 里有两种"问人": 权限裁决是 ask 时问"这次调用许不许可", 模型缺业务信息时问
+"你想要哪一种". 两者的**语义毫无共同之处** —— 前者的回答变成一个 ``PermissionResult``
+(可能还顺带施加一条规则), 后者的回答只是一段文本 —— 但**等待的形状完全一样**: 挂起
 调用者, 在界面上摆一张卡片, 等一个人点一下, 把结果交回去, 并在取消或退出时放开所有
 还在等的.
 
 这个模块就是那个形状, 而且**只是那个形状**.
 
 **``HumanPrompt`` 必须保持哑** (ADR-0043 决策 3 纪律 1). 它里面不许出现
-``ApprovalScope``, ``ToolPlan`` 或任何安全词汇: 一旦出现, 下一次给审批加字段就会顺手
-让提问也拿到它, 而那个字段可能正是一档授权范围. ``scripts/check_arch.py`` 有一条断言
-守着这件事, 不靠自觉.
+``PermissionUpdate``, ``PermissionResult`` 或任何权限词汇: 一旦出现, 下一次给审批加
+字段就会顺手让提问也拿到它, 而那个字段可能正是一条放行规则. ``scripts/check_arch.py``
+有一条断言守着这件事, 不靠自觉.
 
-于是"回答意味着什么"一律在上层的适配器里决定: ``ApprovalService`` 把
-``choice`` 映射回 ``ApprovalOutcome`` 与 ``ApprovalScope``, ``AskUserTool`` 把 ``text``
+于是"回答意味着什么"一律在上层的适配器里决定: ``security/interactive.py`` 把
+``choice`` 映射回 allow / deny 与要施加的建议, ``AskUserQuestionTool`` 把 ``text``
 原样当成工具结果. 两者互不 import.
 """
 
@@ -43,7 +43,7 @@ class PromptKind(Enum):
 class PromptChoice:
     """一个可点的选项.
 
-    ``value`` 是回传给适配器的稳定标识 (审批那侧是 ``once`` / ``workspace`` / ``deny``),
+    ``value`` 是回传给适配器的稳定标识 (审批那侧是 ``yes`` / ``suggestion_N`` / ``no``),
     ``label`` 是给人读的那一行, ``detail`` 是可选的补充说明.
     """
 
@@ -65,9 +65,9 @@ class PromptChoice:
 class HumanPrompt:
     """一条待人作答的提示.
 
-    ``detail`` 是**不透明的**: 通道原样搬运, 不解释其中任何一个键. 审批那侧装的就是
-    ``ApprovalView.to_payload()`` 的返回值 —— 用户批准的对象是被 ``view_hash`` 绑定的
-    那份视图, 而多一份手工维护的投影就多一个"显示的和绑定的不是同一件事"的位置
+    ``detail`` 是**不透明的**: 通道原样搬运, 不解释其中任何一个键. 审批那侧装的是
+    ``security/interactive.py`` 组的那一份 (工具, 入参, 理由, 建议), 终端与 Web 读同
+    一份 —— 多一份手工维护的投影就多一个"两边显示的不是同一件事"的位置
     (ADR-0043 决策 3 纪律 2).
     """
 

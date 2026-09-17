@@ -7,7 +7,7 @@ message 不直接暴露第三方 SDK 对象；content 采用内容块数组：
 复用同包的 MessageRole（USER / ASSISTANT），保持角色词汇单一真相；
 system 提示走 ModelRequest.system_prompt 独立字段，不占消息角色。
 
-ToolSpec / ToolCall 住在 domain.tool: 工具是与对话并列的一等概念, 本模块只在
+ToolCall 住在 core.tool.tool_call: 工具是与对话并列的一等概念, 本模块只在
 ChatMessage.tool_calls 与 ToolResultBlock 上引用它。
 """
 
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from forgecli.core.tool.result import ResultProvenance
 from forgecli.core.tool.tool_call import ToolCall
 from forgecli.core.turn import MessageRole
 
@@ -46,12 +45,6 @@ class ToolResultBlock(ContentBlock):
     tool_call_id: str
     content: str
     is_error: bool = False
-    # 这条结果的来源身份与归档位置 (ADR-0032). 上下文管理据此判断能不能去重, 以及
-    # 降级之后取不取得回来. None 表示工具没声明, 那样的块原样留着.
-    #
-    # 放在块上而不是另建一张边表: 边表要靠索引对齐消息序列, 而消息序列在压缩过程中
-    # 正在被重写 —— 一次没对齐就是把 A 的来源安到 B 头上, 且不会报错.
-    provenance: ResultProvenance | None = None
 
     def __post_init__(self) -> None:
         if not self.tool_call_id.strip():
@@ -70,7 +63,22 @@ class ChatMessage:
     role: MessageRole
     content: tuple[ContentBlock, ...]
     tool_calls: tuple[ToolCall, ...] = ()
+    # Forge 注入窗口的通知 (ADR-0056 决策 6): 界面不显示, 事件日志保留并在恢复时回放.
+    # 通知走 user 角色 (供应商协议里没有第三种能放在历史中间的角色), 靠这个标记与用户
+    # 自己说的话分开.
+    meta: bool = False
+    # 通知的类型与它描述的那份状态的版本. 增量与节流从窗口里同类型的上一条推出来, 不
+    # 另存计数器 —— 压缩淘汰掉旧通知, 计数自然归零.
+    notice_kind: str = ""
+    notice_revision: str = ""
 
     def __post_init__(self) -> None:
         if not self.content and not self.tool_calls:
             raise ValueError("ChatMessage 的 content 与 tool_calls 不能同时为空")
+        if (self.notice_kind or self.notice_revision) and not self.meta:
+            raise ValueError("带 notice_kind 的消息必须是 meta 通知")
+
+    @property
+    def is_user_turn(self) -> bool:
+        """用户自己说的话: user 角色且不是通知. 节流按它数回合."""
+        return self.role is MessageRole.USER and not self.meta

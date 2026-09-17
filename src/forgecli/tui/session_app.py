@@ -17,12 +17,14 @@ from rich.console import Console
 from rich.text import Text
 
 from forgecli.common.exit_codes import ExitCode
-from forgecli.core.mode import PRESET_NAMES, InputOrigin, stance_label
+from forgecli.core.mode import InputOrigin
+from forgecli.core.permissions import PermissionMode
 from forgecli.human_interaction.prompt import PromptAnswer
 from forgecli.runtime.project_runtime import ProjectRuntime, ProjectRuntimeRegistry
 from forgecli.settings.paths import config_dir
 from forgecli.tui import banner
 from forgecli.tui.commands.context import CommandContext, NoActiveProject
+from forgecli.tui.commands.mode import mode_label
 from forgecli.tui.commands.registry import COMMANDS, dispatch
 from forgecli.tui.console import STYLE_DIM, display_path, error, warn
 from forgecli.tui.plan_review import review
@@ -115,7 +117,7 @@ class SessionApp:
         runtime = self.registry.active
         if runtime is None:
             return ""
-        parts = [stance_label(runtime.session.current().mode)]
+        parts = [mode_label(runtime.session.current().mode)]
         model = runtime.current_model()
         if model is None:
             parts.append("未设置模型")
@@ -133,9 +135,9 @@ class SessionApp:
         两端截断不回绕: 从最松的一档再按一次 Tab 跳回最紧的, 是那种按下去才发现的
         意外 —— 而这一轴上的每一步都在改 Forge 能不动手做什么。
 
-        梯度取 `runtime.presets` 而不是 MODE_PRESETS 全表: Full Access 只在启动时带了
-        `--allow-full-access` 才在里面 (ADR-0052). 没放开时最松的一档就是 auto,
-        Tab 到那里停下, 不会撞到一个"点了才报错"的档.
+        梯度取 `runtime.presets`: Bypass Permissions 只在启动时带了
+        `--allow-full-access` 才在里面 (ADR-0052). 没放开时 Tab 到 plan 停下, 不会撞到
+        一个"点了才报错"的档.
         """
         runtime = self.registry.active
         if runtime is None or runtime.busy:
@@ -143,18 +145,14 @@ class SessionApp:
         names = [preset.value for preset in runtime.presets]
         current = runtime.session.current().mode
         index = next(
-            (
-                position
-                for position, name in enumerate(names)
-                if PRESET_NAMES[name] == current
-            ),
-            # 当前是两个轴的自由组合, 不在预设里. 从哪一端起步跟着方向走, 免得
-            # "按一下 Tab 反而更严了"。
+            (position for position, name in enumerate(names) if name == current.value),
+            # 当前档不在菜单里 (dont_ask). 从哪一端起步跟着方向走, 免得"按一下 Tab
+            # 反而更严了".
             -1 if step > 0 else len(names),
         )
         target = max(0, min(index + step, len(names) - 1))
-        if PRESET_NAMES[names[target]] != current:
-            runtime.set_mode(PRESET_NAMES[names[target]])
+        if names[target] != current.value:
+            runtime.set_mode(PermissionMode(names[target]))
 
     def _banner(self) -> None:
         runtime = self.registry.active
@@ -168,7 +166,7 @@ class SessionApp:
             rows.extend(
                 [
                     ("工作区", display_path(runtime.project.primary_workspace_root)),
-                    ("模式", stance_label(runtime.session.current().mode)),
+                    ("模式", mode_label(runtime.session.current().mode)),
                     (
                         "模型",
                         str(model) if model is not None else "未设置, 用 /model 选",

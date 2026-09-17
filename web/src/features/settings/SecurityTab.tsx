@@ -1,22 +1,34 @@
-/** 安全与工具页: 工作区目录, 学习规则, 当前模式下模型看得见的工具。 */
+/** 安全与工具页: 工作区目录, 权限规则, 模型看得见的工具 (ADR-0055). */
 
 import { useState } from "react";
-import {
-  Button,
-  Collapse,
-  Empty,
-  Flex,
-  Input,
-  Popconfirm,
-  Select,
-  Space,
-  Table,
-  Tag,
-  Typography,
-} from "antd";
+import { Button, Collapse, Empty, Flex, Input, Popconfirm, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { Administration } from "@/features/administration/useAdministration";
-import type { LearnedRule, WorkspaceRoot } from "@/types/admin";
+import type { WorkspaceRoot } from "@/types/admin";
+
+/** 来源在界面上的名字, 与终端 /permissions 同一张表. */
+const SOURCE_LABELS: Record<string, string> = {
+  policy_settings: "内置 (只读)",
+  user_settings: "用户 config.json",
+  project_settings: "项目 forge.json",
+  cli_arg: "命令行",
+  session: "本会话",
+};
+
+type RuleRow = { key: string; behavior: string; source: string; rule: string };
+
+function ruleRows(admin: Administration): RuleRow[] {
+  const rows: RuleRow[] = [];
+  const tables = admin.permissions?.rules ?? {};
+  for (const [behavior, bySource] of Object.entries(tables)) {
+    for (const [source, rules] of Object.entries(bySource)) {
+      for (const rule of rules) {
+        rows.push({ key: `${behavior}|${source}|${rule}`, behavior, source, rule });
+      }
+    }
+  }
+  return rows;
+}
 
 export function SecurityTab({ admin }: { admin: Administration }) {
   return (
@@ -30,12 +42,6 @@ export function SecurityTab({ admin }: { admin: Administration }) {
         dataSource={admin.workspaceRoots}
         columns={[
           { title: "目录", dataIndex: "path" },
-          {
-            title: "权限",
-            dataIndex: "access",
-            width: 96,
-            render: (access: string) => <Tag>{access === "write" ? "可读写" : "只读"}</Tag>,
-          },
           {
             title: "",
             key: "action",
@@ -60,63 +66,70 @@ export function SecurityTab({ admin }: { admin: Administration }) {
         ]}
       />
 
-      <Table<LearnedRule>
+      <Table<RuleRow>
         size="small"
         pagination={false}
-        rowKey="rule_id"
-        title={() => <Typography.Text strong>学习规则</Typography.Text>}
-        footer={() => (
-          <Button size="small" onClick={admin.pruneRules}>
-            清理已过期 / 已撤销的规则
-          </Button>
+        rowKey="key"
+        title={() => (
+          <Space>
+            <Typography.Text strong>权限规则</Typography.Text>
+            <Typography.Text type="secondary">
+              写法与 Claude Code 同: Bash(git commit:*), Edit(src/**); 用户与项目来源在设置文件里。
+            </Typography.Text>
+          </Space>
         )}
-        dataSource={admin.rules}
+        dataSource={ruleRows(admin)}
         locale={{
-          emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有工作区学习规则。" />,
+          emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有任何权限规则。" />,
         }}
         columns={[
-          { title: "规则", dataIndex: "rule_id", render: (id: string, rule) => rule.label || id },
-          { title: "范围", dataIndex: "scope", width: 120 },
-          { title: "匹配", dataIndex: ["match", "mode"], width: 120 },
+          {
+            title: "行为",
+            dataIndex: "behavior",
+            width: 80,
+            render: (behavior: string) => (
+              <Tag color={behavior === "deny" ? "red" : behavior === "ask" ? "gold" : "green"}>{behavior}</Tag>
+            ),
+          },
+          { title: "规则", dataIndex: "rule" },
+          {
+            title: "来源",
+            dataIndex: "source",
+            width: 140,
+            render: (source: string) => SOURCE_LABELS[source] ?? source,
+          },
           {
             title: "",
             key: "action",
             width: 88,
-            render: (_value, rule) => (
-              <Button size="small" onClick={() => admin.revokeRule(rule.rule_id)}>
-                撤销
-              </Button>
-            ),
+            render: (_value, row) =>
+              row.source === "policy_settings" ? null : (
+                <Button size="small" onClick={() => admin.removeRule(row.behavior, row.source, row.rule)}>
+                  删除
+                </Button>
+              ),
           },
         ]}
       />
 
       <Flex vertical gap="small">
-        <Typography.Text strong>当前模式下模型可见的工具</Typography.Text>
-        <Typography.Text type="secondary">
-          工具集合由模式的能力上界决定; 换模式会改变这份清单。
-        </Typography.Text>
+        <Typography.Text strong>模型可见的工具</Typography.Text>
+        <Typography.Text type="secondary">整工具的 deny 规则会把工具从这份清单里摘掉。</Typography.Text>
         {admin.tools.length ? (
           <Collapse
             size="small"
             items={admin.tools.map((tool) => ({
               key: tool.name,
-              label: (
-                <Space wrap>
-                  <Typography.Text strong>{tool.name}</Typography.Text>
-                  <Typography.Text type="secondary">{tool.title}</Typography.Text>
-                </Space>
+              label: <Typography.Text strong>{tool.name}</Typography.Text>,
+              children: (
+                <Typography.Paragraph style={{ whiteSpace: "pre-wrap", marginBottom: 0 }} type="secondary">
+                  {tool.description}
+                </Typography.Paragraph>
               ),
-              extra: (
-                <Typography.Text type="secondary">
-                  {tool.declared_capabilities.join(" · ") || "无声明能力"}
-                </Typography.Text>
-              ),
-              children: <Typography.Text type="secondary">{tool.description}</Typography.Text>,
             }))}
           />
         ) : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前模式下没有可见工具。" />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有可见工具。" />
         )}
       </Flex>
     </Flex>
@@ -125,30 +138,20 @@ export function SecurityTab({ admin }: { admin: Administration }) {
 
 function AddRootRow({ onAdd }: { onAdd: (path: string, access: string) => void }) {
   const [path, setPath] = useState("");
-  const [access, setAccess] = useState("read");
   return (
     <Space.Compact block>
       <Input
         value={path}
         onChange={(event) => setPath(event.target.value)}
-        placeholder="额外目录路径"
+        placeholder="额外目录路径 (加进来的目录读写都自动放行)"
         aria-label="额外目录路径"
-      />
-      <Select
-        value={access}
-        onChange={setAccess}
-        style={{ width: 110 }}
-        options={[
-          { value: "read", label: "只读" },
-          { value: "write", label: "读写" },
-        ]}
       />
       <Button
         type="primary"
         icon={<PlusOutlined />}
         disabled={!path.trim()}
         onClick={() => {
-          onAdd(path, access);
+          onAdd(path, "write");
           setPath("");
         }}
       >

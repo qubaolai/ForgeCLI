@@ -23,10 +23,13 @@ class WorkspaceGrantRequest(BaseModel):
 
 
 def _access(runtime: ProjectRuntime, root: str) -> str:
+    """加进来的目录读写都自动放行 (ADR-0055): 只有主根之外的目录才可能不在池里."""
     if root == runtime.project.primary_workspace_root:
         return "write"
-    grant = runtime.tools.grants.access_for(root)
-    return "read" if grant is None else grant.value
+    known = {
+        item.path for item in runtime.tools.permission.additional_working_directories
+    }
+    return "write" if root in known else "none"
 
 
 @router.get("")

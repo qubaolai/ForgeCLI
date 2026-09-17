@@ -83,10 +83,14 @@ def explain_validation_error(error: ValidationError) -> str:
 def _menu_kind(annotation: object) -> type:
     """菜单字段的原生类型: `int | None` 这样的标注要剥到 int.
 
-    只认 int / float / str; 将来给某个字段换了别的类型, 下面那句 raise 会在 import
-    这个模块时就炸掉, 而不是让菜单静默地把它当字符串收.
+    只认 int / float / str / bool 与字符串列表 (`tuple[str, ...]`, 菜单里以逗号分隔
+    的一行文本收, 见 coerce_provider_field); 将来给某个字段换了别的类型, 下面那句
+    raise 会在 import 这个模块时就炸掉, 而不是让菜单静默地把它当字符串收.
     """
     text = str(annotation)
+    # 先于 "str": `tuple[str, ...]` 里也有那三个字母.
+    if text.startswith("tuple[str"):
+        return list
     if "int" in text:
         return int
     if "float" in text:
@@ -149,7 +153,7 @@ class StandardField:
 
     name: str
     label: str
-    kind: type  # int | float | str
+    kind: type  # int | float | str | bool | list (字符串列表, 逗号分隔的一行文本)
     choices: tuple[str, ...] = ()
 
 
@@ -359,13 +363,17 @@ class ProviderConfig(BaseModel):
     api_key_env: str | None = Field(
         default=None, json_schema_extra=_menu("API Key 环境变量")
     )
+    # 可选 key pool (ADR-0011 §7 / §16, ADR-0059 决策 7): 多个 credential reference
+    # (环境变量名, 如 "DEEPSEEK_API_KEY"), 按顺序轮换. 设了它就**只**用它, api_key_env
+    # 不再自动算进去 —— 要它也在池里就把它写进列表, 位置由用户定. 缺省时由 settings
+    # 层从 api_key_env 派生单条引用. 菜单里是逗号分隔的一行, 留空即清除.
+    # 明文 key 永不入配置. 声明在 api_key_env 旁边: 菜单行序即声明序.
+    credential_refs: tuple[str, ...] = Field(
+        default=(), json_schema_extra=_menu("API Key 环境变量池 (逗号分隔)")
+    )
     timeout: int = Field(default=60, ge=0, json_schema_extra=_menu("超时(秒)"))
     max_retries: int = Field(default=2, ge=0, json_schema_extra=_menu("重试次数"))
     models: tuple[ModelSpec, ...] = ()
-    # 可选 key pool (ADR-0011 §7 / §16): 多个 credential reference (环境变量名, 如
-    # "DEEPSEEK_API_KEY"). 缺省时由 settings 层从 api_key_env 派生单条引用.
-    # 只支持手写配置, 不进 /config 菜单编辑 (所以没有菜单标签); 明文 key 永不入配置.
-    credential_refs: tuple[str, ...] = ()
 
     @field_validator("credential_refs", mode="before")
     @classmethod
@@ -391,16 +399,20 @@ class ProviderConfig(BaseModel):
 PROVIDER_FIELDS: tuple[StandardField, ...] = _menu_fields(ProviderConfig)
 
 
-def coerce_provider_field(name: str, raw: str) -> int | str:
+def coerce_provider_field(name: str, raw: str) -> int | str | list[str]:
     """把菜单文本输入转成供应商字段的原生类型.
 
     和 `coerce_field` 分开是因为空串的含义相反: 模型字段留空表示"清除这个可选项",
-    而供应商没有 name 或 api_base 就没法发请求, 留空只能是拒绝.
+    而供应商没有 name 或 api_base 就没法发请求, 留空只能是拒绝. 列表字段是例外:
+    它本来就可选, 留空 (空列表) 就是清除, 由 set_provider_field 把键删掉.
     """
     field = next((item for item in PROVIDER_FIELDS if item.name == name), None)
     if field is None:
         raise ConfigValidationError(f"未知供应商字段: {name}")
     text = raw.strip()
+    if field.kind is list:
+        # 逗号分隔, 各项去空白, 空项丢掉: "A, B," 是手误不是第三个空名字.
+        return [item.strip() for item in text.split(",") if item.strip()]
     if field.kind is str:
         if not text:
             raise ConfigValidationError(f"{name} 不能为空")
@@ -451,9 +463,12 @@ class CircuitBreakerSettings:
 
 @dataclass(frozen=True)
 class RetrySettings:
-    """[llm.retry]（ADR-0012 §2）：429 短等重试阈值（秒）。"""
+    """[llm.retry]（ADR-0012 §2, ADR-0059）：429 短等阈值与配额耗尽冷却时长（秒）。"""
 
     wait_threshold_seconds: float = 5.0
+    # 一把 key 被判配额耗尽后多久不再选它. 小时级: 配额按天 / 按月重置或要人充值,
+    # 30 秒后再试只是把同一个错误再报一遍.
+    quota_cooldown_seconds: float = 3600.0
 
 
 @dataclass(frozen=True)

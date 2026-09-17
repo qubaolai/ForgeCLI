@@ -6,7 +6,7 @@
 
 import { Space, Tag, Typography } from "antd";
 import type { CollapseProps } from "antd";
-import { providerAvailabilityCopy } from "@/shared/lib/modelParams";
+import { providerAvailabilityCopy, providerReady } from "@/shared/lib/modelParams";
 import { DraftForm } from "@/features/settings/models/DraftForm";
 import { ProviderAvatar } from "@/features/settings/models/ProviderAvatar";
 import type { FieldSpec, KnownProvider, Provider } from "@/types/admin";
@@ -24,14 +24,15 @@ export function providerCollapseItem({
   fields: FieldSpec[];
   onSaveProvider: (providerId: string, changed: Record<string, string>) => void;
 }): CollapseItem {
-  const rows = fields.map((field) => ({
-    key: field.name,
-    label: field.label,
-    value: String((provider as unknown as Record<string, unknown>)[field.name] ?? ""),
-  }));
+  const rows = fields.map((field) => {
+    const raw = (provider as unknown as Record<string, unknown>)[field.name];
+    // 列表字段 (credential_refs) 在表单里是逗号分隔的一行, 与后端 coerce 的拆法对应。
+    const value = Array.isArray(raw) ? raw.join(", ") : String(raw ?? "");
+    return { key: field.name, label: field.label, value };
+  });
   // 可用性一律从 knownProviders 里取 —— 这里曾经自己编过一个 available: true,
   // 于是一家根本没配环境变量的供应商在界面上显示"密钥已就绪"。
-  const ready = known.available || !known.api_key_env;
+  const ready = providerReady(known);
   return {
     key: provider.id,
     label: (

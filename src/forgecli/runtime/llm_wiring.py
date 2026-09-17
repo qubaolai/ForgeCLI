@@ -35,6 +35,7 @@ from forgecli.llm.catalog_builder import build_catalog
 from forgecli.llm.config_service import LlmConfigService
 from forgecli.llm.gateway.cache import InMemoryResponseCache
 from forgecli.llm.gateway.credentials import (
+    CredentialCooldownStore,
     EnvCredentialResolver,
     InMemoryCredentialPool,
 )
@@ -51,6 +52,7 @@ from forgecli.llm.selection import ConfigBackedSelectionResolver
 from forgecli.llm.thinking_runtime import ThinkingRuntimeState
 from forgecli.settings.config_service import ConfigService
 from forgecli.settings.errors import ConfigError
+from forgecli.settings.paths import state_dir
 
 
 @dataclass(frozen=True)
@@ -85,7 +87,12 @@ def build_llm_runtime(
         resolver=resolver,
         settings_source=LlmConfigProviderSettingsSource(llm_config_service),
         # 凭证只支持环境变量（ADR-0011 §7 复核）：dotenv / keychain 已移除。
-        credential_pool=InMemoryCredentialPool(EnvCredentialResolver()),
+        # 配额耗尽的冷却落在 state 目录 (ADR-0059 决策 5): 下一个进程不再拿同一把
+        # 没额度的 key 去撞一次.
+        credential_pool=InMemoryCredentialPool(
+            EnvCredentialResolver(),
+            store=CredentialCooldownStore(state_dir() / "credential_cooldowns.json"),
+        ),
         health_registry=_build_health_registry(llm_config_service),
         cache=_build_response_cache(llm_config_service),
     )

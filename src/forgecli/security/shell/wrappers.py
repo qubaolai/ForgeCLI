@@ -32,9 +32,30 @@ from forgecli.security.shell.command_plan import (
     ShellKind,
     normalize_executable,
 )
-from forgecli.security.shell.commands import NETWORK_TOOLS
+
+# 会发网络请求的命令名. 解析器用它判断 `curl x | sh` 这种"下载后执行"的形状.
+NETWORK_TOOLS: frozenset[str] = frozenset(
+    {
+        "curl",
+        "wget",
+        "fetch",
+        "nc",
+        "ncat",
+        "netcat",
+        "socat",
+        "ssh",
+        "scp",
+        "rsync",
+        "sftp",
+        "ftp",
+        "telnet",
+        "Invoke-WebRequest",
+        "iwr",
+    }
+)
 
 __all__ = [
+    "NETWORK_TOOLS",
     "PRIVILEGE_ESCALATORS",
     "FlagStyle",
     "Interpreter",

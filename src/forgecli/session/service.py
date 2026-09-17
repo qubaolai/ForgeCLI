@@ -22,13 +22,15 @@ from forgecli.common.errors import SessionStateError
 from forgecli.common.json_schema import StructuredSchema
 from forgecli.common.observability.log import get_log
 from forgecli.core.message import ChatMessage, TextBlock
-from forgecli.core.mode import InputOrigin, SessionMode
+from forgecli.core.mode import InputOrigin
 from forgecli.core.model.origin import RequestOrigin
 from forgecli.core.model.params import ModelParams
 from forgecli.core.model.request import ModelRequest, StructuredModelRequest
+from forgecli.core.permissions import PermissionMode
 from forgecli.core.turn import MessageRole, TurnStatus
 from forgecli.llm.gateway.errors import ModelResponseParseError
 from forgecli.llm.gateway.gateway import LlmGateway
+from forgecli.prompt import prompts
 from forgecli.session.event_store import JsonlEventStore
 from forgecli.session.events import EventType, SessionEvent
 from forgecli.session.snapshot import SessionSnapshot
@@ -64,7 +66,7 @@ def _title_from(text: str, gateway: LlmGateway) -> str:
                     ),
                 ),
                 params=ModelParams(),
-                system_prompt="将这段内容总结成一个对话的标题已json返回, 最大长度不能超过15个字",
+                system_prompt=prompts.TITLE_PROMPT,
             ),
             schema=schema.schema,
             schema_name=schema.name,
@@ -131,7 +133,7 @@ class SessionService:
         snapshot = SessionSnapshot(
             session_id=self._new_id(),
             workspace_root=self._root,
-            mode=SessionMode.ACCEPT_EDITS,
+            mode=PermissionMode.DEFAULT,
             last_event_id=None,
             updated_at=self._clock(),
         )
@@ -208,6 +210,20 @@ class SessionService:
             payload["diagnostic"] = diagnostic
         return self._append(EventType.ASSISTANT_MESSAGE, payload)
 
+    def record_notice(
+        self, *, kind: str, revision: str, text: str, turn_id: str
+    ) -> SessionEvent:
+        """记录一条进了窗口的通知 (ADR-0056 决策 11). 正文进 payload: 恢复时原样回放."""
+        return self._append(
+            EventType.HARNESS_NOTICE,
+            {
+                "turn_id": turn_id,
+                "kind": kind,
+                "revision": revision,
+                "text": text,
+            },
+        )
+
     def record_usage(
         self, payload: Mapping[str, object], *, turn_id: str
     ) -> SessionEvent:
@@ -252,11 +268,11 @@ class SessionService:
             body["turn_id"] = turn_id
         return self._append(event_type, body)
 
-    def set_mode(self, mode: SessionMode) -> SessionSnapshot:
+    def set_mode(self, mode: PermissionMode) -> SessionSnapshot:
         """把当前会话切到某个模式：纯内存推进，不写事件、也不触发落盘。
 
         模式是**运行时状态而非会话史实**：既不进 events.jsonl，也不进 state.json，
-        因此每个新会话（含 /resume 续写的会话）都从默认档 accept_edits 起步。两条理由：
+        因此每个新会话（含 /resume 续写的会话）都从设置里的 defaultMode 起步。两条理由：
 
         - 快照必须能由事件日志重建（ADR-0001）。若把模式写进 state.json 却不写对应
           事件，就多出一个无从重建的字段，这条不变量即告破。
@@ -271,7 +287,7 @@ class SessionService:
         event_type: EventType,
         payload: Mapping[str, object],
         # *,
-        # mode: SessionMode | None = None,
+        # mode: PermissionMode | None = None,
     ) -> SessionEvent:
         if self._current is None:
             raise SessionStateError("会话尚未开始。")

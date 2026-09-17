@@ -1254,7 +1254,7 @@ model = "gpt-5-mini"
   进程内通过共享运行时状态立即可见。
 - 项目配置：当前模型、按用途的显式模型覆盖。
 - 网关运行时配置：响应缓存（enabled / TTL / 容量 / origins）、熔断器
-  （enabled / 失败阈值 / 冷却时间）、重试策略（429 短等阈值）。
+  （enabled / 失败阈值 / 冷却时间）、重试策略（429 短等阈值 / 配额耗尽冷却时长）。
 
 交互式 `/config` 必须复用 `ConfigService`、`LlmConfigService` 与
 `ModelOverridesService`，不得在 CLI handler 或菜单中复制配置校验和 TOML 写入逻辑。

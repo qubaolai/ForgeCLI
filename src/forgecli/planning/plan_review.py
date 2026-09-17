@@ -6,18 +6,16 @@
 评审不走 ApprovalService, 因此这里**不产生 ExecutionAuthorization, 不进 RiskCache, 不写
 learned rules**. 人同意一份计划, 不会让计划里提到的任何一条命令在下次自动放行.
 
-### 升档是这个模块唯一碰权限的地方
+### 换档是这个模块唯一碰权限的地方
 
-"同意并执行"会把 PLAN 升到 AUTO (ADR-0038 修订了 ADR-0023 决策 4), 而这是权限规则变更,
-约束写死在 `_upgraded_mode` 里, 不接受任何参数:
+"同意并执行"把 PLAN 换回进 plan 之前的那一档 (`pre_plan_mode`, ADR-0055 决策 1; 没有就
+ACCEPT_EDITS), 约束写死在 `_upgraded_mode` 里:
 
-1. 仅当当前档是 PLAN 时升档.
-2. 绝不升到 FULL_ACCESS, 无论计划正文写了什么 —— 计划是模型产出的低信任文本, 不能成为
-   提权的依据; 放网络与跨工作区那一档只能由人自己切.
-3. **批准计划不等于批准计划里的任何一次工具调用.** 升档之后每一步执行仍然逐次经过完整
-   裁决管线: 目录能力门 -> prepare -> 能力分析 -> PolicyEngine -> ASK/ALLOW/DENY ->
-   恢复屏障 -> ExecutionAuthorization. 升档只改变模式编译出的围栏与工具目录, 与在 plan
-   档手敲 /auto 完全等价, 不多一分.
+1. 仅当当前档是 PLAN 时换档.
+2. 绝不换到 BYPASS_PERMISSIONS, 无论计划正文写了什么 —— 计划是模型产出的低信任文本,
+   不能成为提权的依据; 那一档只能由人自己切.
+3. **批准计划不等于批准计划里的任何一次工具调用.** 换档之后每一步执行仍然逐次经过
+   完整裁决 (ADR-0055 决策 4). 换档与在 plan 档手敲 /mode 完全等价, 不多一分.
 """
 
 from __future__ import annotations
@@ -25,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from forgecli.core.mode import SandboxLevel, SessionMode
+from forgecli.core.permissions import PermissionMode
 from forgecli.planning.plan import PlanDocument, PlanStatus
 from forgecli.planning.service import PlanningService
 
@@ -50,7 +48,7 @@ class PlanReviewOutcome:
     # 非空表示要以这段文字再起一轮. 空表示本次到此为止.
     follow_up: str = ""
     # 升档后的模式; None 表示不改档.
-    upgraded_mode: SessionMode | None = None
+    upgraded_mode: PermissionMode | None = None
     seeded_todo_count: int = 0
     message: str = ""
 
@@ -72,7 +70,8 @@ class PlanReviewService:
         choice: PlanReviewChoice,
         plan: PlanDocument,
         *,
-        mode: SessionMode,
+        mode: PermissionMode,
+        pre_plan_mode: PermissionMode | None = None,
         note: str = "",
     ) -> PlanReviewOutcome:
         if choice is PlanReviewChoice.REJECT:
@@ -113,7 +112,7 @@ class PlanReviewService:
                 message=f"计划已批准, 待办已按 {len(todo.items)} 个步骤建好.",
             )
 
-        upgraded = _upgraded_mode(mode)
+        upgraded = _upgraded_mode(mode, pre_plan_mode)
         return PlanReviewOutcome(
             choice=choice,
             plan=approved,
@@ -127,19 +126,20 @@ class PlanReviewService:
         )
 
 
-def _upgraded_mode(mode: SessionMode) -> SessionMode | None:
-    """唯一允许的升档: PLAN -> AUTO (ADR-0038).
+def _upgraded_mode(
+    mode: PermissionMode, pre_plan_mode: PermissionMode | None
+) -> PermissionMode | None:
+    """唯一允许的换档: PLAN -> 进 plan 之前的那一档 (ADR-0055 决策 1).
 
-    不接受任何参数, 也不看计划内容. 写成一个只认当前档的纯函数, 是为了让"计划里写了什么
-    能不能影响档位"这个问题在类型层面就没有入口 —— 计划是模型产出的低信任文本.
+    不看计划内容: 计划是模型产出的低信任文本, "计划里写了什么能不能影响档位"这个问题
+    在类型层面就没有入口. 记不得进 plan 之前是哪一档时落到 ACCEPT_EDITS —— "同意并
+    执行"表达的是"按这份计划自己做完", 停在每一次编辑都要问的 DEFAULT 名实不符.
+    BYPASS_PERMISSIONS 仍在这条边之外: 那种决定只能由人自己做.
 
-    终点是 AUTO 而不是 ACCEPT_EDITS: "同意并执行"表达的是"按这份计划自己做完",
-    停在名义上仍要逐条问命令的那一档名实不符. FULL_ACCESS 仍在这条边之外 ——
-    它放的是网络与跨工作区, 那种决定只能由人自己做.
-
-    在 manual, accept_edits, auto 或 full_access 档批准一份计划不改档: 既不升也不降.
-    降档看起来"更安全", 实际是替用户撤销了他自己做过的决定; manual 不升是因为选它的人
-    要的正是每一步都看一眼, 一份计划改变不了这一点.
+    在其他档批准一份计划不改档: 既不升也不降.
     """
-    # 判据是隔离档: 计划被批准之后要能动手, 而只读档下动不了.
-    return SessionMode.AUTO if mode.sandbox is SandboxLevel.READ_ONLY else None
+    if mode is not PermissionMode.PLAN:
+        return None
+    if pre_plan_mode is None or pre_plan_mode is PermissionMode.BYPASS_PERMISSIONS:
+        return PermissionMode.ACCEPT_EDITS
+    return pre_plan_mode

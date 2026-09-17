@@ -1,7 +1,7 @@
 """`--allow-full-access` 的两道门 (ADR-0052 决策 1 / 2 / 3).
 
-Full Access 档不在默认的预设列表里: 启动时带 `--allow-full-access` 才把它放进
-`available_presets`, 而带了参数还要依次过两道门 ——
+Bypass Permissions (旧名 Full Access) 档不在默认的模式列表里: 启动时带
+`--allow-full-access` 才把它放进 `available_modes`, 而带了参数还要依次过两道门 ——
 
 1. 应用级配置 `security.disable_full_access` 没锁 (决策 3). 锁着就拒绝启动, 而不是静默
    去掉参数: 用户带了参数却发现菜单里没有那一档, 会去翻文档而不是翻配置.
@@ -22,7 +22,7 @@ from rich.console import Console
 from rich.text import Text
 
 from forgecli.common.observability.log import get_log
-from forgecli.security.full_access_consent import consent_recorded, record_consent
+from forgecli.security.bypass_consent import consent_recorded, record_consent
 from forgecli.settings import keys as config_keys
 from forgecli.settings.startup import startup_config
 from forgecli.tui.chooser import confirm
@@ -32,16 +32,15 @@ __all__ = ["FullAccessRefused", "resolve_full_access"]
 
 _log = get_log(__name__)
 
-# 确认前给人看的那几行. 说的是这一档**在 ForgeCLI 里**的语义 (ADR-0030 决策 4 的
-# 2026-08-28 修订), 不是泛泛的"危险": 围栏拦的照拦, 变的只是围栏拦不住的那些还问不问.
+# 确认前给人看的那几行. 说的是这一档 (bypass_permissions, ADR-0055 决策 1) 的语义,
+# 不是泛泛的"危险": deny 规则, 内容级 ask 规则与安全检查照拦, 变的只是其余的还问不问.
 _WARNING = (
-    "Full Access: 围栏就是全部边界.",
-    "  - 围栏立起来时, 除 Hard Deny 外 Forge 不再问你: 看不透正文的脚本, 联网, "
-    "工作区内的任何读写都直接执行.",
-    "  - 围栏拦的照拦: 工作区外的写入与受保护路径的读取在系统调用那一刻被拦下; "
-    "凭证外泄, 提权, 删根目录仍是 Hard Deny.",
-    "  - 围栏立不起来的平台上这一档退回逐项确认, 不会变成什么都不拦.",
-    "  - 提示注入让模型想做的事, 只要在围栏内, 这一档不会替你拦.",
+    "Bypass Permissions: 除显式规则与安全检查外不再问你.",
+    "  - 任何命令, 任何文件的读写都直接执行, 包括工作目录之外的.",
+    "  - 仍然拦的: deny 规则, ask 规则, .git / .forge / shell 配置文件的编辑, "
+    "内置的凭证目录保护.",
+    "  - 围栏 (sandbox) 开着时子进程仍在围栏内; 围栏与这一档是两件事.",
+    "  - 提示注入让模型想做的事, 这一档不会替你拦.",
     "确认一次即可, 记录写在 Forge home 的 full-access-consent.json, 以后不再问.",
 )
 
