@@ -15,11 +15,32 @@ Provider 只做一件事: 接受原始 argv 与一份 `FencePolicy`, 返回被�
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from forgecli.core.execution.fence import FencePolicy
 
-__all__ = ["SandboxProvider", "SelfTestReport"]
+__all__ = ["SandboxProvider", "SelfTestReport", "proxy_environment"]
+
+# 子进程要走代理时给它的变量 (对应 sandbox-runtime 的 generateProxyEnvVars). NO_PROXY 把
+# 本机与私有网段排除在外: 这些地址围栏本来就不放 (除非 allowLocalBinding), 走代理反而
+# 让代理去连它们.
+_NO_PROXY = (
+    "localhost,127.0.0.1,::1,169.254.0.0/16,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+)
+
+
+def proxy_environment(proxy_url: str) -> dict[str, str]:
+    return {
+        "HTTP_PROXY": proxy_url,
+        "HTTPS_PROXY": proxy_url,
+        "http_proxy": proxy_url,
+        "https_proxy": proxy_url,
+        "ALL_PROXY": proxy_url,
+        "all_proxy": proxy_url,
+        "NO_PROXY": _NO_PROXY,
+        "no_proxy": _NO_PROXY,
+    }
 
 
 @dataclass(frozen=True)
@@ -56,6 +77,11 @@ class SandboxProvider(ABC):
     @abstractmethod
     def wrap(self, argv: tuple[str, ...], policy: FencePolicy) -> tuple[str, ...]:
         """把 argv 包进围栏. 包不了就抛 OSError, 由调用方 fail closed."""
+
+    @abstractmethod
+    def environment_for(self, policy: FencePolicy) -> Mapping[str, str]:
+        """围栏内子进程要覆盖的环境变量: 临时目录, 代理地址. 围栏没有网络出口就没有
+        代理变量."""
 
     @abstractmethod
     def self_test(self) -> SelfTestReport:

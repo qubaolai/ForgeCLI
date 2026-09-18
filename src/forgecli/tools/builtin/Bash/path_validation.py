@@ -17,6 +17,7 @@ from forgecli.core.permissions import (
 )
 from forgecli.core.tool.tool import ToolUseContext
 from forgecli.security.filesystem import expand_path, path_in_allowed_working_path
+from forgecli.security.sandbox_paths import in_sandbox_write_allowlist
 from forgecli.security.shell.command_plan import CommandUnit
 
 __all__ = ["check_path_constraints"]
@@ -53,6 +54,16 @@ def _is_recursive_rm(unit: CommandUnit) -> bool:
     return False
 
 
+def _in_sandbox_allowlist(path: str, context: ToolUseContext) -> bool:
+    """围栏立着且设置里明确放开了这个位置 (sandbox.filesystem.allowWrite): 用户配的,
+    不必再问 (对应 pathValidation.ts 3.7)."""
+    sandbox = context.get_app_state().sandbox
+    if not sandbox.active or not sandbox.allow_write:
+        return False
+    primary = context.workspace_roots[0] if context.workspace_roots else context.cwd
+    return in_sandbox_write_allowlist(path, sandbox.allow_write, primary)
+
+
 def check_path_constraints(
     units: tuple[CommandUnit, ...], context: ToolUseContext
 ) -> PermissionResult:
@@ -65,9 +76,10 @@ def check_path_constraints(
                     "and cannot be validated",
                     working_dir_reason("redirect target with variable"),
                 )
+            absolute_target = expand_path(target, context.cwd)
             if not path_in_allowed_working_path(
-                expand_path(target, context.cwd), context
-            ):
+                absolute_target, context
+            ) and not _in_sandbox_allowlist(absolute_target, context):
                 return ask(
                     f"Output redirection to '{target}' is outside the working "
                     "directories and requires approval",

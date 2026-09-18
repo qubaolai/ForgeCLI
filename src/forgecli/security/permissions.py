@@ -64,7 +64,6 @@ __all__ = [
     "DONT_ASK_REJECT_MESSAGE",
     "build_auto_mode_rejection_message",
     "build_classifier_unavailable_message",
-    "check_rule_based_permissions",
     "create_permission_request_message",
     "get_allow_rules",
     "get_ask_rule_for_tool",
@@ -247,13 +246,6 @@ def create_permission_request_message(
     tool_name: str, reason: PermissionDecisionReason | None = None
 ) -> str:
     if reason is not None:
-        if reason.type is DecisionReasonType.HOOK:
-            if reason.reason:
-                return f"Hook '{reason.hook_name}' blocked this action: {reason.reason}"
-            return (
-                f"Hook '{reason.hook_name}' requires approval for this "
-                f"{tool_name} command"
-            )
         if reason.type is DecisionReasonType.RULE and reason.rule is not None:
             return (
                 f"Permission rule '{rule_text(reason.rule)}' from "
@@ -336,29 +328,6 @@ def _is_safety_check(result: PermissionResult) -> bool:
         and reason is not None
         and reason.type is DecisionReasonType.SAFETY_CHECK
     )
-
-
-def check_rule_based_permissions(
-    tool: Tool, input: Mapping[str, object], context: ToolUseContext
-) -> PermissionResult | None:
-    """只做规则那几步 (1a-1g), 不看模式. hook 说 allow 之后要再过这一遍."""
-    permission = context.get_app_state().tool_permission_context
-    deny_rule = get_deny_rule_for_tool(permission, tool)
-    if deny_rule is not None:
-        return deny(
-            f"Permission to use {tool.name} has been denied.", rule_reason(deny_rule)
-        )
-    ask_rule = get_ask_rule_for_tool(permission, tool)
-    if ask_rule is not None and not _sandbox_can_auto_allow(tool, input, context):
-        return ask(create_permission_request_message(tool.name), rule_reason(ask_rule))
-    result = _tool_permission_result(tool, input, context)
-    if result.is_deny:
-        return result
-    if _is_content_ask_rule(result):
-        return result
-    if _is_safety_check(result):
-        return result
-    return None
 
 
 def _inner(

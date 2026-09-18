@@ -1,9 +1,11 @@
 """执行链 (ADR-0054 决策 3; 对应 services/tools/toolExecution.ts 的 runToolUse).
 
-九步, 顺序固定, 每一步失败都是一条 is_error 的 tool_result 回给模型:
+七步, 顺序固定, 每一步失败都是一条 is_error 的 tool_result 回给模型:
 
-    查找 -> schema 校验 -> validate_input -> 补派生字段 -> PreToolUse hook
-    -> 权限 -> call -> PostToolUse hook -> 落盘与回流
+    查找 -> schema 校验 -> validate_input -> 补派生字段 -> 权限 -> call -> 落盘与回流
+
+Claude Code 在权限前后各有一个用户配置的 hook (PreToolUse / PostToolUse); 本仓库没有
+(ADR-0054 决策 6 已撤), 需要时再加.
 
 一次 tool_use 只产生一条 tool_result; 中间事实 (校验过了, 裁决了, 问了人, 开始了,
 结束了) 经 `context.observer` 发出去.
@@ -21,21 +23,13 @@ import jsonschema
 from forgecli.common.cancellation import CancelledError
 from forgecli.common.observability.log import get_log
 from forgecli.core.message import ChatMessage, ToolResultBlock
-from forgecli.core.permissions import (
-    PermissionResult,
-    allow,
-    deny,
-    hook_reason,
-)
+from forgecli.core.permissions import PermissionResult
 from forgecli.core.tool.tool import (
     CanUseToolFn,
-    Tool,
     ToolProgress,
     ToolUseContext,
 )
 from forgecli.core.tool.tool_call import ToolCall
-from forgecli.security.permissions import check_rule_based_permissions
-from forgecli.tools.hooks import HookOutcome, HookRunner
 from forgecli.tools.pool import find_tool_by_name
 from forgecli.tools.result_storage import persist_if_needed
 
@@ -94,7 +88,6 @@ def run_tool_use(
     context: ToolUseContext,
     can_use_tool: CanUseToolFn,
     parent_message: ChatMessage | None,
-    hooks: HookRunner,
 ) -> ToolUseOutcome:
     tool_use_id = tool_use.tool_call_id
     started = time.perf_counter()
@@ -131,7 +124,7 @@ def run_tool_use(
         )
         return _not_run(tool_use_id, _wrapped_error(validation.message), "error")
 
-    # 4. 派生字段在副本上补, 给 hook 与权限看; 原件给 call.
+    # 4. 派生字段在副本上补, 给权限看; 原件给 call.
     observable_input: dict[str, object] = dict(raw_input)
     tool.backfill_observable_input(observable_input)
     context.observer.tool_validated(
@@ -142,27 +135,9 @@ def run_tool_use(
         elapsed_ms=_elapsed_ms(started),
     )
 
-    # 5. PreToolUse hook.
-    hook_outcome = hooks.run_pre_tool_use(
-        tool, observable_input, context, tool_use_id=tool_use_id
-    )
-    if hook_outcome.blocked:
-        reason = hook_outcome.blocking_message or hook_outcome.reason
-        _log.info("tool.hook_blocked", tool=tool.name, hook=hook_outcome.hook_name)
-        return _not_run(tool_use_id, reason, "denied")
-    processed_input: Mapping[str, object] = observable_input
-    if hook_outcome.updated_input is not None:
-        processed_input = hook_outcome.updated_input
-
-    # 6. 权限.
-    decision = _decide(
-        tool,
-        processed_input,
-        context,
-        can_use_tool,
-        parent_message,
-        tool_use_id,
-        hook_outcome,
+    # 5. 权限.
+    decision = can_use_tool(
+        tool, observable_input, context, parent_message, tool_use_id
     )
     if decision.is_deny:
         rejected = _is_user_rejection(decision)
@@ -179,10 +154,8 @@ def run_tool_use(
         and decision.updated_input != observable_input
     ):
         call_input = decision.updated_input
-    elif processed_input is not observable_input:
-        call_input = processed_input
 
-    # 7. call.
+    # 6. call.
     context.observer.tool_started(tool.name, tool_use_id=tool_use_id)
     call_started = time.perf_counter()
 
@@ -220,7 +193,7 @@ def run_tool_use(
             block=_error_block(tool_use_id, message), status="error", executed=True
         )
 
-    # 8. 映射与落盘.
+    # 7. 映射与落盘.
     block = tool.map_tool_result_to_block(result.data, tool_use_id)
     text, persisted = persist_if_needed(
         block.content,
@@ -228,17 +201,8 @@ def run_tool_use(
         tool_use_id=tool_use_id,
         tool_results_dir=context.tool_results_dir,
     )
-    # 9. PostToolUse hook.
-    post = hooks.run_post_tool_use(
-        tool, call_input, context, tool_use_id=tool_use_id, tool_response=text
-    )
-    extra: list[str] = []
     if decision.accept_feedback:
-        extra.append(decision.accept_feedback)
-    for item in post.additional_contexts:
-        extra.append(item)
-    if extra:
-        text = text + "\n\n" + "\n\n".join(extra)
+        text = text + "\n\n" + decision.accept_feedback
     final = ToolResultBlock(
         tool_call_id=tool_use_id, content=text, is_error=block.is_error
     )
@@ -269,40 +233,6 @@ def _not_run(tool_use_id: str, text: str, status: str) -> ToolUseOutcome:
     return ToolUseOutcome(
         block=_error_block(tool_use_id, text), status=status, executed=False
     )
-
-
-def _decide(
-    tool: Tool,
-    input: Mapping[str, object],
-    context: ToolUseContext,
-    can_use_tool: CanUseToolFn,
-    parent_message: ChatMessage | None,
-    tool_use_id: str,
-    hook_outcome: HookOutcome,
-) -> PermissionResult:
-    """hook 说 allow 也要过一遍规则 (toolHooks.ts:324 的不变量); 其余交给
-    can_use_tool."""
-    if hook_outcome.permission_decision == "allow":
-        rule_check = check_rule_based_permissions(tool, input, context)
-        if rule_check is not None and rule_check.is_deny:
-            return rule_check
-        if rule_check is not None and rule_check.is_ask:
-            return can_use_tool(tool, input, context, parent_message, tool_use_id)
-        context.observer.permission_decided(
-            tool.name,
-            tool_use_id=tool_use_id,
-            behavior="allow",
-            reason=f"hook {hook_outcome.hook_name}",
-            message=hook_outcome.reason,
-            elapsed_ms=0.0,
-        )
-        return allow(input, hook_reason(hook_outcome.hook_name, hook_outcome.reason))
-    if hook_outcome.permission_decision == "deny":
-        return deny(
-            hook_outcome.reason or "Blocked by hook",
-            hook_reason(hook_outcome.hook_name, hook_outcome.reason),
-        )
-    return can_use_tool(tool, input, context, parent_message, tool_use_id)
 
 
 def _is_user_rejection(decision: PermissionResult) -> bool:

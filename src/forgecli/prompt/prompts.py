@@ -54,6 +54,7 @@ __all__ = [
     "COMPACTION_NOTHING_KEPT",
     "COMPACTION_USER_VERBATIM",
     "COMPACT_PROMPT",
+    "DIFF_SNIPPET_MAX_BYTES",
     "GIT_STATUS_MAX_CHARS",
     "MEMORY_NOTICE_SESSION_MAX_BYTES",
     "MEMORY_REJECT_EMPTY_VALUE",
@@ -103,13 +104,13 @@ __all__ = [
     "notice_memory",
     "notice_mode",
     "notice_mode_exit",
+    "notice_file_changed",
     "notice_nested_instructions",
     "notice_plan",
     "notice_recent_file",
     "notice_todo",
     "notice_todo_reminder",
     "notice_tools_delta",
-    "notice_workspace_changed",
     "schema_instruction",
     "split_system_prompt",
     "stop_malformed",
@@ -147,6 +148,8 @@ TODO_REMINDER_CALLS_BETWEEN = 10
 POST_COMPACT_MAX_FILES = 5
 POST_COMPACT_MAX_TOKENS_PER_FILE = 5_000
 POST_COMPACT_TOKEN_BUDGET = 50_000
+# 读过的文件被外部改了, 通知里 diff 片段的上限 (决策 14; 对应 DIFF_SNIPPET_MAX_BYTES).
+DIFF_SNIPPET_MAX_BYTES = 8192
 # git 快照里 `status --short` 的上限.
 GIT_STATUS_MAX_CHARS = 2000
 
@@ -619,13 +622,13 @@ def notice_recent_file(path: str, content: str, *, truncated: bool) -> str:
     )
 
 
-def notice_workspace_changed(changes: Iterable[tuple[str, str, str]]) -> str:
-    """(来源标签, 变化类型标签, 显示路径)."""
-    lines = "\n".join(f"- {source} · {kind} · {path}" for source, kind, path in changes)
+def notice_file_changed(path: str, snippet: str) -> str:
+    """模型读过的文件在它读过之后被改了 (对应 edited_text_file). snippet 是变化附近的
+    几段, 带行号, 与 Read 的 cat -n 同一格式."""
     return wrap_reminder(
-        "工作区文件发生变化, 请不要继续依据变化前的内容做决定. 必要时重新读取相关文件:\n"
-        f"{lines}\n"
-        '其中 "外部参与者" 表示其他 agent 或人类在本 agent 工具边界之外做的修改.'
+        f"{path} 在你读过之后被改了, 是用户或 linter 改的. 这个改动是有意的: 接着做时把"
+        "它算进去, 除非用户要求, 不要改回去. 用户已经知道, 不必告诉用户. "
+        f"变化的部分如下 (带行号):\n{snippet}"
     )
 
 
@@ -689,16 +692,27 @@ def loop_tools_not_wired() -> str:
     return "当前会话未装配工具系统"
 
 
-def loop_fence_blocked(paths: Sequence[str]) -> str:
-    # 要同时说清三件事: 不是路径错; 放开边界要用户做; 还有一条不需要放开边界的路.
+def loop_fence_blocked(paths: Sequence[str], *, can_disable: bool) -> str:
+    # 要同时说清三件事: 不是路径错; 出路是什么 (能不能跳出围栏由设置定); 还有一条不需要
+    # 放开边界的路.
     listed = "\n".join(f"- {path}" for path in paths)
+    if can_disable:
+        way_out = (
+            "如果这条命令确实需要写那里, 带 `dangerously_disable_sandbox: true` 重试一次"
+            " (会问用户), 并简短说明是哪条围栏限制拦下的; 否则换一条写在工作区内的做法"
+            " (例如把缓存或输出目录指到工作区里, 临时文件用 $TMPDIR)."
+        )
+    else:
+        way_out = (
+            "放开边界只能由用户改沙箱设置, 你自己改不了 (dangerously_disable_sandbox 已被"
+            "策略关掉). 所以要么请用户放开并说明为什么需要它, 要么换一条写在工作区内的"
+            "做法 (例如把缓存或输出目录指到工作区里, 临时文件用 $TMPDIR)."
+        )
     return (
         "[这次失败很可能是围栏拦下的, 不是路径写错了] 命令试图访问下面的位置, 而它们在"
         "本次会话的可写边界之外:\n"
         f"{listed}\n"
-        "放开边界只能由用户操作 (在界面上把该目录授权为可写), 你自己改不了. 所以要么请"
-        "用户授权并说明为什么需要它, 要么换一条写在工作区内的做法 (例如把缓存或输出目录"
-        "指到工作区里). 在边界改变之前重跑同一条命令只会再失败一次."
+        f"{way_out} 在边界改变之前重跑同一条命令只会再失败一次."
     )
 
 

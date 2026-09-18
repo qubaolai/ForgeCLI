@@ -85,7 +85,6 @@ from forgecli.settings.config_service import ConfigService
 from forgecli.settings.config_store import JsonConfigStore
 from forgecli.settings.paths import config_dir, config_file
 from forgecli.tools.file_history import FileHistorySnapshot, RewindOutcome
-from forgecli.workspace.snapshot_provider import OsWorkspaceSnapshotProvider
 
 _log = get_log(__name__)
 
@@ -233,7 +232,10 @@ class ProjectRuntime:
         tools = self._build_tool_stack(self.tools.permission)
         # 到这里两件都建成了, 一起换上. 之前的顺序是先换 self.llm 再建工具栈, 于是
         # 工具栈建失败时进程停在"新网关 + 旧工具栈"上, 而没有任何东西会说它坏了。
+        previous = self.tools
         self.llm, self.tools = llm, tools
+        # 旧栈带着语言服务器子进程, 代理线程与实例临时目录, 换下来要收掉.
+        previous.close()
         # 会话服务读的是上面两个字段的闭包 (ADR-0051 决策 5), 换完就指向新的. 窗口
         # 管理器是循环规则那一份, 也读字段, 这里重建一个让它带上新网关与新计量.
         self._window_manager = self._build_window_manager()
@@ -261,12 +263,7 @@ class ProjectRuntime:
                 # 每轮现建一份规则表 (ADR-0049): 好几条规则带着本轮的计数器. 读字段
                 # 而不是闭包住一个实例: /compact 走服务那一份, 自动压缩走循环这一份,
                 # 换模型之后两边必须还是同一个 (ADR-0048 决策 1).
-                rules=builtin_rules(
-                    context=self._window_manager,
-                    workspace_provider=OsWorkspaceSnapshotProvider(
-                        lambda: self.tools.working_directories()
-                    ),
-                ),
+                rules=builtin_rules(context=self._window_manager),
                 cancel_token_factory=self.cancel_source.current,
                 model_transport_policy=ModelTransportPolicy(),
                 event_bus=self.event_bus,

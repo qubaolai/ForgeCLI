@@ -32,14 +32,12 @@ from forgecli.agent.run_events import (
     ToolCompletedPayload,
     ToolQueuedPayload,
     TurnFinishedPayload,
-    WorkspaceChangedPayload,
 )
 from forgecli.agent.scrubbing import scrub_arguments
 from forgecli.conversation.window_manager import WindowFitResult
 from forgecli.core.agent.stop import LoopStopReason, StopClassification
 from forgecli.core.model.response import FinishReason, ModelUsage
 from forgecli.core.tool.tool_call import ToolCall
-from forgecli.workspace.changes import WorkspaceChange
 
 __all__ = ["LoopEventPublisher"]
 
@@ -254,12 +252,6 @@ class LoopEventPublisher:
                 ModelUsagePayload.from_draft(usage),
                 request_id=usage.request_id,
             )
-
-    def workspace_changed(self, changes: tuple[WorkspaceChange, ...]) -> None:
-        self._publish(
-            AgentRunEventKind.WORKSPACE_CHANGED,
-            WorkspaceChangedPayload(changes=changes),
-        )
 
     def turn_finished(
         self, reason: LoopStopReason, *, detail: str, model_calls: int, tool_calls: int

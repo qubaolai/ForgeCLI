@@ -7,7 +7,7 @@ CommandExecutor (执行器是"起一个子进程等它结束", 而服务器要�
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from forgecli.core.message import ChatMessage, ToolResultBlock
@@ -24,7 +24,6 @@ from forgecli.core.tool.tool import (
     ValidationResult,
 )
 from forgecli.security.filesystem import check_read_permission_for_tool
-from forgecli.security.shell_rule_matching import match_wildcard_pattern
 from forgecli.tools.builtin.base import expand_input_path, int_of, str_of, text_block
 from forgecli.tools.builtin.LSP.client import LspError
 from forgecli.tools.builtin.LSP.operations import (
@@ -97,12 +96,6 @@ class LspTool(Tool):
 
     def to_auto_classifier_input(self, input: Mapping[str, object]) -> object:
         return f"{str_of(input, 'operation')} {str_of(input, 'filePath')}".strip()
-
-    def prepare_permission_matcher(
-        self, input: Mapping[str, object]
-    ) -> Callable[[str], bool] | None:
-        path = str_of(input, "filePath")
-        return lambda pattern: match_wildcard_pattern(pattern, path)
 
     def check_permissions(
         self, input: Mapping[str, object], context: ToolUseContext

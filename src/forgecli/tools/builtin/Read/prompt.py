@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from forgecli.core.tool.file_text import MAX_LINES_TO_READ
 from forgecli.core.tool.names import BASH_TOOL_NAME
 
-__all__ = ["INPUT_SCHEMA", "DESCRIPTION", "MAX_LINES_TO_READ", "prompt"]
+__all__ = ["INPUT_SCHEMA", "DESCRIPTION", "prompt"]
 
 DESCRIPTION = "Read a file from the local filesystem."
-MAX_LINES_TO_READ = 2000
 
 
 def prompt(max_size_label: str) -> str:

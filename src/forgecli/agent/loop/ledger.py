@@ -13,7 +13,6 @@ from forgecli.agent.loop.event_publisher import LoopEventPublisher
 from forgecli.conversation.window_manager import WindowFitResult
 from forgecli.core.context.compaction import CompactionDraft
 from forgecli.core.model.usage import UsageRecordDraft
-from forgecli.workspace.changes import WorkspaceChange
 
 __all__ = ["TurnLedger"]
 
@@ -33,10 +32,6 @@ class TurnLedger:
         self._compactions.extend(result.drafts)
         self._usage.extend(result.usage_drafts)
         self._events.compaction(result)
-
-    def report_workspace_changes(self, changes: tuple[WorkspaceChange, ...]) -> None:
-        """规则看见工作区变了. 这不是账, 但同样是规则自己看见的事实."""
-        self._events.workspace_changed(changes)
 
     @property
     def usage_drafts(self) -> tuple[UsageRecordDraft, ...]:

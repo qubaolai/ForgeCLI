@@ -1,5 +1,5 @@
-"""设置文件里的 permissions / sandbox / hooks / autoMode 段 (ADR-0055 决策 2, 7;
-ADR-0054 决策 6; ADR-0058 决策 2).
+"""设置文件里的 permissions / sandbox / autoMode 段 (ADR-0055 决策 2, 7; ADR-0058
+决策 2).
 
 这几段是嵌套对象与列表, 与 `settings/config_store.py` 那套 "dotted key -> 字符串"
 的形状对不上, 所以自己读写: 只碰这几个键, 文件里其余内容原样保留.
@@ -21,11 +21,11 @@ from forgecli.settings.paths import config_file, projects_dir
 __all__ = [
     "AutoModeRules",
     "PermissionsSection",
-    "hooks_section",
     "permissions_section",
     "project_settings_file",
     "read_auto_mode",
     "read_permissions",
+    "add_sandbox_allowed_domain",
     "read_sandbox",
     "user_settings_file",
     "write_permissions",
@@ -121,26 +121,56 @@ def write_permissions(path: Path, section: PermissionsSection) -> None:
 
 
 def read_sandbox(path: Path) -> SandboxSettings | None:
-    """文件里的 sandbox 段. 没有这一段返回 None (用缺省)."""
+    """文件里的 sandbox 段, 键与 Claude Code 的 settings.sandbox 同. 没有这一段返回 None
+    (用缺省)."""
     raw = _document(path).get("sandbox")
     if not isinstance(raw, Mapping):
         return None
+    defaults = SandboxSettings()
     filesystem = raw.get("filesystem")
-    allow_write: tuple[str, ...] = ()
-    if isinstance(filesystem, Mapping):
-        allow_write = _strings(filesystem.get("allowWrite"))
+    if not isinstance(filesystem, Mapping):
+        filesystem = {}
     network = raw.get("network")
-    network_allowed = False
-    if isinstance(network, Mapping):
-        network_allowed = bool(network.get("allowAll", False))
+    if not isinstance(network, Mapping):
+        network = {}
     return SandboxSettings(
-        enabled=bool(raw.get("enabled", True)),
-        auto_allow_bash_if_sandboxed=bool(raw.get("autoAllowBashIfSandboxed", False)),
+        enabled=bool(raw.get("enabled", defaults.enabled)),
+        auto_allow_bash_if_sandboxed=bool(
+            raw.get("autoAllowBashIfSandboxed", defaults.auto_allow_bash_if_sandboxed)
+        ),
         excluded_commands=_strings(raw.get("excludedCommands")),
-        allow_unsandboxed_commands=bool(raw.get("allowUnsandboxedCommands", False)),
-        network_allowed=network_allowed,
-        allow_write=allow_write,
+        allow_unsandboxed_commands=bool(
+            raw.get("allowUnsandboxedCommands", defaults.allow_unsandboxed_commands)
+        ),
+        allowed_domains=_strings(network.get("allowedDomains")),
+        denied_domains=_strings(network.get("deniedDomains")),
+        allow_unix_sockets=_strings(network.get("allowUnixSockets")),
+        allow_all_unix_sockets=bool(network.get("allowAllUnixSockets", False)),
+        allow_local_binding=bool(network.get("allowLocalBinding", False)),
+        allow_write=_strings(filesystem.get("allowWrite")),
+        deny_write=_strings(filesystem.get("denyWrite")),
+        deny_read=_strings(filesystem.get("denyRead")),
+        allow_read=_strings(filesystem.get("allowRead")),
     )
+
+
+def add_sandbox_allowed_domain(path: Path, domain: str) -> None:
+    """代理询问卡片的"允许并写进项目设置": 追加进 sandbox.network.allowedDomains, 其余
+    键保留."""
+    document = _document(path)
+    raw = document.get("sandbox")
+    if not isinstance(raw, dict):
+        raw = {}
+    network = raw.get("network")
+    if not isinstance(network, dict):
+        network = {}
+    domains = list(_strings(network.get("allowedDomains")))
+    if domain not in domains:
+        domains.append(domain)
+    network["allowedDomains"] = domains
+    raw["network"] = network
+    document["sandbox"] = raw
+    write_document(path, document)
 
 
 @dataclass(frozen=True)
@@ -173,10 +203,3 @@ def read_auto_mode(path: Path) -> AutoModeRules:
         soft_deny=_strings(raw.get("soft_deny")),
         environment=_strings(raw.get("environment")),
     )
-
-
-def hooks_section(path: Path) -> Mapping[str, Any]:
-    raw = _document(path).get("hooks")
-    if isinstance(raw, Mapping):
-        return raw
-    return {}

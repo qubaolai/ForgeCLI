@@ -24,7 +24,6 @@ from forgecli.core.tool.tool import (
 )
 from forgecli.execution.command_executor import CommandExecutor, CommandRequest
 from forgecli.security.filesystem import check_read_permission_for_tool
-from forgecli.security.shell_rule_matching import match_wildcard_pattern
 from forgecli.tools.builtin.base import expand_input_path, int_of, str_of, text_block
 from forgecli.tools.builtin.Grep.prompt import DESCRIPTION, INPUT_SCHEMA
 from forgecli.tools.builtin.Grep.ripgrep import argv_for, find_ripgrep
@@ -57,8 +56,17 @@ class GrepTool(Tool):
     strict = True
     max_result_size_chars = 20_000
 
-    def __init__(self, executor: CommandExecutor, fence_factory: FenceFactory) -> None:
-        self._executor = executor
+    def __init__(
+        self,
+        *,
+        local: CommandExecutor,
+        sandboxed: CommandExecutor,
+        fence_factory: FenceFactory,
+    ) -> None:
+        # 与 Bash 同: 有围栏走围栏执行器, 没有 (沙箱没开或没立起来) 走本地. 装配时按
+        # confined 选一个会在 enabled=false 时把空策略交给围栏执行器, 那边 fail closed.
+        self._local = local
+        self._sandboxed = sandboxed
         self._fence_factory = fence_factory
 
     def description(self, input: Mapping[str, object]) -> str:
@@ -94,12 +102,6 @@ class GrepTool(Tool):
         if path:
             return f"{pattern} in {path}"
         return pattern
-
-    def prepare_permission_matcher(
-        self, input: Mapping[str, object]
-    ) -> Callable[[str], bool] | None:
-        pattern = str_of(input, "pattern")
-        return lambda rule: match_wildcard_pattern(rule, pattern)
 
     def check_permissions(
         self, input: Mapping[str, object], context: ToolUseContext
@@ -141,14 +143,16 @@ class GrepTool(Tool):
             raise FileNotFoundError("ripgrep (rg) is not installed")
         path = expand_input_path(str_of(input, "path") or context.cwd, context.cwd)
         mode = str_of(input, "output_mode", "files_with_matches")
-        outcome = self._executor.run(
+        fence = self._fence_factory(context)
+        executor = self._sandboxed if fence is not None else self._local
+        outcome = executor.run(
             CommandRequest(
                 argv=argv_for(rg, input, path=path),
                 cwd=context.cwd,
                 environment=context.environment,
                 timeout_seconds=_TIMEOUT_SECONDS,
                 max_output_bytes=_MAX_OUTPUT_BYTES,
-                fence=self._fence_factory(context),
+                fence=fence,
             ),
             context.abort,
         )

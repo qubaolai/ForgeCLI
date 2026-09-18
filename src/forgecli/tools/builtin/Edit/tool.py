@@ -1,19 +1,20 @@
 """Edit (对应 FileEditTool/FileEditTool.ts).
 
 validate_input 依次: old == new; edit deny 规则; 文件大小; 文件不存在 (old_string 为空
-视为新建); 未读过 / 读后被改 (FileStateCache); 定位; 多于一处且没 replace_all.
-call 施加, 原子写盘, 更新 FileStateCache, 记文件历史.
+视为新建); 未读过 / 读后被改 (file_freshness); 定位; 多于一处且没 replace_all.
+call 记文件历史, 紧贴读盘再查一次未读过 / 读后被改, 施加, 原子写盘, 更新 FileStateCache.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from forgecli.core.message import ChatMessage, ToolResultBlock
 from forgecli.core.permissions import PermissionBehavior, PermissionResult
 from forgecli.core.tool.file_state import FileState
+from forgecli.core.tool.file_text import add_line_numbers
 from forgecli.core.tool.names import FILE_EDIT_TOOL_NAME
 from forgecli.core.tool.tool import (
     CanUseToolFn,
@@ -28,7 +29,6 @@ from forgecli.security.filesystem import (
     check_write_permission_for_tool,
     matching_rule_for_input,
 )
-from forgecli.security.shell_rule_matching import match_wildcard_pattern
 from forgecli.tools.builtin.base import expand_input_path, str_of, text_block
 from forgecli.tools.builtin.Edit.prompt import DESCRIPTION, INPUT_SCHEMA, PROMPT
 from forgecli.tools.builtin.Edit.utils import (
@@ -36,10 +36,18 @@ from forgecli.tools.builtin.Edit.utils import (
     find_actual_string,
     snippet_around,
 )
+from forgecli.tools.builtin.file_freshness import (
+    MODIFIED_SINCE_READ_MESSAGE,
+    NOT_READ_MESSAGE,
+    Freshness,
+    check_freshness,
+    read_text_file,
+    read_text_file_if_exists,
+    require_fresh,
+)
 from forgecli.tools.builtin.file_ops import create_file, replace_file
-from forgecli.tools.builtin.Read.tool import add_line_numbers
 
-__all__ = ["EditOutput", "FileEditTool", "MAX_EDIT_FILE_SIZE", "read_text_file"]
+__all__ = ["EditOutput", "FileEditTool", "MAX_EDIT_FILE_SIZE"]
 
 MAX_EDIT_FILE_SIZE = 25 * 1024 * 1024
 
@@ -53,19 +61,6 @@ class EditOutput:
     snippet: str
     snippet_start_line: int
     note: str = ""
-
-
-def read_text_file(path: str) -> str:
-    with open(path, "rb") as stream:
-        raw = stream.read()
-    if raw.startswith(b"\xff\xfe"):
-        text = raw.decode("utf-16", errors="replace")
-    else:
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            text = raw.decode("latin-1")
-    return text.replace("\r\n", "\n")
 
 
 def _bool_of(input: Mapping[str, object], key: str) -> bool:
@@ -106,12 +101,6 @@ class FileEditTool(Tool):
         path = input.get("file_path")
         if isinstance(path, str):
             input["file_path"] = expand_input_path(path, os.getcwd())
-
-    def prepare_permission_matcher(
-        self, input: Mapping[str, object]
-    ) -> Callable[[str], bool] | None:
-        path = str_of(input, "file_path")
-        return lambda pattern: match_wildcard_pattern(pattern, path)
 
     def check_permissions(
         self, input: Mapping[str, object], context: ToolUseContext
@@ -186,9 +175,13 @@ class FileEditTool(Tool):
                     error_code=3,
                 )
             return ValidationResult(ok=True)
-        stale = _stale_check(path, content, context)
-        if stale is not None:
-            return stale
+        freshness = check_freshness(path, content, context.read_file_state)
+        if freshness is Freshness.NOT_READ:
+            return ValidationResult(ok=False, message=NOT_READ_MESSAGE, error_code=6)
+        if freshness is Freshness.MODIFIED:
+            return ValidationResult(
+                ok=False, message=MODIFIED_SINCE_READ_MESSAGE, error_code=7
+            )
         located = find_actual_string(content, old_string, new_string)
         if located.actual is None:
             message = f"String to replace not found in file.\nString: {old_string}"
@@ -223,8 +216,21 @@ class FileEditTool(Tool):
         old_string = str_of(input, "old_string")
         new_string = str_of(input, "new_string")
         replace_all = _bool_of(input, "replace_all")
-        exists = os.path.exists(path)
-        content = read_text_file(path) if exists else ""
+        # 备份在关键段之外: 它只是记下原样, 检查失败了多一份没用的备份, 不是错误状态.
+        context.track_file_edit(path)
+        # 从这里到落盘是关键段 (对应 FileEditTool.ts 里那段不许 await 的代码): 权限询问
+        # 可以等任意长, validate_input 的结论已经过期, 紧贴读盘把同样的前提再查一次.
+        current = read_text_file_if_exists(path)
+        exists = current is not None
+        if current is None:
+            content = ""
+        elif old_string == "":
+            if current.strip() != "":
+                raise ValueError("Cannot create new file - file already exists.")
+            content = current
+        else:
+            require_fresh(path, current, context.read_file_state)
+            content = current
         note = ""
         actual = old_string
         written_new = new_string
@@ -239,7 +245,6 @@ class FileEditTool(Tool):
             if located.aligned_new is not None:
                 written_new = located.aligned_new
         updated = apply_edit(content, actual, written_new, replace_all=replace_all)
-        context.track_file_edit(path)
         if exists:
             replace_file(path, updated)
         else:
@@ -279,27 +284,3 @@ class FileEditTool(Tool):
         if output.note:
             text = text + f"\n\nNote: {output.note}."
         return text_block(tool_use_id, text)
-
-
-def _stale_check(
-    path: str, content: str, context: ToolUseContext
-) -> ValidationResult | None:
-    state = context.read_file_state.get(path)
-    if state is None or state.is_partial_view:
-        return ValidationResult(
-            ok=False,
-            message="File has not been read yet. Read it first before writing to it.",
-            error_code=6,
-        )
-    if os.path.getmtime(path) > state.timestamp:
-        if state.is_full_read and content == state.content:
-            return None
-        return ValidationResult(
-            ok=False,
-            message=(
-                "File has been modified since read, either by the user or by a linter. "
-                "Read it again before attempting to write it."
-            ),
-            error_code=7,
-        )
-    return None

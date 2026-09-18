@@ -194,12 +194,6 @@ class Tool(ABC):
     def get_path(self, input: Mapping[str, object]) -> str | None:
         return None
 
-    def prepare_permission_matcher(
-        self, input: Mapping[str, object]
-    ) -> Callable[[str], bool] | None:
-        """hook 的 `if` 条件用的匹配器. None = 只按工具名匹配."""
-        return None
-
     def check_permissions(
         self, input: Mapping[str, object], context: ToolUseContext
     ) -> PermissionResult:
@@ -214,7 +208,7 @@ class Tool(ABC):
         return ValidationResult(ok=True)
 
     def backfill_observable_input(self, input: dict[str, object]) -> None:
-        """在入参副本上补派生字段 (路径展开一类), 给 hook 与权限看. 必须幂等."""
+        """在入参副本上补派生字段 (路径展开一类), 给权限看. 必须幂等."""
         return None
 
     def inputs_equivalent(

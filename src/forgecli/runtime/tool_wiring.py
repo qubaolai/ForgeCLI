@@ -15,7 +15,7 @@ from forgecli.agent.run_bus import AgentRunEventBus
 from forgecli.agent.tool_observer import EventBusToolRunObserver
 from forgecli.core.app_state import AppState
 from forgecli.core.execution.environment import EnvironmentInheritance
-from forgecli.core.execution.fence import FencePolicy, fence_for
+from forgecli.core.execution.fence import FencePolicy
 from forgecli.core.execution.profile import ExecutionProfile, IsolationLevel
 from forgecli.core.permissions import (
     AdditionalWorkingDirectory,
@@ -44,6 +44,7 @@ from forgecli.memory.store import JsonMemoryStore
 from forgecli.planning.plan_store import FsPlanStore
 from forgecli.planning.service import PlanningService
 from forgecli.prompt.project_instruction_reader import FsProjectInstructionReader
+from forgecli.runtime.sandbox_wiring import SandboxRuntime
 from forgecli.security.auto_mode_classifier import AutoModeClassifier, StructuredQuery
 from forgecli.security.interactive import make_can_use_tool
 from forgecli.security.permission_setup import transition_permission_mode
@@ -81,7 +82,6 @@ from forgecli.tools.builtin.planning.tool import (
 from forgecli.tools.builtin.Read.tool import FileReadTool
 from forgecli.tools.builtin.Write.tool import FileWriteTool
 from forgecli.tools.file_history import FileHistory
-from forgecli.tools.hooks import HookRunner, load_hook_config
 from forgecli.tools.runner import ToolRunner
 
 __all__ = ["AppStateHolder", "ToolStack", "build_tool_stack"]
@@ -132,6 +132,7 @@ class ToolStack:
     memory: MemoryService
     file_history: FileHistory
     lsp: LspServerPool
+    sandbox: SandboxRuntime
 
     @property
     def permission(self) -> ToolPermissionContext:
@@ -153,8 +154,9 @@ class ToolStack:
         return tuple(roots)
 
     def close(self) -> None:
-        """项目关闭时收尾: 关掉语言服务器子进程."""
+        """项目关闭时收尾: 关掉语言服务器子进程, 代理与实例临时目录."""
         self.lsp.close()
+        self.sandbox.close()
 
 
 def _sandbox_settings(workspace_id: str, confined: bool) -> SandboxSettings:
@@ -221,20 +223,18 @@ def build_tool_stack(
         session.set_mode(mode)
 
     holder = AppStateHolder(permission, sandbox, on_mode_change=sync_mode)
+    sandbox_runtime = SandboxRuntime(
+        provider=provider,
+        workspace_roots=roots,
+        protected_paths=protected,
+        get_app_state=holder.get,
+        set_app_state=holder.set,
+        prompts=None if non_interactive else channel,
+        project_settings_file=project_settings_file(workspace_id),
+    )
 
     def fence_factory(context: ToolUseContext) -> FencePolicy | None:
-        current = context.get_app_state()
-        if not current.sandbox.active:
-            return None
-        extra = tuple(
-            item.path
-            for item in current.tool_permission_context.additional_working_directories
-        )
-        return fence_for(
-            current.sandbox,
-            workspace_roots=roots + extra,
-            protected_paths=protected,
-        )
+        return sandbox_runtime.fence(context)
 
     # 3. 各工具要的服务.
     planning = PlanningService(
@@ -257,7 +257,7 @@ def build_tool_stack(
         FileEditTool(),
         FileWriteTool(),
         GlobTool(),
-        GrepTool(sandboxed if fence_report.confined else local, fence_factory),
+        GrepTool(local=local, sandboxed=sandboxed, fence_factory=fence_factory),
         LspTool(lsp_pool),
         BashTool(
             local=local,
@@ -279,9 +279,6 @@ def build_tool_stack(
     applier = PermissionUpdateApplier(
         user_file=user_settings_file(), project_file=project_settings_file(workspace_id)
     )
-    hooks = HookRunner(
-        load_hook_config((user_settings_file(), project_settings_file(workspace_id)))
-    )
     classifier: AutoModeClassifier | None = None
     if structured_query is not None:
         instruction_reader = FsProjectInstructionReader()
@@ -297,7 +294,6 @@ def build_tool_stack(
         )
     runner = ToolRunner(
         base_tools=base_tools,
-        hooks=hooks,
         can_use_tool=make_can_use_tool(applier, classifier=classifier),
         get_app_state=holder.get,
         set_app_state=holder.set,
@@ -326,6 +322,7 @@ def build_tool_stack(
         memory=memory,
         file_history=file_history,
         lsp=lsp_pool,
+        sandbox=sandbox_runtime,
     )
 
 

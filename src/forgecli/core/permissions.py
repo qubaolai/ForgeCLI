@@ -37,7 +37,6 @@ __all__ = [
     "classifier_reason",
     "deny",
     "empty_tool_permission_context",
-    "hook_reason",
     "mode_reason",
     "other_reason",
     "parse_permission_mode",
@@ -229,7 +228,6 @@ class DecisionReasonType(Enum):
     RULE = "rule"
     MODE = "mode"
     SUBCOMMAND_RESULTS = "subcommand_results"
-    HOOK = "hook"
     SANDBOX_OVERRIDE = "sandbox_override"
     WORKING_DIR = "working_dir"
     SAFETY_CHECK = "safety_check"
@@ -246,7 +244,6 @@ class PermissionDecisionReason:
     rule: PermissionRule | None = None
     mode: PermissionMode | None = None
     reason: str = ""
-    hook_name: str = ""
     subcommand_results: tuple[tuple[str, PermissionResult], ...] = ()
     # 哪个分类器 (CLASSIFIER 才有).
     classifier: str = ""
@@ -260,8 +257,6 @@ class PermissionDecisionReason:
             return f"rule {rule_text(self.rule)} ({self.rule.source.value})"
         if self.type is DecisionReasonType.MODE and self.mode is not None:
             return f"mode {self.mode.value}"
-        if self.type is DecisionReasonType.HOOK:
-            return f"hook {self.hook_name}: {self.reason}"
         if self.type is DecisionReasonType.CLASSIFIER:
             return f"classifier {self.classifier}: {self.reason}"
         if self.type is DecisionReasonType.SUBCOMMAND_RESULTS:
@@ -315,12 +310,6 @@ def working_dir_reason(reason: str) -> PermissionDecisionReason:
 def sandbox_override_reason(reason: str) -> PermissionDecisionReason:
     return PermissionDecisionReason(
         type=DecisionReasonType.SANDBOX_OVERRIDE, reason=reason
-    )
-
-
-def hook_reason(hook_name: str, reason: str) -> PermissionDecisionReason:
-    return PermissionDecisionReason(
-        type=DecisionReasonType.HOOK, hook_name=hook_name, reason=reason
     )
 
 

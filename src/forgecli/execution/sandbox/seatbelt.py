@@ -11,6 +11,13 @@ profile 的形态是**实测定下来的**, 不是照抄别处的写法 (ADR-003
 后者意味着受保护路径要逐条列举, **漏一条就是凭证暴露** —— 这条风险在 macOS 上没有解,
 Linux 的 bubblewrap 靠 mount namespace 不受此限.
 
+两条边界各叠一层反向规则 (与 sandbox-runtime 同): 可写区里再 deny 掉 `.git/hooks` 这类
+路径, denied 读区里再 allow 回具体路径. Seatbelt 是**后写的规则赢**, 所以顺序是
+deny-all, allow, deny (写) 与 deny, allow (读).
+
+网络: `(deny network*)` 之后只放一条到本机代理端口的 outbound (`network_proxy.py` 在那头
+按域名裁决); unix socket 与本机端口按设置放开. `allowedDomains` 含 `*` 时不写 deny.
+
 路径一律先 `realpath`: macOS 上 `/tmp` 是 `/private/tmp` 的符号链接, 而 Seatbelt 比对
 的是解析后的真实路径. 拿没解析的路径去写 profile, 规则会静默不匹配 —— 那比报错糟得多.
 """
@@ -21,10 +28,15 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 from forgecli.core.execution.fence import FencePolicy
-from forgecli.execution.sandbox.provider import SandboxProvider, SelfTestReport
+from forgecli.execution.sandbox.provider import (
+    SandboxProvider,
+    SelfTestReport,
+    proxy_environment,
+)
 
 __all__ = ["SeatbeltProvider"]
 
@@ -47,6 +59,10 @@ def _real(path: str) -> str:
         return os.path.realpath(path)
     except OSError:
         return path
+
+
+def _subpaths(paths: list[str]) -> str:
+    return " ".join(f"(subpath {_quote(path)})" for path in paths)
 
 
 class SeatbeltProvider(SandboxProvider):
@@ -78,13 +94,62 @@ class SeatbeltProvider(SandboxProvider):
         # /dev/fd 下的重定向目标是按需创建的, 只能按 subpath 放行.
         allow_write.append('(subpath "/dev/fd")')
         lines.append(f"(allow file-write* {' '.join(allow_write)})")
+        # 可写区里再挖掉的: 放在 allow 之后, 后写的赢.
+        denied_write = [_real(path) for path in policy.denied_write_paths if path]
+        if denied_write:
+            lines.append(f"(deny file-write* {_subpaths(denied_write)})")
         denied = [_real(path) for path in policy.denied_read_paths if path]
         if denied:
-            targets = " ".join(f"(subpath {_quote(path)})" for path in denied)
-            lines.append(f"(deny file-read* {targets})")
-        if not policy.network_allowed:
-            lines.append("(deny network*)")
+            lines.append(f"(deny file-read* {_subpaths(denied)})")
+        allowed_read = [_real(path) for path in policy.allowed_read_paths if path]
+        if allowed_read:
+            lines.append(f"(allow file-read* {_subpaths(allowed_read)})")
+        lines.extend(self._network_rules(policy))
         return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _network_rules(policy: FencePolicy) -> list[str]:
+        network = policy.network
+        if network.unrestricted:
+            return []
+        rules = ["(deny network*)"]
+        if network.proxy_port is not None:
+            # 只放到代理那一条. 域名对不对由代理裁, 内核只管"除了它谁都连不上".
+            rules.append(
+                f'(allow network-outbound (remote ip "localhost:{network.proxy_port}"))'
+            )
+        if network.allow_local_binding:
+            # bind / inbound 用 "*:*" 而不是 "localhost:*": 现代 macOS 把 IPv4 映射成
+            # ::ffff:127.0.0.1, Seatbelt 的 localhost 过滤器认不出它 (sandbox-runtime
+            # 的实测); outbound 仍限 localhost, 域名白名单不因此失效.
+            rules.append('(allow network-bind (local ip "*:*"))')
+            rules.append('(allow network-inbound (local ip "*:*"))')
+            rules.append('(allow network-outbound (remote ip "localhost:*"))')
+        if network.allow_all_unix_sockets:
+            rules.append('(allow network-bind (local unix-socket (path-regex #"^/")))')
+            rules.append(
+                '(allow network-outbound (remote unix-socket (path-regex #"^/")))'
+            )
+        else:
+            for path in network.allow_unix_sockets:
+                real = _quote(_real(path))
+                rules.append(
+                    f"(allow network-bind (local unix-socket (subpath {real})))"
+                )
+                rules.append(
+                    f"(allow network-outbound (remote unix-socket (subpath {real})))"
+                )
+        return rules
+
+    def environment_for(self, policy: FencePolicy) -> Mapping[str, str]:
+        env: dict[str, str] = {}
+        if policy.instance_temp_root:
+            temp = _real(policy.instance_temp_root)
+            env.update({"TMPDIR": temp, "TMP": temp, "TEMP": temp})
+        network = policy.network
+        if network.proxied and network.proxy_port is not None:
+            env.update(proxy_environment(f"http://localhost:{network.proxy_port}"))
+        return env
 
     def wrap(self, argv: tuple[str, ...], policy: FencePolicy) -> tuple[str, ...]:
         if not argv:
@@ -114,7 +179,6 @@ class SeatbeltProvider(SandboxProvider):
         policy = FencePolicy(
             writable_roots=(str(workspace),),
             denied_read_paths=(str(secret_dir),),
-            network_allowed=False,
         )
         failures: list[str] = []
 

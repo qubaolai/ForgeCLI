@@ -25,8 +25,10 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+from collections.abc import Mapping
 
 from forgecli.core.execution.fence import FencePolicy
+from forgecli.execution.sandbox.bubblewrap import bwrap_filesystem_flags
 from forgecli.execution.sandbox.provider import SandboxProvider, SelfTestReport
 
 __all__ = ["Wsl2Provider", "windows_to_wsl_path", "wsl2_bubblewrap_available"]
@@ -140,17 +142,20 @@ class Wsl2Provider(SandboxProvider):
             # PID namespace 让 kill / pkill 打不到 WSL 里的其他进程.
             "--unshare-pid",
         ]
-        for root in policy.all_writable:
-            if root:
-                translated = windows_to_wsl_path(root)
-                flags += ["--bind", translated, translated]
-        for path in policy.denied_read_paths:
-            if path:
-                # tmpfs 盖住: 进程看到空目录, 问不出原内容, 也问不出存在性.
-                flags += ["--tmpfs", windows_to_wsl_path(path)]
-        if not policy.network_allowed:
+        flags += bwrap_filesystem_flags(
+            policy, translate=windows_to_wsl_path, resolve=lambda path: path
+        )
+        # WSL 侧没有代理桥 (宿主的 unix socket 过不去 wsl.exe 边界): 网络要么全放
+        # (`allowedDomains: ["*"]`), 要么全拦.
+        if not policy.network.unrestricted:
             flags.append("--unshare-net")
         return tuple(flags)
+
+    def environment_for(self, policy: FencePolicy) -> Mapping[str, str]:
+        if not policy.instance_temp_root:
+            return {}
+        temp = windows_to_wsl_path(policy.instance_temp_root)
+        return {"TMPDIR": temp, "TMP": temp, "TEMP": temp}
 
     def self_test(self) -> SelfTestReport:
         if not self.available():
@@ -179,7 +184,6 @@ class Wsl2Provider(SandboxProvider):
         policy = FencePolicy(
             writable_roots=(f"{root}/ws",),
             denied_read_paths=(f"{root}/secret",),
-            network_allowed=False,
         )
         failures: list[str] = []
 

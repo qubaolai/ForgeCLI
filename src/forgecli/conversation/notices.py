@@ -1,4 +1,4 @@
-"""窗口通知的组装: 增量, 节流, 预算 (ADR-0056 决策 4 / 5 / 6 / 7 / 9).
+"""窗口通知的组装: 增量, 节流, 预算 (ADR-0056 决策 4 / 5 / 6 / 7 / 9 / 14).
 
 Claude Code 的 attachments 在本仓库的对应物. 每次调模型前算一次"这次要新发哪几条", 判据
 全部从**窗口本身**推出来: 同类型的上一条通知在哪, 它之后有几个用户回合 / 几次模型调用 /
@@ -7,11 +7,17 @@ Claude Code 的 attachments 在本仓库的对应物. 每次调模型前算一�
 原则: **模型已经在窗口里看过的内容不再发.** 计划与待办的绝大多数变化由模型自己用工具
 造成, tool_result 里已经有新状态; 只有外部改动 (revision 变了, 而窗口里没有对应的工具
 调用), 提醒, 与压缩 / 恢复后的重注入三种情形才发.
+
+两处会改 `FileStateCache` (决策 14): 读过的文件被外部改了, 发过 diff 片段就把缓存换成
+新内容; 压缩之后清空缓存, 只把重注入的几个放回去. 都是为了守住同一个不变量: 缓存说
+"读过" 的文件, 模型上下文里一定有它现在的内容.
 """
 
 from __future__ import annotations
 
+import difflib
 import os
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +27,8 @@ from forgecli.core.context.window import Window
 from forgecli.core.message import ChatMessage, TextBlock
 from forgecli.core.permissions import PermissionMode
 from forgecli.core.token_estimator import ApproximateTokenEstimator
-from forgecli.core.tool.file_state import FileStateCache, normalize_path
+from forgecli.core.tool.file_state import FileState, FileStateCache, normalize_path
+from forgecli.core.tool.file_text import add_line_numbers, decode_text, render_read
 from forgecli.core.tool.hashing import digest_text
 from forgecli.core.tool.names import (
     MEMORY_FORGET_TOOL_NAME,
@@ -68,7 +75,7 @@ KIND_TOOLS = "tools"
 KIND_DATE = "date"
 KIND_NESTED_INSTRUCTIONS = "nested_instructions"
 KIND_RECENT_FILE = "recent_file"
-KIND_WORKSPACE_CHANGED = "workspace_changed"
+KIND_FILE_CHANGED = "file_changed"
 # 循环规则回填的引导: 空转提醒, 格式重试, 收工具. 同一个包裹, 同一个 meta 标记.
 KIND_LOOP_GUIDANCE = "loop_guidance"
 
@@ -177,6 +184,10 @@ class NoticeAssembler:
         if inputs.after_compaction:
             # 压缩后重注入的文件有自己的预算, 不占这一批的 20 KB.
             batch = (*batch, *self._recent_files(inputs))
+        else:
+            # 读过的文件被外部改了: 每条片段自己封顶, 也不占这一批的 20 KB, 否则一次
+            # 格式化改了几个文件就把别的通知挤掉. 压缩后不用查: 缓存刚清过.
+            batch = (*batch, *self._changed_files(inputs))
         if batch:
             _log.info(
                 "context.notices",
@@ -358,24 +369,35 @@ class NoticeAssembler:
     # ---- 压缩后重注入最近读过的文件 (决策 9) ----
 
     def _recent_files(self, inputs: NoticeInputs) -> list[ChatMessage]:
+        """压缩淘汰了工具结果, 缓存里"读过"的文件模型已经看不见: 清空缓存, 只把这次重
+        注入的几个放回去 (对应 compact.ts 的 `readFileState.clear()` 与随后的
+        `FileReadTool.call`), 其余的要 Edit 得先重 Read."""
         cache = inputs.read_files
         if cache is None:
             return []
+        # keys() 按最近使用排, 最近的在末尾. 先取候选再清: 清了就没有顺序了.
+        candidates = [
+            (path, state)
+            for path in reversed(cache.keys())
+            if (state := cache.peek(path)) is not None
+            and state.is_full_read
+            and not state.is_partial_view
+        ]
+        cache.clear()
         out: list[ChatMessage] = []
+        restored: list[tuple[str, FileState]] = []
         budget = prompts.POST_COMPACT_TOKEN_BUDGET
         if inputs.file_token_room is not None:
             budget = min(budget, inputs.file_token_room)
-        # keys() 按最近使用排, 最近的在末尾.
-        for path in reversed(cache.keys()):
+        for path, state in candidates:
             if len(out) >= prompts.POST_COMPACT_MAX_FILES or budget <= 0:
                 break
-            state = cache.get(path)
-            if state is None or not state.is_full_read or state.is_partial_view:
-                continue
             try:
-                current = Path(path).read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+                modified_at = os.path.getmtime(path)
+                raw = Path(path).read_bytes()
+            except OSError:
                 continue
+            current, _ = render_read(decode_text(raw), 1, None)
             if current != state.content:
                 # 压缩期间被改过: 发旧内容会误导, 让模型自己重读.
                 continue
@@ -389,7 +411,105 @@ class NoticeAssembler:
                     prompts.notice_recent_file(path, content, truncated=truncated),
                 )
             )
+            # 模型又看到了这份 (或它的开头): 放回缓存. 截过的记成部分读 (limit = 给了
+            # 几行), Edit 照样能改, 只是没有内容兜底.
+            restored.append(
+                (
+                    path,
+                    FileState(
+                        content=content,
+                        timestamp=modified_at,
+                        limit=content.count("\n") if truncated else None,
+                    ),
+                )
+            )
+        # 最近的最后放, 顺序与清之前一致.
+        for path, state in reversed(restored):
+            cache.set(path, state)
         return out
+
+    # ---- 读过的文件被外部改了 (决策 14) ----
+
+    def _changed_files(self, inputs: NoticeInputs) -> list[ChatMessage]:
+        """对应 getChangedFiles: 只看缓存里的路径, 只看完整读过的 (部分读的不知道模型看
+        的是哪一段, 与 Claude Code 同). mtime 变了就重读, 缓存换成新内容 —— 模型马上会在
+        通知里看到变化, 与它自己 Read 过等价; 片段为空 (碰过没改) 就不发.
+
+        文件没了才从缓存删, 而且只在 FileNotFoundError 时删: 编辑器"写临时文件再
+        rename"的瞬间 stat 会失败, 那不是删除, 删了下一次 Edit 会平白撞上 "not been
+        read yet"."""
+        cache = inputs.read_files
+        if cache is None:
+            return []
+        out: list[ChatMessage] = []
+        for path in cache.keys():  # noqa: SIM118 - FileStateCache 不是 dict
+            state = cache.peek(path)
+            if state is None or not state.is_full_read or state.is_partial_view:
+                continue
+            try:
+                modified_at = os.path.getmtime(path)
+            except FileNotFoundError:
+                cache.delete(path)
+                continue
+            except OSError:
+                continue
+            if modified_at <= state.timestamp:
+                continue
+            try:
+                raw = Path(path).read_bytes()
+            except OSError:
+                continue
+            content, _ = render_read(decode_text(raw), 1, None)
+            cache.set(path, FileState(content=content, timestamp=modified_at))
+            snippet = _diff_snippet(state.content, content)
+            if not snippet:
+                continue
+            out.append(
+                notice(
+                    KIND_FILE_CHANGED, path, prompts.notice_file_changed(path, snippet)
+                )
+            )
+        return out
+
+
+# ---- diff 片段 ----
+
+_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def _diff_snippet(before: str, after: str) -> str:
+    """变化附近的几段 (对应 getSnippetForTwoFileDiff): 每段只留新文件里的行 (上下文与
+    新增, 删掉的不要), 按新文件行号编号, 段之间 "..."; 超过上限从末尾按行截并注明.
+    没有变化返回空串."""
+    # 头两行是 --- / +++ 文件头, 按位置跳, 不按前缀: 内容为 "-- x" 的删除行看着也像.
+    diff = list(
+        difflib.unified_diff(before.splitlines(), after.splitlines(), n=8, lineterm="")
+    )[2:]
+    hunks: list[str] = []
+    start = 1
+    lines: list[str] = []
+    for line in diff:
+        header = _HUNK_HEADER.match(line)
+        if header:
+            if lines:
+                hunks.append(add_line_numbers("\n".join(lines), start))
+            start = int(header.group(1))
+            lines = []
+            continue
+        if line.startswith("-"):
+            continue
+        lines.append(line[1:])
+    if lines:
+        hunks.append(add_line_numbers("\n".join(lines), start))
+    full = "\n...\n".join(hunks)
+    encoded = full.encode("utf-8")
+    limit = prompts.DIFF_SNIPPET_MAX_BYTES
+    if len(encoded) <= limit:
+        return full
+    cutoff = encoded.rfind(b"\n", 0, limit)
+    kept = encoded[: cutoff if cutoff > 0 else limit].decode("utf-8", errors="ignore")
+    remaining = full.count("\n", len(kept)) + 1
+    return f"{kept}\n\n... [{remaining} lines truncated] ..."
 
 
 # ---- 窗口扫描 ----

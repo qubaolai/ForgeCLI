@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from forgecli.core.message import ChatMessage, ToolResultBlock
@@ -22,7 +22,6 @@ from forgecli.core.tool.tool import (
     ValidationResult,
 )
 from forgecli.security.filesystem import check_read_permission_for_tool
-from forgecli.security.shell_rule_matching import match_wildcard_pattern
 from forgecli.tools.builtin.base import expand_input_path, str_of, text_block
 from forgecli.tools.builtin.Glob.prompt import DESCRIPTION, INPUT_SCHEMA
 from forgecli.workspace.filesystem_view import OsFileSystemView
@@ -79,12 +78,6 @@ class GlobTool(Tool):
 
     def to_auto_classifier_input(self, input: Mapping[str, object]) -> object:
         return str_of(input, "pattern")
-
-    def prepare_permission_matcher(
-        self, input: Mapping[str, object]
-    ) -> Callable[[str], bool] | None:
-        pattern = str_of(input, "pattern")
-        return lambda rule: match_wildcard_pattern(rule, pattern)
 
     def check_permissions(
         self, input: Mapping[str, object], context: ToolUseContext

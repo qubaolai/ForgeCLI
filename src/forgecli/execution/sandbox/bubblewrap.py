@@ -9,22 +9,76 @@ macOS 只能靠一张需要追赶的 denylist.
 
 `--unshare-pid` 顺带把进程操作也关住了, 所以 Linux 上 `kill` / `pkill` 打不到宿主进程.
 Seatbelt 没有这个能力, 那边只能靠"围栏外不可回滚操作表"兜底.
+
+网络 (与 sandbox-runtime 的 Linux 桥同): `--unshare-net` 之后围栏里没有任何网络, 代理
+在宿主上监听一个 unix socket, bind 进围栏, 围栏内起一个 `socat` 把 `127.0.0.1:3128` 转到
+那个 socket, 子进程的 HTTP_PROXY 指向 3128. 没有 `socat` 就没有出口 —— 不退化成放开网络.
+
+可写区里挖掉的路径 (`.git/hooks`) 与 denied 读区里放回的路径 (allowRead) 都靠**后面的
+bind 覆盖前面的**: `--ro-bind` 叠在 `--bind` 之上, `--ro-bind` 叠在 `--tmpfs` 之上. 只对
+存在的路径做 —— bind 一个不存在的路径 bwrap 直接报错.
+
+**本机是 macOS, 这个文件没有在 Linux 上实跑过**: 纯函数 (flag 拼装) 有把握, 桥的形状照
+sandbox-runtime, 但 socat 的参数与 bind 顺序在真实 Linux 上验证之前只能算"按文档写的".
+自测 (`self_test`) 会在启动时把明显不对的形状拦下来: 三项被禁操作任一没拦住就
+UNCONFINED.
 """
 
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from forgecli.core.execution.fence import FencePolicy
-from forgecli.execution.sandbox.provider import SandboxProvider, SelfTestReport
+from forgecli.execution.sandbox.provider import (
+    SandboxProvider,
+    SelfTestReport,
+    proxy_environment,
+)
 
-__all__ = ["BubblewrapProvider"]
+__all__ = ["BubblewrapProvider", "bwrap_filesystem_flags"]
 
 _SELF_TEST_TIMEOUT = 15.0
+# 围栏内代理桥监听的端口 (对应 sandbox-runtime 的内部 3128).
+_BRIDGE_PORT = 3128
+
+
+def bwrap_filesystem_flags(
+    policy: FencePolicy,
+    *,
+    translate: Callable[[str], str] = lambda path: path,
+    resolve: Callable[[str], str] | None = None,
+) -> list[str]:
+    """可写根, 挖掉的写路径, 盖住的读路径, 放回的读路径, 按这个顺序: 后面的覆盖前面的.
+
+    `resolve` 解符号链接 (缺省 realpath); `translate` 给 WSL2 把 Windows 路径翻成
+    `/mnt/c/...`, 那边不能 realpath (宿主的 realpath 会把 WSL 侧的路径当成 Windows
+    路径).
+    """
+    real = resolve or _real
+    flags: list[str] = []
+    for root in policy.all_writable:
+        if root:
+            path = translate(real(root))
+            flags += ["--bind", path, path]
+    for denied in policy.denied_write_paths:
+        if denied and os.path.exists(real(denied)):
+            path = translate(real(denied))
+            flags += ["--ro-bind", path, path]
+    for denied in policy.denied_read_paths:
+        if denied:
+            # tmpfs 盖住: 进程看到空目录, 问不出原内容, 也问不出存在性.
+            flags += ["--tmpfs", translate(real(denied))]
+    for allowed in policy.allowed_read_paths:
+        if allowed and os.path.exists(real(allowed)):
+            path = translate(real(allowed))
+            flags += ["--ro-bind", path, path]
+    return flags
 
 
 def _real(path: str) -> str:
@@ -37,6 +91,7 @@ def _real(path: str) -> str:
 class BubblewrapProvider(SandboxProvider):
     def __init__(self, executable: str | None = None) -> None:
         self._executable = executable or shutil.which("bwrap") or ""
+        self._socat = shutil.which("socat") or ""
 
     @property
     def name(self) -> str:
@@ -80,17 +135,32 @@ class BubblewrapProvider(SandboxProvider):
             # PID namespace 让 kill / pkill 打不到宿主进程.
             "--unshare-pid",
         ]
-        for root in policy.all_writable:
-            if root:
-                real = _real(root)
-                flags += ["--bind", real, real]
-        for path in policy.denied_read_paths:
-            if path:
-                # tmpfs 盖住: 进程看到空目录, 问不出原内容, 也问不出存在性.
-                flags += ["--tmpfs", _real(path)]
-        if not policy.network_allowed:
-            flags.append("--unshare-net")
+        flags += bwrap_filesystem_flags(policy)
+        network = policy.network
+        if network.unrestricted:
+            return (*flags, "--", *argv)
+        flags.append("--unshare-net")
+        if network.proxy_socket and self._socat:
+            # 代理的 unix socket bind 进来, 围栏内 socat 把 127.0.0.1:3128 转过去.
+            flags += ["--bind", network.proxy_socket, network.proxy_socket]
+            bridge = (
+                f"{shlex.quote(self._socat)} "
+                f"TCP-LISTEN:{_BRIDGE_PORT},bind=127.0.0.1,fork,reuseaddr "
+                f"UNIX-CONNECT:{shlex.quote(network.proxy_socket)} & "
+                'exec "$@"'
+            )
+            return (*flags, "--", "/bin/sh", "-c", bridge, "sh", *argv)
         return (*flags, "--", *argv)
+
+    def environment_for(self, policy: FencePolicy) -> Mapping[str, str]:
+        env: dict[str, str] = {}
+        if policy.instance_temp_root:
+            temp = _real(policy.instance_temp_root)
+            env.update({"TMPDIR": temp, "TMP": temp, "TEMP": temp})
+        network = policy.network
+        if network.proxied and network.proxy_socket and self._socat:
+            env.update(proxy_environment(f"http://localhost:{_BRIDGE_PORT}"))
+        return env
 
     def self_test(self) -> SelfTestReport:
         if not self.available():
@@ -112,7 +182,6 @@ class BubblewrapProvider(SandboxProvider):
         policy = FencePolicy(
             writable_roots=(str(workspace),),
             denied_read_paths=(str(secret_dir),),
-            network_allowed=False,
         )
         failures: list[str] = []
 

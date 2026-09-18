@@ -67,6 +67,12 @@ class FileStateCache:
             self._entries.move_to_end(key)
             return state
 
+    def peek(self, path: str) -> FileState | None:
+        """不算一次使用. 巡检全部条目 (变化通知) 走这个, 否则每巡一遍顺序就被搅成巡检序,
+        而压缩后重注入靠这个顺序挑"最近读过的"."""
+        with self._lock:
+            return self._entries.get(_normalize(path))
+
     def set(self, path: str, state: FileState) -> None:
         key = _normalize(path)
         with self._lock:
@@ -100,5 +106,6 @@ class FileStateCache:
             self._size = 0
 
     def keys(self) -> tuple[str, ...]:
+        """按最近使用排, 最近的在末尾. 是快照: 遍历时改缓存不影响它."""
         with self._lock:
             return tuple(self._entries.keys())

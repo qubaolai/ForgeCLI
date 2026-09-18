@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from forgecli.core.execution.fence import FencePolicy
 from forgecli.execution.sandbox.provider import SandboxProvider, SelfTestReport
 
@@ -27,6 +29,9 @@ class NoSandboxProvider(SandboxProvider):
         if not argv:
             raise OSError("argv 为空")
         return argv
+
+    def environment_for(self, policy: FencePolicy) -> Mapping[str, str]:
+        return {}
 
     def self_test(self) -> SelfTestReport:
         """三项全 False. 如实报告"什么都拦不住", 不假装.

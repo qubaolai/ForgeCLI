@@ -1,10 +1,10 @@
-"""Write (对应 FileWriteTool/FileWriteTool.ts). 已存在的文件要求先读且未被改;
-父目录按需建."""
+"""Write (对应 FileWriteTool/FileWriteTool.ts). 已存在的文件要求先读且未被改, 权限之后
+紧贴落盘再查一次 (file_freshness); 父目录按需建."""
 
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from forgecli.core.message import ChatMessage, ToolResultBlock
@@ -24,8 +24,15 @@ from forgecli.security.filesystem import (
     check_write_permission_for_tool,
     matching_rule_for_input,
 )
-from forgecli.security.shell_rule_matching import match_wildcard_pattern
 from forgecli.tools.builtin.base import expand_input_path, str_of, text_block
+from forgecli.tools.builtin.file_freshness import (
+    MODIFIED_SINCE_READ_MESSAGE,
+    NOT_READ_MESSAGE,
+    Freshness,
+    check_freshness,
+    read_text_file_if_exists,
+    require_fresh,
+)
 from forgecli.tools.builtin.file_ops import create_file, replace_file
 from forgecli.tools.builtin.Write.prompt import DESCRIPTION, INPUT_SCHEMA, PROMPT
 
@@ -76,12 +83,6 @@ class FileWriteTool(Tool):
         if isinstance(path, str):
             input["file_path"] = expand_input_path(path, os.getcwd())
 
-    def prepare_permission_matcher(
-        self, input: Mapping[str, object]
-    ) -> Callable[[str], bool] | None:
-        path = str_of(input, "file_path")
-        return lambda pattern: match_wildcard_pattern(pattern, path)
-
     def check_permissions(
         self, input: Mapping[str, object], context: ToolUseContext
     ) -> PermissionResult:
@@ -109,23 +110,12 @@ class FileWriteTool(Tool):
             return ValidationResult(
                 ok=False, message=f"{path} is a directory, not a file.", error_code=4
             )
-        state = context.read_file_state.get(path)
-        if state is None or state.is_partial_view:
+        freshness = check_freshness(path, None, context.read_file_state)
+        if freshness is Freshness.NOT_READ:
+            return ValidationResult(ok=False, message=NOT_READ_MESSAGE, error_code=2)
+        if freshness is Freshness.MODIFIED:
             return ValidationResult(
-                ok=False,
-                message=(
-                    "File has not been read yet. Read it first before writing to it."
-                ),
-                error_code=2,
-            )
-        if os.path.getmtime(path) > state.timestamp:
-            return ValidationResult(
-                ok=False,
-                message=(
-                    "File has been modified since read, either by the user or by a "
-                    "linter. Read it again before attempting to write it."
-                ),
-                error_code=3,
+                ok=False, message=MODIFIED_SINCE_READ_MESSAGE, error_code=3
             )
         return ValidationResult(ok=True)
 
@@ -140,9 +130,14 @@ class FileWriteTool(Tool):
         requested = str_of(input, "file_path")
         path = expand_input_path(requested, context.cwd)
         content = str_of(input, "content")
-        exists = os.path.exists(path)
+        # 备份在关键段之外: 检查失败了多一份没用的备份, 不是错误状态.
         context.track_file_edit(path)
-        if exists:
+        # 从这里到落盘是关键段 (对应 FileWriteTool.ts 里那段不许 await 的代码): 权限询问
+        # 可以等任意长, validate_input 的结论已经过期, 紧贴读盘把同样的前提再查一次.
+        current = read_text_file_if_exists(path)
+        exists = current is not None
+        if current is not None:
+            require_fresh(path, current, context.read_file_state)
             replace_file(path, content)
         else:
             os.makedirs(os.path.dirname(path), exist_ok=True)

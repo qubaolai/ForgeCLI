@@ -65,7 +65,7 @@ class RuleTable:
 
 
 def _name(step: Callable[..., object]) -> str:
-    """`WorkspaceWatchRule.before_model` 这种, 类名带方法名, 够定位."""
+    """`ContextFitRule.before_model` 这种, 类名带方法名, 够定位."""
     return str(getattr(step, "__qualname__", repr(step)))
 
 

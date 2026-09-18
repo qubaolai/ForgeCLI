@@ -19,7 +19,6 @@ from forgecli.core.message import ChatMessage
 from forgecli.core.tool.tool import CanUseToolFn, Tool, ToolUseContext
 from forgecli.core.tool.tool_call import ToolCall
 from forgecli.tools.execution import ToolUseOutcome, run_tool_use
-from forgecli.tools.hooks import HookRunner
 from forgecli.tools.pool import find_tool_by_name
 
 __all__ = ["Batch", "max_tool_use_concurrency", "partition_tool_calls", "run_tools"]
@@ -79,19 +78,16 @@ def run_tools(
     context: ToolUseContext,
     can_use_tool: CanUseToolFn,
     parent_message: ChatMessage | None,
-    hooks: HookRunner,
 ) -> tuple[ToolUseOutcome, ...]:
     """跑完一轮的全部调用, 按请求序返回."""
     results: dict[str, ToolUseOutcome] = {}
     for batch in partition_tool_calls(calls, context.options.tools):
         if batch.is_concurrency_safe and len(batch.blocks) > 1:
-            _run_concurrently(
-                batch, context, can_use_tool, parent_message, hooks, results
-            )
+            _run_concurrently(batch, context, can_use_tool, parent_message, results)
         else:
             for call in batch.blocks:
                 results[call.tool_call_id] = run_tool_use(
-                    call, context, can_use_tool, parent_message, hooks
+                    call, context, can_use_tool, parent_message
                 )
     return tuple(results[call.tool_call_id] for call in calls)
 
@@ -101,7 +97,6 @@ def _run_concurrently(
     context: ToolUseContext,
     can_use_tool: CanUseToolFn,
     parent_message: ChatMessage | None,
-    hooks: HookRunner,
     results: dict[str, ToolUseOutcome],
 ) -> None:
     workers = min(max_tool_use_concurrency(), len(batch.blocks))
@@ -113,7 +108,7 @@ def _run_concurrently(
                 (
                     call,
                     pool.submit(
-                        run_tool_use, call, context, can_use_tool, parent_message, hooks
+                        run_tool_use, call, context, can_use_tool, parent_message
                     ),
                 )
             )

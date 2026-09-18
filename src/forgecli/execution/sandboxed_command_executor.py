@@ -6,6 +6,9 @@
 **fail closed**: 真实 Provider 拿到一个不带 `fence` 的请求会直接失败, 而不是"没策略
 就不围". 漏传策略是 bug, 而这个 bug 的后果是一次完全没有围栏的执行 —— 那正是必须
 响的地方.
+
+围栏内的环境由 Provider 定 (`environment_for`): TMPDIR 指向实例临时目录, 代理变量指向
+本机代理. 叠在净化过的环境之上, 盖掉同名变量.
 """
 
 from __future__ import annotations
@@ -43,4 +46,10 @@ class SandboxedCommandExecutor(CommandExecutor):
             argv = self._provider.wrap(request.argv, request.fence)
         except OSError as exc:
             return CommandOutcome(exit_code=None, failure=f"围栏创建失败: {exc}")
-        return self._inner.run(replace(request, argv=argv), cancel)
+        environment = {
+            **request.environment,
+            **self._provider.environment_for(request.fence),
+        }
+        return self._inner.run(
+            replace(request, argv=argv, environment=environment), cancel
+        )

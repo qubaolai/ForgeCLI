@@ -32,7 +32,6 @@ from forgecli.core.tool.tool_call import ToolCall, ToolSchema
 from forgecli.human_interaction.service import HumanPromptService
 from forgecli.tools.execution import ToolUseOutcome
 from forgecli.tools.file_history import FileHistory
-from forgecli.tools.hooks import HookRunner
 from forgecli.tools.orchestration import run_tools
 from forgecli.tools.pool import assemble_tool_pool
 
@@ -64,7 +63,6 @@ def observation_of(outcome: ToolUseOutcome) -> LoopObservation:
 @dataclass
 class ToolRunner:
     base_tools: tuple[Tool, ...]
-    hooks: HookRunner
     can_use_tool: CanUseToolFn
     get_app_state: Callable[[], AppState]
     set_app_state: Callable[[AppState], None]
@@ -154,4 +152,4 @@ class ToolRunner:
         context = self.context(
             session_id=session_id, turn_id=turn_id, messages=messages, cancel=cancel
         )
-        return run_tools(calls, context, self.can_use_tool, parent_message, self.hooks)
+        return run_tools(calls, context, self.can_use_tool, parent_message)

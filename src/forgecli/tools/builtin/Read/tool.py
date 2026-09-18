@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from forgecli.core.message import ChatMessage, ToolResultBlock
 from forgecli.core.permissions import PermissionBehavior, PermissionResult
 from forgecli.core.tool.file_state import FileState
+from forgecli.core.tool.file_text import add_line_numbers, decode_text, render_read
 from forgecli.core.tool.names import FILE_READ_TOOL_NAME
 from forgecli.core.tool.tool import (
     CanUseToolFn,
@@ -29,21 +30,13 @@ from forgecli.security.filesystem import (
     check_read_permission_for_tool,
     matching_rule_for_input,
 )
-from forgecli.security.shell_rule_matching import match_wildcard_pattern
 from forgecli.tools.builtin.base import expand_input_path, int_of, str_of, text_block
-from forgecli.tools.builtin.Read.prompt import (
-    DESCRIPTION,
-    INPUT_SCHEMA,
-    MAX_LINES_TO_READ,
-    prompt,
-)
+from forgecli.tools.builtin.Read.prompt import DESCRIPTION, INPUT_SCHEMA, prompt
 
-__all__ = ["FileReadTool", "ReadOutput", "add_line_numbers"]
+__all__ = ["FileReadTool", "ReadOutput"]
 
 # 没给 limit 时的文件总大小上限 (对应 maxSizeBytes). 超了让模型用 offset / limit.
 MAX_SIZE_BYTES = 256 * 1024
-# 单行上限: 超过的截断 (压缩过的 JS 一行几十万字符, 全塞进上下文没有意义).
-MAX_LINE_LENGTH = 2000
 
 _BINARY_EXTENSIONS = frozenset(
     {
@@ -114,34 +107,12 @@ class ReadOutput:
     total_lines: int
 
 
-def add_line_numbers(content: str, start_line: int) -> str:
-    """cat -n 的格式: 六位右对齐的行号加一个箭头."""
-    if not content:
-        return ""
-    lines = content.split("\n")
-    numbered: list[str] = []
-    for index, line in enumerate(lines):
-        if index == len(lines) - 1 and line == "":
-            continue
-        numbered.append(f"{start_line + index:6d}→{line}")
-    return "\n".join(numbered)
-
-
 def _format_size(size: int) -> str:
     if size >= 1024 * 1024:
         return f"{size / (1024 * 1024):.1f}MB"
     if size >= 1024:
         return f"{size / 1024:.1f}KB"
     return f"{size}B"
-
-
-def _decode(raw: bytes) -> str:
-    if raw.startswith(b"\xff\xfe"):
-        return raw.decode("utf-16", errors="replace")
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return raw.decode("latin-1")
 
 
 class FileReadTool(Tool):
@@ -201,12 +172,6 @@ class FileReadTool(Tool):
         path = input.get("file_path")
         if isinstance(path, str):
             input["file_path"] = expand_input_path(path, os.getcwd())
-
-    def prepare_permission_matcher(
-        self, input: Mapping[str, object]
-    ) -> Callable[[str], bool] | None:
-        path = str_of(input, "file_path")
-        return lambda pattern: match_wildcard_pattern(pattern, path)
 
     def check_permissions(
         self, input: Mapping[str, object], context: ToolUseContext
@@ -279,29 +244,17 @@ class FileReadTool(Tool):
                 "parameters to read specific portions of the file, or search for "
                 "specific content instead of reading the whole file."
             )
+        # 先记 mtime 再读内容: 记下的时间只会早于内容, 不会晚于. 反过来的话, 读与 stat
+        # 之间被改的文件会以新 mtime 配旧内容进缓存, 之后 Edit 的检查放行; 早于内容顶多
+        # 让 Edit 多报一次 "modified since read", 而且内容比对还能把它兜回来.
+        modified_at = os.path.getmtime(path)
         raw = self._read_bytes(path)
-        text = _decode(raw).replace("\r\n", "\n")
-        all_lines = text.split("\n")
-        if all_lines and all_lines[-1] == "":
-            all_lines.pop()
-        total = len(all_lines)
-        start_index = max(offset - 1, 0)
-        count = limit if limit is not None else MAX_LINES_TO_READ
-        selected = all_lines[start_index : start_index + count]
-        truncated: list[str] = []
-        for line in selected:
-            if len(line) > MAX_LINE_LENGTH:
-                truncated.append(line[:MAX_LINE_LENGTH] + "… [line truncated]")
-            else:
-                truncated.append(line)
-        content = "\n".join(truncated)
-        if truncated:
-            content = content + "\n"
+        content, total = render_read(decode_text(raw), offset, limit)
         context.read_file_state.set(
             path,
             FileState(
                 content=content,
-                timestamp=os.path.getmtime(path),
+                timestamp=modified_at,
                 offset=None if input.get("offset") is None else offset,
                 limit=limit,
             ),
@@ -310,7 +263,7 @@ class FileReadTool(Tool):
             data=ReadOutput(
                 file_path=requested,
                 content=content,
-                num_lines=len(truncated),
+                num_lines=content.count("\n"),
                 start_line=offset,
                 total_lines=total,
             )

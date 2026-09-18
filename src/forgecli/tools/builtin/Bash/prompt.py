@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from forgecli.core.sandbox import SandboxSettings
 from forgecli.core.tool.names import (
     BASH_TOOL_NAME,
     FILE_EDIT_TOOL_NAME,
@@ -11,23 +12,47 @@ from forgecli.core.tool.names import (
     GREP_TOOL_NAME,
 )
 
-__all__ = ["DEFAULT_TIMEOUT_MS", "MAX_TIMEOUT_MS", "prompt"]
+__all__ = ["DEFAULT_TIMEOUT_MS", "MAX_TIMEOUT_MS", "prompt", "sandbox_section"]
 
 DEFAULT_TIMEOUT_MS = 120_000
 MAX_TIMEOUT_MS = 600_000
 
 
-def prompt(sandboxed: bool) -> str:
-    sandbox_section = ""
-    if sandboxed:
-        sandbox_section = (
-            "\n# Sandbox\n"
-            "Commands run inside a sandbox: writes outside the working directories "
-            "and network access are blocked at the system-call level unless the "
-            "sandbox settings allow them. If a command fails with a permission error "
-            "that looks like the sandbox, say so instead of retrying with sudo or a "
-            "different path.\n"
+def sandbox_section(sandbox: SandboxSettings) -> str:
+    """围栏立着时给模型的那段 (对应 prompt.ts 的 sandbox 段): 边界是什么, 什么时候能
+    跳出去, 临时文件写哪."""
+    if not sandbox.active:
+        return ""
+    if sandbox.network_unrestricted:
+        network = "Network: unrestricted."
+    else:
+        allowed = ", ".join(sandbox.allowed_domains) or "(none)"
+        network = (
+            f"Network: only these hosts are reachable, through a local proxy: {allowed}. "
+            "Other hosts prompt the user once (or fail when nobody is present)."
         )
+        if sandbox.denied_domains:
+            network += f" Denied: {', '.join(sandbox.denied_domains)}."
+    if sandbox.allow_unsandboxed_commands:
+        override = """- You should always default to running commands within the sandbox. Do NOT set `dangerously_disable_sandbox: true` unless:
+  - The user *explicitly* asks you to bypass the sandbox, or
+  - A specific command just failed and you see evidence of sandbox restrictions causing the failure. Commands fail for many reasons unrelated to the sandbox (missing files, wrong arguments, network issues).
+- Evidence of sandbox-caused failures: "Operation not permitted" on file or network operations; access denied to paths outside the working directories; connection failures to hosts outside the allowlist; unix socket connection errors.
+- When you see such evidence: immediately retry with `dangerously_disable_sandbox: true` (don't ask, just do it) and briefly say which restriction likely caused the failure. That retry prompts the user for permission.
+- Treat each `dangerously_disable_sandbox: true` command individually: even if the previous command needed it, default to the sandbox for the next one.
+- Do not suggest adding sensitive paths (~/.bashrc, ~/.zshrc, ~/.ssh/*, credential files) to the sandbox allowlist."""
+    else:
+        override = """- All commands MUST run in the sandbox: the `dangerously_disable_sandbox` parameter is disabled by policy and is ignored.
+- If a command fails because of a sandbox restriction, work with the user to adjust the sandbox settings instead."""
+    return f"""
+# Sandbox
+Commands run inside an OS-level sandbox. Writes are allowed only inside the working directories (plus paths the sandbox settings allow); reads of credential directories are blocked; {network}
+{override}
+- For temporary files always use `$TMPDIR`: it points at a sandbox-writable directory that persists across commands. Do NOT use `/tmp` directly. On macOS a bare `mktemp` ignores TMPDIR, so write `mktemp -d "$TMPDIR/work.XXXXXX"` instead.
+"""
+
+
+def prompt(sandbox: SandboxSettings) -> str:
     return f"""Executes a given bash command and returns its output.
 
 The working directory persists between commands, but shell state does not. The shell environment is initialized from the user's profile (bash or zsh).
@@ -61,4 +86,4 @@ While the {BASH_TOOL_NAME} tool can do similar things, it is better to use the b
    - Do not sleep between commands that can run immediately - just run them.
    - Do not retry failing commands in a sleep loop - diagnose the root cause.
    - If you must poll an external process, use a check command rather than sleeping first, and keep any sleep short (1-5 seconds).
-{sandbox_section}"""
+{sandbox_section(sandbox)}"""

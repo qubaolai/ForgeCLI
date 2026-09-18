@@ -15,6 +15,7 @@ from forgecli.core.execution.environment import ShellLaunch
 from forgecli.core.execution.fence import FencePolicy
 from forgecli.core.message import ChatMessage, ToolResultBlock
 from forgecli.core.permissions import PermissionResult
+from forgecli.core.sandbox import SandboxSettings
 from forgecli.core.tool.names import BASH_TOOL_NAME
 from forgecli.core.tool.tool import (
     CanUseToolFn,
@@ -30,14 +31,9 @@ from forgecli.execution.command_executor import CommandExecutor, CommandRequest
 from forgecli.prompt import prompts
 from forgecli.security.sandbox_rules import should_use_sandbox
 from forgecli.security.shell.command_plan import ShellKind
-from forgecli.security.shell_rule_matching import (
-    match_wildcard_pattern,
-    permission_rule_extract_prefix,
-)
 from forgecli.tools.builtin.base import int_of, str_of, text_block
 from forgecli.tools.builtin.Bash.bash_permissions import (
     bash_tool_has_permission,
-    command_text,
     parse_for_permissions,
 )
 from forgecli.tools.builtin.Bash.destructive_command_warning import (
@@ -100,6 +96,8 @@ class BashOutput:
     # 输出里疑似被围栏拦下的路径 (ADR-0041 决策 9): 只在围栏立着时才算, 没围栏那句
     # Permission denied 只能是文件系统本身的权限, 说成围栏就是在骗模型.
     fence_blocked: tuple[str, ...] = ()
+    # 模型能不能带 dangerously_disable_sandbox 重试: 决定围栏提示怎么说.
+    can_disable_sandbox: bool = False
 
 
 class BashTool(Tool):
@@ -131,10 +129,10 @@ class BashTool(Tool):
         return str_of(input, "description") or "Run shell command"
 
     def prompt(self, options: PromptOptions) -> str:
-        sandboxed = False
+        sandbox = SandboxSettings()
         if options.get_app_state is not None:
-            sandboxed = options.get_app_state().sandbox.active
-        return prompt(sandboxed)
+            sandbox = options.get_app_state().sandbox
+        return prompt(sandbox)
 
     def user_facing_name(self, input: Mapping[str, object]) -> str:
         return self.name
@@ -182,24 +180,6 @@ class BashTool(Tool):
         if first in ("ls", "tree", "du"):
             return SearchOrRead(is_search=False, is_read=False, is_list=True)
         return None
-
-    def prepare_permission_matcher(
-        self, input: Mapping[str, object]
-    ) -> Callable[[str], bool] | None:
-        plan = parse_for_permissions(str_of(input, "command"), self.shell_kind, "")
-        texts = [command_text(unit, self.shell_kind) for unit in plan.units]
-
-        def matcher(pattern: str) -> bool:
-            prefix = permission_rule_extract_prefix(pattern)
-            for text in texts:
-                if prefix is not None:
-                    if text == prefix or text.startswith(prefix + " "):
-                        return True
-                elif match_wildcard_pattern(pattern, text):
-                    return True
-            return False
-
-        return matcher
 
     def validate_input(
         self, input: Mapping[str, object], context: ToolUseContext
@@ -257,6 +237,7 @@ class BashTool(Tool):
                 failure=outcome.failure or "",
                 truncated=outcome.truncated,
                 fence_blocked=blocked,
+                can_disable_sandbox=sandbox.allow_unsandboxed_commands,
             )
         )
 
@@ -283,7 +264,12 @@ class BashTool(Tool):
         if output.truncated:
             parts.append("[Output truncated]")
         if output.fence_blocked:
-            parts.append(prompts.loop_fence_blocked(list(output.fence_blocked)))
+            parts.append(
+                prompts.loop_fence_blocked(
+                    list(output.fence_blocked),
+                    can_disable=output.can_disable_sandbox,
+                )
+            )
         if not parts:
             parts.append("(No output)")
         is_error = bool(output.failure) or output.timed_out or output.interrupted
