@@ -1,7 +1,4 @@
 """本地控制面的准入: Host 白名单, 会话 cookie, CSRF 与安全响应头。
-
-从 ``app.py`` 分出来 (ADR-0048 决策 5): 它与任何一个资源都无关, 而混在路由表里的
-后果是每次加一条路由都要从这段中间件读起。
 """
 
 from __future__ import annotations

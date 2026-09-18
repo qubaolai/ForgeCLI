@@ -1,14 +1,11 @@
 """Forge 的极薄命令行启动入口。
 
-两条启动路径, 同一个组合根: 裸 ``forge`` 监听本机 Web 控制面, 业务交互进浏览器
-(ADR-0025 决策 1); ``forge --cli`` 进终端交互式会话 (ADR-0045)。默认仍是 Web ——
-加一个参数才换。组合根在 ``interfaces/runtime``, 两条路共用它; 这里只负责解析启动
+两条启动路径, 同一个组合根: 裸 forge 监听本机 Web 控制面, 业务交互进浏览器;
+forge --cli 进终端交互式会话. 默认是 Web. 这里只负责解析启动
 参数并把进程交出去, 不放任何业务判断。
 
 同一项目只能有一个 Forge 进程: 计划、会话与恢复点都不加文件锁, 正是因为项目级
-``forge.lock`` 保证了这一点 (ADR-0025 §2.3)。这条约束跨入口成立 —— Web 与终端取的是
-同一把锁, 抢不到的一方报 ``PROJECT_LOCKED`` 退出, 两条路用同一个码。退出码住在
-``interfaces/exit_codes``, 那是进程级契约。
+forge.lock 保证了这一点. 
 """
 
 from __future__ import annotations
@@ -93,7 +90,7 @@ def _root(
     页面, 所以带着它们进 ``--cli`` 是用法错误, 直接拒绝 —— 静默忽略会让人以为
     ``forge --cli --port 9000`` 起了一个监听 9000 的什么东西。
 
-    ``--allow-full-access`` 两条路都认 (ADR-0052): 它是进程级的事实, 由各自的启动路径在
+    ``--allow-full-access`` 两条路都认: 它是进程级的事实, 由各自的启动路径在
     装好日志之后过 ``interfaces/full_access_gate`` 的两道门, 这里只把参数交下去。
     """
     if cli:

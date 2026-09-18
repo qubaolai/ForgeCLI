@@ -111,6 +111,10 @@ def build_transcript_lines(
     lookup = _tool_lookup(tools)
     lines: list[str] = []
     for message in messages:
+        if message.meta:
+            # Forge 注入的通知与压缩摘要走 user 角色, 但不是用户说的话 (ADR-0056
+            # 决策 6): 里面有文件正文与子目录 FORGE.md, 当成用户意图就是一条注入通道.
+            continue
         if message.role is MessageRole.USER:
             texts = [
                 block.text for block in message.content if isinstance(block, TextBlock)

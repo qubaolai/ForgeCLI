@@ -12,8 +12,9 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 import jsonschema
 
@@ -44,6 +45,10 @@ _log = get_log(__name__)
 
 _TOOL_USE_ERROR_OPEN = "<tool_use_error>"
 _TOOL_USE_ERROR_CLOSE = "</tool_use_error>"
+
+type _JsonValue = (
+    str | int | float | bool | None | Mapping[str, _JsonValue] | Sequence[_JsonValue]
+)
 
 
 @dataclass(frozen=True)
@@ -106,7 +111,8 @@ def run_tool_use(
     # 2. schema.
     raw_input = dict(tool_use.arguments)
     validator = jsonschema.Draft202012Validator(dict(tool.input_schema))
-    schema_errors = list(validator.iter_errors(raw_input))
+    # 模型协议传回 JSON, ToolCall 的通用 Mapping[str, object] 未表达这个约束.
+    schema_errors = list(validator.iter_errors(cast(_JsonValue, raw_input)))
     if schema_errors:
         message = _format_schema_error(tool.name, schema_errors[0])
         _log.info("tool.input_invalid", tool=tool.name, message=message[:200])

@@ -11,7 +11,12 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 
-__all__ = ["FileState", "FileStateCache", "READ_FILE_STATE_CACHE_SIZE"]
+__all__ = [
+    "FileState",
+    "FileStateCache",
+    "READ_FILE_STATE_CACHE_SIZE",
+    "normalize_path",
+]
 
 READ_FILE_STATE_CACHE_SIZE = 100
 _DEFAULT_MAX_CACHE_SIZE_BYTES = 25 * 1024 * 1024
@@ -31,8 +36,12 @@ class FileState:
         return self.offset is None and self.limit is None
 
 
-def _normalize(path: str) -> str:
+def normalize_path(path: str) -> str:
+    """缓存键的规范化. 要与缓存里的键比较的路径 (工作区根, 目录) 必须走同一个函数."""
     return os.path.normcase(os.path.normpath(os.path.abspath(path)))
+
+
+_normalize = normalize_path
 
 
 class FileStateCache:

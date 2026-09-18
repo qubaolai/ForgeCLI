@@ -62,8 +62,6 @@ def create_app(
         openapi_url=None,
         lifespan=lifespan,
     )
-    # 路由经 app.state 拿这三样, 而不是闭包 —— 闭包是它们原先只能定义在这个函数里的
-    # 唯一原因, 也就是这个文件长成一千二百行的原因。
     app.state.registry = runtimes
     app.state.security = security
     app.state.stopping = stopping
@@ -80,8 +78,7 @@ def create_app(
 
     assets = static_dir or Path(__file__).with_name("static")
     if not assets.is_dir():
-        # 源码树里这个目录是构建产物, 不入库 (ADR-0025 决策 10: 最终用户装的 wheel
-        # 里带着它, 所以只有从源码跑的人会撞上). StaticFiles 自己也会抛, 但它只说
+        # 源码树里这个目录是构建产物, 不入库. StaticFiles 自己也会抛, 但它只说
         # "Directory does not exist", 不说该跑什么.
         raise RuntimeError(
             f"前端静态资源不存在: {assets}\n"

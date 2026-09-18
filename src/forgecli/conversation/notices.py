@@ -21,7 +21,7 @@ from forgecli.core.context.window import Window
 from forgecli.core.message import ChatMessage, TextBlock
 from forgecli.core.permissions import PermissionMode
 from forgecli.core.token_estimator import ApproximateTokenEstimator
-from forgecli.core.tool.file_state import FileStateCache
+from forgecli.core.tool.file_state import FileStateCache, normalize_path
 from forgecli.core.tool.hashing import digest_text
 from forgecli.core.tool.names import (
     MEMORY_FORGET_TOOL_NAME,
@@ -33,14 +33,27 @@ from forgecli.core.tool.names import (
 )
 from forgecli.core.turn import MessageRole
 from forgecli.memory.entry import MemoryEntry
+from forgecli.planning.plan import PlanDocument
 from forgecli.planning.service import ActivePlanning
+from forgecli.planning.todo import TodoList
 from forgecli.prompt import prompts
 from forgecli.prompt.project_instruction_reader import (
     INSTRUCTION_FILE_NAME,
     FsProjectInstructionReader,
 )
 
-__all__ = ["NoticeAssembler", "NoticeInputs", "guidance", "memory_digest", "notice"]
+__all__ = [
+    "MEMORY_TOOLS",
+    "PLAN_TOOLS",
+    "TODO_TOOLS",
+    "NoticeAssembler",
+    "NoticeInputs",
+    "guidance",
+    "memory_digest",
+    "notice",
+    "plan_revision",
+    "todo_revision",
+]
 
 _log = get_log(__name__)
 
@@ -61,9 +74,11 @@ KIND_LOOP_GUIDANCE = "loop_guidance"
 
 # 离开这两档要说一声: 它们改变了模型能做什么, 不说它会继续按旧档位行事.
 _ANNOUNCED_EXIT = (PermissionMode.PLAN, PermissionMode.AUTO)
-_PLAN_TOOLS = frozenset({PLAN_WRITE_TOOL_NAME, PLAN_READ_TOOL_NAME})
-_TODO_TOOLS = frozenset({TODO_WRITE_TOOL_NAME, TODO_SET_STATUS_TOOL_NAME})
-_MEMORY_TOOLS = frozenset({MEMORY_WRITE_TOOL_NAME, MEMORY_FORGET_TOOL_NAME})
+# 调过这些工具的那一批之后, 模型就看过了对应状态的当前版本 (决策 5): 由
+# AgentTurnService 在每批工具结果之后 mark_seen, 通知只在"版本与模型看过的不同"时发.
+PLAN_TOOLS = frozenset({PLAN_WRITE_TOOL_NAME, PLAN_READ_TOOL_NAME})
+TODO_TOOLS = frozenset({TODO_WRITE_TOOL_NAME, TODO_SET_STATUS_TOOL_NAME})
+MEMORY_TOOLS = frozenset({MEMORY_WRITE_TOOL_NAME, MEMORY_FORGET_TOOL_NAME})
 _CHARS_PER_TOKEN = 3
 
 
@@ -87,6 +102,15 @@ def memory_digest(entries: Iterable[MemoryEntry]) -> str:
     return digest_text("\n".join(f"{e.scope.value}:{e.key}={e.value}" for e in entries))
 
 
+def plan_revision(plan: PlanDocument) -> str:
+    """计划的版本键. 状态也算: 评审改了状态, 模型要知道."""
+    return f"{plan.plan_id}:{plan.revision}:{plan.status.value}"
+
+
+def todo_revision(todo: TodoList) -> str:
+    return f"{todo.todo_id}:{todo.revision}"
+
+
 @dataclass(frozen=True)
 class NoticeInputs:
     window: Window
@@ -103,6 +127,9 @@ class NoticeInputs:
     workspace_roots: tuple[str, ...] = ()
     # 上一次组装以来窗口被淘汰过: 重注入 (决策 9).
     after_compaction: bool = False
+    # 重注入文件能占多少 token: 由组装器按当前预算算, 不让重注入把刚压下去的窗口再撑
+    # 过水位. None 表示没有预算, 用 POST_COMPACT_TOKEN_BUDGET.
+    file_token_room: int | None = None
 
 
 class NoticeAssembler:
@@ -118,11 +145,19 @@ class NoticeAssembler:
         self._estimator = estimator or ApproximateTokenEstimator()
         self._announced_tools: frozenset[str] | None = None
         self._memory_notice_bytes = 0
+        # 模型在自己的工具结果里看过的版本 (kind -> revision). 压缩把那些结果淘汰掉了,
+        # 所以刷新点一并清空, 下一次按"没看过"重注入.
+        self._seen: dict[str, str] = {}
 
     def reset_baselines(self, tool_names: frozenset[str]) -> None:
         """会话刷新点: 会话段刚重算, 它里面的工具清单就是新的基线."""
         self._announced_tools = tool_names
         self._memory_notice_bytes = 0
+        self._seen.clear()
+
+    def mark_seen(self, kind: str, revision: str) -> None:
+        """一批工具结果之后, 模型看过了这个版本."""
+        self._seen[kind] = revision
 
     def build(self, inputs: NoticeInputs) -> tuple[ChatMessage, ...]:
         window = inputs.window
@@ -135,6 +170,10 @@ class NoticeAssembler:
         notices.extend(self._date(window, inputs.today, inputs.start_date))
         notices.extend(self._nested_instructions(window, inputs))
         batch = _cap_batch(notices)
+        # 记忆的会话预算只记真正发出去的: 被整批上限丢掉的那条不算.
+        self._memory_notice_bytes += sum(
+            _size_of(item) for item in batch if item.notice_kind == KIND_MEMORY
+        )
         if inputs.after_compaction:
             # 压缩后重注入的文件有自己的预算, 不占这一批的 20 KB.
             batch = (*batch, *self._recent_files(inputs))
@@ -152,16 +191,10 @@ class NoticeAssembler:
         last = _last_notice(window, KIND_MODE)
         if last is None or last[1].notice_revision != mode.value:
             out: list[ChatMessage] = []
-            if last is not None:
-                previous = PermissionMode(last[1].notice_revision)
-                if previous in _ANNOUNCED_EXIT:
-                    out.append(
-                        notice(
-                            KIND_MODE_EXIT,
-                            previous.value,
-                            prompts.notice_mode_exit(previous),
-                        )
-                    )
+            previous = _mode_of(last[1].notice_revision) if last is not None else None
+            if previous is not None and previous in _ANNOUNCED_EXIT:
+                exit_text = prompts.notice_mode_exit(previous)
+                out.append(notice(KIND_MODE_EXIT, previous.value, exit_text))
             out.append(
                 notice(KIND_MODE, mode.value, prompts.notice_mode(mode, full=True))
             )
@@ -180,10 +213,8 @@ class NoticeAssembler:
         plan = inputs.planning.live_plan
         if plan is None:
             return []
-        revision = f"{plan.plan_id}:{plan.revision}:{plan.status.value}"
-        if not self._changed_externally(
-            window, KIND_PLAN, revision, _PLAN_TOOLS, inputs.after_compaction
-        ):
+        revision = plan_revision(plan)
+        if not self._changed_externally(window, KIND_PLAN, revision):
             return []
         return [
             notice(
@@ -202,10 +233,8 @@ class NoticeAssembler:
         todo = inputs.planning.live_todo
         if todo is None:
             return []
-        revision = f"{todo.todo_id}:{todo.revision}"
-        if self._changed_externally(
-            window, KIND_TODO, revision, _TODO_TOOLS, inputs.after_compaction
-        ):
+        revision = todo_revision(todo)
+        if self._changed_externally(window, KIND_TODO, revision):
             return [
                 notice(
                     KIND_TODO,
@@ -221,7 +250,7 @@ class NoticeAssembler:
         anchor = max(
             _last_index(window, KIND_TODO),
             _last_index(window, KIND_TODO_REMINDER),
-            _last_tool_call_index(window, _TODO_TOOLS),
+            _last_tool_call_index(window, TODO_TOOLS),
         )
         calls = _assistant_calls_since(window, anchor)
         if calls < prompts.TODO_REMINDER_CALLS_SINCE_WRITE:
@@ -239,22 +268,16 @@ class NoticeAssembler:
             )
         ]
 
-    @staticmethod
-    def _changed_externally(
-        window: Window,
-        kind: str,
-        revision: str,
-        own_tools: frozenset[str],
-        after_compaction: bool,
-    ) -> bool:
-        """revision 与上一条通知不同, 且模型自己没有在那之后调过改它的工具."""
+    def _changed_externally(self, window: Window, kind: str, revision: str) -> bool:
+        """这个版本模型还没见过: 既不是上一条通知说的, 也不是它自己工具结果里看过的.
+
+        "看过"由 mark_seen 在每批工具结果之后记下, 而不是扫窗口找有没有调过对应工具:
+        窗口里一条早先的 plan_write 说明不了后来的外部改动.
+        """
         last = _last_notice(window, kind)
         if last is not None and last[1].notice_revision == revision:
             return False
-        if after_compaction:
-            return True
-        since = -1 if last is None else last[0]
-        return not (_tool_names_since(window, since) & own_tools)
+        return self._seen.get(kind) != revision
 
     # ---- 记忆 ----
 
@@ -262,17 +285,13 @@ class NoticeAssembler:
         current = memory_digest(inputs.memory)
         last = _last_notice(window, KIND_MEMORY)
         baseline = inputs.memory_baseline if last is None else last[1].notice_revision
-        if current == baseline:
-            return []
-        since = -1 if last is None else last[0]
-        if _tool_names_since(window, since) & _MEMORY_TOOLS:
+        if current == baseline or self._seen.get(KIND_MEMORY) == current:
             return []
         text = prompts.truncate_notice(prompts.notice_memory(inputs.memory))
         size = len(text.encode("utf-8"))
         if self._memory_notice_bytes + size > prompts.MEMORY_NOTICE_SESSION_MAX_BYTES:
             _log.info("context.memory_notice_budget_exhausted")
             return []
-        self._memory_notice_bytes += size
         return [notice(KIND_MEMORY, current, text)]
 
     # ---- 工具池 (决策 8) ----
@@ -314,7 +333,8 @@ class NoticeAssembler:
             for message in window.messages
             if message.notice_kind == KIND_NESTED_INSTRUCTIONS
         }
-        roots = tuple(str(Path(root).resolve()) for root in inputs.workspace_roots)
+        # 与 FileStateCache 的键走同一个规范化, 否则符号链接下的根永远对不上.
+        roots = tuple(normalize_path(root) for root in inputs.workspace_roots)
         out: list[ChatMessage] = []
         for directory in _touched_directories(inputs.read_files.keys(), roots):
             target = os.path.join(directory, INSTRUCTION_FILE_NAME)
@@ -343,6 +363,8 @@ class NoticeAssembler:
             return []
         out: list[ChatMessage] = []
         budget = prompts.POST_COMPACT_TOKEN_BUDGET
+        if inputs.file_token_room is not None:
+            budget = min(budget, inputs.file_token_room)
         # keys() 按最近使用排, 最近的在末尾.
         for path in reversed(cache.keys()):
             if len(out) >= prompts.POST_COMPACT_MAX_FILES or budget <= 0:
@@ -406,12 +428,20 @@ def _assistant_calls_since(window: Window, index: int) -> int:
     )
 
 
-def _tool_names_since(window: Window, index: int) -> set[str]:
-    return {
-        call.name
-        for message in window.messages[index + 1 :]
-        for call in message.tool_calls
-    }
+def _mode_of(value: str) -> PermissionMode | None:
+    """回放的通知里可能带一个已经不存在的档位名, 那时当作没有上一条."""
+    try:
+        return PermissionMode(value)
+    except ValueError:
+        return None
+
+
+def _size_of(message: ChatMessage) -> int:
+    return sum(
+        len(block.text.encode("utf-8"))
+        for block in message.content
+        if isinstance(block, TextBlock)
+    )
 
 
 def _trailing_streak(window: Window, kind: str, revision: str) -> int:
@@ -432,7 +462,7 @@ def _touched_directories(
     """读过的文件所在目录, 以及往上到工作区根 (不含根) 的每一级; 去重, 保序."""
     seen: list[str] = []
     for path in paths:
-        directory = os.path.dirname(os.path.abspath(path))
+        directory = os.path.dirname(normalize_path(path))
         root = next(
             (r for r in roots if directory == r or directory.startswith(r + os.sep)),
             None,

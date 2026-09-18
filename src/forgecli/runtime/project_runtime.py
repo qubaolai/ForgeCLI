@@ -63,7 +63,7 @@ from forgecli.project.model import ProjectConfig
 from forgecli.project.process_lock import ProcessLock
 from forgecli.project.service import ProjectService
 from forgecli.prompt.project_instruction_reader import FsProjectInstructionReader
-from forgecli.prompt.session_facts import SessionFacts
+from forgecli.prompt.session_facts import GitSnapshot, SessionFacts
 from forgecli.runtime.event_hub import RunEventHub
 from forgecli.runtime.human_prompt_broker import BlockingHumanPromptBroker
 from forgecli.runtime.llm_wiring import LlmRuntime, build_llm_runtime
@@ -272,10 +272,17 @@ class ProjectRuntime:
                 event_bus=self.event_bus,
             )
 
+        # git 快照只在会话开始读一次: 提示词里明说它是"会话开始时的快照", 而刷新点
+        # (压缩, /reload, 改 FORGE.md) 都可能落在一轮中间, 六个 git 子进程会让那一轮
+        # 停几秒. 换会话与 /resume 都重建本服务, 自然重读.
+        git_snapshot: list[GitSnapshot | None] = []
+
         def session_facts() -> SessionFacts:
-            """会话段的事实 (ADR-0056 决策 7). 只在刷新点读一次, 含 git 快照."""
+            """会话段的事实 (ADR-0056 决策 7). 只在刷新点重读, git 快照除外."""
             cwd = self.tools.cwd()
             model = self.config.effective().default_model
+            if not git_snapshot:
+                git_snapshot.append(read_git_snapshot(cwd))
             return SessionFacts.from_profile(
                 self.tools.profile,
                 working_directory=cwd,
@@ -284,7 +291,7 @@ class ProjectRuntime:
                 sandboxed=self.tools.runner.sandboxed(),
                 model="" if model is None else str(model),
                 start_date=date.today().isoformat(),
-                git=read_git_snapshot(cwd),
+                git=git_snapshot[0],
             )
 
         def diagnostics_dir() -> str:
@@ -334,7 +341,7 @@ class ProjectRuntime:
         return self._agent_turn.current_turn()
 
     def start_turn(self, text: str, *, origin: InputOrigin) -> TurnRun:
-        """起一轮。``origin`` 没有默认值: 两条入口各自说明这句话是谁给的。"""
+        """开始一轮对话"""
         message = text.strip()
         if not message:
             raise ValueError("消息不能为空")
@@ -343,12 +350,8 @@ class ProjectRuntime:
                 raise RuntimeError("当前项目已有正在运行的 turn")
             run = TurnRun(run_id=f"run_{uuid.uuid4().hex[:12]}", status="running")
             self._run = run
-            # 轮次生命周期在起线程之前就位 (ADR-0048 决策 3): 从这里返回到后台线程真正
-            # 跑起来之间有一段真空, 而"停止"随时可能落在那一段里. 以前这两句在后台线程
-            # 开头, 于是那一段里的取消要么取消掉上一轮的 token, 要么什么都没取消 ——
-            # 两种都会返回成功。
             self.cancel_source.issue()
-            # 本轮的提问额度归零 (ADR-0043 决策 9), 同时解除上一轮的取消闩。
+            # 重置取消控制, 已问问题数目
             self.prompts.begin_turn()
             self._thread = threading.Thread(
                 target=self._execute_turn,
@@ -369,9 +372,6 @@ class ProjectRuntime:
         )
         try:
             response = self._agent_turn.handle_user_message(text, origin=origin)
-            # 终态照 response 说的报, 不一律当成 completed: 驱动抛异常时 service 会
-            # 把它隔离成一个 FAILED 的轮次并如实写进会话事件, 而这里报 completed 就是
-            # 在日志与 `/turns/current` 上把那次失败说成成功。
             if response.pause is TurnPause.PLAN_REVIEW:
                 status = "waiting_plan_review"
             elif response.status is TurnStatus.FAILED:
@@ -380,9 +380,7 @@ class ProjectRuntime:
                 status = "completed"
             completed = TurnRun(run_id=run_id, status=status, response=response)
             _log.info("turn.finished", run_id=run_id, status=status)
-        except Exception as exc:  # noqa: BLE001 - 后台边界必须转成可查询状态
-            # 这里是后台线程的最外层: 异常被压成一个字符串状态之后, traceback 就再也
-            # 拿不回来了 —— 而页面上只会显示一行错误文案.
+        except Exception as exc:
             _log.exception(
                 "turn.failed",
                 run_id=run_id,

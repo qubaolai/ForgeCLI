@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import difflib
-import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,7 +30,7 @@ from forgecli.core.context.window import Window
 from forgecli.core.permissions import PermissionMode
 from forgecli.core.token_estimator import ApproximateTokenEstimator
 from forgecli.core.tool.file_state import FileStateCache
-from forgecli.core.tool.hashing import digest_text
+from forgecli.core.tool.hashing import digest, digest_text
 from forgecli.core.tool.tool_call import ToolSchema
 from forgecli.memory.entry import MemoryEntry
 from forgecli.planning.service import ActivePlanning
@@ -90,6 +89,10 @@ class ContextAssembler:
         """会话刷新点 (决策 7): 下一次组装重算会话段, 通知的基线跟着重置."""
         self._refresh_pending = reason
 
+    def mark_seen(self, kind: str, revision: str) -> None:
+        """模型在一批工具结果里看过了这个版本 (决策 5), 不再为它发通知."""
+        self._notices.mark_seen(kind, revision)
+
     def assemble(self, inputs: AssemblyInputs) -> AssembledContext:
         after_compaction = inputs.window.evicted_count > self._evicted_seen
         if after_compaction:
@@ -116,7 +119,7 @@ class ContextAssembler:
         fingerprints = ContextFingerprints(
             static=digest_text(static_text),
             session=digest_text(session_text),
-            tools=digest_text(_tools_canonical(inputs.tools)),
+            tools=digest(inputs.tools),
         )
         self._detect_cache_break(fingerprints, static_text, session_text, refreshed)
 
@@ -133,6 +136,11 @@ class ContextAssembler:
                 read_files=inputs.read_files,
                 workspace_roots=inputs.facts.workspace_roots,
                 after_compaction=after_compaction,
+                file_token_room=(
+                    self._file_token_room(inputs, static_text, session_text)
+                    if after_compaction
+                    else None
+                ),
             )
         )
         context = AssembledContext(
@@ -158,6 +166,22 @@ class ContextAssembler:
         # 什么"恰恰是最需要能翻出来的一件事.
         _log.debug("context.system_prompt", text=context.system_prompt)
         return context
+
+    def _file_token_room(
+        self, inputs: AssemblyInputs, static_text: str, session_text: str
+    ) -> int | None:
+        """压缩后重注入文件还能占多少 token: 低水位减去当前窗口 (决策 9).
+
+        重注入发生在这次的水位检查之后, 没有这个上限它会把刚压下去的窗口再撑过高水位,
+        下一次调用又压一次; 小窗口模型上就是两次溢出后停轮.
+        """
+        if inputs.budget is None:
+            return None
+        prefix = self._estimator.estimate_input(
+            messages=(), system_prompt=static_text + session_text, tools=inputs.tools
+        )
+        used = self._estimator.estimate_input(messages=inputs.window.messages)
+        return max(0, inputs.budget.window_floor(prefix) - used)
 
     def _detect_cache_break(
         self,
@@ -210,19 +234,3 @@ class ContextAssembler:
             return path
         except OSError:
             return None
-
-
-def _tools_canonical(tools: tuple[ToolSchema, ...]) -> str:
-    return json.dumps(
-        [
-            {
-                "name": schema.name,
-                "description": schema.description,
-                "parameters": dict(schema.parameters),
-            }
-            for schema in tools
-        ],
-        ensure_ascii=False,
-        sort_keys=True,
-        default=str,
-    )

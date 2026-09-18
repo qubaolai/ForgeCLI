@@ -1,16 +1,12 @@
-"""AgentTurnService：一轮自然语言对话的 application 用例（ADR-0010 §3 / §5）。
+"""AgentTurnService：一轮自然语言对话的处理
 
-本类是外层 (ADR-0051): 管一轮对话的生命周期. 记 user 消息, 把"执行一次工具"与"组一次
+负责一轮对话的生命周期. 记 user 消息, 把"执行一次工具"与"组一次
 上下文"两个函数交给循环, 让循环跑完这一次查询, 再记 assistant / usage / compaction.
-工具怎么执行、执行几次、上下文什么时候组, 是循环 (内层) 的事; 每次执行都经本类的
-`_run_tool` 走安全管线, 每次组都经本类的 `_assemble_context` 读计划, 记忆与目录.
+工具怎么执行、执行几次、上下文什么时候组, 是循环 (内层) 的事; 每次执行工具都经本类的
+`_run_tool` 走安全分析, 每次组上下文都经本类的 `_assemble_context` 读计划, 记忆与目录.
 
 随模型配置一起换的几样东西 (预算, 记忆, 计划, 工具) 以"用时读"的函数收进来: 组合根
 `reload_llm` 换了自己的字段, 这里下一次调用自然指向新的, 不需要 reconfigure.
-
-约束（ADR-0003 / 概要设计 §6.5）：service 不依赖任何界面库；
-**所有事件落盘只经 SessionService 单一门面**，本类不持有 JsonlEventStore /
-JsonStateStore。
 
 一轮 = 一个 turn：成对写 user_message / assistant_message，共享 turn_id；
 turn 的终态写在 assistant_message 上（COMPLETED；异常与阻塞停止隔离为 FAILED）。
@@ -41,7 +37,18 @@ from forgecli.common.cancellation import CancelToken
 from forgecli.common.observability.context import bind
 from forgecli.common.observability.log import get_log
 from forgecli.conversation.assembler import AssemblyInputs, ContextAssembler
-from forgecli.conversation.notices import notice
+from forgecli.conversation.notices import (
+    KIND_MEMORY,
+    KIND_PLAN,
+    KIND_TODO,
+    MEMORY_TOOLS,
+    PLAN_TOOLS,
+    TODO_TOOLS,
+    memory_digest,
+    notice,
+    plan_revision,
+    todo_revision,
+)
 from forgecli.core.agent.actions import (
     LoopObservation,
     LoopResult,
@@ -227,6 +234,16 @@ class AgentTurnService:
                 pause=None if outcome.pause is None else outcome.pause.value,
             )
         _log.info("turn.answer", text=outcome.text)
+        for compaction in outcome.compaction_drafts:
+            # 同一条分工 (ADR-0032 决策 1): 循环压缩, 但不写事件. 压缩记在本轮的通知与
+            # 回复**之前**: 回放到它时窗口换成摘要, 之后的通知与回复接在摘要后面 —— 与
+            # 本轮里的真实顺序一致 (压缩发生在调模型之前, 重注入与回答在它之后).
+            self._session.record_compaction(compaction.to_payload(), turn_id=turn_id)
+            _log.info(
+                "context.compacted",
+                level=compaction.level.value,
+                tokens_saved=compaction.tokens_saved,
+            )
         # 通知先于助手回复落盘: 回放时它们就落在用户消息与回复之间, 与本轮里的位置一致.
         for message in _new_notices(self._window.messages, outcome.window):
             self._session.record_notice(
@@ -245,14 +262,6 @@ class AgentTurnService:
         for draft in outcome.usage_drafts:
             # usage 写入边界（ADR-0011 §11.1）：loop 只随回复交回草稿，这里统一落盘。
             self._session.record_usage(draft.to_payload(), turn_id=turn_id)
-        for compaction in outcome.compaction_drafts:
-            # 同一条分工 (ADR-0032 决策 1): 循环压缩, 但不写事件.
-            self._session.record_compaction(compaction.to_payload(), turn_id=turn_id)
-            _log.info(
-                "context.compacted",
-                level=compaction.level.value,
-                tokens_saved=compaction.tokens_saved,
-            )
         self._remember_turn(text, outcome)
         return AssistantResponse(
             turn_id=turn_id,
@@ -414,7 +423,23 @@ class AgentTurnService:
         before = self._planning_revisions()
         observations = self._run_tools(calls, turn_id)
         self._emit_planning_changes(before, turn_id)
+        self._mark_seen(calls)
         return observations
+
+    def _mark_seen(self, calls: tuple[ToolCall, ...]) -> None:
+        """这批里调过计划 / 待办 / 记忆工具, 模型就在工具结果里看过了它们的当前版本
+        (ADR-0056 决策 5): 组装器据此不再为这个版本发通知."""
+        names = {call.name for call in calls}
+        planning = self._planning()
+        if planning is not None and names & (PLAN_TOOLS | TODO_TOOLS):
+            active = planning.load()
+            if active.plan is not None and names & PLAN_TOOLS:
+                self._assembler.mark_seen(KIND_PLAN, plan_revision(active.plan))
+            if active.todo is not None and names & TODO_TOOLS:
+                self._assembler.mark_seen(KIND_TODO, todo_revision(active.todo))
+        memory = self._memory()
+        if memory is not None and names & MEMORY_TOOLS:
+            self._assembler.mark_seen(KIND_MEMORY, memory_digest(memory.load()))
 
     def _planning_revisions(
         self,
@@ -647,59 +672,62 @@ def _rebuild_window(events: list[SessionEvent]) -> Window:
 
     通知按原位置回放 (ADR-0056 决策 11): 它们是模型当时看到的内容, 而通知的增量与节流
     就从窗口里推 —— 不回放, 恢复后的第一次调用会把每一条都当成没发过.
+
+    压缩发生在某一轮的中间, 那一轮已经进窗口的消息 (用户这句话, 之前的通知) 在真实窗口
+    里留在了摘要之后的尾巴上, 所以回放时按 turn_id 把它们留下, 而不是整段丢掉.
     """
-    transcript: list[ChatMessage] = []
+    transcript: list[tuple[str, ChatMessage]] = []
+    compactions = 0
     for event in events:
+        turn_id = str(event.payload.get("turn_id", ""))
         if event.type == EventType.USER_QUESTION_ANSWERED:
-            transcript.append(
-                ChatMessage(
-                    role=MessageRole.USER,
-                    content=(
-                        TextBlock(
-                            prompts.ask_user_answer_replay(
-                                str(event.payload.get("question", "")),
-                                str(event.payload.get("answer", "")),
-                            )
-                        ),
-                    ),
-                )
+            replay = prompts.ask_user_answer_replay(
+                str(event.payload.get("question", "")),
+                str(event.payload.get("answer", "")),
             )
+            transcript.append((turn_id, _user_text(replay)))
             continue
         if event.type == EventType.HARNESS_NOTICE:
             text = str(event.payload.get("text", ""))
             if text:
-                transcript.append(
-                    notice(
-                        str(event.payload.get("kind", "")),
-                        str(event.payload.get("revision", "")),
-                        text,
-                    )
-                )
+                kind = str(event.payload.get("kind", ""))
+                revision = str(event.payload.get("revision", ""))
+                transcript.append((turn_id, notice(kind, revision, text)))
             continue
         if event.type == EventType.CONTEXT_COMPACTED:
             summary = _summary_of(event)
             if summary:
-                transcript = [
-                    ChatMessage(
-                        role=MessageRole.USER,
-                        content=(
-                            TextBlock(f"{prompts.COMPACTION_HEADER}\n\n{summary}"),
-                        ),
-                    )
-                ]
+                compactions += 1
+                block = ChatMessage(
+                    role=MessageRole.USER,
+                    content=(TextBlock(f"{prompts.COMPACTION_HEADER}\n\n{summary}"),),
+                    meta=True,
+                )
+                same_turn = [item for item in transcript if item[0] == turn_id]
+                transcript = [(turn_id, block), *same_turn]
             continue
         text = str(event.payload.get("text", ""))
         if not text:
             continue
         if event.type == EventType.USER_MESSAGE:
-            transcript.append(
-                ChatMessage(role=MessageRole.USER, content=(TextBlock(text),))
-            )
+            transcript.append((turn_id, _user_text(text)))
         elif event.type == EventType.ASSISTANT_MESSAGE:
             transcript.append(
-                ChatMessage(role=MessageRole.ASSISTANT, content=(TextBlock(text),))
+                (
+                    turn_id,
+                    ChatMessage(role=MessageRole.ASSISTANT, content=(TextBlock(text),)),
+                )
             )
-    return Window(messages=tuple(transcript))
+    return Window(
+        messages=tuple(message for _, message in transcript),
+        # 头一条是交接说明时必须非零: 下一次淘汰靠它跳过那一条, 不把上一份摘要里已经
+        # 逐字保留过的用户原话再抄一遍.
+        evicted_count=compactions,
+    )
+
+
+def _user_text(text: str) -> ChatMessage:
+    return ChatMessage(role=MessageRole.USER, content=(TextBlock(text),))
 
 
 def _new_notices(

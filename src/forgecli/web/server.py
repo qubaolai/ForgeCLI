@@ -36,6 +36,7 @@ _log = get_log(__name__)
 
 DEFAULT_PORT = 8765
 
+# 优雅关停时长
 _GRACEFUL_SHUTDOWN_SECONDS = 5
 _SECRETS_FILE = "web-secrets.json"
 

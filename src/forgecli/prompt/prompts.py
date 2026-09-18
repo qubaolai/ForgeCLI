@@ -171,12 +171,23 @@ def wrap_reminder(text: str) -> str:
 
 
 def truncate_notice(text: str, limit: int = NOTICE_MAX_BYTES) -> str:
-    """按字节截断一条通知并注明. 截的是尾部: 通知的要点在开头."""
-    encoded = text.encode("utf-8")
+    """按字节截断一条通知并注明. 截的是尾部: 通知的要点在开头.
+
+    已经包好的通知先拆开再截, 截完重新包: 否则截掉的是结束标记, 模型看到的是一个没有
+    闭合的 <system-reminder>, 后面的东西都像在它里面.
+    """
+    wrapped = text.startswith(_REMINDER_OPEN) and text.rstrip().endswith(
+        _REMINDER_CLOSE
+    )
+    inner = (
+        text.strip()[len(_REMINDER_OPEN) : -len(_REMINDER_CLOSE)] if wrapped else text
+    )
+    encoded = inner.encode("utf-8")
     if len(encoded) <= limit:
         return text
     kept = encoded[:limit].decode("utf-8", errors="ignore")
-    return f"{kept}\n[通知超过 {limit} 字节, 已截断]"
+    clipped = f"{kept}\n[通知超过 {limit} 字节, 已截断]"
+    return wrap_reminder(clipped) if wrapped else clipped
 
 
 # =====================================================================

@@ -156,7 +156,8 @@ class Window:
         kept: list[ChatMessage] = []
         used = 0
         for message in dropped[start:]:
-            if message.role is not MessageRole.USER:
+            # 通知走 user 角色但不是用户说的话 (ADR-0056 决策 6): 逐字保留的只有人写的.
+            if message.role is not MessageRole.USER or message.meta:
                 continue
             size = sum(len(getattr(block, "text", "")) for block in message.content)
             if used + size > budget_chars:

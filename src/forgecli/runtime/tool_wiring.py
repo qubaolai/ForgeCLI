@@ -70,6 +70,7 @@ from forgecli.tools.builtin.Glob.tool import GlobTool
 from forgecli.tools.builtin.Grep.tool import GrepTool
 from forgecli.tools.builtin.LSP.pool import LspServerPool
 from forgecli.tools.builtin.LSP.tool import LspTool
+from forgecli.tools.builtin.Test.tool import TestTool
 from forgecli.tools.builtin.memory.tool import MemoryForgetTool, MemoryWriteTool
 from forgecli.tools.builtin.planning.tool import (
     PlanReadTool,
@@ -271,6 +272,7 @@ def build_tool_stack(
         AskUserQuestionTool(),
         MemoryWriteTool(memory),
         MemoryForgetTool(memory),
+        TestTool(),
     )
 
     # 4. 权限: 建议的施加器, auto 模式的分类器与 can_use_tool.

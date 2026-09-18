@@ -43,6 +43,7 @@ PLAN_WRITE_TOOL_NAME = "plan_write"
 TODO_SET_STATUS_TOOL_NAME = "todo_set_status"
 MEMORY_WRITE_TOOL_NAME = "memory_write"
 MEMORY_FORGET_TOOL_NAME = "memory_forget"
+TEST_TOOL_NAME = "TEST"
 
 # 曾用名 -> 现在的名字. 规则解析 (security) 与工具池 (tools) 共用这一张.
 LEGACY_TOOL_NAMES: dict[str, str] = {

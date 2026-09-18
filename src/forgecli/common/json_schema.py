@@ -22,8 +22,9 @@ strict=False 时填进 StructuredModelResponse.validation_errors).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
@@ -45,7 +46,9 @@ def validate_json_schema(
         # 会让 iter_errors 产出零条错误 —— 也就是这次调用完全没有校验, 而调用方
         # 无从分辨"通过了"和"没查".
         Draft202012Validator.check_schema(materialized)
-        errors = list(Draft202012Validator(materialized).iter_errors(data))
+        # jsonschema 的类型桩要求 instance 是 JSON 值的联合; data 来自 json.loads 或
+        # 模型入参, 本来就是那个形状, 只是这里的静态类型是 object.
+        errors = list(Draft202012Validator(materialized).iter_errors(cast("Any", data)))
     except SchemaError as exc:
         return [f"{path}: schema 本身不合法: {exc.message}"]
     return sorted(
@@ -53,16 +56,14 @@ def validate_json_schema(
     )
 
 
-def _locate(root: str, parts: object) -> str:
+def _locate(root: str, parts: Iterable[object]) -> str:
     """把 jsonschema 的 deque 路径拼成 `$.a[0].b` 这种形状.
 
     整数是数组下标, 字符串是字段名 —— 两者的写法不同, 混成一种会让 `$.items.2` 这样
     的消息指不回模型实际发出的结构.
     """
     location = root
-    for part in (
-        parts if isinstance(parts, list | tuple) or hasattr(parts, "__iter__") else ()
-    ):
+    for part in parts:
         location += f"[{part}]" if isinstance(part, int) else f".{part}"
     return location
 

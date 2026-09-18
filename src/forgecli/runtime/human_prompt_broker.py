@@ -31,7 +31,7 @@ __all__ = ["BlockingHumanPromptBroker"]
 @dataclass
 class _Pending:
     prompt: HumanPrompt
-    # 这条提示属于哪一轮 (ADR-0048 决策 3). 单独的 prompt_id 说不出这件事, 而"上一轮
+    # 这条提示属于哪一轮. 单独的 prompt_id 说不出这件事, 而"上一轮
     # 的那张卡片还开着"与"这一轮又问了一次"在界面上长得一模一样.
     turn: int
     ready: threading.Event = field(default_factory=threading.Event)
@@ -40,7 +40,7 @@ class _Pending:
 
 
 class BlockingHumanPromptBroker(HumanPromptService):
-    """一个 ``prompt_id`` 只接受一次作答; 没拿到作答一律 ``resolved=False``."""
+    """一个 prompt_id 只接受一次作答; 没拿到作答一律 resolved=False."""
 
     def __init__(self, on_change: Callable[[str, str], None] | None = None) -> None:
         self._on_change = on_change
@@ -49,7 +49,7 @@ class BlockingHumanPromptBroker(HumanPromptService):
         self._questions_this_turn = 0
         self._closed = False
         # 轮次身份与"这一轮被取消了"的闩. 两者都只在锁内读写: 取消与入队必须在同一个
-        # 同步边界上分出先后, 否则先后由调度决定 (ADR-0048 决策 3).
+        # 同步边界上分出先后, 否则先后由调度决定.
         self._turn = 0
         self._cancelled = False
         self._cancel_note = ""

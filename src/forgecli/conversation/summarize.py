@@ -145,6 +145,8 @@ def _summary_block(plan: EvictionPlan, text: str) -> ChatMessage:
                 f"{prompts.COMPACTION_HEADER}\n\n{text}{_verbatim_section(plan)}"
             ),
         ),
+        # Forge 拼的, 不是用户这一轮说的话: 不计入用户回合, 分类器也不把它当用户意图.
+        meta=True,
     )
 
 
@@ -161,6 +163,7 @@ def _verbatim_block(plan: EvictionPlan) -> ChatMessage:
                 f"{_verbatim_section(plan).strip() or prompts.COMPACTION_NOTHING_KEPT}"
             ),
         ),
+        meta=True,
     )
 
 
@@ -199,6 +202,10 @@ def _flatten(messages: tuple[ChatMessage, ...]) -> str:
     """
     lines: list[str] = []
     for message in messages:
+        if message.meta:
+            # 通知是 Forge 说的, 不是对话的一部分; 标成 user 会让摘要把它当成用户的要求.
+            # 压缩之后该重注入的会重注入, 不用摘要记着.
+            continue
         body = "\n".join(_block_text(block) for block in message.content)
         if message.tool_calls:
             calls = "\n".join(f"-> {_call_line(call)}" for call in message.tool_calls)
