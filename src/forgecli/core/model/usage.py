@@ -38,11 +38,13 @@ class UsageRecordDraft:
     estimated_cost: float | None
     latency_ms: float
     created_at: str
+    agent_id: str = ""
 
     def to_payload(self) -> dict[str, object]:
         """转成可 JSON 落盘的事件 payload（只含安全摘要，无凭证 / 原文）。"""
         return {
             "request_id": self.request_id,
+            "agent_id": self.agent_id,
             "session_id": self.session_id,
             "turn_id": self.turn_id,
             "provider": self.provider,

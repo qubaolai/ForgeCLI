@@ -28,7 +28,9 @@ export function ModeMenu({
   presets,
   disabled,
   onChange,
+  onOpen,
 }: {
+  onOpen: () => void;
   value: Stance;
   presets: ModePreset[];
   disabled: boolean;
@@ -40,6 +42,9 @@ export function ModeMenu({
     <Dropdown
       disabled={disabled}
       trigger={["click"]}
+      onOpenChange={(open) => {
+        if (open) onOpen();
+      }}
       menu={{
         selectable: true,
         selectedKeys: current ? [current.value] : [],

@@ -3,7 +3,6 @@
  * 删除不可撤销, 所以走一次 Popconfirm —— 后果写在气泡里, 确认之前不发请求。
  */
 
-import { useState } from "react";
 import { Avatar, Button, Flex, Layout, Menu, Popconfirm, Typography, theme } from "antd";
 import { DeleteOutlined, FolderOpenOutlined, FolderOutlined, PlusOutlined } from "@ant-design/icons";
 import type { Project } from "@/types/session";
@@ -25,7 +24,11 @@ export function SessionSidebar({
   onResume,
   onDelete,
   onLoadMore,
+  expandedProjects,
+  onToggleProject,
 }: {
+  expandedProjects: string[];
+  onToggleProject: (projectId: string) => void;
   width: number;
   projects: Project[];
   sessionGroups: Record<string, ProjectSessionGroup>;
@@ -44,11 +47,6 @@ export function SessionSidebar({
   onLoadMore: (projectId: string) => Promise<void>;
 }) {
   const { token } = theme.useToken();
-  const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>({});
-
-  function toggleProject(projectId: string) {
-    setCollapsedProjects((items) => ({ ...items, [projectId]: !items[projectId] }));
-  }
 
   return (
     <Layout.Sider
@@ -94,7 +92,7 @@ export function SessionSidebar({
             {projects.map((project) => {
               const current = project.project_id === activeProjectId;
               const locked = Boolean(busy) && !current;
-              const collapsed = collapsedProjects[project.project_id] ?? false;
+              const collapsed = !expandedProjects.includes(project.project_id);
               const group = sessionGroups[project.project_id];
               return (
                 <div role="listitem" key={project.project_id}>
@@ -102,7 +100,7 @@ export function SessionSidebar({
                     <button
                       type="button"
                       className="forge-sidebar-project-toggle"
-                      onClick={() => toggleProject(project.project_id)}
+                      onClick={() => onToggleProject(project.project_id)}
                       aria-expanded={!collapsed}
                       aria-label={
                         collapsed

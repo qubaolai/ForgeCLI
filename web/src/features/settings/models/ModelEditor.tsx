@@ -51,11 +51,13 @@ export function modelCollapseItem({
               key: field.name,
               label: field.label,
               value: String(model.params[field.name] ?? ""),
+              kind: field.kind,
             })),
             {
               key: "thinking_effort",
               label: "当前 Thinking 强度",
               value: thinkingEffortText(model.params.thinking_effort),
+              choices: ["", ...(model.params.thinking_efforts?.map((item) => String(item)) ?? [])],
             },
             {
               key: "thinking_efforts",
@@ -66,6 +68,7 @@ export function modelCollapseItem({
               key: "thinking_default_effort",
               label: "默认 Thinking 强度",
               value: thinkingEffortText(model.params.thinking_default_effort),
+              choices: ["", ...(model.params.thinking_efforts?.map((item) => String(item)) ?? [])],
             },
             { key: "extra", label: "厂商扩展 JSON", value: JSON.stringify(model.params.extra ?? {}) },
           ]}

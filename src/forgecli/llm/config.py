@@ -225,8 +225,12 @@ class ModelParams(BaseModel):
     thinking_mode: ThinkingMode | None = Field(default=None, strict=False)
     thinking_effort: EffortName | None = None
     supports_structured_output: bool = Field(
-        default=True,
-        json_schema_extra=_menu("支持原生结构化输出"),
+        default=False,
+        json_schema_extra=_menu("支持 JSON Schema 输出"),
+    )
+    supports_json_object: bool = Field(
+        default=False,
+        json_schema_extra=_menu("支持 JSON Object 输出"),
     )
     supports_tool_calling: bool = Field(
         default=True,

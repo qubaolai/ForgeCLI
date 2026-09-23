@@ -73,7 +73,7 @@ class ProjectService:
             project = self._configs.load(entry.project_id)
             if project is not None and project.trusted:
                 projects.append(project)
-        projects.sort(key=lambda item: item.primary_workspace_root.casefold())
+        projects.sort(key=lambda item: item.created_at, reverse=True)
         return tuple(projects)
 
     def get(self, project_id: str) -> ProjectConfig | None:
@@ -90,14 +90,16 @@ class ProjectService:
         """信任当前目录：生成 project-id、写 forge.json 与索引一条。"""
         root = canonical_path(cwd)
         root_str = str(root)
+        now = self._clock()
         project = ProjectConfig(
             project_id=generate_project_id(root),
             trusted=True,
             primary_workspace_root=root_str,
             workspace_roots=(root_str,),
+            created_at=now,
+            updated_at=now,
         )
         self._configs.save(project)
-        now = self._clock()
         self._index.upsert(
             IndexEntry(
                 root=root_str,
@@ -127,15 +129,17 @@ class ProjectService:
     def add_workspace_dir(self, project: ProjectConfig, path: Path) -> ProjectConfig:
         """把已规范化目录加入 workspace_roots；已存在则原样返回（无感跳过）。"""
         value = str(path)
+        now = self._clock()
         if value in project.workspace_roots:
             return project
-        updated = replace(project, workspace_roots=(*project.workspace_roots, value))
+        updated = replace(project, workspace_roots=(*project.workspace_roots, value), updated_at=now)
         self._configs.save(updated)
         return updated
 
     def remove_workspace_dir(self, project: ProjectConfig, path: Path) -> ProjectConfig:
         """移除额外工作区目录；主工作区根是项目身份，不允许移除。"""
         value = str(path)
+        now = self._clock()
         if value == project.primary_workspace_root:
             raise WorkspaceError("不能移除项目的主工作区目录。")
         if value not in project.workspace_roots:
@@ -145,6 +149,7 @@ class ProjectService:
             workspace_roots=tuple(
                 root for root in project.workspace_roots if root != value
             ),
+            updated_at = now,
         )
         self._configs.save(updated)
         return updated

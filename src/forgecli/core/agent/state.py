@@ -71,6 +71,7 @@ class LoopInput:
     initial_window: tuple[ChatMessage, ...] = ()
     # 上一轮结束时的累计淘汰数, 本轮接着数.
     evicted_count: int = 0
+    agent_id: str = ""
 
     def __post_init__(self) -> None:
         if not self.turn_id.strip():

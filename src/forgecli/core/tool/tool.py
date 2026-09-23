@@ -97,6 +97,7 @@ class PromptOptions:
 class ToolUseOptions:
     tools: tuple[Tool, ...]
     non_interactive: bool = False
+    read_only: bool = False
     debug: bool = False
     main_loop_model: str = ""
 
@@ -125,6 +126,8 @@ class ToolUseContext:
     tool_results_dir: str
     # 项目内部路径 (计划文件目录等): 权限层视为可读可写.
     internal_paths: tuple[str, ...] = ()
+    agent_id: str = ""
+    tool_use_id: str = ""
 
 
 # 权限裁决的入口: (tool, input, context, parent_message, tool_use_id) -> 决定.

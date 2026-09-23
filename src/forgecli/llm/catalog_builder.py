@@ -79,7 +79,12 @@ def _build_entry(spec: ModelSpec) -> ModelCatalogEntry:
         model=spec.id,
         context_window=params.context_window or _DEFAULT_CONTEXT_WINDOW,
         max_output_tokens=params.max_tokens,
-        supports_structured_output=params.supports_structured_output,
+        supports_structured_output=(
+            params.supports_structured_output
+            if "supports_structured_output" in params.model_fields_set
+            else flag("supports_structured_output", False)
+        ),
+        supports_json_object=params.supports_json_object,
         supports_tool_calling=params.supports_tool_calling,
         thinking_capabilities=thinking_capabilities,
         thinking_settings=thinking_settings,

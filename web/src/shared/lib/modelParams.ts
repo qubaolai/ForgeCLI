@@ -53,6 +53,8 @@ function optionalPositiveInteger(raw: string, label: string): number | undefined
 /** 采样参数的出厂默认值: 添加模型时预填, 用户可改。 */
 export const DEFAULT_TEMPERATURE = "0.7";
 export const DEFAULT_TOP_P = "1.0";
+export const DEFAULT_CONTEXT_WINDOW = "1000000";
+export const DEFAULT_MAX_TOKENS = "128000";
 
 export function buildInitialModelParams(
   contextWindow: string,
@@ -65,8 +67,8 @@ export function buildInitialModelParams(
   },
 ): Record<string, number | string> {
   const params: Record<string, number | string> = {};
-  const context = optionalPositiveInteger(contextWindow, "上下文窗口");
-  const output = optionalPositiveInteger(maxTokens, "最大输出 Tokens");
+  const context = optionalPositiveInteger(contextWindow || DEFAULT_CONTEXT_WINDOW, "上下文窗口");
+  const output = optionalPositiveInteger(maxTokens || DEFAULT_MAX_TOKENS, "最大输出 Tokens");
   if (context !== undefined) params.context_window = context;
   if (output !== undefined) params.max_tokens = output;
   // 温度与 top_p 一律带上: 留空等于让每家供应商用自己的默认值, 而那些默认值互不相同

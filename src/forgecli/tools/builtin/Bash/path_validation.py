@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import glob
 import os
 import re
+from itertools import islice
 
 from forgecli.core.permissions import (
     PermissionResult,
@@ -16,9 +18,15 @@ from forgecli.core.permissions import (
     working_dir_reason,
 )
 from forgecli.core.tool.tool import ToolUseContext
-from forgecli.security.filesystem import expand_path, path_in_allowed_working_path
+from forgecli.security.filesystem import (
+    check_read_path_permission,
+    expand_path,
+    path_in_allowed_working_path,
+)
 from forgecli.security.sandbox_paths import in_sandbox_write_allowlist
 from forgecli.security.shell.command_plan import CommandUnit
+from forgecli.tools.builtin.Bash.read_paths import read_operands
+from forgecli.tools.builtin.Bash.static_paths import is_null_sink
 
 __all__ = ["check_path_constraints"]
 
@@ -68,8 +76,25 @@ def check_path_constraints(
     units: tuple[CommandUnit, ...], context: ToolUseContext
 ) -> PermissionResult:
     for unit in units:
+        for path in (*read_operands(unit), *unit.read_targets):
+            if _VARIABLE.search(path):
+                return ask("Read path contains an unresolved variable")
+            absolute = expand_path(path, context.cwd)
+            paths = (
+                list(islice(glob.iglob(absolute), 257))
+                if glob.has_magic(absolute)
+                else [absolute]
+            )
+            if len(paths) > 256:
+                return ask("Too many shell path matches to verify; narrow the query")
+            for candidate in paths or [absolute]:
+                result = check_read_path_permission(candidate, {}, context)
+                if not result.is_allow:
+                    return result
         # 重定向目标.
         for target in unit.write_targets:
+            if is_null_sink(target):
+                continue
             if _VARIABLE.search(target):
                 return ask(
                     f"Output redirection target '{target}' contains a shell variable "

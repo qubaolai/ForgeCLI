@@ -15,9 +15,11 @@ on_event 里 (§3).
 
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections import deque
 from collections.abc import Callable
 
 from forgecli.agent.run_events import AgentRunEvent, AgentRunEventKind, RunEventPayload
@@ -50,6 +52,9 @@ class AgentRunEventBus:
         clock: Callable[[], float] = time.monotonic,
         event_id_factory: Callable[[], str] = _new_event_id,
     ) -> None:
+        self._condition = threading.Condition(threading.RLock())
+        self._queue: deque[AgentRunEvent] = deque()
+        self._draining = False
         self._subscribers: list[AgentRunEventSubscriber] = []
         # 按 (会话, 轮次) 计数: sequence 是"这一轮里的第几件事", 跨轮重新从 1 开始
         # (§3). 只按 turn_id 计数的话, 两个会话的 turn_0001 会共用一个计数器 ——
@@ -61,7 +66,8 @@ class AgentRunEventBus:
         self._isolated: list[_IsolatedFailure] = []
 
     def subscribe(self, subscriber: AgentRunEventSubscriber) -> None:
-        self._subscribers.append(subscriber)
+        with self._condition:
+            self._subscribers.append(subscriber)
 
     def publish(
         self,
@@ -74,6 +80,7 @@ class AgentRunEventBus:
         request_id: str | None = None,
         tool_call_id: str | None = None,
         invocation_id: str | None = None,
+        agent_id: str = "",
     ) -> AgentRunEvent:
         """编号并分发一个事件, 返回它.
 
@@ -83,24 +90,45 @@ class AgentRunEventBus:
         上下文是给排查用的, 它绑在哪个线程上是可观测性的事, 而事件归属是业务事实 ——
         两者今天恰好一致, 明天多一个线程就不一致了, 而那时不会有任何东西报错.
         """
-        key = (session_id, turn_id)
-        sequence = self._sequences.get(key, 0) + 1
-        self._sequences[key] = sequence
-        event = AgentRunEvent(
-            event_id=self._new_event_id(),
-            kind=kind,
-            session_id=session_id,
-            turn_id=turn_id,
-            sequence=sequence,
-            occurred_at=self._clock(),
-            payload=payload,
-            step_index=step_index,
-            request_id=request_id,
-            tool_call_id=tool_call_id,
-            invocation_id=invocation_id,
-        )
-        self._dispatch(event)
+        with self._condition:
+            key = (session_id, turn_id)
+            sequence = self._sequences.get(key, 0) + 1
+            self._sequences[key] = sequence
+            event = AgentRunEvent(
+                event_id=self._new_event_id(),
+                kind=kind,
+                session_id=session_id,
+                turn_id=turn_id,
+                sequence=sequence,
+                occurred_at=self._clock(),
+                payload=payload,
+                step_index=step_index,
+                request_id=request_id,
+                tool_call_id=tool_call_id,
+                invocation_id=invocation_id,
+                agent_id=agent_id,
+            )
+            self._queue.append(event)
+            if self._draining:
+                return event
+            self._draining = True
+        self._drain()
         return event
+
+    def _drain(self) -> None:
+        while True:
+            with self._condition:
+                if not self._queue:
+                    self._draining = False
+                    self._condition.notify_all()
+                    return
+                event = self._queue.popleft()
+            self._dispatch(event)
+
+    def flush(self) -> None:
+        """Wait for delivery; call outside subscriber callbacks."""
+        with self._condition:
+            self._condition.wait_for(lambda: not self._draining)
 
     def _dispatch(self, event: AgentRunEvent) -> None:
         for subscriber in self._subscribers:

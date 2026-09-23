@@ -44,6 +44,8 @@ class ContextFitRule:
             budget=view.budget,
             session_id=view.session_id,
             turn_id=view.turn_id,
+            agent_id=view.agent_id,
+            cancel_token=view.cancel_token,
             system_prompt=view.system_prompt,
             tools=view.tools,
         )
@@ -87,6 +89,8 @@ class ContextFitRule:
             force=True,
             session_id=view.session_id,
             turn_id=view.turn_id,
+            agent_id=view.agent_id,
+            cancel_token=view.cancel_token,
             system_prompt=view.system_prompt,
             tools=view.tools,
         )

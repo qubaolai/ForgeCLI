@@ -28,6 +28,7 @@ from forgecli.core.context.budget import ContextBudget
 from forgecli.core.model.catalog import ModelCatalogEntry
 from forgecli.core.model.model_ref import ModelRef
 from forgecli.core.model.origin import RequestOrigin
+from forgecli.core.model.resolved import ResolvedModel
 from forgecli.llm import providers as provider_registry
 from forgecli.llm.adapters.openai_compatible import OpenAICompatibleProvider
 from forgecli.llm.catalog import ModelCatalogService
@@ -63,7 +64,8 @@ class LlmRuntime:
     usage_meter: UsageMeter
     overrides_service: ModelOverridesService
     # 当前模型的上下文预算 (ADR-0032 决策 1). 每轮现取: 用户可能刚 /model 换过模型.
-    context_budget: Callable[[], ContextBudget | None]
+    context_budget: Callable[..., ContextBudget | None]
+    resolve_model: Callable[..., ResolvedModel]
 
 
 def build_llm_runtime(
@@ -104,12 +106,13 @@ def build_llm_runtime(
         usage_meter=usage_meter,
         overrides_service=overrides_service,
         context_budget=_budget_reader(resolver),
+        resolve_model=resolver.resolve,
     )
 
 
 def _budget_reader(
     resolver: ConfigBackedSelectionResolver,
-) -> Callable[[], ContextBudget | None]:
+) -> Callable[..., ContextBudget | None]:
     """把当前主模型的窗口折成一份预算 (ADR-0041 决策 5).
 
     走 resolver 而不是直接读 llm.json: 当前模型是谁, 有没有按用途覆盖, 目录里的窗口
@@ -120,9 +123,11 @@ def _budget_reader(
     防线. 返回 None 只是回到接入淘汰之前的行为, 而那不会让这一轮失败.
     """
 
-    def _current() -> ContextBudget | None:
+    def _current(
+        origin: RequestOrigin = RequestOrigin.TOOL_CALL,
+    ) -> ContextBudget | None:
         try:
-            resolved = resolver.resolve(origin=RequestOrigin.TOOL_CALL)
+            resolved = resolver.resolve(origin=origin)
         except (ModelGatewayError, ConfigError):
             # 模型没配, 目录里没有它, 或者配置读不了. 都不是这一轮该失败的理由.
             return None

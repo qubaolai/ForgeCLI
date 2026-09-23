@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import replace
 
 from forgecli.common.observability.log import get_log
 from forgecli.core.model.catalog import ModelCatalogEntry
@@ -158,14 +159,40 @@ class DefaultLlmGateway(LlmGateway):
         thinking = self._resolve_thinking(base, ref, entry)
         self._check_tool_capability(base, ref, entry)
         capabilities = self._registry.get(ref.provider).capabilities()
+        json_object = capabilities.supports_json_object and entry.supports_json_object
         if capabilities.supports_structured_output and entry.supports_structured_output:
-            response, data, errors = self._structured_native(
-                base, ref, entry, base.params, thinking, request
-            )
+            try:
+                response, data, errors = self._structured_native(
+                    base, ref, entry, base.params, thinking, request
+                )
+            except ModelBadRequestError as error:
+                if not structured.unsupported_format(error):
+                    raise
+                _log.warning(
+                    "llm.structured_format_unsupported",
+                    provider=ref.provider,
+                    model=ref.model,
+                    format="json_schema",
+                )
+                response, data, errors = self._structured_degraded(
+                    base,
+                    ref,
+                    entry,
+                    base.params,
+                    thinking,
+                    request,
+                    json_object=json_object,
+                )
         else:
             # 受控解析降级（§3.7）：schema 指令注入 prompt，有上限重试，不换模型。
             response, data, errors = self._structured_degraded(
-                base, ref, entry, base.params, thinking, request
+                base,
+                ref,
+                entry,
+                base.params,
+                thinking,
+                request,
+                json_object=json_object,
             )
         if errors and request.strict:
             raise ModelResponseParseError(
@@ -615,8 +642,11 @@ class DefaultLlmGateway(LlmGateway):
         params: ModelParams,
         thinking: ThinkingConfig,
         request: StructuredModelRequest,
+        *,
+        json_object: bool = False,
     ) -> tuple[ModelResponse, object | None, list[str]]:
-        prompted = structured.with_instruction(base, request)
+        params = replace(params, response_format="json_object" if json_object else None)
+        prompted = structured.with_instruction(replace(base, params=params), request)
         cached = self._cache.lookup(prompted, ref, thinking=thinking)
         if cached is not None:
             cached_data, cached_errors = structured.parse(cached.content, request)
@@ -626,9 +656,22 @@ class DefaultLlmGateway(LlmGateway):
         data: object | None = None
         errors: list[str] = []
         for _attempt in range(self._structured_retry_limit + 1):
-            response = self._complete_resolved(
-                prompted, ref, entry, params, thinking, use_cache=False
-            )
+            try:
+                response = self._complete_resolved(
+                    prompted, ref, entry, params, thinking, use_cache=False
+                )
+            except ModelBadRequestError as error:
+                if not json_object or not structured.unsupported_format(error):
+                    raise
+                _log.warning(
+                    "llm.structured_format_unsupported",
+                    provider=ref.provider,
+                    model=ref.model,
+                    format="json_object",
+                )
+                return self._structured_degraded(
+                    base, ref, entry, base.params, thinking, request, json_object=False
+                )
             data, errors = structured.parse(response.content, request)
             if not errors:
                 self._cache.store(prompted, ref, response, thinking=thinking)
@@ -642,7 +685,9 @@ class DefaultLlmGateway(LlmGateway):
         self, request: ModelRequest
     ) -> tuple[ModelRef, ModelCatalogEntry]:
         """把选择解析成 (ModelRef, 目录条目)；resolver 为必备协作件（ADR-0012 §10）。"""
-        resolved = self._resolver.resolve(origin=request.origin)
+        resolved = request.resolved_model or self._resolver.resolve(
+            origin=request.origin
+        )
         return resolved.ref, resolved.entry
 
     def _resolve_thinking(

@@ -27,7 +27,7 @@ export function ModelSettings({
   const [showAddProvider, setShowAddProvider] = useState(false);
 
   return (
-    <>
+    <div className="forge-model-fields">
       <Tabs
         activeKey={view}
         onChange={(key) => setView(key as ModelSettingsView)}
@@ -73,6 +73,6 @@ export function ModelSettings({
           onSetCurrent={admin.chooseCurrentModel}
         />
       )}
-    </>
+    </div>
   );
 }

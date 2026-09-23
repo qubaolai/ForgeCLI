@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 
 import jsonschema
 
 from forgecli.common.cancellation import CancelledError
 from forgecli.common.observability.log import get_log
+from forgecli.core.agent.sub_agent import SUB_AGENT_TOOLS
 from forgecli.core.message import ChatMessage, ToolResultBlock
 from forgecli.core.permissions import PermissionResult
 from forgecli.core.tool.tool import (
@@ -155,6 +156,21 @@ def run_tool_use(
     ):
         call_input = decision.updated_input
 
+    if context.options.read_only and (
+        tool.name not in SUB_AGENT_TOOLS or not tool.is_read_only(call_input)
+    ):
+        context.observer.permission_decided(
+            tool.name,
+            tool_use_id=tool_use_id,
+            behavior="deny",
+            reason="read_only",
+            message="Read-only execution constraint",
+            elapsed_ms=0,
+        )
+        return _not_run(tool_use_id, "Read-only execution constraint", "denied")
+    if context.abort.cancelled:
+        return _not_run(tool_use_id, "Tool execution was cancelled", "cancelled")
+    context = replace(context, tool_use_id=tool_use_id)
     # 6. call.
     context.observer.tool_started(tool.name, tool_use_id=tool_use_id)
     call_started = time.perf_counter()

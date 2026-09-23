@@ -46,7 +46,11 @@ export function ApprovalCard({
       }
     >
       <Flex vertical gap="small">
-        <Alert type={SEVERITY_TYPE[severityOf(approval)]} showIcon title={view.message || "确认下面的内容再决定"} />
+        <Alert
+          type={SEVERITY_TYPE[severityOf(approval)]}
+          showIcon
+          title={view.message || "确认下面的内容再决定"}
+        />
         {/* 入参永远可见: 参数里可能出现什么, 用户就该看到什么。 */}
         <Flex vertical gap={4}>
           {entries.map(([key, value]) =>
@@ -57,7 +61,8 @@ export function ApprovalCard({
               </Flex>
             ) : (
               <Typography.Text key={key}>
-                <Typography.Text strong>{key}</Typography.Text>: <Typography.Text code>{value}</Typography.Text>
+                <Typography.Text strong>{key}</Typography.Text>:{" "}
+                <Typography.Text code>{value}</Typography.Text>
               </Typography.Text>
             ),
           )}

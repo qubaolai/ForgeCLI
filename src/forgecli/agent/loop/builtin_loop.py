@@ -77,6 +77,7 @@ from forgecli.core.message import ChatMessage, TextBlock, ToolResultBlock
 from forgecli.core.model.origin import RequestOrigin
 from forgecli.core.model.params import ModelParams
 from forgecli.core.model.request import ModelRequest
+from forgecli.core.model.resolved import ResolvedModel
 from forgecli.core.permissions import PermissionMode
 from forgecli.core.tool.tool_call import ToolCall, ToolSchema
 from forgecli.core.turn import MessageRole
@@ -111,8 +112,10 @@ class BuiltinAgentLoop:
         request_id_factory: Callable[[], str] = _new_request_id,
         cancel_token_factory: Callable[[], CancelToken | None] = lambda: None,
         event_bus: AgentRunEventBus | None = None,
+        resolved_model: ResolvedModel | None = None,
         timer: Callable[[], float] = time.monotonic,
     ) -> None:
+        self._resolved_model = resolved_model
         self._new_request_id = request_id_factory
         self._new_cancel_token = cancel_token_factory
         self._timer = timer
@@ -131,6 +134,7 @@ class BuiltinAgentLoop:
         self._phase = LoopPhase.NOT_STARTED
         self._turn_id: str | None = None
         self._session_id = ""
+        self._agent_id = ""
         self._mode: PermissionMode | None = None
         # 本轮的会话窗口: 每次模型调用都基于它, 工具结果按 §10 写回这里.
         #
@@ -169,12 +173,15 @@ class BuiltinAgentLoop:
         self._phase = LoopPhase.RUNNING
         self._turn_id = loop_input.turn_id
         self._session_id = loop_input.session_id
+        self._agent_id = loop_input.agent_id
         self._mode = loop_input.mode
         self._window = Window(
             messages=loop_input.initial_window,
             evicted_count=loop_input.evicted_count,
         )
-        self._events.start_turn(session_id=self._session_id, turn_id=self._turn_id)
+        self._events.start_turn(
+            session_id=self._session_id, turn_id=self._turn_id, agent_id=self._agent_id
+        )
         # 本轮的标识就位, 上一轮的清零. `update` 没有还原点, 所以由每一轮自己把
         # step / req / tool 归零 —— 否则 loop.start 那一行会带着上一轮的步号.
         update_run_context(
@@ -190,7 +197,14 @@ class BuiltinAgentLoop:
             messages=len(self._messages),
             rules=self._rules.table.describe(),
         )
-        stop = self._think_and_act(execute, assemble)
+        try:
+            stop = self._think_and_act(execute, assemble)
+        except ModelCancelledError:
+            stop = self._stop(LoopStop(LoopStopReason.USER_CANCELLED))
+        return self.exit_snapshot(stop)
+
+    def exit_snapshot(self, stop: LoopStop) -> LoopResult:
+        """Read only after run has returned or raised (ADR-0062)."""
         return LoopResult(
             stop=stop,
             answer=self._answer,
@@ -199,6 +213,8 @@ class BuiltinAgentLoop:
             evicted_count=self._window.evicted_count,
             usage_drafts=self._ledger.usage_drafts,
             compaction_drafts=self._ledger.compaction_drafts,
+            model_calls=self._model_calls,
+            tool_calls=self._tool_calls,
         )
 
     # ---- 窗口与快照 ----
@@ -232,6 +248,8 @@ class BuiltinAgentLoop:
             tool_calls=self._tool_calls,
             pending_calls=len(self._pending_calls),
             ledger=self._ledger,
+            agent_id=self._agent_id,
+            cancel_token=self._new_cancel_token(),
         )
 
     @property
@@ -250,6 +268,9 @@ class BuiltinAgentLoop:
         回到 while 顶上, 不递归.
         """
         while True:
+            cancel = self._new_cancel_token()
+            if cancel is not None and cancel.cancelled:
+                return self._stop(LoopStop(LoopStopReason.USER_CANCELLED))
             self._assemble(assemble)
             evicted_before = self._window.evicted_count
             stop = self._rules.before_model(self._view, self._apply_rewrite)
@@ -516,7 +537,11 @@ class BuiltinAgentLoop:
             turn_id=self._turn_id or "",
             origin=(
                 # 带工具目录的调用属于 act 阶段; 纯对话仍记 chat (ADR-0011 §3.3).
-                RequestOrigin.TOOL_CALL if self._tools else RequestOrigin.CHAT
+                RequestOrigin.SUB_AGENT
+                if self._agent_id
+                else RequestOrigin.TOOL_CALL
+                if self._tools
+                else RequestOrigin.CHAT
             ),
             # 窗口就是全部: 通知已经在里面 (ADR-0056 决策 2), 没有额外要拼的帧.
             messages=self._messages,
@@ -526,6 +551,8 @@ class BuiltinAgentLoop:
             ),
             tools=self._tools,
             cancel_token=self._new_cancel_token(),
+            agent_id=self._agent_id,
+            resolved_model=self._resolved_model,
         )
 
     def _stop(self, stop: LoopStop) -> LoopStop:

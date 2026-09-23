@@ -5,7 +5,7 @@
 
 SessionService 写事件用 MessageRole/TurnStatus，AgentTurnService 编排也用 TurnStatus，
 但 SessionService 不必依赖 application/agent_turn（避免 session ↔ agent_turn 循环）。
-为将来 sub agent 预留 MessageRole.SUB_AGENT（本次不启用）。
+子 Agent 报告以普通 tool result 回到父窗口 (ADR-0062)。
 """
 
 from __future__ import annotations

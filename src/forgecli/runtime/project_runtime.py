@@ -20,6 +20,7 @@ from forgecli.agent.run_bus import AgentRunEventBus
 from forgecli.agent.run_events import AgentRunEventKind, HumanPromptPayload
 from forgecli.agent.run_log import RunEventLogger
 from forgecli.agent.run_store import JsonlRunStore
+from forgecli.agent.sub_agent.runner import SubAgentRunner, positive_env
 from forgecli.agent.turn_cancellation import TurnCancelSource
 from forgecli.agent.turn_service import AgentTurnService
 from forgecli.common.errors import SessionStateError
@@ -67,6 +68,7 @@ from forgecli.prompt.session_facts import GitSnapshot, SessionFacts
 from forgecli.runtime.event_hub import RunEventHub
 from forgecli.runtime.human_prompt_broker import BlockingHumanPromptBroker
 from forgecli.runtime.llm_wiring import LlmRuntime, build_llm_runtime
+from forgecli.runtime.sub_agent_wiring import prepare_sub_agent
 from forgecli.runtime.tool_wiring import ToolStack, build_tool_stack
 from forgecli.security.permission_rule_parser import permission_rule_value_from_string
 from forgecli.security.permission_setup import (
@@ -168,6 +170,29 @@ class ProjectRuntime:
             self.session.start()
             self.session.set_mode(self.tools.permission.mode)
             self._agent_turn = self._build_agent_turn()
+            self._sub_agents = SubAgentRunner(
+                bus=self.event_bus,
+                concurrency=max(
+                    1, int(positive_env("FORGE_MAX_SUB_AGENT_CONCURRENCY", 4))
+                ),
+                prepare=lambda identity, cancel, limit: prepare_sub_agent(
+                    identity,
+                    cancel,
+                    limit,
+                    llm=self.llm,
+                    parent=self.tools.runner,
+                    session=self.session,
+                    bus=self.event_bus,
+                    facts=self._session_facts(),
+                ),
+                limit=max(1, int(positive_env("FORGE_MAX_SUB_AGENTS_PER_TURN", 8))),
+                model_calls=max(
+                    1, int(positive_env("FORGE_SUB_AGENT_MAX_MODEL_CALLS", 30))
+                ),
+                timeout=positive_env("FORGE_SUB_AGENT_TIMEOUT_SECONDS", 300),
+                grace=positive_env("FORGE_SUB_AGENT_GRACE_SECONDS", 30),
+            )
+            self.event_bus.subscribe(self._sub_agents)
             self._sweep_tombstones()
         except BaseException:
             self.lock.release()
@@ -187,6 +212,7 @@ class ProjectRuntime:
             # auto 模式的分类器走同一个网关 (ADR-0058): 用途标签 permission_classifier,
             # 用户可以像别的用途一样给它单独绑一个模型.
             structured_query=self.llm.gateway.complete_structured,
+            sub_agent_run=lambda task, context: self._sub_agents.run(task, context),
         )
 
     def _initial_permission(self) -> ToolPermissionContext:
@@ -290,6 +316,8 @@ class ProjectRuntime:
                 start_date=date.today().isoformat(),
                 git=git_snapshot[0],
             )
+
+        self._session_facts = session_facts
 
         def diagnostics_dir() -> str:
             return str(
@@ -836,11 +864,12 @@ class ProjectRuntime:
     def close(self) -> None:
         self.cancel()
         self.prompts.close()
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join()
+        self.event_bus.flush()
         self.events.close()
         self.tools.close()
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=2.0)
         self.lock.release()
 
 

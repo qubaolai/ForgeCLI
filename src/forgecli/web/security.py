@@ -1,5 +1,4 @@
-"""本地控制面的准入: Host 白名单, 会话 cookie, CSRF 与安全响应头。
-"""
+"""本地控制面的准入: Host 白名单, 会话 cookie, CSRF 与安全响应头。"""
 
 from __future__ import annotations
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from forgecli.common.cancellation import CancelToken
 from forgecli.core.agent.actions import (
@@ -17,6 +18,7 @@ from forgecli.core.agent.actions import (
     ObservationDisposition,
     ObservationSource,
 )
+from forgecli.core.agent.sub_agent import SUB_AGENT_TOOLS, SubAgentIdentity
 from forgecli.core.app_state import AppState
 from forgecli.core.message import ChatMessage
 from forgecli.core.tool.file_state import FileStateCache
@@ -29,7 +31,11 @@ from forgecli.core.tool.tool import (
     ToolUseOptions,
 )
 from forgecli.core.tool.tool_call import ToolCall, ToolSchema
-from forgecli.human_interaction.service import HumanPromptService
+from forgecli.human_interaction.service import (
+    HumanPromptService,
+    PendingHumanPromptService,
+)
+from forgecli.security.sub_agent import SubAgentState
 from forgecli.tools.execution import ToolUseOutcome
 from forgecli.tools.file_history import FileHistory
 from forgecli.tools.orchestration import run_tools
@@ -68,7 +74,7 @@ class ToolRunner:
     set_app_state: Callable[[AppState], None]
     prompts: HumanPromptService
     observer: ToolRunObserver
-    file_history: FileHistory
+    file_history: FileHistory | None
     read_file_state: FileStateCache
     cwd: str
     environment: Mapping[str, str]
@@ -76,6 +82,8 @@ class ToolRunner:
     tool_results_dir: Callable[[], str]
     internal_paths: tuple[str, ...] = ()
     non_interactive: bool = False
+    agent_id: str = ""
+    read_only: bool = False
     # 每批调用一个快照 (对应 Claude Code 每条 assistant 消息一个), 编号只在本会话内
     # 有意义.
     batches: int = 0
@@ -117,7 +125,9 @@ class ToolRunner:
         os.makedirs(results_dir, exist_ok=True)
         return ToolUseContext(
             options=ToolUseOptions(
-                tools=self.pool(), non_interactive=self.non_interactive
+                tools=self.pool(),
+                non_interactive=self.non_interactive,
+                read_only=self.read_only,
             ),
             abort=cancel if cancel is not None else CancelToken(),
             read_file_state=self.read_file_state,
@@ -131,7 +141,10 @@ class ToolRunner:
             turn_id=turn_id,
             prompts=self.prompts,
             observer=self.observer,
-            track_file_edit=self.file_history.track_edit,
+            track_file_edit=self.file_history.track_edit
+            if self.file_history
+            else _no_edits,
+            agent_id=self.agent_id,
             tool_results_dir=results_dir,
             internal_paths=self.internal_paths,
         )
@@ -146,10 +159,42 @@ class ToolRunner:
         parent_message: ChatMessage | None = None,
         cancel: CancelToken | None = None,
     ) -> tuple[ToolUseOutcome, ...]:
-        self.observer.bind_turn(session_id, turn_id)
+        self.observer.bind_turn(session_id, turn_id, self.agent_id)
         self.batches += 1
-        self.file_history.make_snapshot(f"{turn_id}#{self.batches}")
+        if self.file_history is not None:
+            self.file_history.make_snapshot(f"{turn_id}#{self.batches}")
         context = self.context(
             session_id=session_id, turn_id=turn_id, messages=messages, cancel=cancel
         )
         return run_tools(calls, context, self.can_use_tool, parent_message)
+
+
+def _no_edits(path: str) -> None:
+    raise RuntimeError("Child agents cannot edit files")
+
+
+def sub_agent_runner(
+    parent: ToolRunner,
+    identity: SubAgentIdentity,
+    observer: ToolRunObserver,
+) -> ToolRunner:
+    state = SubAgentState(parent.get_app_state)
+    results = str(Path(parent.tool_results_dir()) / "agents" / identity.agent_id)
+    return ToolRunner(
+        base_tools=tuple(t for t in parent.base_tools if t.name in SUB_AGENT_TOOLS),
+        can_use_tool=parent.can_use_tool,
+        get_app_state=state.get,
+        set_app_state=state.set,
+        prompts=PendingHumanPromptService(),
+        observer=observer,
+        file_history=None,
+        read_file_state=parent.read_file_state.clone(),
+        cwd=parent.cwd,
+        environment=parent.environment,
+        workspace_roots=parent.workspace_roots,
+        tool_results_dir=lambda: results,
+        internal_paths=parent.internal_paths,
+        non_interactive=True,
+        agent_id=identity.agent_id,
+        read_only=True,
+    )

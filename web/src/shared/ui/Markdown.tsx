@@ -1,80 +1,84 @@
-/** 把解析好的 Markdown 块画出来。
- *
- * 排版全在 styles/index.css 的 .forge-md 里 —— 这一块是自己解析出来的标签树,
- * 没有对应的 antd 组件; 套 antd 的 Typography 只会让两套间距规则按注入顺序打架。
- */
-
-import { Fragment, useMemo } from "react";
-import type { ReactNode } from "react";
-import { MarkdownBlock as Block, parseMarkdown } from "@/shared/lib/markdown";
+/** CommonMark + GFM, rendered as React elements rather than injected HTML. */
+import { memo, useId, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import type { Components, Options } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import { documentAnchors, nodeText } from "@/shared/lib/markdown";
 import { CopyButton } from "@/shared/ui/CopyButton";
+import { MermaidDiagram } from "@/shared/ui/MermaidDiagram";
 
-export function Markdown({ content }: { content: string }) {
-  const blocks = useMemo(() => parseMarkdown(content), [content]);
-  return (
-    <div className="forge-md">
-      {blocks.map((block, index) => (
-        <MarkdownBlock block={block} key={`${block.kind}-${index}`} />
-      ))}
-    </div>
-  );
-}
-
-function MarkdownBlock({ block }: { block: Block }) {
-  if (block.kind === "code") {
+const components: Components = {
+  pre({ node, children, ...props }) {
+    const code = node?.children.find((child) => child.type === "element" && child.tagName === "code");
+    const classes = code?.type === "element" ? code.properties.className : [];
+    const language = Array.isArray(classes)
+      ? String(classes.find((name) => String(name).startsWith("language-")) ?? "").slice(9)
+      : "";
+    // Text is read from the syntax tree so highlighting never changes copied code.
+    const text = code ? nodeText(code).replace(/\n$/, "") : "";
+    if (language.toLowerCase() === "mermaid") return <MermaidDiagram source={text} />;
     return (
-      <figure>
+      <figure className="forge-code-block">
         <figcaption>
-          <span>{block.language || "code"}</span>
-          <CopyButton content={block.text} compact label="复制代码" />
+          <span>{language || "code"}</span>
+          <CopyButton content={text} compact label="复制代码" />
         </figcaption>
-        <pre>
-          <code>{block.text}</code>
-        </pre>
+        <pre {...props}>{children}</pre>
       </figure>
     );
-  }
-  if (block.kind === "heading") {
-    if (block.level === 1) return <h1>{renderInline(block.text)}</h1>;
-    if (block.level === 2) return <h2>{renderInline(block.text)}</h2>;
-    if (block.level === 3) return <h3>{renderInline(block.text)}</h3>;
-    return <h4>{renderInline(block.text)}</h4>;
-  }
-  if (block.kind === "list") {
-    const items = block.items.map((item, index) => <li key={`${index}-${item}`}>{renderInline(item)}</li>);
-    return block.ordered ? <ol>{items}</ol> : <ul>{items}</ul>;
-  }
-  if (block.kind === "quote") return <blockquote>{renderLines(block.text)}</blockquote>;
-  if (block.kind === "rule") return <hr />;
-  return <p>{renderLines(block.text)}</p>;
-}
+  },
+  table({ children }) {
+    return (
+      <div className="forge-md-table" role="region" aria-label="表格，可横向滚动" tabIndex={0}>
+        <table>{children}</table>
+      </div>
+    );
+  },
+  a({ href, children, title, ...props }) {
+    if (!href) return <span>{children}</span>;
+    const external = /^(?:https?:)?\/\//i.test(href);
+    return (
+      <a
+        href={href}
+        title={title}
+        id={props.id}
+        aria-describedby={props["aria-describedby"]}
+        aria-label={props["aria-label"]}
+        className={props.className}
+        target={external ? "_blank" : undefined}
+        rel={external ? "noopener noreferrer" : undefined}
+      >
+        {children}
+      </a>
+    );
+  },
+  img({ src, alt, title }) {
+    if (!src) return <span>{alt}</span>;
+    return <img src={src} alt={alt ?? ""} title={title} loading="lazy" decoding="async" />;
+  },
+};
 
-function renderLines(text: string) {
-  return text.split("\n").map((line, index) => (
-    <Fragment key={`${index}-${line}`}>
-      {index > 0 && <br />}
-      {renderInline(line)}
-    </Fragment>
-  ));
-}
-
-function renderInline(text: string): ReactNode[] {
-  const tokens = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g).filter(Boolean);
-  return tokens.map((token, index) => {
-    if (token.startsWith("**") && token.endsWith("**"))
-      return <strong key={index}>{token.slice(2, -2)}</strong>;
-    if (token.startsWith("`") && token.endsWith("`")) return <code key={index}>{token.slice(1, -1)}</code>;
-    const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-    if (link && safeLink(link[2]))
-      return (
-        <a href={link[2]} target="_blank" rel="noreferrer" key={index}>
-          {link[1]}
-        </a>
-      );
-    return <Fragment key={index}>{token}</Fragment>;
-  });
-}
-
-function safeLink(href: string) {
-  return /^(https?:\/\/|\/)/.test(href);
-}
+export const Markdown = memo(function Markdown({ content }: { content: string }) {
+  const id = useId();
+  const prefix = `forge-md-${id.replace(/[^a-zA-Z0-9_-]/g, "")}-`;
+  const plugins = useMemo<Options["rehypePlugins"]>(
+    () => [
+      [documentAnchors, { prefix }],
+      [rehypeHighlight, { detect: false }],
+    ],
+    [prefix],
+  );
+  return (
+    <div className="forge-md">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={plugins}
+        remarkRehypeOptions={{ clobberPrefix: prefix, footnoteLabel: "注释", footnoteBackLabel: "返回正文" }}
+        components={components}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+});

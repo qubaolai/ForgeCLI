@@ -55,6 +55,9 @@ class AgentRunEventKind(Enum):
     """运行事件类型 (§4). 值即序列化字符串, 进测试断言与可选 trace, 不可随意改."""
 
     # -- turn 与步骤 (§4.1) --
+    SUB_AGENT_STARTED = "sub_agent_started"
+    SUB_AGENT_FINISHED = "sub_agent_finished"
+    SUB_AGENT_STOPPING = "sub_agent_stopping"
     DECISION_SUMMARY = "decision_summary"
     TURN_COMPLETED = "turn_completed"
     TURN_CANCELLED = "turn_cancelled"
@@ -102,6 +105,23 @@ class ReasoningStatus(Enum):
 @dataclass(frozen=True)
 class RunEventPayload:
     """事件载荷的密封基类. 子类都是冻结值对象, 不允许自由 dict."""
+
+
+@dataclass(frozen=True)
+class SubAgentStartedPayload(RunEventPayload):
+    description: str
+    parent_tool_call_id: str
+
+
+@dataclass(frozen=True)
+class SubAgentFinishedPayload(RunEventPayload):
+    status: str
+    model_calls: int
+    tool_calls: int
+    total_tokens: int
+    duration_ms: float
+    detail: str = ""
+    usage_complete: bool = True
 
 
 @dataclass(frozen=True)
@@ -381,6 +401,7 @@ class AgentRunEvent:
     request_id: str | None = None
     tool_call_id: str | None = None
     invocation_id: str | None = None
+    agent_id: str = ""
 
     def __post_init__(self) -> None:
         if not self.session_id.strip():

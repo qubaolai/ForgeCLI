@@ -25,6 +25,8 @@ export function Composer({
   stance,
   presets,
   onStance,
+  onOpenModes,
+  onOpenModels,
   currentModel,
   models,
   thinking,
@@ -44,6 +46,8 @@ export function Composer({
   stance: Stance;
   presets: ModePreset[];
   onStance: (mode: string) => void;
+  onOpenModes: () => void;
+  onOpenModels: () => Promise<void>;
   currentModel: string;
   models: string[];
   thinking: ThinkingView;
@@ -97,8 +101,15 @@ export function Composer({
       />
       <Flex align="center" gap={8} wrap className="composer-bar">
         <Flex align="center" gap={8} className="composer-menus">
-          <ModeMenu value={stance} presets={presets} disabled={busy} onChange={onStance} />
+          <ModeMenu
+            value={stance}
+            presets={presets}
+            disabled={busy}
+            onChange={onStance}
+            onOpen={onOpenModes}
+          />
           <ModelMenu
+            onOpen={onOpenModels}
             current={currentModel}
             models={models}
             thinking={thinking}

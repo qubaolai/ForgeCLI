@@ -31,6 +31,8 @@ class ProjectConfig:
     primary_workspace_root: str
     # 始终至少包含 primary_workspace_root, 且其为首元素. 由 __post_init__ 保证.
     workspace_roots: tuple[str, ...] = ()
+    created_at: str = ""
+    updated_at: str = ""
 
     def __post_init__(self) -> None:
         """把 workspace_roots 归一到不变量, 而不是指望每个构造方自觉.

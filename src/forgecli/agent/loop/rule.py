@@ -23,6 +23,7 @@ from forgecli.agent.loop.verdicts import (
     Replace,
     Rewrite,
 )
+from forgecli.common.cancellation import CancelToken
 from forgecli.core.agent.actions import LoopObservation, LoopStop
 from forgecli.core.agent.phase import LoopPhase
 from forgecli.core.context.budget import ContextBudget
@@ -72,6 +73,8 @@ class LoopView:
     # 只给数量, 不给队列: 规则改不了派发顺序.
     pending_calls: int
     ledger: TurnLedger
+    agent_id: str = ""
+    cancel_token: CancelToken | None = None
 
 
 # ---- 每个时机上一条规则的形状 ----

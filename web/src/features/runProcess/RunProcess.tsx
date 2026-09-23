@@ -1,18 +1,8 @@
-/** 一轮的处理过程。
- *
- * **叙述常驻, 工具折叠。**
- *
- * 原先是整轮塞进一个默认收起的 `<details>`, 而最终回答另起一段。那个形状撑不住一条
- * 硬约束: 最终回答必须流式, 而循环在发请求之前分不出哪一次调用是最后一次 —— 于是
- * 只能每次都流, 流出来的叙述必然已经显示过。既然已经显示过, 就不能再撤回它 (撤回
- * 的表现是"一段话闪一下又消失"), 只能让它留下。
- *
- * 留下之后, "最终回答"不再是特例: 它只是最后一段叙述。两边不再各画一遍同一段文字。
- */
+/** 一轮的处理过程：运行时逐步展示，完成后折叠过程，最终回答保持可见。 */
 
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Alert, Flex, Typography } from "antd";
+import { Alert, Collapse, Flex, Typography } from "antd";
 import { NarrationBlock } from "@/features/runProcess/NarrationBlock";
 import { NoteStep } from "@/features/runProcess/NoteStep";
 import { RunMetrics } from "@/features/runProcess/RunMetrics";
@@ -22,6 +12,7 @@ import { activityOf } from "@/shared/lib/run/activity";
 import { metricsFor } from "@/shared/lib/run/metrics";
 import type { ToolDirectory } from "@/shared/lib/run/tools";
 import { buildTimeline } from "@/shared/lib/run/timeline";
+import type { TimelineItem } from "@/shared/lib/run/timeline";
 import type { LocalTurn } from "@/shared/lib/run/turn";
 import { terminalFailureDetail } from "@/shared/lib/run/turn";
 
@@ -59,31 +50,74 @@ export function RunProcess({
   const modelFailureShown = turn.events.some((event) => event.kind === "model_failed");
   const running = turn.status === "running";
 
+  const answer = timeline.find((item) => item.kind === "model" && item.key === turn.answerRequestId);
+  const toolCount = timeline.reduce(
+    (count, item) => count + (item.kind === "tools" ? item.groups.length : 0),
+    0,
+  );
+  // 等整轮成功收尾再折叠；单次工具结束、子任务完成或模型仍在流式输出时不触发。
+  // 没有可显示的最终回答时保留过程，避免折叠掉仅有的可见内容。
+  const collapseProcess = turn.status === "completed" && Boolean(answer) && toolCount > 0;
+  function renderItem(item: TimelineItem) {
+    if (item.kind === "model") {
+      return (
+        <NarrationBlock
+          events={item.events}
+          output={turn.outputs[item.key] ?? ""}
+          terminal={!running}
+          key={item.id}
+        />
+      );
+    }
+    if (item.kind === "tools")
+      return (
+        <ToolRun
+          groups={item.groups}
+          childEvents={turn.events.filter((event) => {
+            if (!event.agent_id) return false;
+            const start = turn.events.find(
+              (candidate) => candidate.agent_id === event.agent_id && candidate.kind === "sub_agent_started",
+            );
+            return item.groups.some((group) => group.id === String(start?.payload.parent_tool_call_id));
+          })}
+          turnStatus={turn.status}
+          reason={item.reason}
+          directory={directory}
+          key={item.id}
+        />
+      );
+    return <NoteStep event={item.event} key={item.id} />;
+  }
+
   return (
     <Flex vertical gap="small">
-      {timeline.map((item) => {
-        if (item.kind === "model") {
-          return (
-            <NarrationBlock
-              events={item.events}
-              output={turn.outputs[item.key] ?? ""}
-              terminal={!running}
-              key={item.id}
-            />
-          );
-        }
-        if (item.kind === "tools")
-          return (
-            <ToolRun
-              groups={item.groups}
-              turnStatus={turn.status}
-              reason={item.reason}
-              directory={directory}
-              key={item.id}
-            />
-          );
-        return <NoteStep event={item.event} key={item.id} />;
-      })}
+      {collapseProcess && answer ? (
+        <>
+          <Collapse
+            key={turn.clientId}
+            ghost
+            size="small"
+            defaultActiveKey={[]}
+            styles={{ header: { padding: "4px 0" }, body: { padding: "8px 0" } }}
+            items={[
+              {
+                key: "process",
+                label: (
+                  <Typography.Text type="secondary">查看处理过程 · {toolCount} 次工具调用</Typography.Text>
+                ),
+                children: (
+                  <Flex vertical gap="small">
+                    {timeline.filter((item) => item !== answer).map(renderItem)}
+                  </Flex>
+                ),
+              },
+            ]}
+          />
+          {renderItem(answer)}
+        </>
+      ) : (
+        timeline.map(renderItem)
+      )}
       {!timeline.length && !failureDetail && (
         <Typography.Text type="secondary">正在建立本轮事件流…</Typography.Text>
       )}

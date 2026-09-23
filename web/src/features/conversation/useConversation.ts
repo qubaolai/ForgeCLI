@@ -14,6 +14,7 @@ import type { RunSnapshot } from "@/shared/lib/run/events";
 import type { LocalTurn } from "@/shared/lib/run/turn";
 import { failUnboundTurn, finishLocalTurn, newLocalTurn, restoreTurn } from "@/shared/lib/run/turn";
 import type { ModePreset, Stance } from "@/shared/lib/stance";
+import type { ThinkingView } from "@/types/admin";
 import type { Session, TranscriptEvent, TurnRunState } from "@/types/session";
 
 const DEFAULT_STANCE: Stance = "default";
@@ -25,6 +26,7 @@ export function useConversation(
   resumePosition: ResumePosition,
   /** 发送时重新贴回底部; 由时间线的滚动那一份持有。 */
   followNow: () => void,
+  applyPresentation: (value: { current_model: string; thinking: ThinkingView }) => void,
 ) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -35,7 +37,7 @@ export function useConversation(
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [stance, setStance] = useState<Stance>(DEFAULT_STANCE);
-  // 可选的预设 (GET /modes). 进程级事实, 只在装入时取一次: forge 起来之后不会变.
+  // 可选的预设 (GET /modes)，打开模式菜单时读取。
   const [presets, setPresets] = useState<ModePreset[]>([]);
   // 当前会话, 给事件回调用。回调建立时闭包住的那个值会过期, 而过期的作用域判断比
   // 不判断更糟: 它会把新会话的事件当成外来的丢掉 (ADR-0048 决策 2)。
@@ -50,13 +52,14 @@ export function useConversation(
     if (!busy) setStopping(false);
   }, [busy]);
 
-  useEffect(() => {
-    api<{ items: ModePreset[] }>("/modes")
-      .then((result) => setPresets(result.items))
-      .catch((reason) => onError((reason as Error).message));
-    // 只装一次; onError 是稳定的横幅回调, 不作为重新拉取的理由.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const loadPresets = useCallback(async () => {
+    try {
+      const result = await api<{ items: ModePreset[] }>("/modes");
+      setPresets(result.items);
+    } catch (reason) {
+      onError((reason as Error).message);
+    }
+  }, [onError]);
 
   const restoredByTurn = useMemo(() => {
     const live = new Set(localTurns.map((turn) => turn.turnId));
@@ -69,15 +72,24 @@ export function useConversation(
 
   const loadConversation = useCallback(async () => {
     const [sessionResult, runResult] = await Promise.all([
-      api<{ current_session_id: string; current_session: Session; items: Session[] }>("/sessions"),
+      api<{
+        current_session_id: string;
+        current_session: Session;
+        items: Session[];
+        presentation: { theme: string; current_model: string; thinking: ThinkingView };
+      }>("/sessions"),
       api<TurnRunState | null>("/turns/current"),
     ]);
+    applyPresentation(sessionResult.presentation);
+    const theme = sessionResult.presentation.theme;
+    if (theme === "dark" || theme === "light") document.documentElement.dataset.theme = theme;
+    else delete document.documentElement.dataset.theme;
     setSessions(sessionResult.items);
     setCurrentSessionId(sessionResult.current_session_id);
     setStance(sessionResult.current_session.mode ?? DEFAULT_STANCE);
     // 服务端才是"是否还在跑"的真相源：刷新页面后按它恢复运行态。
     setBusy(runResult?.status === "running");
-  }, []);
+  }, [applyPresentation]);
 
   const loadTranscript = useCallback(
     async (sessionId: string) => {
@@ -194,6 +206,7 @@ export function useConversation(
     stopping,
     stance,
     presets,
+    loadPresets,
     sessionScopeRef,
     setLocalTurns,
 

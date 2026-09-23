@@ -12,7 +12,7 @@ asyncio 任务里, 前者新线程起手是一份空 Context (于是拿到默认
 后者每个 task 自带 Context 副本 (于是并发的两条流不会互相覆盖). threading.local 在
 asyncio 下这两件事都做不到.
 
-字段是**封闭**的六个: 它们是全局唯一能把日志接起来的那几个 id. 一次性的业务字段
+字段是**封闭**的七个: 它们是全局唯一能把日志接起来的那几个 id. 一次性的业务字段
 (文件路径, 退出码, 命中了哪条规则) 直接写在那一行的 `**fields` 里, 不进这里 ——
 放进来就意味着它要跟着整个调用栈跑, 而它只对一行有意义.
 """
@@ -34,6 +34,7 @@ class RunContext:
 
     session_id: str = ""
     turn_id: str = ""
+    agent_id: str = ""
     step: int = 0
     request_id: str = ""
     invocation_id: str = ""
@@ -46,6 +47,8 @@ class RunContext:
             known["session"] = self.session_id
         if self.turn_id:
             known["turn"] = self.turn_id
+        if self.agent_id:
+            known["agent"] = self.agent_id
         if self.step:
             known["step"] = self.step
         if self.request_id:
@@ -73,6 +76,7 @@ def bind(
     *,
     session_id: str | None = None,
     turn_id: str | None = None,
+    agent_id: str | None = None,
     step: int | None = None,
     request_id: str | None = None,
     invocation_id: str | None = None,
@@ -90,6 +94,7 @@ def bind(
     updated = RunContext(
         session_id=base.session_id if session_id is None else session_id,
         turn_id=base.turn_id if turn_id is None else turn_id,
+        agent_id=base.agent_id if agent_id is None else agent_id,
         step=base.step if step is None else step,
         request_id=base.request_id if request_id is None else request_id,
         invocation_id=(base.invocation_id if invocation_id is None else invocation_id),
@@ -106,6 +111,7 @@ def update(
     *,
     session_id: str | None = None,
     turn_id: str | None = None,
+    agent_id: str | None = None,
     step: int | None = None,
     request_id: str | None = None,
     invocation_id: str | None = None,
@@ -125,6 +131,7 @@ def update(
         RunContext(
             session_id=base.session_id if session_id is None else session_id,
             turn_id=base.turn_id if turn_id is None else turn_id,
+            agent_id=base.agent_id if agent_id is None else agent_id,
             step=base.step if step is None else step,
             request_id=base.request_id if request_id is None else request_id,
             invocation_id=(

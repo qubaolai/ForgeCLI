@@ -54,15 +54,17 @@ class LoopEventPublisher:
         self._bus = bus
         self._timer = timer
         self._session_id = ""
+        self._agent_id = ""
         self._turn_id: str | None = None
         self._step = 0
         self._started_at = 0.0
 
     # ---- 轮次身份与步骤 ----
 
-    def start_turn(self, *, session_id: str, turn_id: str) -> None:
+    def start_turn(self, *, session_id: str, turn_id: str, agent_id: str = "") -> None:
         self._session_id = session_id
         self._turn_id = turn_id
+        self._agent_id = agent_id
         self._started_at = self._timer()
 
     @property
@@ -256,6 +258,8 @@ class LoopEventPublisher:
     def turn_finished(
         self, reason: LoopStopReason, *, detail: str, model_calls: int, tool_calls: int
     ) -> None:
+        if self._agent_id:
+            return
         # 只有 BLOCKING 算失败. 可恢复暂停 (等审批 / 等输入) 也是"这一轮结束了",
         # 页面要收掉活动区; 它与失败的区别由 TurnFinishedPayload.status 表达.
         kind = (
@@ -293,6 +297,7 @@ class LoopEventPublisher:
             kind,
             session_id=self._session_id,
             turn_id=self._turn_id,
+            agent_id=self._agent_id,
             payload=payload,
             step_index=self._step,
             request_id=request_id,

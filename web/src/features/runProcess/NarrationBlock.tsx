@@ -6,7 +6,7 @@ import { stringValue } from "@/shared/lib/run/events";
 import { Markdown } from "@/shared/ui/Markdown";
 
 /**
- * 一次模型调用说的话。**总是可见**, 不折叠。
+ * 一次模型调用说的话。运行时直接展示，完成后由 RunProcess 折叠过程叙述。
  *
  * 它可能是过程叙述 ("我先看一下目录"), 也可能是最终回答 —— 在这里不区分, 因为区分
  * 需要等调用收尾, 而那时字已经流完了。

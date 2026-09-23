@@ -87,6 +87,7 @@ function ThemeBridge({ dark }: { dark: boolean }) {
       "--forge-muted": token.colorTextTertiary,
       "--forge-danger": token.colorError,
       "--forge-warning": token.colorWarning,
+      "--forge-success": token.colorSuccess,
       "--forge-raise": extra.raise,
       "--forge-code-bg": extra.codeBg,
       "--forge-code-inline": extra.codeInline,

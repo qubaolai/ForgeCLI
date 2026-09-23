@@ -14,6 +14,7 @@ BudgetGuard 已整体删除（ADR-0028 规则 C）：它比对的 `ModelRequest.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -50,6 +51,7 @@ class SlidingWindowHealthRegistry:
         cooldown_seconds: float = 30.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        self._lock = threading.RLock()
         if failure_threshold <= 0:
             raise ValueError("failure_threshold 必须为正整数")
         if cooldown_seconds <= 0:
@@ -63,48 +65,51 @@ class SlidingWindowHealthRegistry:
         self._circuits: dict[tuple[str, str], _Circuit] = {}
 
     def check(self, ref: ModelRef) -> None:
-        if not self._enabled:
-            return
-        circuit = self._circuit(ref)
-        if circuit.state is _CircuitState.CLOSED:
-            return
-        if circuit.state is _CircuitState.OPEN:
-            remaining = circuit.opened_at + self._cooldown - self._clock()
-            if remaining > 0:
-                raise ModelUnavailableError(
-                    f"模型 {ref} 熔断中（连续失败达 {self._threshold} 次），"
-                    f"约 {remaining:.0f}s 后进入半开探测",
-                    provider=ref.provider,
-                    model=ref.model,
-                )
-            circuit.state = _CircuitState.HALF_OPEN  # 冷却到期: 放行本次 改为半开
-            return
-        # HALF_OPEN：探测请求已在途，其余调用继续拒绝。
-        raise ModelUnavailableError(
-            f"模型 {ref} 熔断半开，探测请求进行中",
-            provider=ref.provider,
-            model=ref.model,
-        )
+        with self._lock:
+            if not self._enabled:
+                return
+            circuit = self._circuit(ref)
+            if circuit.state is _CircuitState.CLOSED:
+                return
+            if circuit.state is _CircuitState.OPEN:
+                remaining = circuit.opened_at + self._cooldown - self._clock()
+                if remaining > 0:
+                    raise ModelUnavailableError(
+                        f"模型 {ref} 熔断中（连续失败达 {self._threshold} 次），"
+                        f"约 {remaining:.0f}s 后进入半开探测",
+                        provider=ref.provider,
+                        model=ref.model,
+                    )
+                circuit.state = _CircuitState.HALF_OPEN  # 冷却到期: 放行本次 改为半开
+                return
+            # HALF_OPEN：探测请求已在途，其余调用继续拒绝。
+            raise ModelUnavailableError(
+                f"模型 {ref} 熔断半开，探测请求进行中",
+                provider=ref.provider,
+                model=ref.model,
+            )
 
     def record_success(self, ref: ModelRef) -> None:
-        if not self._enabled:
-            return
-        circuit = self._circuit(ref)
-        circuit.state = _CircuitState.CLOSED
-        circuit.consecutive_failures = 0
+        with self._lock:
+            if not self._enabled:
+                return
+            circuit = self._circuit(ref)
+            circuit.state = _CircuitState.CLOSED
+            circuit.consecutive_failures = 0
 
     def record_failure(self, ref: ModelRef) -> None:
-        if not self._enabled:
-            return
-        circuit = self._circuit(ref)
-        if circuit.state is _CircuitState.HALF_OPEN:
-            circuit.state = _CircuitState.OPEN  # 探测失败：重新进入冷却
-            circuit.opened_at = self._clock()
-            return
-        circuit.consecutive_failures += 1
-        if circuit.consecutive_failures >= self._threshold:
-            circuit.state = _CircuitState.OPEN
-            circuit.opened_at = self._clock()
+        with self._lock:
+            if not self._enabled:
+                return
+            circuit = self._circuit(ref)
+            if circuit.state is _CircuitState.HALF_OPEN:
+                circuit.state = _CircuitState.OPEN  # 探测失败：重新进入冷却
+                circuit.opened_at = self._clock()
+                return
+            circuit.consecutive_failures += 1
+            if circuit.consecutive_failures >= self._threshold:
+                circuit.state = _CircuitState.OPEN
+                circuit.opened_at = self._clock()
 
     def _circuit(self, ref: ModelRef) -> _Circuit:
         return self._circuits.setdefault((ref.provider, ref.model), _Circuit())

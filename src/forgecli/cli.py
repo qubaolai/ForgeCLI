@@ -5,7 +5,7 @@ forge --cli 进终端交互式会话. 默认是 Web. 这里只负责解析启动
 参数并把进程交出去, 不放任何业务判断。
 
 同一项目只能有一个 Forge 进程: 计划、会话与恢复点都不加文件锁, 正是因为项目级
-forge.lock 保证了这一点. 
+forge.lock 保证了这一点.
 """
 
 from __future__ import annotations

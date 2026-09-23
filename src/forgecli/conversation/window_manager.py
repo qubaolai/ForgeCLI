@@ -12,12 +12,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from forgecli.common.cancellation import CancelToken
 from forgecli.common.observability.log import get_log
 from forgecli.conversation import split_points
 from forgecli.conversation.summarize import summarize
 from forgecli.core.context.budget import ContextBudget
 from forgecli.core.context.compaction import CompactionDraft, CompactionLevel
 from forgecli.core.context.window import Window, WindowPolicy
+from forgecli.core.model.resolved import ResolvedModel
 from forgecli.core.model.usage import UsageRecordDraft
 from forgecli.core.token_estimator import ApproximateTokenEstimator
 from forgecli.core.tool.tool_call import ToolSchema
@@ -58,6 +60,7 @@ class WindowManager:
         gateway: LlmGateway | None = None,
         estimator: ApproximateTokenEstimator | None = None,
         meter: UsageMeter | None = None,
+        compact_model: ResolvedModel | None = None,
     ) -> None:
         # 单条工具结果的内联上限, 由装配层给. 必填而不是给个缺省:
         # 缺省值与真实配置对不上的话, 那条水位判据查的就是另一套数, 而它不会报错.
@@ -68,6 +71,7 @@ class WindowManager:
         self._estimator = estimator or ApproximateTokenEstimator()
         # meter 缺省为 None: 没接计量时摘要照常跑, 只是这次调用不产出计量草稿.
         self._meter = meter
+        self._compact_model = compact_model
 
     def fit(
         self,
@@ -76,6 +80,8 @@ class WindowManager:
         budget: ContextBudget | None,
         session_id: str,
         turn_id: str,
+        agent_id: str = "",
+        cancel_token: CancelToken | None = None,
         system_prompt: str = "",
         tools: tuple[ToolSchema, ...] = (),
         force: bool = False,
@@ -115,6 +121,8 @@ class WindowManager:
             before=estimated,
             session_id=session_id,
             turn_id=turn_id,
+            agent_id=agent_id,
+            cancel_token=cancel_token,
         )
 
     def _evict(
@@ -127,6 +135,8 @@ class WindowManager:
         before: int,
         session_id: str,
         turn_id: str,
+        agent_id: str = "",
+        cancel_token: CancelToken | None = None,
     ) -> WindowFitResult:
         """一次性淘汰到低水位.
 
@@ -158,7 +168,10 @@ class WindowManager:
                 self._gateway,
                 session_id=session_id,
                 turn_id=turn_id,
+                agent_id=agent_id,
+                cancel_token=cancel_token,
                 meter=self._meter,
+                resolved_model=self._compact_model,
             )
 
         evicted = Window(

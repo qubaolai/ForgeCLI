@@ -107,6 +107,7 @@ class TerminalRunView:
     def __init__(self, console: Console) -> None:
         self.console = console
         self.metrics = TurnMetrics()
+        self._child_counts: dict[str, tuple[int, int]] = {}
         self.finished = False
         self._streaming = False
         self._thinking = False
@@ -127,6 +128,27 @@ class TerminalRunView:
     def handle(self, event: AgentRunEvent) -> None:
         kind = event.kind
         payload = event.payload
+        if event.agent_id:
+            if kind is AgentRunEventKind.MODEL_USAGE and isinstance(
+                payload, ModelUsagePayload
+            ):
+                self.metrics.add(payload)
+            elif kind is AgentRunEventKind.SUB_AGENT_STARTED:
+                self._entry(
+                    "子 Agent", str(getattr(payload, "description", event.agent_id))
+                )
+            elif kind is AgentRunEventKind.SUB_AGENT_STOPPING:
+                self._sub(f"{event.agent_id}: 正在停止…")
+            elif kind is AgentRunEventKind.SUB_AGENT_FINISHED:
+                self._child_counts[event.agent_id] = (
+                    int(getattr(payload, "model_calls", 0)),
+                    int(getattr(payload, "tool_calls", 0)),
+                )
+                self._sub(
+                    f"{event.agent_id}: {getattr(payload, 'status', '')} · "
+                    f"{getattr(payload, 'total_tokens', 0)} tokens"
+                )
+            return
         if kind is AgentRunEventKind.MODEL_OUTPUT_DELTA and isinstance(
             payload, TextDeltaPayload
         ):
@@ -348,10 +370,14 @@ class TerminalRunView:
         # 读数与正文之间空一行: 它是这一轮的落款, 不是回答的最后一句.
         self.console.print()
         seconds = payload.elapsed_ms / 1000
+        model_calls = payload.model_calls + sum(
+            c[0] for c in self._child_counts.values()
+        )
+        tool_calls = payload.tool_calls + sum(c[1] for c in self._child_counts.values())
         chips = [
             f"{seconds:.1f}s",
-            f"模型 {payload.model_calls} 次",
-            f"工具 {payload.tool_calls} 次",
+            f"模型 {model_calls} 次",
+            f"工具 {tool_calls} 次",
         ]
         if self.metrics.fresh_input_tokens:
             chips.append(f"输入 {self.metrics.fresh_input_tokens}")

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from forgecli.agent.run_bus import AgentRunEventBus
 from forgecli.agent.tool_observer import EventBusToolRunObserver
+from forgecli.core.agent.sub_agent import SubAgentRun
 from forgecli.core.app_state import AppState
 from forgecli.core.execution.environment import EnvironmentInheritance
 from forgecli.core.execution.fence import FencePolicy
@@ -64,6 +65,7 @@ from forgecli.settings.paths import (
     projects_dir,
     user_memory_file,
 )
+from forgecli.tools.builtin.Agent.tool import AgentTool
 from forgecli.tools.builtin.AskUserQuestion.tool import AskUserQuestionTool
 from forgecli.tools.builtin.Bash.tool import BashTool
 from forgecli.tools.builtin.Edit.tool import FileEditTool
@@ -71,7 +73,6 @@ from forgecli.tools.builtin.Glob.tool import GlobTool
 from forgecli.tools.builtin.Grep.tool import GrepTool
 from forgecli.tools.builtin.LSP.pool import LspServerPool
 from forgecli.tools.builtin.LSP.tool import LspTool
-from forgecli.tools.builtin.Test.tool import TestTool
 from forgecli.tools.builtin.memory.tool import MemoryForgetTool, MemoryWriteTool
 from forgecli.tools.builtin.planning.tool import (
     PlanReadTool,
@@ -80,6 +81,7 @@ from forgecli.tools.builtin.planning.tool import (
     TodoWriteTool,
 )
 from forgecli.tools.builtin.Read.tool import FileReadTool
+from forgecli.tools.builtin.Test.tool import TestTool
 from forgecli.tools.builtin.Write.tool import FileWriteTool
 from forgecli.tools.file_history import FileHistory
 from forgecli.tools.runner import ToolRunner
@@ -188,6 +190,7 @@ def build_tool_stack(
     environment_inheritance: EnvironmentInheritance = EnvironmentInheritance.ALL,
     non_interactive: bool = False,
     structured_query: StructuredQuery | None = None,
+    sub_agent_run: SubAgentRun | None = None,
 ) -> ToolStack:
     """`structured_query` 是网关的 complete_structured: auto 模式的分类器靠它问模型
     (ADR-0058). 不给就没有分类器, auto 下的 ask 与 default 一样问人."""
@@ -274,6 +277,9 @@ def build_tool_stack(
         MemoryForgetTool(memory),
         TestTool(),
     )
+
+    if sub_agent_run is not None:
+        base_tools += (AgentTool(sub_agent_run),)
 
     # 4. 权限: 建议的施加器, auto 模式的分类器与 can_use_tool.
     applier = PermissionUpdateApplier(

@@ -28,10 +28,12 @@ class EventBusToolRunObserver(ToolRunObserver):
         self._bus = bus
         self._turn_id = ""
         self._session_id = ""
+        self._agent_id = ""
 
-    def bind_turn(self, session_id: str, turn_id: str) -> None:
+    def bind_turn(self, session_id: str, turn_id: str, agent_id: str = "") -> None:
         self._session_id = session_id
         self._turn_id = turn_id
+        self._agent_id = agent_id
 
     def tool_validated(
         self,
@@ -183,6 +185,7 @@ class EventBusToolRunObserver(ToolRunObserver):
             kind,
             session_id=self._session_id,
             turn_id=self._turn_id,
+            agent_id=self._agent_id,
             payload=payload,
             invocation_id=invocation_id,
         )

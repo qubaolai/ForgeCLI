@@ -61,6 +61,7 @@ _PROTOCOL_CAPABILITIES = ProviderCapabilities(
     supports_streaming=True,
     supports_tools=True,
     supports_structured_output=True,
+    supports_json_object=True,
 )
 
 

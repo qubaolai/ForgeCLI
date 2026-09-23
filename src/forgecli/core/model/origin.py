@@ -23,6 +23,7 @@ from enum import Enum
 class RequestOrigin(Enum):
     """模型调用用途。新增用途必须先扩这个封闭枚举（ADR-0011 §3.3）。"""
 
+    SUB_AGENT = "sub_agent"
     CHAT = "chat"
     TOOL_CALL = "tool_call"
     TITLE = "title"
@@ -51,6 +52,7 @@ _THINKING_BY_ORIGIN: dict[RequestOrigin, bool] = {}
 def _register_thinking_defaults() -> None:
     thinks = {
         RequestOrigin.CHAT,
+        RequestOrigin.SUB_AGENT,
         RequestOrigin.TOOL_CALL,
     }
     mechanical = {

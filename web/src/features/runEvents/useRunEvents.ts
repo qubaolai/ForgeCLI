@@ -135,7 +135,24 @@ export function useRunEvents(
       delay *= reconnectFactor;
       setRetryDelay(wait);
       setConnection("retrying");
-      timer = window.setTimeout(connect, wait);
+      timer = window.setTimeout(() => {
+        // 延迟到真正重连时才探测鉴权。刷新页面关闭旧 SSE 也可能触发 error，
+        // 在 error 回调里立即握手会多发一次 bootstrap。
+        fetch("/api/v1/bootstrap")
+          .then(
+            (response) => (response.status === 401 ? "stale" : "retry"),
+            () => "retry",
+          )
+          .then((verdict) => {
+            if (disposed) return;
+            if (verdict === "stale") {
+              latest.current.onError(STALE_SESSION);
+              setConnection("stopped");
+              return;
+            }
+            connect();
+          });
+      }, wait);
     };
 
     function connect() {
@@ -169,17 +186,7 @@ export function useRunEvents(
         source?.close();
         source = null;
         if (disposed) return;
-        // 会话密钥跨重启复用，正常不会走到这里；真失效时给出可操作提示。
-        fetch("/api/v1/bootstrap")
-          .then(
-            (response) => (response.status === 401 ? "stale" : "retry"),
-            () => "retry",
-          )
-          .then((verdict) => {
-            if (disposed) return;
-            if (verdict === "stale") latest.current.onError(STALE_SESSION);
-            scheduleRetry();
-          });
+        scheduleRetry();
       };
     }
 

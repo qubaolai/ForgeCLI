@@ -19,13 +19,17 @@ class CancelToken:
     """协作式取消: 被取消方自己检查 cancelled, 不做强制中断."""
 
     _cancelled: bool = False
+    _parent: CancelToken | None = None
+
+    def child(self) -> CancelToken:
+        return CancelToken(_parent=self)
 
     def cancel(self) -> None:
         self._cancelled = True
 
     @property
     def cancelled(self) -> bool:
-        return self._cancelled
+        return self._cancelled or (self._parent is not None and self._parent.cancelled)
 
 
 class CancelledError(Exception):

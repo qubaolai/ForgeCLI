@@ -15,7 +15,10 @@ from forgecli.agent.loop.rules.barren_streak import BarrenStreakRule
 from forgecli.agent.loop.rules.context_fit import ContextFitRule
 from forgecli.agent.loop.rules.empty_response import EmptyResponseRule
 from forgecli.agent.loop.rules.malformed_output import MalformedOutputRule
-from forgecli.agent.loop.rules.model_budget import ModelBudgetRule
+from forgecli.agent.loop.rules.model_budget import (
+    DEFAULT_MAX_MODEL_CALLS,
+    ModelBudgetRule,
+)
 from forgecli.agent.loop.rules.plan_review import PlanReviewRule
 from forgecli.agent.loop.rules.refusal import RefusalRule
 from forgecli.agent.loop.rules.repeat_call import RepeatCallRule
@@ -25,7 +28,9 @@ from forgecli.conversation.window_manager import WindowManager
 __all__ = ["builtin_rules"]
 
 
-def builtin_rules(*, context: WindowManager | None) -> RuleTable:
+def builtin_rules(
+    *, context: WindowManager | None, max_model_calls: int = DEFAULT_MAX_MODEL_CALLS
+) -> RuleTable:
     # 挂了不止一个时机的几条先建好, 下面各列引用同一个对象.
     fit = ContextFitRule(context)
     malformed = MalformedOutputRule()
@@ -36,7 +41,7 @@ def builtin_rules(*, context: WindowManager | None) -> RuleTable:
     return RuleTable(
         before_model=(
             # 该停了就别再为压缩花一次模型调用: 那次调用记进用量却什么也没换来.
-            ModelBudgetRule().before_model,
+            ModelBudgetRule(limit=max_model_calls).before_model,
             # 调模型之前最后一道, 看到的是这一轮要发出去的窗口.
             fit.before_model,
         ),

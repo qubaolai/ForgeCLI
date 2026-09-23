@@ -77,37 +77,34 @@ export function useAdministration(onError: (message: string) => void, reloadProj
     setThinking(models.thinking);
   }, []);
 
-  /** 只要工具名的那一份。拉不回来不报错, 只是每一行显示工具名而不是中文 —— 那是
-   *  toolActionLabel 的既定退路, 比为一份展示用的名字表弹一条错误提示合适。 */
-  const loadToolDirectory = useCallback(async () => {
-    try {
-      const value = await api<ToolsResponse>("/tools");
-      setToolDirectory(indexTools(value.all));
-    } catch {
-      /* 退回显示工具名 */
-    }
+  const applyPresentation = useCallback((value: { current_model: string; thinking: ThinkingView }) => {
+    setCurrentModel(value.current_model);
+    setThinking(value.thinking);
   }, []);
 
-  const loadAll = useCallback(async () => {
-    const [roots, permissionRules, rewindList, toolList, status] = await Promise.all([
-      api<{ items: WorkspaceRoot[] }>("/workspace-roots"),
-      api<PermissionRules>("/permissions"),
-      api<{ items: RewindPoint[] }>("/rewind"),
-      api<ToolsResponse>("/tools"),
-      api<StatusView>("/status"),
+  const loadSecurity = useCallback(async () => {
+    await Promise.all([
+      api<{ items: WorkspaceRoot[] }>("/workspace-roots").then((value) => setWorkspaceRoots(value.items)),
+      api<PermissionRules>("/permissions").then(setPermissions),
+      api<ToolsResponse>("/tools").then((value) => {
+        setTools(value.items);
+        setToolDirectory(indexTools(value.all));
+      }),
     ]);
-    setWorkspaceRoots(roots.items);
-    setPermissions(permissionRules);
-    setRewindPoints(rewindList.items);
-    setTools(toolList.items);
-    setToolDirectory(indexTools(toolList.all));
-    setStatusView(status);
-    await loadModels();
-  }, [loadModels]);
+  }, []);
+
+  const loadRecovery = useCallback(async () => {
+    const value = await api<{ items: RewindPoint[] }>("/rewind");
+    setRewindPoints(value.items);
+  }, []);
+
+  const loadStatus = useCallback(async () => {
+    setStatusView(await api<StatusView>("/status"));
+  }, []);
 
   /** 一次写操作 + 一次重新拉取。`after` 决定拉哪一份。 */
   const write = useCallback(
-    async (run: () => Promise<unknown>, after: () => Promise<unknown> = loadAll): Promise<boolean> => {
+    async (run: () => Promise<unknown>, after: () => Promise<unknown>): Promise<boolean> => {
       try {
         await run();
         await after();
@@ -117,7 +114,7 @@ export function useAdministration(onError: (message: string) => void, reloadProj
         return false;
       }
     },
-    [fail, loadAll],
+    [fail],
   );
 
   /** 逐字段 PATCH, 但只在整批做完后刷新一次: 中途刷新会把还没保存的输入冲掉。 */
@@ -136,8 +133,8 @@ export function useAdministration(onError: (message: string) => void, reloadProj
   );
 
   const withProjects = useCallback(async () => {
-    await Promise.all([reloadProjects(), loadAll()]);
-  }, [reloadProjects, loadAll]);
+    await Promise.all([reloadProjects(), loadSecurity()]);
+  }, [reloadProjects, loadSecurity]);
 
   return {
     workspaceRoots,
@@ -158,9 +155,11 @@ export function useAdministration(onError: (message: string) => void, reloadProj
     toolDirectory,
     statusView,
 
-    loadAll,
+    loadSecurity,
+    loadRecovery,
+    loadStatus,
     loadModels,
-    loadToolDirectory,
+    applyPresentation,
 
     addWorkspace: (path: string, access: string) =>
       write(
@@ -173,17 +172,19 @@ export function useAdministration(onError: (message: string) => void, reloadProj
         withProjects,
       ),
     removeRule: (behavior: string, source: string, rule: string) =>
-      write(() =>
-        api("/permissions/remove", {
-          method: "POST",
-          body: JSON.stringify({ behavior, source, rule }),
-        }),
+      write(
+        () =>
+          api("/permissions/remove", {
+            method: "POST",
+            body: JSON.stringify({ behavior, source, rule }),
+          }),
+        loadSecurity,
       ),
     rewindTo: (messageId: string) =>
-      write(() => api(`/rewind/${encodeURIComponent(messageId)}`, { method: "POST" })),
+      write(() => api(`/rewind/${encodeURIComponent(messageId)}`, { method: "POST" }), loadRecovery),
 
     addProvider: (body: ProviderDraft) =>
-      write(() => api("/providers", { method: "POST", body: JSON.stringify(body) })),
+      write(() => api("/providers", { method: "POST", body: JSON.stringify(body) }), loadModels),
     addModel: (providerId: string, modelId: string, params: Record<string, unknown>) =>
       write(
         () =>

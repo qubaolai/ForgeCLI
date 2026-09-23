@@ -1,7 +1,8 @@
 """只读命令表与 `is_read_only` (对应 BashTool/readOnlyValidation.ts).
 
 判据是 fail closed 的: 每个子命令都要在表里, 且没带表里列为不安全的参数; 有输出重定向,
-有动态执行, 含 `cd` 又含 `git`, 或来自命令替换, 都不算只读. 只读的命令在 default 与
+有动态执行, 含 `cd` 又含 `git`, 或来自命令替换, 都不算只读. /dev/null 输出除外.
+cd 还须通过整条命令的静态控制流与权限层路径检查. 只读的命令在 default 与
 plan 下直接放行 (bash_permissions 的第 7 步).
 """
 
@@ -13,8 +14,13 @@ from forgecli.security.shell.command_plan import (
     CommandPlan,
     CommandUnit,
     ParseStatus,
+    RedirectKind,
     UnitOrigin,
 )
+from forgecli.tools.builtin.Bash.git_validation import git_query_is_read_only
+from forgecli.tools.builtin.Bash.read_paths import read_operands
+from forgecli.tools.builtin.Bash.sed_validation import sed_read_paths
+from forgecli.tools.builtin.Bash.static_paths import is_null_sink, static_cd_targets
 
 __all__ = ["ReadOnlyVerdict", "check_read_only_constraints", "unit_is_read_only"]
 
@@ -50,6 +56,7 @@ _TABLE: dict[str, _Spec] = {
     "file": _PLAIN,
     "tree": _Spec(unsafe_flags=("-o",)),
     "pwd": _PLAIN,
+    "cd": _PLAIN,
     "basename": _PLAIN,
     "dirname": _PLAIN,
     "realpath": _PLAIN,
@@ -122,69 +129,12 @@ _TABLE: dict[str, _Spec] = {
             "-fprint0",
             "-fprintf",
             "-fls",
+            "-files0-from",
         )
     ),
     "awk": _Spec(unsafe_fragments=("system(", "|", ">", "getline")),
     "gawk": _Spec(unsafe_fragments=("system(", "|", ">", "getline")),
     # 包管理与工具链的只读子命令.
-    "git": _Spec(
-        subcommands=(
-            "status",
-            "log",
-            "diff",
-            "show",
-            "branch",
-            "remote",
-            "rev-parse",
-            "ls-files",
-            "ls-tree",
-            "blame",
-            "describe",
-            "tag",
-            "stash",
-            "config",
-            "shortlog",
-            "reflog",
-            "cat-file",
-            "rev-list",
-            "name-rev",
-            "grep",
-            "help",
-            "version",
-        ),
-        subcommand_unsafe_flags={
-            "branch": (
-                "-d",
-                "-D",
-                "-m",
-                "-M",
-                "-c",
-                "-C",
-                "--delete",
-                "--move",
-                "--copy",
-                "-u",
-                "--set-upstream-to",
-                "--unset-upstream",
-                "-f",
-                "--force",
-            ),
-            "remote": ("add", "remove", "rm", "rename", "set-url", "prune", "update"),
-            "tag": ("-a", "-d", "-D", "-f", "-m", "-s", "-u", "--delete", "--force"),
-            "stash": ("push", "pop", "apply", "drop", "clear", "save", "branch"),
-            "config": (
-                "--unset",
-                "--unset-all",
-                "--add",
-                "--replace-all",
-                "--remove-section",
-                "--rename-section",
-                "--edit",
-                "-e",
-            ),
-            "reflog": ("expire", "delete"),
-        },
-    ),
     "npm": _Spec(
         subcommands=(
             "ls",
@@ -224,8 +174,56 @@ def unit_is_read_only(unit: CommandUnit) -> str:
         return "command substitution"
     if unit.dynamic_execution:
         return f"{unit.name} executes dynamic content"
-    if unit.write_targets:
+    if any(not is_null_sink(target) for target in unit.write_targets):
         return "output redirection"
+    for redirect in unit.redirects:
+        if redirect.kind is RedirectKind.DUPLICATE and not (
+            redirect.target.isascii()
+            and redirect.target.isdigit()
+            or redirect.target == "-"
+        ):
+            return "non-descriptor redirection"
+    if unit.name == "git":
+        return (
+            ""
+            if git_query_is_read_only(unit.argv)
+            else "git invocation is not a proven query"
+        )
+    if unit.name == "uniq" and len(read_operands(unit)) > 1:
+        return "uniq output file is not read-only"
+    if unit.name == "sed":
+        return (
+            ""
+            if sed_read_paths(unit) is not None
+            else "sed script is not a proven read-only query"
+        )
+    if unit.name == "npm" and unit.argv[:1] == ("version",) and len(unit.argv) != 1:
+        return "npm version with arguments can modify files"
+    if (
+        unit.name == "poetry"
+        and unit.argv[:1] == ("env",)
+        and unit.argv[1:2] not in (("info",), ("list",))
+    ):
+        return "poetry env operation is not a query"
+    if (
+        unit.name == "go"
+        and unit.argv[:1] == ("env",)
+        and any(a in ("-w", "-u") for a in unit.argv)
+    ):
+        return "go env modifies configuration"
+    if (
+        unit.name == "kubectl"
+        and unit.argv[:1] == ("config",)
+        and unit.argv[1:2]
+        not in (
+            ("view",),
+            ("current-context",),
+            ("get-contexts",),
+            ("get-clusters",),
+            ("get-users",),
+        )
+    ):
+        return "kubectl config operation is not a query"
     spec = _TABLE.get(unit.name)
     if spec is None:
         return f"{unit.name} is not a known read-only command"
@@ -270,6 +268,8 @@ def check_read_only_constraints(plan: CommandPlan) -> ReadOnlyVerdict:
         return ReadOnlyVerdict(False, "command could not be fully parsed")
     if not plan.units:
         return ReadOnlyVerdict(False, "empty command")
+    if static_cd_targets(plan) is None:
+        return ReadOnlyVerdict(False, "directory changes cannot be statically verified")
     names = [unit.name for unit in plan.units]
     if "cd" in names and "git" in names:
         return ReadOnlyVerdict(False, "compound command with cd and git")

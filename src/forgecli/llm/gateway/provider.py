@@ -37,6 +37,7 @@ class ProviderCapabilities:
     supports_streaming: bool = False
     supports_tools: bool = False
     supports_structured_output: bool = False
+    supports_json_object: bool = False
 
 
 @dataclass(frozen=True)

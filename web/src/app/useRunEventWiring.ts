@@ -67,7 +67,6 @@ export function useRunEventWiring({
       refreshWorkspace();
     },
     onOpen: (reconnected) => {
-      void reloadPrompts().catch((reason: Error) => onError(reason.message));
       if (reconnected) {
         // 断线期间可能换了进程：项目、会话和运行态都要重新对齐。
         reloadProjects().catch(() => undefined);

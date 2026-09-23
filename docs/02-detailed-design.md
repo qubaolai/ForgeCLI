@@ -989,23 +989,13 @@ TTL/LRU 响应缓存、thinking 方言、精确分词器接入、价格口径、
 
 ### 12.1 Sub-Agent Contract
 
-输入：
+以 [ADR-0062](adr/2026-09-21-0062-采用只读报告型子Agent复用主循环.md) 为准。
+主 Agent 调用 `Agent(description, prompt)`，子运行复用主循环，使用独立上下文和固定只读工具池，
+不接收模式、工具白名单或输出 schema 等提权参数。返回普通工具结果，包含报告、状态及用量尾注。
+子 Agent 不直接修改工作区；需要修改时提供建议，由主 Agent 复核证据并执行。
 
-- `task`
-- `mode_policy`
-- `context_slice`
-- `allowed_tools`
-- `output_schema`
-
-输出：
-
-- `summary`
-- `findings`
-- `evidence`
-- `recommended_actions`
-- `confidence`
-
-Sub-Agent 不直接写文件。需要修改时返回建议，由 Orchestrator 决定。
+运行身份是父 `session_id`、父 `turn_id` 和独立 `agent_id`。父取消向子传播，超时请求取消后
+等待实际退出，期间保持项目 busy；报告型子任务不支持后台跨轮运行或独立恢复。
 
 ### 12.2 调度策略
 

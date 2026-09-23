@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
@@ -37,7 +38,9 @@ from forgecli.core.model.request import ModelRequest
 from forgecli.core.model.response import ModelResponse, ModelUsage
 
 # 响应缓存永远不适用的 origin（§14：主 Agent 对话不走响应缓存）。
-_NEVER_CACHED_ORIGINS = frozenset({RequestOrigin.CHAT, RequestOrigin.TOOL_CALL})
+_NEVER_CACHED_ORIGINS = frozenset(
+    {RequestOrigin.CHAT, RequestOrigin.TOOL_CALL, RequestOrigin.SUB_AGENT}
+)
 
 
 def structured_schema_digest(schema_name: str, schema: Mapping[str, object]) -> str:
@@ -73,6 +76,7 @@ class InMemoryResponseCache:
         max_entries: int = 256,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        self._lock = threading.RLock()
         if ttl_seconds is not None and ttl_seconds <= 0:
             raise ValueError("InMemoryResponseCache.ttl_seconds 必须为正数或 None")
         if max_entries <= 0:
@@ -91,26 +95,27 @@ class InMemoryResponseCache:
         thinking: ThinkingConfig | None = None,
         schema_digest: str | None = None,
     ) -> ModelResponse | None:
-        if request.origin not in self._allowed:
-            return None
-        key = _fingerprint(request, ref, thinking, schema_digest)
-        slot = self._entries.get(key)
-        if slot is None:
-            return None
-        if self._expired(slot):
-            del self._entries[key]
-            return None
-        self._entries.move_to_end(key)  # 命中刷新 LRU 顺位
-        metadata = dict(slot.response.raw_metadata)
-        metadata["cache_hit"] = "true"
-        return replace(
-            slot.response,
-            request_id=request.request_id,
-            cached=True,
-            usage=ModelUsage(input_tokens=0, output_tokens=0, total_tokens=0),
-            latency_ms=0.0,
-            raw_metadata=metadata,
-        )
+        with self._lock:
+            if request.origin not in self._allowed:
+                return None
+            key = _fingerprint(request, ref, thinking, schema_digest)
+            slot = self._entries.get(key)
+            if slot is None:
+                return None
+            if self._expired(slot):
+                del self._entries[key]
+                return None
+            self._entries.move_to_end(key)  # 命中刷新 LRU 顺位
+            metadata = dict(slot.response.raw_metadata)
+            metadata["cache_hit"] = "true"
+            return replace(
+                slot.response,
+                request_id=request.request_id,
+                cached=True,
+                usage=ModelUsage(input_tokens=0, output_tokens=0, total_tokens=0),
+                latency_ms=0.0,
+                raw_metadata=metadata,
+            )
 
     def store(
         self,
@@ -121,13 +126,14 @@ class InMemoryResponseCache:
         thinking: ThinkingConfig | None = None,
         schema_digest: str | None = None,
     ) -> None:
-        if request.origin not in self._allowed or response.cached:
-            return
-        key = _fingerprint(request, ref, thinking, schema_digest)
-        self._entries[key] = _CacheSlot(stored_at=self._clock(), response=response)
-        self._entries.move_to_end(key)
-        while len(self._entries) > self._max_entries:
-            self._entries.popitem(last=False)  # 淘汰最久未命中项
+        with self._lock:
+            if request.origin not in self._allowed or response.cached:
+                return
+            key = _fingerprint(request, ref, thinking, schema_digest)
+            self._entries[key] = _CacheSlot(stored_at=self._clock(), response=response)
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)  # 淘汰最久未命中项
 
     def _expired(self, slot: _CacheSlot) -> bool:
         if self._ttl is None:

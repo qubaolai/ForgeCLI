@@ -48,6 +48,7 @@ function App() {
   // 已经自动弹出过计划栏的那份提案; 同一份不弹第二次。
   const announced = useRef("");
   const refreshHandle = useRef(0);
+  const startup = useRef<Promise<void> | null>(null);
   // 在途请求由客户端统一记账 (shared/api/client), 这里只订阅结果。
   const requests = useRequestActivity();
   const resumePosition = useResumePosition();
@@ -56,7 +57,7 @@ function App() {
   // 每个功能自己持有状态与动作 (ADR-0048 决策 5)。
   const projects = useProjects();
   const { activeProjectId } = projects;
-  const projectSessions = useProjectSessions(projects.projects, setError);
+  const projectSessions = useProjectSessions(projects.projects, activeProjectId, setError);
   const promptsFeature = usePrompts(setError);
   const settingsFeature = useSettings(setError);
   const planningFeature = usePlanning(setError);
@@ -64,12 +65,13 @@ function App() {
   const loadProjects = projects.load;
   const reloadProjectSessions = projectSessions.load;
   const loadPrompts = promptsFeature.load;
+  const { load: loadPlanning, loadIndex: loadPlanIndex, planning } = planningFeature;
 
   const closePicker = useCallback(() => setShowProjectPicker(false), []);
   const closeSettings = useCallback(() => setShowSettings(false), []);
 
   const scroll = useTimelineScroll();
-  const conversation = useConversation(setError, resumePosition, scroll.followNow);
+  const conversation = useConversation(setError, resumePosition, scroll.followNow, admin.applyPresentation);
   const { currentSessionId, loadTranscript, loadConversation } = conversation;
   const isNewSession =
     Boolean(currentSessionId) &&
@@ -81,20 +83,15 @@ function App() {
     [admin.providers],
   );
 
-  /** 各功能各自去拉, 互不等待 (ADR-0048 决策 5)。
-   *
-   * 原先这四份绑在一个 `Promise.all` 里, 于是一个慢查询会把其余三份一起压住 —— 工具
-   * 挂起时待答卡片也跟着出不来。现在只有会话与运行态还成对: 它们要一起决定"是否在跑"。
-   */
+  /** 自动同步会话与需要即时处理的提示、计划评审状态。 */
   const loadWorkspace = useCallback(async () => {
     const report = (reason: Error) => setError(reason.message);
     void loadPrompts().catch(report);
-    void settingsFeature.load().catch(report);
-    void planningFeature.load().catch(report);
+    void loadPlanning().catch(report);
     await loadConversation();
     // 依赖各功能的 load 本身, 而不是功能对象: 对象每次 render 都是新的, 会让下面
     // 那个 effect 每渲染一次就重新拉一遍。
-  }, [loadPrompts, settingsFeature.load, planningFeature.load, loadConversation]);
+  }, [loadPrompts, loadPlanning, loadConversation]);
 
   const refreshWorkspace = useCallback(() => {
     // 工作区刷新会并行请求多份状态；密集事件下不节流会把浏览器的连接数吃光。
@@ -114,7 +111,8 @@ function App() {
   );
 
   useEffect(() => {
-    api<{ csrf_token: string; active_project_id: string | null }>("/bootstrap")
+    // StrictMode 重放 effect 时复用同一次启动，不重复握手和项目加载。
+    startup.current ??= api<{ csrf_token: string; active_project_id: string | null }>("/bootstrap")
       .then((value) => {
         setCsrfToken(value.csrf_token);
       })
@@ -125,9 +123,6 @@ function App() {
   useEffect(() => {
     if (!activeProjectId) return;
     loadWorkspace().catch((reason: Error) => setError(reason.message));
-    admin.loadModels().catch(() => undefined);
-    void admin.loadToolDirectory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- admin 的动作每次 render 都是新的
   }, [activeProjectId, loadWorkspace]);
 
   useEffect(() => {
@@ -136,8 +131,11 @@ function App() {
 
   useEffect(() => {
     const theme = settingsFeature.settings.find((item) => item.key === "output.theme")?.value;
+    if (theme === undefined) return;
     if (theme === "dark" || theme === "light") {
       document.documentElement.dataset.theme = theme;
+    } else {
+      delete document.documentElement.dataset.theme;
     }
   }, [settingsFeature.settings]);
 
@@ -175,14 +173,10 @@ function App() {
     setShowPlan(true);
   }, [planningFeature.planning.plan]);
 
-  async function openSettings() {
-    setShowSettings(true);
-    try {
-      await admin.loadAll();
-    } catch (reason) {
-      setError((reason as Error).message);
-    }
-  }
+  useEffect(() => {
+    if (!showPlan || !activeProjectId) return;
+    loadPlanIndex().catch((reason: Error) => setError(reason.message));
+  }, [showPlan, activeProjectId, currentSessionId, planning, loadPlanIndex]);
 
   if (!activeProjectId) {
     return (
@@ -219,6 +213,8 @@ function App() {
             onResume={projectSwitch.openSession}
             onDelete={sessionActions.remove}
             onLoadMore={projectSessions.loadNextPage}
+            expandedProjects={projectSessions.expandedProjects}
+            onToggleProject={projectSessions.toggleProject}
           />
         </Splitter.Panel>
         <Splitter.Panel className="forge-main-panel" min={0}>
@@ -229,7 +225,7 @@ function App() {
               planOpen={showPlan}
               planProposed={planningFeature.planning.plan?.status === "proposed"}
               onTogglePlan={() => setShowPlan((value) => !value)}
-              onOpenSettings={openSettings}
+              onOpenSettings={() => setShowSettings(true)}
             />
             <Layout.Content className="forge-content" style={{ minWidth: 0 }}>
               <Splitter
@@ -288,6 +284,10 @@ function App() {
                           stance={conversation.stance}
                           presets={conversation.presets}
                           onStance={conversation.changeStance}
+                          onOpenModes={conversation.loadPresets}
+                          onOpenModels={() =>
+                            admin.loadModels().catch((reason: Error) => setError(reason.message))
+                          }
                           currentModel={admin.currentModel}
                           models={configuredModels}
                           thinking={admin.thinking}

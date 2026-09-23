@@ -10,10 +10,10 @@ export function usePlanning(onError: (message: string) => void) {
 
   const load = useCallback(async () => {
     setPlanning(await api<Planning>("/planning"));
-    // 目录是次要信息: 拉不回来不该让当前计划一起显示不出来。
-    api<PlanIndexView>("/plans")
-      .then(setIndex)
-      .catch(() => undefined);
+  }, []);
+
+  const loadIndex = useCallback(async () => {
+    setIndex(await api<PlanIndexView>("/plans"));
   }, []);
 
   const write = useCallback(
@@ -32,6 +32,7 @@ export function usePlanning(onError: (message: string) => void) {
     planning,
     index,
     load,
+    loadIndex,
     resolveReview: (decision: string) =>
       write(() =>
         api("/plan-reviews/current/resolve", {

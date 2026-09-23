@@ -88,7 +88,9 @@ export function SecurityTab({ admin }: { admin: Administration }) {
             dataIndex: "behavior",
             width: 80,
             render: (behavior: string) => (
-              <Tag color={behavior === "deny" ? "red" : behavior === "ask" ? "gold" : "green"}>{behavior}</Tag>
+              <Tag color={behavior === "deny" ? "red" : behavior === "ask" ? "gold" : "green"}>
+                {behavior}
+              </Tag>
             ),
           },
           { title: "规则", dataIndex: "rule" },

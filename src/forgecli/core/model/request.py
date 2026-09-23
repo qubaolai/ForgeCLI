@@ -16,6 +16,7 @@ from forgecli.common.cancellation import CancelToken
 from forgecli.core.message import ChatMessage
 from forgecli.core.model.origin import RequestOrigin
 from forgecli.core.model.params import ModelParams
+from forgecli.core.model.resolved import ResolvedModel
 from forgecli.core.tool.tool_call import ToolSchema
 
 
@@ -32,6 +33,8 @@ class ModelRequest:
     system_prompt: str | None = None
     tools: tuple[ToolSchema, ...] = ()
     cancel_token: CancelToken | None = None
+    agent_id: str = ""
+    resolved_model: ResolvedModel | None = None
 
     def __post_init__(self) -> None:
         if not self.request_id.strip():

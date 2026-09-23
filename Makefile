@@ -16,7 +16,7 @@
 # install-cli           build wheel and install forge with pip
 # uninstall-cli         uninstall forgecli with pip
 # verify-cli            verify installed forge command
-.PHONY: help install lock check lint format format-check type arch test web-install web-lint web-type web-build ci run run-cli package install-cli uninstall-cli verify-cli
+.PHONY: web-test help install lock check lint format format-check type arch test web-install web-lint web-type web-build ci run run-cli package install-cli uninstall-cli verify-cli
 
 # 变量定义
 POETRY ?= poetry
@@ -94,7 +94,10 @@ web-type:
 web-build:
 	cd web && npm run build
 
-ci: check lint format-check type arch web-lint web-type web-build test
+web-test:
+	cd web && npm test
+
+ci: check lint format-check type arch web-lint web-type web-build web-test test
 
 run: 
 	$(POETRY) run forge $(FORGE_RUN_ARGS)

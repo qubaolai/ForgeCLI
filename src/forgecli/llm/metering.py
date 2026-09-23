@@ -87,6 +87,7 @@ class UsageMeter:
         cost = self._cost.estimate_cost(prices, response.usage)
         return UsageRecordDraft(
             request_id=response.request_id,
+            agent_id=request.agent_id,
             session_id=request.session_id,
             turn_id=request.turn_id,
             provider=response.provider,

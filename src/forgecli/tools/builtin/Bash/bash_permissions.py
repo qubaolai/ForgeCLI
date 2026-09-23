@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import shlex
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from forgecli.core.permissions import (
     PermissionBehavior,
@@ -54,6 +54,7 @@ from forgecli.security.shell_rule_matching import (
     parse_permission_rule,
     suggestion_for_exact_command,
 )
+from forgecli.tools.builtin.Bash.directory_flow import directory_contexts
 from forgecli.tools.builtin.Bash.mode_validation import check_permission_mode
 from forgecli.tools.builtin.Bash.path_validation import check_path_constraints
 from forgecli.tools.builtin.Bash.read_only_validation import unit_is_read_only
@@ -325,16 +326,32 @@ def bash_tool_has_permission(
     if exact.is_deny or exact.is_ask:
         return exact
 
+    contexts, directory_error = directory_contexts(plan, context)
     # 3. 逐子命令.
     results: list[tuple[str, PermissionResult, CommandUnit]] = []
-    for unit, text in zip(units, texts, strict=True):
-        results.append(
-            (text, bash_tool_check_permission(unit, text, context, permission), unit)
+    for index, (unit, text) in enumerate(zip(units, texts, strict=True)):
+        unit_contexts = contexts[index] if contexts else (context,)
+        checked_unit = unit
+        if unit.name == "cd" and unit.argv[:1] == ("--",):
+            checked_unit = replace(unit, argv=unit.argv[1:])
+        decisions = tuple(
+            bash_tool_check_permission(checked_unit, text, candidate, permission)
+            for candidate in unit_contexts
         )
+        decision = next((d for d in decisions if d.is_deny), None)
+        decision = decision or next((d for d in decisions if d.is_ask), None)
+        decision = decision or next(
+            (d for d in decisions if not d.is_allow), decisions[0]
+        )
+        results.append((text, decision, unit))
     reason_pairs = tuple((text, result) for text, result, _ in results)
     for _, result, _ in results:
         if result.is_deny:
             return deny(result.message, subcommand_results_reason(reason_pairs))
+    if directory_error:
+        if exact.is_allow:
+            return allow(input, exact.decision_reason)
+        return ask(directory_error, other_reason(directory_error))
     if all(result.is_allow for _, result, _ in results):
         return allow(input, subcommand_results_reason(reason_pairs))
     if exact.is_allow:

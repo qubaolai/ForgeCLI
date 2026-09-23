@@ -1,6 +1,7 @@
 /** 设置面板: 一个模态框 + 左侧竖排 tab。窄屏时 tab 转到顶部。 */
 
-import { Grid, Modal, Tabs } from "antd";
+import { useEffect, useState } from "react";
+import { Alert, Button, Grid, Modal, Spin, Tabs } from "antd";
 import type { Administration } from "@/features/administration/useAdministration";
 import { GeneralTab } from "@/features/settings/GeneralTab";
 import { ModelSettings } from "@/features/settings/models/ModelSettings";
@@ -24,6 +25,33 @@ export function SettingsPanel({
   onClose: () => void;
 }) {
   const screens = Grid.useBreakpoint();
+  const [activeTab, setActiveTab] = useState(initialTab);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+  const load = {
+    general: settings.load,
+    models: admin.loadModels,
+    security: admin.loadSecurity,
+    recovery: admin.loadRecovery,
+    status: admin.loadStatus,
+  }[activeTab];
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    load()
+      .catch((reason: Error) => {
+        if (!cancelled) setError(reason.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [load, retry]);
   const items = [
     { key: "general", label: "常规", children: <GeneralTab settings={settings} /> },
     { key: "models", label: "模型", children: <ModelSettings admin={admin} /> },
@@ -42,12 +70,25 @@ export function SettingsPanel({
       destroyOnHidden
       styles={{ body: { maxHeight: "70vh", overflowY: "auto" } }}
     >
-      <Tabs
-        defaultActiveKey={initialTab}
-        tabPlacement={screens.md ? "start" : "top"}
-        destroyOnHidden
-        items={items}
-      />
+      {error && (
+        <Alert
+          type="error"
+          title={error}
+          action={<Button onClick={() => setRetry((value) => value + 1)}>重试</Button>}
+        />
+      )}
+      <Spin spinning={loading}>
+        <Tabs
+          activeKey={activeTab}
+          onChange={(key) => {
+            setLoading(true);
+            setActiveTab(key as SettingsTab);
+          }}
+          tabPlacement={screens.md ? "start" : "top"}
+          destroyOnHidden
+          items={items.map((item) => ({ ...item, children: loading || error ? null : item.children }))}
+        />
+      </Spin>
     </Modal>
   );
 }

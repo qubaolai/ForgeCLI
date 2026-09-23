@@ -96,6 +96,8 @@ class LoopResult:
     evicted_count: int = 0
     usage_drafts: tuple[UsageRecordDraft, ...] = ()
     compaction_drafts: tuple[CompactionDraft, ...] = ()
+    model_calls: int = 0
+    tool_calls: int = 0
 
 
 # 外层交给循环的"执行一批工具": AgentTurnService 那个经 run_tools 走执行链的方法.

@@ -44,6 +44,39 @@ forge 会直接拒绝启动 (退出码 4)，而不是挂在那里等一个永远
 同一个项目同时只能有一个 Forge 进程，所以 Web 和 `--cli` 不能同时开着同一个项目
 (后启动的一方会告诉你占用者的 pid)。详见 [ADR-0045](docs/adr/2026-09-03-0045-恢复终端交互式入口并与Web控制面共存.md)。
 
+## 子 Agent 调研
+
+主 Agent 可调用 `Agent`，把独立的代码搜索、阅读和分析任务交给子 Agent，再汇总报告。
+子 Agent 使用独立上下文，只能使用 Read、Glob、Grep、LSP 和可证明只读的 Bash；
+不修改工作区、不询问用户，也不能继续创建子 Agent。报告中的证据由主 Agent 复核后再用于改动。
+
+缺省每轮最多派发 8 次、同时运行 4 个，每个子任务最多 30 次循环模型调用，300 秒后请求取消。
+可通过以下环境变量覆盖（正数）：
+
+- `FORGE_MAX_SUB_AGENTS_PER_TURN`
+- `FORGE_MAX_SUB_AGENT_CONCURRENCY`
+- `FORGE_SUB_AGENT_MAX_MODEL_CALLS`
+- `FORGE_SUB_AGENT_TIMEOUT_SECONDS`
+- `FORGE_SUB_AGENT_GRACE_SECONDS`（停止收尾提示阈值，缺省 30 秒）
+
+停止父轮会取消全部子任务。超时采用协作取消；如果底层调用尚未退出，界面显示正在停止，
+项目仍保持忙碌直到收尾完成。子任务不是可跨轮运行的后台任务。模型设置可通过 `sub_agent`
+用途绑定独立模型；压缩仍使用 `compact` 用途，用量均计入父轮。
+
+## Bash 与结构化输出
+
+Bash 按 `;`、换行、`&&`、`||` 和管道分别检查分析单元，实际仍完整执行原命令。
+工作区内的目录切换和只读查询可自动放行；分号后会检查目录切换成功和失败两种路径。
+无法静态验证的控制结构、越界路径、写操作及显式拒绝规则仍按权限流程处理。
+`2>/dev/null` 可用于丢弃错误输出，普通文件重定向不属于只读操作。
+
+模型设置区分两项能力：`supports_structured_output` 表示原生 JSON Schema 输出，
+`supports_json_object` 表示 JSON Object 输出。二者默认关闭；都关闭时，结构化调用使用
+提示词约束和本地 schema 校验。仅支持 JSON Object 的接口应关闭前者、开启后者。
+两项均开启时优先使用 JSON Schema。服务端明确返回“不支持该 response_format”的 400
+错误时，会在同一模型上降级到声明支持的 JSON Object 或文本校验通道；取消、其他请求
+错误及 schema 不合法不会被这种降级掩盖。所有通道都校验最终 JSON 的字段和类型。
+
 ## 排查问题
 
 运行日志写在 `~/.forge/logs/`, 一次运行一个文件, `forge-latest.log` 指向本次运行:

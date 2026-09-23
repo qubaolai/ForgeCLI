@@ -13,6 +13,7 @@ SessionService 只依赖两个存储抽象与领域值对象，不碰 Rich/Typer
 from __future__ import annotations
 
 import secrets
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -118,6 +119,7 @@ class SessionService:
         clock: Callable[[], str] = now_iso,
         id_factory: Callable[[], str] = _new_session_id,
     ) -> None:
+        self._lock = threading.RLock()
         self._events = event_store
         self._states = state_store
         self._root = workspace_root
@@ -130,23 +132,25 @@ class SessionService:
 
     def start(self) -> SessionSnapshot:
         """仅在内存建立会话身份（不落盘）。重复调用会开启一个新会话。"""
-        snapshot = SessionSnapshot(
-            session_id=self._new_id(),
-            workspace_root=self._root,
-            mode=PermissionMode.DEFAULT,
-            last_event_id=None,
-            updated_at=self._clock(),
-        )
-        self._current = snapshot
-        self._seq = 0
-        self._persisted = False
-        return snapshot
+        with self._lock:
+            snapshot = SessionSnapshot(
+                session_id=self._new_id(),
+                workspace_root=self._root,
+                mode=PermissionMode.DEFAULT,
+                last_event_id=None,
+                updated_at=self._clock(),
+            )
+            self._current = snapshot
+            self._seq = 0
+            self._persisted = False
+            return snapshot
 
     def current(self) -> SessionSnapshot:
         """当前会话快照（可能尚未落盘）；未 start() 抛 SessionStateError。"""
-        if self._current is None:
-            raise SessionStateError("会话尚未开始。")
-        return self._current
+        with self._lock:
+            if self._current is None:
+                raise SessionStateError("会话尚未开始。")
+            return self._current
 
     def resume(
         self, snapshot: SessionSnapshot, events: Sequence[SessionEvent]
@@ -158,10 +162,11 @@ class SessionService:
         ``_seq`` 接续历史最后一条事件，后续 record_* 从 ``evt_(_seq+1)`` 追加进同一
         events.jsonl。
         """
-        self._current = snapshot
-        self._seq = _last_seq(events)
-        self._persisted = True
-        return snapshot
+        with self._lock:
+            self._current = snapshot
+            self._seq = _last_seq(events)
+            self._persisted = True
+            return snapshot
 
     def record_user_message(
         self,
@@ -232,7 +237,15 @@ class SessionService:
         payload 为 UsageRecordDraft.to_payload() 产出的安全摘要；gateway 不落盘，
         写入边界在 AgentTurnService -> 本方法。
         """
-        return self._append(EventType.USAGE_RECORDED, {"turn_id": turn_id, **payload})
+        with self._lock:
+            if (
+                payload.get("session_id", self.current().session_id)
+                != self.current().session_id
+            ):
+                raise SessionStateError("Usage belongs to a different session")
+            return self._append(
+                EventType.USAGE_RECORDED, {"turn_id": turn_id, **payload}
+            )
 
     def record_compaction(
         self, payload: Mapping[str, object], *, turn_id: str
@@ -245,11 +258,14 @@ class SessionService:
         顺带把 last_compaction_event_id 推进到这条事件 —— _append 已经把 last_event_id
         更新过了, 这里直接取它, 不重新算一遍 id.
         """
-        event = self._append(
-            EventType.CONTEXT_COMPACTED, {"turn_id": turn_id, **payload}
-        )
-        self._current = replace(self.current(), last_compaction_event_id=event.event_id)
-        return event
+        with self._lock:
+            event = self._append(
+                EventType.CONTEXT_COMPACTED, {"turn_id": turn_id, **payload}
+            )
+            self._current = replace(
+                self.current(), last_compaction_event_id=event.event_id
+            )
+            return event
 
     def record_tool_event(
         self,
@@ -279,8 +295,9 @@ class SessionService:
         - 模式直接决定权限裁决（ADR-0009 决策 6）。昨天升到 full_access，不该在今天
           /resume 时被静默继承——重新授权应当是显式动作。
         """
-        self._current = replace(self.current(), mode=mode)
-        return self._current
+        with self._lock:
+            self._current = replace(self.current(), mode=mode)
+            return self._current
 
     def _append(
         self,
@@ -289,70 +306,73 @@ class SessionService:
         # *,
         # mode: PermissionMode | None = None,
     ) -> SessionEvent:
-        if self._current is None:
-            raise SessionStateError("会话尚未开始。")
-        # 会话摘要名称只在首次落盘前、由首条自然语言输入派生一次（之后不改）。
-        if (
-            not self._persisted
-            and event_type == EventType.USER_MESSAGE
-            and not self._current.title
-        ):
-            title = _title_from(str(payload.get("text", "")), self._gateway)
-            if title:
-                self._current = replace(self._current, title=title)
-        self._ensure_persisted()
-        # if mode is not None:
-        #     self._current = replace(self._current, mode=mode)
-        return self._emit(event_type, payload)
+        with self._lock:
+            if self._current is None:
+                raise SessionStateError("会话尚未开始。")
+            # 会话摘要名称只在首次落盘前、由首条自然语言输入派生一次（之后不改）。
+            if (
+                not self._persisted
+                and event_type == EventType.USER_MESSAGE
+                and not self._current.title
+            ):
+                title = _title_from(str(payload.get("text", "")), self._gateway)
+                if title:
+                    self._current = replace(self._current, title=title)
+            self._ensure_persisted()
+            # if mode is not None:
+            #     self._current = replace(self._current, mode=mode)
+            return self._emit(event_type, payload)
 
     def _ensure_persisted(self) -> None:
         """首个可记录事件触发：补写 session_created，真正建出磁盘文件。"""
-        if self._persisted:
-            return
-        self._persisted = True
-        snapshot = self.current()
-        # 不带 mode：模式是运行时状态（见 set_mode），落进事件反而会记下"首个可记录
-        # 事件发生时的模式"这种既非会话起点、又无人消费的值。
-        self._emit(
-            EventType.SESSION_CREATED,
-            {"workspace_root": snapshot.workspace_root},
-        )
+        with self._lock:
+            if self._persisted:
+                return
+            self._persisted = True
+            snapshot = self.current()
+            # 不带 mode：模式是运行时状态（见 set_mode），落进事件反而会记下"首个可记录
+            # 事件发生时的模式"这种既非会话起点、又无人消费的值。
+            self._emit(
+                EventType.SESSION_CREATED,
+                {"workspace_root": snapshot.workspace_root},
+            )
 
     def _emit(
         self, event_type: EventType, payload: Mapping[str, object]
     ) -> SessionEvent:
-        snapshot = self.current()
-        self._seq += 1
-        event_id = f"evt_{self._seq:04d}"
-        created_at = self._clock()
-        event = SessionEvent(
-            event_id=event_id,
-            session_id=snapshot.session_id,
-            type=event_type,
-            created_at=created_at,
-            payload=payload,
-        )
-        # 先追加事件，再更新快照——快照的 last_event_id 始终指向已落盘的事件。
-        try:
-            self._events.append(event)
-            self._current = replace(
-                snapshot, last_event_id=event_id, updated_at=created_at
+        with self._lock:
+            snapshot = self.current()
+            self._seq += 1
+            event_id = f"evt_{self._seq:04d}"
+            created_at = self._clock()
+            event = SessionEvent(
+                event_id=event_id,
+                session_id=snapshot.session_id,
+                type=event_type,
+                created_at=created_at,
+                payload=payload,
             )
-            self._states.write(self._current)
-        except OSError:
-            # 写不进事件日志是"这次会话的记录从此不完整"级别的故障, 而调用方多半只会
-            # 看到一个 IO 异常冒到最外层. 先留痕再上抛.
-            _log.exception(
-                "session.write_failed",
+            # 先追加事件，再更新快照——快照的 last_event_id 始终指向已落盘的事件。
+            try:
+                self._events.append(event)
+                self._current = replace(
+                    snapshot, last_event_id=event_id, updated_at=created_at
+                )
+                self._states.write(self._current)
+            except OSError:
+                # 写不进事件日志是"这次会话的记录从此不完整"级别的故障, 而调用方多半只会
+                # 看到一个 IO 异常冒到最外层. 先留痕再上抛.
+                _log.exception(
+                    "session.write_failed",
+                    event_id=event_id,
+                    event_type=event_type.value,
+                    session_id=snapshot.session_id,
+                )
+                raise
+            _log.debug(
+                "session.event",
                 event_id=event_id,
                 event_type=event_type.value,
-                session_id=snapshot.session_id,
+                payload=dict(payload),
             )
-            raise
-        _log.debug(
-            "session.event",
-            event_id=event_id,
-            event_type=event_type.value,
-            payload=dict(payload),
-        )
-        return event
+            return event

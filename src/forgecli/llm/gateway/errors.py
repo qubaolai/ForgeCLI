@@ -80,7 +80,7 @@ class ModelContextOverflowError(ModelGatewayError):
 
 
 class ModelBadRequestError(ModelGatewayError):
-    """请求构造非法 / provider schema 不兼容（多为 bug），不应 fallback 掩盖。"""
+    """请求非法; 仅明确不支持 response_format 时可切换结构化传输格式。"""
 
 
 class ModelProviderInternalError(ModelGatewayError):

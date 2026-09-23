@@ -12,7 +12,7 @@ __all__ = ["ToolRunObserver"]
 
 class ToolRunObserver(ABC):
     @abstractmethod
-    def bind_turn(self, session_id: str, turn_id: str) -> None: ...
+    def bind_turn(self, session_id: str, turn_id: str, agent_id: str = "") -> None: ...
 
     @abstractmethod
     def tool_validated(

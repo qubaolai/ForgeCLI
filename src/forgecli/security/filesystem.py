@@ -311,6 +311,13 @@ def check_read_permission_for_tool(
     path = tool.get_path(input)
     if path is None:
         path = context.cwd
+    return check_read_path_permission(path, input, context)
+
+
+def check_read_path_permission(
+    path: str, input: Mapping[str, object], context: ToolUseContext
+) -> PermissionResult:
+    """Shared read boundary for file tools and shell path operands."""
     cwd = context.cwd
     candidates = paths_for_permission_check(path, cwd)
 
@@ -356,7 +363,7 @@ def check_read_permission_for_tool(
     if path_in_allowed_working_path(path, context):
         return allow(input, working_dir_reason("Path is in a working directory"))
     # 7. 内部路径.
-    if _in_internal_paths(expand_path(path, cwd), context):
+    if all(_in_internal_paths(candidate, context) for candidate in candidates):
         return allow(input, other_reason("Internal Forge path"))
     # 8. read allow 规则.
     for candidate in candidates:

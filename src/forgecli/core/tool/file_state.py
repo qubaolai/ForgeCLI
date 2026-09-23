@@ -58,6 +58,13 @@ class FileStateCache:
         self._size = 0
         self._lock = threading.Lock()
 
+    def clone(self) -> FileStateCache:
+        with self._lock:
+            cloned = FileStateCache(self._max_entries, self._max_size_bytes)
+            cloned._entries = self._entries.copy()
+            cloned._size = self._size
+            return cloned
+
     def get(self, path: str) -> FileState | None:
         key = _normalize(path)
         with self._lock:

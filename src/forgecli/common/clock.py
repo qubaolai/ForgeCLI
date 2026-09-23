@@ -7,4 +7,4 @@ from datetime import datetime
 
 def now_iso() -> str:
     """本地时区、秒级 ISO 时间戳，如 ``2026-06-27T10:30:00+08:00``。"""
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")

@@ -60,6 +60,12 @@ async def list_sessions(request: Request) -> dict[str, object]:
         "current_session_id": runtime.session.current().session_id,
         "current_session": to_jsonable(runtime.session.current()),
         "items": [to_jsonable(item) for item in runtime.list_sessions()],
+        # 首屏只需要当前显示值，完整配置和可选模型留给对应菜单。
+        "presentation": {
+            "theme": runtime.config.display("output.theme"),
+            "current_model": str(runtime.current_model() or ""),
+            "thinking": runtime.thinking_view(),
+        },
     }
 
 

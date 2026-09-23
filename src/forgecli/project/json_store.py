@@ -97,6 +97,8 @@ class JsonProjectConfigStore:
             trusted=bool(data.get("trusted", False)),
             primary_workspace_root=str(data["primary_workspace_root"]),
             workspace_roots=roots,
+            created_at=str(data.get("created_at", "")),
+            updated_at=str(data.get("updated_at", "")),
         )
 
     def save(self, project: ProjectConfig) -> None:
@@ -109,4 +111,6 @@ class JsonProjectConfigStore:
         document["trusted"] = project.trusted
         document["primary_workspace_root"] = project.primary_workspace_root
         document["workspace_roots"] = list(project.workspace_roots)
+        document["create_at"] = project.created_at
+        document["update_at"] = project.updated_at
         write_document(path, document)

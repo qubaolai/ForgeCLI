@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
 
 import jsonschema
@@ -108,7 +109,12 @@ def _run_concurrently(
                 (
                     call,
                     pool.submit(
-                        run_tool_use, call, context, can_use_tool, parent_message
+                        copy_context().run,
+                        run_tool_use,
+                        call,
+                        context,
+                        can_use_tool,
+                        parent_message,
                     ),
                 )
             )

@@ -7,8 +7,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Button, Col, Flex, Form, Input, Row, Select, Typography } from "antd";
+import { CapabilitySelect } from "@/features/settings/models/CapabilitySelect";
 
-export type DraftField = { key: string; label: string; value: string; choices?: string[] };
+export type DraftField = { key: string; label: string; value: string; choices?: string[]; kind?: string };
 
 export function DraftForm({
   fields,
@@ -36,7 +37,7 @@ export function DraftForm({
   const update = (key: string, value: string) => setDraft((state) => ({ ...state, [key]: value }));
 
   return (
-    <Form layout="vertical" component="div" size="small">
+    <Form className="forge-model-fields" layout="vertical" component="div">
       {/* 两列: 这些表单大多是十来个短字段, 一列排下去要滚很久才能看到保存按钮。 */}
       <Row gutter={12}>
         {fields.map((field) => (
@@ -46,11 +47,21 @@ export function DraftForm({
               // 改过还没保存的那几行标出来: 一张表里哪几格待保存, 光看按钮上的数字看不出来。
               validateStatus={draft[field.key] !== committed[field.key] ? "warning" : undefined}
             >
-              {field.choices ? (
+              {field.kind === "bool" ? (
+                <CapabilitySelect
+                  value={draft[field.key] ?? "false"}
+                  onChange={(value) => update(field.key, value)}
+                  detail={field.label.replace(/^支持\s*/, "")}
+                />
+              ) : field.choices ? (
                 <Select
+                  className="forge-choice-select"
                   value={draft[field.key] ?? ""}
                   onChange={(value) => update(field.key, value)}
-                  options={field.choices.map((choice) => ({ value: choice, label: choice }))}
+                  options={field.choices.map((choice) => ({
+                    value: choice,
+                    label: choice || "使用默认",
+                  }))}
                 />
               ) : (
                 <Input

@@ -47,6 +47,7 @@ class ModelCatalogEntry:
     # None 表示未知, 上下文预算据此退化为只按硬限兜底; 不猜一个数.
     effective_context_tokens: int | None = None
     supports_structured_output: bool = False
+    supports_json_object: bool = False
     supports_tool_calling: bool = False
     thinking_capabilities: ModelThinkingCapabilities = field(
         default_factory=_default_thinking_options

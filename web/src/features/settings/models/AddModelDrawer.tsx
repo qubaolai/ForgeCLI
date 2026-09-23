@@ -15,12 +15,15 @@ import {
   Form,
   Input,
   Radio,
+  Select,
   Space,
   Switch,
   Tag,
   Typography,
 } from "antd";
 import {
+  DEFAULT_CONTEXT_WINDOW,
+  DEFAULT_MAX_TOKENS,
   DEFAULT_TEMPERATURE,
   DEFAULT_TOP_P,
   buildInitialModelParams,
@@ -29,6 +32,7 @@ import {
   providerReady,
 } from "@/shared/lib/modelParams";
 import { ProviderAvatar } from "@/features/settings/models/ProviderAvatar";
+import { CapabilitySelect } from "@/features/settings/models/CapabilitySelect";
 import type { KnownProvider, Provider } from "@/types/admin";
 
 type ModelDraft = {
@@ -36,10 +40,14 @@ type ModelDraft = {
   modelId: string;
   thinking: boolean;
   thinkingEffort: string;
+  thinkingEfforts: string;
   temperature: string;
   topP: string;
   contextWindow: string;
   maxTokens: string;
+  supportsStructuredOutput: string;
+  supportsJsonObject: string;
+  supportsToolCalling: string;
   makeDefault: boolean;
 };
 
@@ -63,6 +71,11 @@ export function AddModelDrawer({
   const [validationError, setValidationError] = useState("");
   const providerId = Form.useWatch("providerId", form) ?? knownProviders[0]?.id ?? "";
   const thinking = Form.useWatch("thinking", form);
+  const thinkingEfforts = Form.useWatch("thinkingEfforts", form) ?? "";
+  const effortOptions = thinkingEfforts
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
   const makeDefault = Form.useWatch("makeDefault", form);
   const selected = knownProviders.find((item) => item.id === providerId);
   const selectedSettings = providerSettings.find((item) => item.id === providerId);
@@ -77,6 +90,13 @@ export function AddModelDrawer({
         thinkingMode: values.thinking ? "on" : "off",
         thinkingEffort: values.thinkingEffort ?? "",
       });
+      params.thinking_efforts = (values.thinkingEfforts ?? "")
+        .split(",")
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean);
+      params.supports_structured_output = values.supportsStructuredOutput === "true";
+      params.supports_json_object = values.supportsJsonObject === "true";
+      params.supports_tool_calling = values.supportsToolCalling === "true";
       setValidationError("");
     } catch (reason) {
       setValidationError((reason as Error).message);
@@ -112,6 +132,7 @@ export function AddModelDrawer({
       }
     >
       <Form<ModelDraft>
+        className="forge-model-fields"
         form={form}
         layout="vertical"
         onFinish={submit}
@@ -120,10 +141,14 @@ export function AddModelDrawer({
           modelId: "",
           thinking: false,
           thinkingEffort: "",
+          thinkingEfforts: "",
           temperature: DEFAULT_TEMPERATURE,
           topP: DEFAULT_TOP_P,
-          contextWindow: "",
-          maxTokens: "",
+          contextWindow: DEFAULT_CONTEXT_WINDOW,
+          maxTokens: DEFAULT_MAX_TOKENS,
+          supportsStructuredOutput: "false",
+          supportsJsonObject: "false",
+          supportsToolCalling: "true",
           makeDefault: true,
         }}
       >
@@ -175,13 +200,24 @@ export function AddModelDrawer({
           <Switch disabled={saving} />
         </Form.Item>
         {thinking && (
-          <Form.Item
-            name="thinkingEffort"
-            label="思考强度"
-            extra="填模型自己声明的强度名，例如 low / medium / high。"
-          >
-            <Input placeholder="留空用模型默认" disabled={saving} />
-          </Form.Item>
+          <>
+            <Form.Item
+              name="thinkingEfforts"
+              label="模型支持的思考强度"
+              extra="按供应商文档填写，逗号分隔，例如 low, medium, high。"
+            >
+              <Input placeholder="low, medium, high" disabled={saving} />
+            </Form.Item>
+            <Form.Item name="thinkingEffort" label="当前思考强度">
+              <Select
+                className="forge-choice-select"
+                allowClear
+                placeholder="留空使用模型默认"
+                disabled={saving || effortOptions.length === 0}
+                options={effortOptions.map((value) => ({ value, label: value }))}
+              />
+            </Form.Item>
+          </>
         )}
 
         <Collapse
@@ -205,11 +241,27 @@ export function AddModelDrawer({
                     <Input inputMode="decimal" disabled={saving} />
                   </Form.Item>
                   <Form.Item name="contextWindow" label="上下文窗口">
-                    <Input inputMode="numeric" placeholder="使用供应商默认值" disabled={saving} />
+                    <Input inputMode="numeric" disabled={saving} />
                   </Form.Item>
                   <Form.Item name="maxTokens" label="最大输出 Tokens">
-                    <Input inputMode="numeric" placeholder="使用供应商默认值" disabled={saving} />
+                    <Input inputMode="numeric" disabled={saving} />
                   </Form.Item>
+                  {(
+                    [
+                      ["supportsStructuredOutput", "支持 JSON Schema 输出"],
+                      ["supportsJsonObject", "支持 JSON Object 输出"],
+                      ["supportsToolCalling", "支持工具调用"],
+                    ] as const
+                  ).map(([name, label]) => (
+                    <Form.Item key={name} name={name} label={label}>
+                      <CapabilitySelect
+                        disabled={saving}
+                        detail={label.replace(/^支持\s*/, "")}
+                        value={form.getFieldValue(name)}
+                        onChange={(value) => form.setFieldValue(name, value)}
+                      />
+                    </Form.Item>
+                  ))}
                 </>
               ),
             },

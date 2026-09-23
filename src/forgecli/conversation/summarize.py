@@ -23,12 +23,15 @@ from __future__ import annotations
 import json
 import uuid
 
+from forgecli.common.cancellation import CancelToken
 from forgecli.core.context.window import EvictionPlan
 from forgecli.core.message import ChatMessage, TextBlock, ToolResultBlock
 from forgecli.core.model.origin import RequestOrigin
 from forgecli.core.model.params import ModelParams
 from forgecli.core.model.request import ModelRequest
+from forgecli.core.model.resolved import ResolvedModel
 from forgecli.core.model.usage import UsageRecordDraft
+from forgecli.core.token_estimator import ApproximateTokenEstimator
 from forgecli.core.tool.tool_call import ToolCall
 from forgecli.core.turn import MessageRole
 from forgecli.llm.gateway.gateway import LlmGateway
@@ -75,7 +78,10 @@ def summarize(
     *,
     session_id: str,
     turn_id: str,
+    agent_id: str = "",
+    cancel_token: CancelToken | None = None,
     meter: UsageMeter | None = None,
+    resolved_model: ResolvedModel | None = None,
 ) -> tuple[tuple[ChatMessage, ...], Summary]:
     """把被淘汰的那一段换成一份交接说明, 返回淘汰后的完整窗口.
 
@@ -92,19 +98,32 @@ def summarize(
 
     ``meter`` 缺省为 None: 没接计量时照常摘要, 只是这次调用不产出计量草稿.
     """
+    flat = _flatten(plan.dropped)
+    if resolved_model is not None:
+        entry = resolved_model.entry
+        allowance = entry.context_window - (entry.max_output_tokens or 0)
+        estimator = ApproximateTokenEstimator()
+        while (
+            flat
+            and estimator.estimate_text(prompts.COMPACT_PROMPT + flat) + 16 > allowance
+        ):
+            flat = flat[len(flat) // 4 + 1 :]
+        if not flat:
+            return (_verbatim_block(plan), *plan.kept), Summary()
     request = ModelRequest(
         request_id=f"req_{uuid.uuid4().hex[:12]}",
         session_id=session_id,
         turn_id=turn_id,
+        agent_id=agent_id,
+        cancel_token=cancel_token,
+        resolved_model=resolved_model,
         # 用途标签, 不选模型 (ADR-0011 §3.3): 摘要走当前主模型, 除非用户显式
         # 给这个用途配了覆盖.
         origin=RequestOrigin.COMPACT,
         messages=(
             ChatMessage(
                 role=MessageRole.USER,
-                content=(
-                    TextBlock(f"{prompts.COMPACT_PROMPT}\n\n{_flatten(plan.dropped)}"),
-                ),
+                content=(TextBlock(f"{prompts.COMPACT_PROMPT}\n\n{flat}"),),
             ),
         ),
         params=ModelParams(),

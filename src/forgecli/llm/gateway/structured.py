@@ -15,9 +15,36 @@ from dataclasses import replace
 
 from forgecli.common.json_schema import validate_json_schema
 from forgecli.core.model.request import ModelRequest, StructuredModelRequest
+from forgecli.llm.gateway.errors import ModelBadRequestError
 from forgecli.prompt import prompts
 
 __all__ = ["parse", "strip_code_fence", "with_instruction"]
+
+
+def unsupported_format(error: ModelBadRequestError) -> bool:
+    """Only unsupported transport formats qualify; malformed schemas do not."""
+    message = str(error).lower()
+    if any(
+        part in message
+        for part in (
+            "invalid schema",
+            "schema keyword",
+            "schema property",
+            "additionalproperties",
+        )
+    ):
+        return False
+    return any(
+        name in message for name in ("response_format", "json_schema", "json_object")
+    ) and any(
+        phrase in message
+        for phrase in (
+            "not supported",
+            "unsupported",
+            "unavailable",
+            "does not support",
+        )
+    )
 
 
 def with_instruction(

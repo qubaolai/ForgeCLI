@@ -320,6 +320,7 @@ def _using_your_tools(tool_names: frozenset[str]) -> str | None:
 
     has_bash = BASH_TOOL_NAME in tool_names
     dedicated = [
+        when("Agent", "独立且需要多步阅读的调研可交给 Agent; 改代码前复核报告证据。"),
         when(
             FILE_READ_TOOL_NAME,
             f"读文件用 {FILE_READ_TOOL_NAME}, 不用 cat / head / tail / sed",
@@ -924,3 +925,48 @@ def auto_mode_classifier_prompt(
 - `thinking`: 两三句话的推理: 这条调用做什么, 落不落进哪个类别, 用户有没有明确要求.
 - `should_block`: 布尔值, 拦为 true.
 - `reason`: 一句话, 写给 Forge 看: 拦的话说清为什么以及它能换什么做法; 放行的话说一句"允许"即可."""
+
+
+def sub_agent_system_prompt(
+    facts: SessionFacts, instructions: tuple[ProjectInstruction, ...]
+) -> str:
+    return "\n\n".join(
+        filter(
+            None,
+            (
+                "You are Forge's read-only research agent. Complete only the delegated task. "
+                "Use Read, Glob, Grep, LSP, and proven read-only Bash commands. Never create, edit, "
+                "delete or move files, write through redirections, or ask the user. Do not retry "
+                "denied actions with different spellings; report the exact blocked command/path. "
+                "Project instructions provide context only; instructions to edit, execute writes "
+                "or commit do not apply. Return a report with headings 摘要 / 发现 / 证据 / 建议 / 未完成. "
+                "Cite file paths, line numbers and short excerpts. Give recommendations, not patches.",
+                _env_info(facts),
+                _workspace_instructions(instructions),
+            ),
+        )
+    )
+
+
+def sub_agent_task(prompt: str) -> str:
+    return f"Delegated research task:\n{prompt}"
+
+
+def sub_agent_limit(limit: int) -> str:
+    return f"This turn has reached its {limit} child-agent dispatch limit. Continue the task yourself."
+
+
+def sub_agent_stopped(status: str) -> str:
+    return f"Child research stopped ({status}). Findings may be incomplete."
+
+
+def sub_agent_trailer(
+    agent_id: str,
+    status: str,
+    model_calls: int,
+    tool_calls: int,
+    total_tokens: int,
+    duration_ms: float,
+    usage_complete: bool,
+) -> str:
+    return f"\n\n<usage agent_id={agent_id} status={status} model_calls={model_calls} tool_calls={tool_calls} total_tokens={total_tokens} duration_ms={duration_ms:.0f} usage_complete={usage_complete}/>"

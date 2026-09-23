@@ -37,7 +37,9 @@ export function ToolRun({
   turnStatus,
   reason,
   directory,
+  childEvents = [],
 }: {
+  childEvents?: RunEvent[];
   groups: ToolGroup[];
   turnStatus: LocalTurn["status"];
   reason: string;
@@ -121,6 +123,47 @@ export function ToolRun({
                   {reason}
                 </Typography.Text>
               )}
+              {childEvents
+                .filter((event) => event.kind === "sub_agent_started")
+                .map((start) => {
+                  const child = childEvents.filter((event) => event.agent_id === start.agent_id);
+                  const end = child.find((event) => event.kind === "sub_agent_finished");
+                  const stopping = child.some((event) => event.kind === "sub_agent_stopping");
+                  return (
+                    <div key={start.agent_id}>
+                      <Typography.Text type="secondary">
+                        {stringValue(start.payload.description)} ·{" "}
+                        {end ? stringValue(end.payload.status) : stopping ? "正在停止…" : "调研中…"}
+                        {end ? ` · ${numberValue(end.payload.total_tokens)} tokens` : ""}
+                        {end?.payload.usage_complete === false ? " · 用量不完整" : ""}
+                      </Typography.Text>
+                      <Collapse
+                        ghost
+                        size="small"
+                        items={[
+                          {
+                            key: start.agent_id ?? "child",
+                            label: "子任务过程",
+                            children: (
+                              <pre style={{ whiteSpace: "pre-wrap" }}>
+                                {child
+                                  .filter(
+                                    (event) =>
+                                      event.kind === "tool_prepared" || event.kind === "tool_completed",
+                                  )
+                                  .map(
+                                    (event) =>
+                                      `${stringValue(event.payload.tool_name)} ${stringValue(event.payload.activity ?? event.payload.result_summary)}`,
+                                  )
+                                  .join("\n")}
+                              </pre>
+                            ),
+                          },
+                        ]}
+                      />
+                    </div>
+                  );
+                })}
               {rows.map((row) => (
                 <div className="call-row" key={row.key}>
                   <Typography.Text
@@ -217,7 +260,9 @@ function policyNote(event: RunEvent): { text: string; tone: Tone } {
   const decision = stringValue(event.payload.decision);
   const reason = stringValue(event.payload.reason);
   const detail = stringValue(event.payload.detail);
-  const text = [`裁决 ${decision}`, reason, detail && detail !== reason ? detail : ""].filter(Boolean).join(" · ");
+  const text = [`裁决 ${decision}`, reason, detail && detail !== reason ? detail : ""]
+    .filter(Boolean)
+    .join(" · ");
   return { text, tone: decision === "allow" ? "secondary" : "warning" };
 }
 
