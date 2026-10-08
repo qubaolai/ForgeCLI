@@ -1,8 +1,7 @@
 """policy_settings 来源的内置规则 (ADR-0055 差异表).
 
-Claude Code 的 policySettings 是企业下发的文件; 本仓库是单用户工具, 这一来源的内容
-写在代码里: 凭证目录与 Forge 自己的目录不该等用户自己写 deny 规则才受保护. 来源的
-语义与 Claude Code 同 —— 不可被其他来源覆盖, /permissions 里只读.
+本仓库是单用户工具, 这一来源的内容写在代码里: 凭证目录与 Forge 自己的目录不该等用户自己写 deny 规则才受保护.
+不可被其他来源覆盖, /permissions 里只读.
 """
 
 from __future__ import annotations

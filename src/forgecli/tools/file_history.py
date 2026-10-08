@@ -2,7 +2,7 @@
 
 Edit / Write 落盘前调 `track_edit(path)` 备份原件; 每条 assistant 消息开始时
 `make_snapshot(message_id)`; `rewind(message_id)` 回到那条消息之前的文件状态. 快照
-上限 100. Bash 改的文件不在历史里 —— 与 Claude Code 同.
+上限 100. Bash 改的文件不在历史里.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ class RewindOutcome:
 
 @dataclass
 class FileHistory:
-    """一个会话的文件历史. 备份目录在会话目录下, 与被改的工作区分开."""
+    """一个会话的文件历史. 索引仅存内存, 备份使用当前进程的临时目录, 与工作区分开."""
 
     backup_dir: Path
     tracked: dict[str, str | None] = field(default_factory=dict)

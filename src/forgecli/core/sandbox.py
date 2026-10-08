@@ -1,9 +1,9 @@
-"""沙箱设置 (ADR-0055 决策 7; 对应 Claude Code 的 settings.sandbox 与 sandbox-runtime).
+"""沙箱设置 (ADR-0055 决策 7.
 
 围栏 (`core/execution/fence.py`) 是实现, 这里是驱动它的设置. 与模式正交: 模式说"什么
 时候问人", 沙箱说"子进程能碰什么".
 
-缺省值与 Claude Code 同: 不开沙箱; 开了之后围栏内的 Bash 自动放行 (沙箱换来的就是
+缺省值: 不开沙箱; 开了之后围栏内的 Bash 自动放行 (沙箱换来的就是
 不用问), 模型可以用 `dangerously_disable_sandbox` 跳出围栏 (会触发询问).
 """
 

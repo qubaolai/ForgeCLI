@@ -31,7 +31,7 @@ __all__ = [
     "write_permissions",
 ]
 
-# 设置文件里的键名, 与 Claude Code 的 settings.json 同.
+# 设置文件里的键名.
 _ALLOW = "allow"
 _DENY = "deny"
 _ASK = "ask"
@@ -121,7 +121,7 @@ def write_permissions(path: Path, section: PermissionsSection) -> None:
 
 
 def read_sandbox(path: Path) -> SandboxSettings | None:
-    """文件里的 sandbox 段, 键与 Claude Code 的 settings.sandbox 同. 没有这一段返回 None
+    """文件里的 sandbox 段. 没有这一段返回 None
     (用缺省)."""
     raw = _document(path).get("sandbox")
     if not isinstance(raw, Mapping):

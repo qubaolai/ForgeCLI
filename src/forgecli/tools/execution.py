@@ -4,9 +4,6 @@
 
     查找 -> schema 校验 -> validate_input -> 补派生字段 -> 权限 -> call -> 落盘与回流
 
-Claude Code 在权限前后各有一个用户配置的 hook (PreToolUse / PostToolUse); 本仓库没有
-(ADR-0054 决策 6 已撤), 需要时再加.
-
 一次 tool_use 只产生一条 tool_result; 中间事实 (校验过了, 裁决了, 问了人, 开始了,
 结束了) 经 `context.observer` 发出去.
 """

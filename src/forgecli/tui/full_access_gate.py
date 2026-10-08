@@ -7,7 +7,7 @@ Bypass Permissions (旧名 Full Access) 档不在默认的模式列表里: 启�
    去掉参数: 用户带了参数却发现菜单里没有那一档, 会去翻文档而不是翻配置.
 2. 这台机器上有人在交互式终端里确认过一次 (决策 2). 记录在
    `infrastructure/security/full_access_consent`, 以后不再问. 没有终端就没有人能回答,
-   那时拒绝启动并说清楚去哪里确认 —— 与 Claude Code 对 `--bg` 的处理一样.
+   那时拒绝启动并说清楚去哪里确认.
 
 住在 `interfaces/` 顶层而不是某个入口的包里: 两条启动路径 (`tui/bootstrap`,
 `web/server`) 都要过它, 而它既要读配置 (infrastructure) 又要在终端里问人 (tui/chooser).

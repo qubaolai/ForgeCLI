@@ -1,4 +1,4 @@
-/** 会话模式 (ADR-0055 决策 1, ADR-0058): 与 Claude Code 同一组, 六档.
+/** 会话模式 (ADR-0055 决策 1, ADR-0058): 六档.
  *
  * 模式列表**不在这里写死**, 由 GET /modes 给: 名字, 说明都是后端 MODE_OPTIONS 的事实,
  * 这里再写一份就是第二份定义 —— 而且 Bypass Permissions 在不在列表里取决于 forge 启动时

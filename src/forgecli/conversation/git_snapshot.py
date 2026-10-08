@@ -1,4 +1,4 @@
-"""会话开始时的 git 快照 (ADR-0056 决策 7; 对应 Claude Code 的 context.ts getGitStatus).
+"""会话开始时的 git 快照 (ADR-0056 决策 7).
 
 只在会话刷新点读一次, 进 system prompt 的会话段. 读不到 (不是仓库, 没装 git, 超时) 就
 没有这一节, 不抛错: 它是辅助信息, 一个坏掉的 git 不该让会话起不来.

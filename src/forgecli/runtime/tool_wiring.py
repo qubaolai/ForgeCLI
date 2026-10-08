@@ -63,6 +63,8 @@ from forgecli.settings.paths import (
     plans_dir,
     project_memory_file,
     projects_dir,
+    runtime_project_dir,
+    session_runtime_dir,
     user_memory_file,
 )
 from forgecli.tools.builtin.Agent.tool import AgentTool
@@ -82,6 +84,8 @@ from forgecli.tools.builtin.planning.tool import (
 )
 from forgecli.tools.builtin.Read.tool import FileReadTool
 from forgecli.tools.builtin.Test.tool import TestTool
+from forgecli.tools.builtin.WebFetch.tool import WebFetch
+from forgecli.tools.builtin.WebSearch.tool import WebSearch
 from forgecli.tools.builtin.Write.tool import FileWriteTool
 from forgecli.tools.file_history import FileHistory
 from forgecli.tools.runner import ToolRunner
@@ -253,13 +257,17 @@ def build_tool_stack(
     )
     lsp_pool = LspServerPool(roots[0], environment)
     project_home = projects_dir() / workspace_id
-    file_history = FileHistory(backup_dir=project_home / "file-history")
+    file_history = FileHistory(
+        backup_dir=runtime_project_dir(workspace_id) / "file-history"
+    )
 
     base_tools: tuple[Tool, ...] = (
         FileReadTool(),
         FileEditTool(),
         FileWriteTool(),
         GlobTool(),
+        WebSearch(api_key=environment.get("PARALLEL_API_KEY", "")),
+        WebFetch(),
         GrepTool(local=local, sandboxed=sandboxed, fence_factory=fence_factory),
         LspTool(lsp_pool),
         BashTool(
@@ -311,9 +319,13 @@ def build_tool_stack(
         environment=environment,
         workspace_roots=roots,
         tool_results_dir=lambda: str(
-            project_home / "sessions" / session.current().session_id / "tool-results"
+            session_runtime_dir(workspace_id, session.current().session_id)
+            / "tool-results"
         ),
-        internal_paths=(str(project_home / "sessions"),),
+        internal_paths=(
+            str(project_home / "sessions"),
+            str(runtime_project_dir(workspace_id) / "sessions"),
+        ),
         non_interactive=non_interactive,
     )
     return ToolStack(

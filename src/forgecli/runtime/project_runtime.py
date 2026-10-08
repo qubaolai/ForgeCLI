@@ -85,7 +85,7 @@ from forgecli.session.snapshot import SessionSnapshot
 from forgecli.session.state_store import JsonStateStore
 from forgecli.settings.config_service import ConfigService
 from forgecli.settings.config_store import JsonConfigStore
-from forgecli.settings.paths import config_dir, config_file
+from forgecli.settings.paths import config_dir, config_file, session_runtime_dir
 from forgecli.tools.file_history import FileHistorySnapshot, RewindOutcome
 
 _log = get_log(__name__)
@@ -321,11 +321,9 @@ class ProjectRuntime:
 
         def diagnostics_dir() -> str:
             return str(
-                config_dir()
-                / "projects"
-                / self.project.project_id
-                / "sessions"
-                / self.session.current().session_id
+                session_runtime_dir(
+                    self.project.project_id, self.session.current().session_id
+                )
                 / "diagnostics"
             )
 
@@ -655,7 +653,7 @@ class ProjectRuntime:
         return self.session.current()
 
     def grant_workspace(self, path: Path, *, write: bool) -> AdditionalWorkingDirectory:
-        """`/add-dir`: 加一个额外工作目录 (本会话). Claude Code 的目录授权不分读写,
+        """`/add-dir`: 加一个额外工作目录 (本会话). 
         加进来就是可读可写; `write` 只进事件记录."""
         resolved = str(path.resolve())
         self._apply_permission_update(

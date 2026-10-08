@@ -17,6 +17,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from forgecli.common.runtime_files import runtime_dir
+
 CONFIG_DIR_ENV = "FORGE_CONFIG_DIR"
 _DEFAULT_DIRNAME = ".forge"
 
@@ -35,18 +37,23 @@ def config_file(name: str) -> Path:
 
 
 def state_dir() -> Path:
-    """Forge 状态根目录: 工具产物与工作区恢复数据落在这里.
-
-    刻意放在 Forge home 而不是工作区: 恢复数据必须在被恢复的目录之外, 否则一条
-    ``rm -rf .`` 会同时删掉工作区和用来还原它的备份 (ADR-0015 §6); 工具产物落在工作区
-    则会污染用户仓库, 还会被下一轮 Agent 当成项目内容读回上下文.
-    """
+    """持久状态根目录: 恢复快照、凭证冷却等跨运行数据; 临时产物不放这里."""
     return config_dir() / "state"
 
 
 def artifacts_dir() -> Path:
-    """超阈值工具输出的落盘位置 (ADR-0004 §8)."""
-    return state_dir() / "artifacts"
+    """可丢弃的通用工具产物, 使用进程级系统临时目录."""
+    return runtime_dir() / "artifacts"
+
+
+def runtime_project_dir(project_id: str) -> Path:
+    """当前运行中某个项目的临时产物根目录."""
+    return runtime_dir() / "projects" / project_id
+
+
+def session_runtime_dir(project_id: str, session_id: str) -> Path:
+    """工具输出、诊断与子 Agent 临时记录; 不存会话恢复真相源."""
+    return runtime_project_dir(project_id) / "sessions" / session_id
 
 
 def recovery_dir() -> Path:

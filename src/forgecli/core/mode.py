@@ -1,8 +1,7 @@
 """会话输入的来源枚举: 这一行是谁给的.
 
-模式不再住在这里: ADR-0055 之后模式是 `core/permissions.py` 的 `PermissionMode`, 与
-Claude Code 同一组五档. 早先这里还有 ``SessionMode`` (隔离档 x 审批档两轴) 与它的预设
-表, 随权限模块重写一起删除.
+模式不再住在这里: ADR-0055 之后模式是 `core/permissions.py` 的 `PermissionMode`. 
+早先这里还有 ``SessionMode`` (隔离档 x 审批档两轴) 与它的预设表, 随权限模块重写一起删除.
 
 设计约束: 不可变, 值相等, 无副作用; 取值会落盘 (origin 进 user_message 事件), 因此
 不可随意改写.

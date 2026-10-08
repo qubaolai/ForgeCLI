@@ -26,7 +26,7 @@ VERSION = $(shell $(POETRY) version -s)
 WHEEL = dist/$(PACKAGE_NAME)-$(VERSION)-py3-none-any.whl
 PIP_INSTALL_ARGS ?= --user --force-reinstall
 # lint / format 的范围. 写成显式目录而不是 `.`: 仓库根下会挂进编辑器与工具的本地
-# 目录 (.claude/ 之类), 它们不是本仓库的代码, 却会让 `make lint` 报一堆与改动无关的错.
+# 目录, 它们不是本仓库的代码, 却会让 `make lint` 报一堆与改动无关的错.
 LINT_PATHS ?= src tests scripts
 
 # 帮助

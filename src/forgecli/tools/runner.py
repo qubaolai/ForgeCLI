@@ -84,7 +84,7 @@ class ToolRunner:
     non_interactive: bool = False
     agent_id: str = ""
     read_only: bool = False
-    # 每批调用一个快照 (对应 Claude Code 每条 assistant 消息一个), 编号只在本会话内
+    # 每批调用一个快照, 编号只在本会话内
     # 有意义.
     batches: int = 0
     _schema_cache: (

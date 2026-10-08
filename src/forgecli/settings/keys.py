@@ -158,7 +158,7 @@ SCHEMA: tuple[ConfigKey, ...] = (
         ConfigLevel.APP,
         ValueKind.TEXT,
         label="日志目录",
-        help="留空表示 Forge 主目录下的 logs/。",
+        help="留空使用系统临时目录；非活跃运行的临时产物保留 7 天，历史项目不清理。",
         effect="下次启动生效",
         allow_empty=True,
     ),
@@ -194,7 +194,7 @@ SCHEMA: tuple[ConfigKey, ...] = (
         "PATH 无论哪一档都会去掉工作区内的目录。",
         effect="下一次工具调用生效",
     ),
-    # 应用级而**不是**项目级, 与 Claude Code 的 disableBypassPermissionsMode 只认
+    # 应用级而**不是**项目级, 只认
     # 用户级 / 托管级设置同一个理由: 一个 clone 下来的仓库不能替用户决定跳过审批,
     # 反过来它也不该能替用户把这一档锁死 —— 锁与放都只能是坐在这台机器前的人自己的
     # 决定.

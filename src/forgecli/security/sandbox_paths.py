@@ -14,7 +14,7 @@ sandbox-adapter.ts 的 convertToSandboxRuntimeConfig).
   `git init` 之前本来就不该拦.
 
 带通配符的规则 (`Edit(src/**/*.py)`) 翻不成一个路径: 尾部的 `/**` `/*` 剥掉, 中间还有
-通配就跳过 —— 那条规则只在工具层生效, 围栏层拦不住, 与 Claude Code 在 Linux 上的处理同.
+通配就跳过 —— 那条规则只在工具层生效, 围栏层拦不住.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from forgecli.common.runtime_files import runtime_dir
 from forgecli.core.permissions import (
     PermissionBehavior,
     PermissionRuleSource,
@@ -179,6 +180,8 @@ def _without_glob(candidate: str) -> str | None:
 
 def _mandatory_deny_write(workspace_roots: tuple[str, ...]) -> list[str]:
     out = [str(config_dir())]
+    # 临时运行状态搬离 Forge home 后仍不得由受限 Shell 篡改.
+    out.extend(str(runtime_dir() / name) for name in ("projects", "logs", "artifacts"))
     for root in workspace_roots:
         for relative in _MANDATORY_DENY_WRITE:
             candidate = os.path.join(root, relative)

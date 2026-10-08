@@ -86,7 +86,7 @@ def cmd_permissions(context: CommandContext, _argument: str) -> None:
 
 
 def cmd_dirs(context: CommandContext, argument: str) -> None:
-    """额外工作目录: 加进来的目录读写都自动放行 (Claude Code 的目录授权不分读写)."""
+    """额外工作目录: 加进来的目录读写都自动放行."""
     if not context.require_idle():
         return
     runtime = context.runtime

@@ -78,7 +78,7 @@ __all__ = [
 
 _log = get_log(__name__)
 
-# 来源的求值序: 与 Claude Code 的 PERMISSION_RULE_SOURCES 同, policy 最先.
+# 来源的求值序: policy 最先.
 _SOURCES: tuple[PermissionRuleSource, ...] = (
     PermissionRuleSource.POLICY_SETTINGS,
     PermissionRuleSource.USER_SETTINGS,
@@ -95,8 +95,7 @@ def DONT_ASK_REJECT_MESSAGE(tool_name: str) -> str:  # noqa: N802
     )
 
 
-# 被拒之后模型该怎么办, 与 Claude Code 的 DENIAL_WORKAROUND_GUIDANCE 逐字同: 允许换一种
-# 自然的做法, 不许绕.
+# 被拒之后模型该怎么办, 允许换一种自然的做法, 不许绕.
 DENIAL_WORKAROUND_GUIDANCE = (
     "IMPORTANT: You *may* attempt to accomplish this action using other tools that "
     "might naturally be used to accomplish this goal, e.g. using head instead of "

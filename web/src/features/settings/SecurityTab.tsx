@@ -74,7 +74,7 @@ export function SecurityTab({ admin }: { admin: Administration }) {
           <Space>
             <Typography.Text strong>权限规则</Typography.Text>
             <Typography.Text type="secondary">
-              写法与 Claude Code 同: Bash(git commit:*), Edit(src/**); 用户与项目来源在设置文件里。
+              写法: Bash(git commit:*), Edit(src/**); 用户与项目来源在设置文件里。
             </Typography.Text>
           </Space>
         )}

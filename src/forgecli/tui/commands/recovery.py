@@ -1,6 +1,6 @@
 """/rewind: 回到某条 assistant 消息之前的文件状态 (ADR-0054 决策 5).
 
-文件历史只记 Edit / Write 改过的文件, Bash 改的不在里面 —— 与 Claude Code 同.
+文件历史只记 Edit / Write 改过的文件, Bash 改的不在里面.
 """
 
 from __future__ import annotations

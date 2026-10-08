@@ -1,4 +1,4 @@
-"""读过的文件 (ADR-0054 决策 5; 对应 Claude Code 的 fileStateCache.ts).
+"""读过的文件 (ADR-0054 决策 5).
 
 Read 写它, Edit / Write 的 validate_input 读它: 没读过不许改, 读后被改也不许改. 这是
 对 TOCTOU 的全部处理.

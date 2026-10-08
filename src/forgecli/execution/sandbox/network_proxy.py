@@ -11,7 +11,7 @@ curl / pip / npm / git-https 走前者, ssh / psql 一类走后者.
 与 sandbox-runtime 同: 先 deniedDomains, 再 allowedDomains, 都没命中就问人 (有人在场时),
 问不了就拒. 问过的答案本会话记住 (按 host), 同一 host 的并发请求合成一次提问.
 
-只裁 host, 不看端口与路径: `*.example.com` 放的是整个子域, 与 Claude Code 同.
+只裁 host, 不看端口与路径: `*.example.com` 放的是整个子域.
 """
 
 from __future__ import annotations

@@ -1,8 +1,7 @@
 """一个工具栈的沙箱运行件: 实例临时目录, 本机代理, 围栏工厂 (ADR-0055 决策 7).
 
-对应 Claude Code 的 `sandbox-adapter.ts` 里 CLI 特有的那一段: 把设置, 权限规则与工作
-目录编译成 sandbox-runtime 的配置, 起代理, 接"不认识的域名问用户"的回调. 这里的三样
-东西都跟着工具栈生灭:
+把设置, 权限规则与工作目录编译成 sandbox-runtime 的配置, 起代理, 接"不认识的域名问用户"的回调. 
+这里的三样东西都跟着工具栈生灭:
 
 - **临时目录**: `mkdtemp` 一个, 每条围栏内的命令都能写, 跨命令持久, `close` 时删.
   子进程的 TMPDIR 指向它 (由 Provider 的 `environment_for` 注入).
@@ -21,6 +20,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from forgecli.common.observability.log import get_log
+from forgecli.common.runtime_files import runtime_dir
 from forgecli.core.app_state import AppState
 from forgecli.core.execution.fence import FencePolicy, NetworkFence, fence_for
 from forgecli.core.sandbox import SandboxSettings
@@ -59,7 +59,7 @@ class SandboxRuntime:
         self._get_state = get_app_state
         self._set_state = set_app_state
         self._settings_file = project_settings_file
-        self.temp_dir = tempfile.mkdtemp(prefix="forge-")
+        self.temp_dir = tempfile.mkdtemp(prefix="sandbox-", dir=runtime_dir())
         self._policy = DomainPolicy(ask=self._ask_host if prompts is not None else None)
         self._prompts = prompts
         self._proxy: NetworkProxy | None = None

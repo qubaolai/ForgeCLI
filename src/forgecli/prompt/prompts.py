@@ -1,5 +1,4 @@
-"""Forge 撰写的, 会进模型上下文的全部文字 (ADR-0056 决策 1; 对应 Claude Code 的
-`constants/prompts.ts`).
+"""Forge 撰写的, 会进模型上下文的全部文字 (ADR-0056 决策 1).
 
 只有这一个文件. 系统提示词的每个 section, 窗口通知, 压缩指令, 旁路调用的提示词都在这里;
 唯一的例外是工具描述, 它们与工具住在一起 (`tools/builtin/<Tool>/prompt.py`), 只在该工具
@@ -130,7 +129,7 @@ SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"
 _REMINDER_OPEN = "<system-reminder>"
 _REMINDER_CLOSE = "</system-reminder>"
 
-# ---- 预算与节奏. 数值取自 Claude Code, 没有本仓库的实测之前不改 (决策 6) ----
+# ---- 预算与节奏. 没有本仓库的实测之前不改 (决策 6) ----
 
 # 单条通知的上限, 超出截断并注明.
 NOTICE_MAX_BYTES = 4 * 1024
@@ -320,7 +319,7 @@ def _using_your_tools(tool_names: frozenset[str]) -> str | None:
 
     has_bash = BASH_TOOL_NAME in tool_names
     dedicated = [
-        when("Agent", "独立且需要多步阅读的调研可交给 Agent; 改代码前复核报告证据。"),
+        when("Agent", "独立且需要多步并行阅读的调研可交给 Agent; 改代码前复核报告证据。"),
         when(
             FILE_READ_TOOL_NAME,
             f"读文件用 {FILE_READ_TOOL_NAME}, 不用 cat / head / tail / sed",
@@ -784,7 +783,7 @@ def memory_reject_scope_full(limit: int) -> str:
 # 压缩: 与主循环不共用的一套指令
 # =====================================================================
 
-# 与 Claude Code 的 compact prompt 同一结构: 先禁工具, 再要 <analysis> 与 <summary>.
+# 先禁工具, 再要 <analysis> 与 <summary>.
 # <analysis> 是草稿, 进窗口的只有 <summary> 里的部分 (extract_compact_summary).
 COMPACT_PROMPT = """只输出文字, 不要调用任何工具: 你需要的全部信息都已经在下面的对话里.
 
@@ -849,8 +848,7 @@ def auto_mode_classifier_prompt(
     soft_deny: Sequence[str] = (),
     environment: Sequence[str] = (),
 ) -> str:
-    """auto 模式安全分类器的 system prompt (ADR-0058 决策 3; 对应 Claude Code 的
-    yolo-classifier-prompts/auto_mode_system_prompt.txt).
+    """auto 模式安全分类器的 system prompt (ADR-0058 决策 3).
 
     读者是另一次模型调用: 它只看用户说过的话与 Agent 已经做过的工具调用, 对最后一条
     调用回答"拦不拦". 缺省放行; 只有 user 行说的话算数; 拦下的类别要能一句话说清.

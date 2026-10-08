@@ -1,5 +1,4 @@
-"""system prompt 的 section 按名缓存 (ADR-0056 决策 3; 对应 Claude Code 的
-systemPromptSections.ts).
+"""system prompt 的 section 按名缓存 (ADR-0056 决策 3).
 
 会话段的每个 section 是一个 compute 函数. 缓存命中就不调它; 只在会话刷新点 (决策 7)
 清一次. 要每次调用都重算的 section 必须用 `uncached_section` 并写明理由 —— 一个每轮变的

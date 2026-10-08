@@ -1,6 +1,6 @@
 """ask 的去向: 摆卡片, 等人点, 把回答翻回决定 (ADR-0055 决策 4 / 6).
 
-对应 Claude Code 的 useCanUseTool: 先 `has_permissions_to_use_tool`, 只有 ask 才经
+先 `has_permissions_to_use_tool`, 只有 ask 才经
 `HumanPromptService` 摆一张审批卡片 (ADR-0043 的通道, 与 AskUserQuestion 共用).
 卡片上的按钮来自决定里的 `suggestions`; 用户选了哪一项, 就施加对应的 PermissionUpdate.
 
@@ -45,7 +45,7 @@ __all__ = [
 
 _log = get_log(__name__)
 
-# 用户拒绝时回给模型的话, 与 Claude Code 的 REJECT_MESSAGE 逐字同: 它是给模型的指令.
+# 用户拒绝时回给模型的话, 它是给模型的指令.
 REJECT_MESSAGE = (
     "The user doesn't want to proceed with this tool use. The tool use was rejected "
     "(eg. if it was a file edit, the new_string was NOT written to the file). STOP "

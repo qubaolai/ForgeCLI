@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from forgecli.common.observability.configure import LoggingStatus, configure_logging
-from forgecli.settings.paths import config_dir
+from forgecli.common.runtime_files import runtime_dir
 from forgecli.settings.startup import startup_config
 
 __all__ = ["start_observability"]
@@ -28,7 +28,7 @@ def start_observability() -> LoggingStatus:
     directory = (
         Path(config.logging_directory).expanduser()
         if config.logging_directory.strip()
-        else config_dir() / "logs"
+        else runtime_dir() / "logs"
     )
     return configure_logging(
         directory=directory,

@@ -1,4 +1,4 @@
-"""权限模块的类型 (ADR-0055 决策 2 / 4; 对应 Claude Code 的 types/permissions.ts).
+"""权限模块的类型 (ADR-0055 决策 2 / 4).
 
 只有类型与常量, 没有任何 IO. 单独放在 core 里是为了断 import 环: `Tool` 协议要引用
 `PermissionResult`, 权限逻辑 (security/) 又要引用 `Tool`; 两边都只 import 这里.
@@ -113,8 +113,7 @@ class ModeOption:
     hint: str
 
 
-# 菜单里的次序就是 Tab 循环的次序 (security/next_mode.py; 与 Claude Code 的
-# getNextPermissionMode 同: plan 之后先 bypass 再 auto). dont_ask 不进菜单.
+# 菜单里的次序就是 Tab 循环的次序 (security/next_mode.py; plan 之后先 bypass 再 auto). dont_ask 不进菜单.
 MODE_OPTIONS: tuple[ModeOption, ...] = (
     ModeOption(
         PermissionMode.DEFAULT.value,

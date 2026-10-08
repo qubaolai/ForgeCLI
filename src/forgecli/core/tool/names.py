@@ -1,6 +1,6 @@
 """内置工具的名字与曾用名 (ADR-0054 决策 2).
 
-名字用 Claude Code 的: 权限规则 `Bash(git commit:*)` 与它的设置文件逐字相同, 模型对
+权限规则 `Bash(git commit:*)` 与它的设置文件逐字相同, 模型对
 这几个名字与入参形状也已经很熟. 曾用名只用于查找 (旧会话记录, 旧规则文件), 不进目录.
 """
 
@@ -24,6 +24,8 @@ __all__ = [
     "PLAN_WRITE_TOOL_NAME",
     "TODO_SET_STATUS_TOOL_NAME",
     "TODO_WRITE_TOOL_NAME",
+    "WEB_FETCH_TOOL_NAME",
+    "WEB_SEARCH_TOOL_NAME",
     "is_valid_tool_name",
     "normalize_legacy_tool_name",
 ]
@@ -44,6 +46,8 @@ TODO_SET_STATUS_TOOL_NAME = "todo_set_status"
 MEMORY_WRITE_TOOL_NAME = "memory_write"
 MEMORY_FORGET_TOOL_NAME = "memory_forget"
 TEST_TOOL_NAME = "TEST"
+WEB_SEARCH_TOOL_NAME = "WebSearch"
+WEB_FETCH_TOOL_NAME = "WebFetch"
 
 # 曾用名 -> 现在的名字. 规则解析 (security) 与工具池 (tools) 共用这一张.
 LEGACY_TOOL_NAMES: dict[str, str] = {

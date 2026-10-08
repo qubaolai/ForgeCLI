@@ -67,7 +67,12 @@ THIRD_PARTY_HOMES: dict[str, tuple[str, ...]] = {
     "starlette": ("web",),
     "sse_starlette": ("web",),
     "uvicorn": ("web",),
-    "httpx": ("llm.adapters",),
+    # 联网工具的 HTTP 实现限定在各自客户端, 不向其他业务模块开放.
+    "httpx": (
+        "llm.adapters",
+        "tools.builtin.WebSearch.client",
+        "tools.builtin.WebFetch.client",
+    ),
     "requests": (),
     "openai": (),
     "anthropic": (),
@@ -75,7 +80,7 @@ THIRD_PARTY_HOMES: dict[str, tuple[str, ...]] = {
 
 # 同层互斥: (包前缀, 不得 import 的包前缀, 豁免前缀, 说明).
 SIBLING_BANS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
-    # ADR-0054 之后工具认识权限 (每个工具自己实现 check_permissions, 与 Claude Code 同),
+    # ADR-0054 之后工具认识权限 (每个工具自己实现 check_permissions,
     # 所以 tools -> security 是允许的; 反方向仍然禁止: 权限逻辑只认识 core 里的 Tool
     # 协议, 不认识任何具体工具实现.
     (

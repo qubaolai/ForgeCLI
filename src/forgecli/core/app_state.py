@@ -1,4 +1,4 @@
-"""会话级的可变状态 (对应 Claude Code 的 AppState 里工具执行要看的那几项).
+"""会话级的可变状态.
 
 工具与权限层经 `ToolUseContext.get_app_state()` 读, 经 `set_app_state()` 写; 状态本身
 是不可变对象, 每次改都换一份.

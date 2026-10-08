@@ -7,7 +7,7 @@ from enum import StrEnum
 from forgecli.core.model.usage import UsageRecordDraft
 from forgecli.core.tool.tool import ToolUseContext
 
-SUB_AGENT_TOOLS = ("Read", "Glob", "Grep", "LSP", "Bash")
+SUB_AGENT_TOOLS = ("Read", "Glob", "Grep", "LSP", "Bash", "WebSearch", "WebFetch")
 
 
 class SubAgentLimitError(Exception):

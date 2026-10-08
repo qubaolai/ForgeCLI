@@ -14,7 +14,7 @@ from forgecli.core.tool.names import BASH_TOOL_NAME
 __all__ = ["DANGEROUS_BASH_PATTERNS", "is_dangerous_bash_permission"]
 
 # 能执行任意代码的入口: 解释器, 包运行器, shell, 远程执行, 提权, 以及把参数变成命令的
-# 包装器. 与 Claude Code 对外构建的清单同.
+# 包装器.
 DANGEROUS_BASH_PATTERNS: tuple[str, ...] = (
     "python",
     "python3",

@@ -207,7 +207,7 @@ COMMANDS: tuple[Command, ...] = (
         "权限规则: allow / deny / ask 三张表",
         security.cmd_permissions,
         detail=(
-            "规则写法与 Claude Code 同: Bash(git commit:*), Edit(src/**).\n"
+            "规则写法: Bash(git commit:*), Edit(src/**).\n"
             "内置来源只读; 用户与项目来源在设置文件里, 本会话来源随会话消失."
         ),
         category="安全",
