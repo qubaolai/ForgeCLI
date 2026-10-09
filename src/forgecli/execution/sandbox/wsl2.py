@@ -1,23 +1,13 @@
-"""Windows 上的围栏: 经 WSL2 借用 bubblewrap (ADR-0030 决策 5, 2026-08-24 修订).
+"""Windows 上的沙箱: 经 WSL2 借用 bubblewrap.
 
-原生 Windows 没有可用的围栏原语: AppContainer 要求应用自己带 manifest 与 SID, 不适用于
-"任意用户命令"; Job Object 管的是资源不是文件系统边界. 所以这里不自己造, 而是**把命令
-交给 WSL2 里的 bubblewrap** —— 那是 Linux 内核的 mount namespace, 与 Linux 上完全同一
-套保证.
+原生 Windows 没有可用的沙箱: AppContainer 要求应用自己带 manifest 与 SID, 不适用于
+"任意用户命令"; Job Object 管的是资源不是文件系统边界. 所以这里不自己造, 而是把命令
+交给 WSL2 里的 bubblewrap.
 
-代价要说清楚, 这不只是安全机制的变化:
 
-- 命令跑在 **Linux** 里. `python` / `node` / `git` 是 WSL 里那一套, 不是 Windows 上的.
-- 路径要翻译: `C:\\Users\\x\\proj` -> `/mnt/c/Users/x/proj`.
-- `.exe` 与 PowerShell 脚本在这条路径上跑不了.
-
-因此 WSL2 未安装时**不退化成"用静态分析补偿"**, 而是直接 UNCONFINED: 工作区内照常,
-跨栏一律 ASK (ADR-0030 决策 5). 那条路不需要任何命令知识 —— budget 里
+WSL2 未安装时不退化成"用静态分析补偿", 而是直接 UNCONFINED: 工作区内照常,
+跨栏一律 ASK. 那条路不需要任何命令知识 —— budget 里
 EXECUTE_SHELL 只在 confined 时进自动集合, 所以无围栏时每条 shell 命令必然落 ASK.
-
-**未在真实 Windows 上验证.** 本机是 macOS, 只有纯函数部分有测试覆盖. 这一点是可控的:
-`available()` 与 `self_test()` 任一不过就落回 NoSandbox, 而那正是用户选定的兜底行为 ——
-实现有错的后果是"退回每条命令都问", 不是"以为有围栏而其实没有".
 """
 
 from __future__ import annotations

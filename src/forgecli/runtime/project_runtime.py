@@ -1,8 +1,5 @@
-"""一个激活项目的组合根: Web 控制面与终端入口共用同一份装配 (ADR-0045)。
+"""一个激活项目的组合根: Web 控制面与终端入口共用同一份装配。
 
-住在 ``interfaces/runtime`` 而不是任何一个入口包下, 是因为两条入口都要它: 让
-``interfaces/tui`` 去 import ``interfaces/web`` 的话, 终端会话就跟着 FastAPI、
-sse-starlette 与静态资源一起装配, 而它一个都用不上。
 """
 
 from __future__ import annotations
@@ -112,8 +109,7 @@ class ProjectRuntime:
         full_access_allowed: bool = False,
     ) -> None:
         self.project = project
-        # 启动时定下的事实 (`forge --allow-full-access`, ADR-0052), 整个进程不变.
-        # 缺省 False: 忘记传参的后果是少一档, 不是多一档.
+        # 启动时定下的事实 (`forge --allow-full-access`), 整个进程不变.
         self.full_access_allowed = full_access_allowed
         project_home = config_dir() / "projects" / project.project_id
         sessions_dir = project_home / "sessions"
@@ -158,8 +154,7 @@ class ProjectRuntime:
             self.event_bus.subscribe(RunEventLogger())
             self.events = RunEventHub()
             self.event_bus.subscribe(self.events)
-            # 处理过程落盘 (展示用, 不是恢复真相源). 内存缓冲只有 2048 条且随进程消失,
-            # 而"回看上周那一轮到底做了什么"要的正是跨进程的那一份.
+            # 处理过程落盘 (展示用, 不是恢复真相源). 内存缓冲只有 2048 条且随进程消失
             self.runs = JsonlRunStore(sessions_dir)
             self.event_bus.subscribe(self.runs)
             self.prompts = BlockingHumanPromptBroker(self._prompt_changed)
@@ -187,12 +182,13 @@ class ProjectRuntime:
                 ),
                 limit=max(1, int(positive_env("FORGE_MAX_SUB_AGENTS_PER_TURN", 8))),
                 model_calls=max(
-                    1, int(positive_env("FORGE_SUB_AGENT_MAX_MODEL_CALLS", 30))
+                    1, int(positive_env("FORGE_SUB_AGENT_MAX_MODEL_CALLS", 999))
                 ),
                 timeout=positive_env("FORGE_SUB_AGENT_TIMEOUT_SECONDS", 300),
                 grace=positive_env("FORGE_SUB_AGENT_GRACE_SECONDS", 30),
             )
             self.event_bus.subscribe(self._sub_agents)
+            # 通过墓碑 清理之前没有删除的文件
             self._sweep_tombstones()
         except BaseException:
             self.lock.release()
@@ -200,7 +196,7 @@ class ProjectRuntime:
 
     def _build_tool_stack(self, permission: ToolPermissionContext) -> ToolStack:
         """重载时要先把新的一整套建出来, 建成了才提交; 权限上下文 (模式, 会话规则,
-        额外目录) 原样带过去, 换模型的人还在同一个会话里."""
+        额外目录) 原样带过去, 换模型还在同一个会话里."""
         return build_tool_stack(
             workspace_roots=(self.project.primary_workspace_root,),
             workspace_id=self.project.project_id,
@@ -216,7 +212,7 @@ class ProjectRuntime:
         )
 
     def _initial_permission(self) -> ToolPermissionContext:
-        """启动期装一次权限上下文 (ADR-0055 决策 2): 设置文件里的规则, bypass 的可用性,
+        """启动期装一次权限上下文: 设置文件里的规则, bypass 的可用性,
         项目里信任的额外目录."""
         context = get_initial_permission_context(
             project_id=self.project.project_id,
@@ -486,7 +482,7 @@ class ProjectRuntime:
         """后台清墓碑。
 
         daemon 线程且不 join: 清理没清完就退出进程不会丢东西 —— 墓碑还在, 下次启动
-        的扫描接着清。反过来为它卡住退出, 换来的只是一个关不掉的窗口。
+        的扫描接着清. 反过来为它卡住退出, 换来的只是一个关不掉的窗口
         """
         if not tombstones:
             return

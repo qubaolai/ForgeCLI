@@ -1,4 +1,4 @@
-"""ToolRunner: 循环与执行链之间的唯一通道 (ADR-0051 的"循环只认识一个入口").
+"""ToolRunner: 循环与执行链之间的唯一通道.
 
 AgentTurnService 只认识这一个类: 它拿一批 ToolCall, 组一份 ToolUseContext, 交给
 `run_tools`, 把结果翻成 LoopObservation. 工具池按当前权限上下文现算 (deny 规则会把
@@ -84,8 +84,7 @@ class ToolRunner:
     non_interactive: bool = False
     agent_id: str = ""
     read_only: bool = False
-    # 每批调用一个快照, 编号只在本会话内
-    # 有意义.
+    # 每批调用一个快照, 编号只在本会话内有意义.
     batches: int = 0
     _schema_cache: (
         tuple[tuple[tuple[str, ...], bool], tuple[ToolSchema, ...]] | None

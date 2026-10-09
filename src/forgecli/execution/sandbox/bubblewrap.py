@@ -1,11 +1,8 @@
-"""Linux 与 WSL2 围栏: bubblewrap (ADR-0030 决策 2).
+"""Linux 与 WSL2 沙箱: bubblewrap.
 
 与 Seatbelt 的关键差别: bubblewrap 建的是新的 mount namespace, 可见性靠逐项 bind
-决定, 因此**读边界天然是 allowlist**. 受保护路径用 `--tmpfs` 盖住 —— 进程看到的是
+决定, 因此读边界天然是 allowlist. 受保护路径用 `--tmpfs` 盖住 —— 进程看到的是
 一个空目录, 不是"读被拒", 连存在性都问不出来.
-
-这就是 ADR-0030 记录的那处平台不对称: 同一条安全性质, Linux 由内核的 namespace 保证,
-macOS 只能靠一张需要追赶的 denylist.
 
 `--unshare-pid` 顺带把进程操作也关住了, 所以 Linux 上 `kill` / `pkill` 打不到宿主进程.
 Seatbelt 没有这个能力, 那边只能靠"围栏外不可回滚操作表"兜底.
@@ -14,14 +11,9 @@ Seatbelt 没有这个能力, 那边只能靠"围栏外不可回滚操作表"兜�
 在宿主上监听一个 unix socket, bind 进围栏, 围栏内起一个 `socat` 把 `127.0.0.1:3128` 转到
 那个 socket, 子进程的 HTTP_PROXY 指向 3128. 没有 `socat` 就没有出口 —— 不退化成放开网络.
 
-可写区里挖掉的路径 (`.git/hooks`) 与 denied 读区里放回的路径 (allowRead) 都靠**后面的
-bind 覆盖前面的**: `--ro-bind` 叠在 `--bind` 之上, `--ro-bind` 叠在 `--tmpfs` 之上. 只对
+可写区里挖掉的路径 (`.git/hooks`) 与 denied 读区里放回的路径 (allowRead) 都靠后面的
+bind 覆盖前面的: `--ro-bind` 叠在 `--bind` 之上, `--ro-bind` 叠在 `--tmpfs` 之上. 只对
 存在的路径做 —— bind 一个不存在的路径 bwrap 直接报错.
-
-**本机是 macOS, 这个文件没有在 Linux 上实跑过**: 纯函数 (flag 拼装) 有把握, 桥的形状照
-sandbox-runtime, 但 socat 的参数与 bind 顺序在真实 Linux 上验证之前只能算"按文档写的".
-自测 (`self_test`) 会在启动时把明显不对的形状拦下来: 三项被禁操作任一没拦住就
-UNCONFINED.
 """
 
 from __future__ import annotations

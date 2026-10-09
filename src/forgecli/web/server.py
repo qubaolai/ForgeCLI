@@ -87,11 +87,11 @@ def _shutdown_signals(server: uvicorn.Server, console: Console) -> Generator[Non
 
 
 def load_web_secrets() -> tuple[str, str]:
-    """读取或创建跨重启复用的 ``(session, csrf)`` 密钥。
+    """读取或创建跨重启复用的密钥(session, csrf)。
 
     端口固定加上密钥固定，重启 Forge 之后已经打开的浏览器窗口才能自己连回来：
-    否则每次重启都换 cookie，页面只能重新走一遍启动链接。文件按 0600 存放在用户配置
-    目录，与服务只监听 loopback 是同一层信任假设。
+    否则每次重启都换 cookie，页面只能重新走一遍启动链接。文件存放在用户配置
+    目录，与服务只监听 loopback 是同一层。
     """
     path = config_dir() / _SECRETS_FILE
     try:
@@ -103,7 +103,7 @@ def load_web_secrets() -> tuple[str, str]:
         pass
     session, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(24)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # 先以 0600 创建再写入：先写后 chmod 会留下一个短暂的可读窗口。
+    # 先创建再写入：先写后 chmod 会留下一个短暂的可读窗口
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         json.dump({"session": session, "csrf": csrf}, handle)
@@ -118,8 +118,7 @@ def run(
 ) -> int:
     """只监听 loopback，并用一次性启动令牌打开控制面。
 
-    ``allow_full_access`` 在这里过门而不是在浏览器里 (ADR-0052): 一次性确认要有人在
-    终端里回答, 而起服务的那条命令行就是一个终端. 页面上只会看到"有没有这一档".
+    allow_full_access 在这里设置.
     """
     console = Console()
     status = start_observability()
@@ -134,7 +133,7 @@ def run(
         log_level=status.level,
     )
     try:
-        full_access = resolve_full_access(console, requested=allow_full_access)
+        full_access = resolve_full_access(console, allow_full_access=allow_full_access)
     except FullAccessRefused as exc:
         console.print(f"[red]{exc.message}[/]")
         return ExitCode.FULL_ACCESS_REFUSED

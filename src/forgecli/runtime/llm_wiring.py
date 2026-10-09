@@ -88,9 +88,8 @@ def build_llm_runtime(
         _build_provider_registry(llm_config_service),
         resolver=resolver,
         settings_source=LlmConfigProviderSettingsSource(llm_config_service),
-        # 凭证只支持环境变量（ADR-0011 §7 复核）：dotenv / keychain 已移除。
-        # 配额耗尽的冷却落在 state 目录 (ADR-0059 决策 5): 下一个进程不再拿同一把
-        # 没额度的 key 去撞一次.
+        # 凭证只支持环境变量
+        # 配额耗尽的冷却落在 state 目录, 下一个进程不再拿同一把没额度的 key 去撞一次.
         credential_pool=InMemoryCredentialPool(
             EnvCredentialResolver(),
             store=CredentialCooldownStore(state_dir() / "credential_cooldowns.json"),

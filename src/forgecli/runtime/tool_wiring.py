@@ -33,7 +33,7 @@ from forgecli.execution.environment_probe import (
     probe_execution_profile,
 )
 from forgecli.execution.local_command_executor import LocalCommandExecutor
-from forgecli.execution.sandbox.selection import select_provider
+from forgecli.execution.sandbox.selection import select_sandbox_provider
 from forgecli.execution.sandboxed_command_executor import SandboxedCommandExecutor
 from forgecli.human_interaction.service import (
     HumanPromptService,
@@ -166,13 +166,11 @@ class ToolStack:
 
 
 def _sandbox_settings(workspace_id: str, confined: bool) -> SandboxSettings:
-    """用户级设置打底, 项目级覆盖; confined 来自围栏自测, 不是设置."""
+    """用户级设置打底, 项目级覆盖; confined 来自沙箱自检, 不是设置."""
     settings = read_sandbox(user_settings_file())
     project = read_sandbox(project_settings_file(workspace_id))
     if project is not None:
         settings = project
-    if settings is None:
-        settings = SandboxSettings()
     return replace(settings, confined=confined)
 
 
@@ -196,8 +194,8 @@ def build_tool_stack(
     structured_query: StructuredQuery | None = None,
     sub_agent_run: SubAgentRun | None = None,
 ) -> ToolStack:
-    """`structured_query` 是网关的 complete_structured: auto 模式的分类器靠它问模型
-    (ADR-0058). 不给就没有分类器, auto 下的 ask 与 default 一样问人."""
+    """`structured_query` 是网关的 complete_structured: auto 模式的分类器靠它问模型. 
+    不给就没有分类器, auto 下的 ask 与 default 一样问人."""
     roots = tuple(dict.fromkeys(str(Path(root).resolve()) for root in workspace_roots))
     if not roots:
         raise ValueError("workspace_roots 不能为空")
@@ -212,8 +210,8 @@ def build_tool_stack(
     )
     environment = build_execution_environment(profile)
 
-    # 2. 围栏: 选 Provider 并做行为自测 (ADR-0030 决策 3).
-    provider, fence_report = select_provider()
+    # 2. 沙箱: 选 Provider 并做行为自测.
+    provider, fence_report = select_sandbox_provider()
     profile = replace(
         profile,
         isolation_level=(
@@ -260,7 +258,7 @@ def build_tool_stack(
     file_history = FileHistory(
         backup_dir=runtime_project_dir(workspace_id) / "file-history"
     )
-
+    # 新增内置工具需要在此注册
     base_tools: tuple[Tool, ...] = (
         FileReadTool(),
         FileEditTool(),

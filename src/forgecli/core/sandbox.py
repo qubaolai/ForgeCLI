@@ -16,7 +16,7 @@ __all__ = ["SandboxSettings"]
 
 @dataclass(frozen=True)
 class SandboxSettings:
-    enabled: bool = False
+    enabled: bool = True
     # 围栏立起来的 Bash 命令自动放行 (先查 deny / ask 规则).
     auto_allow_bash_if_sandboxed: bool = True
     # 含这些前缀的命令不进围栏 (`docker *` 一类). 不是安全边界.

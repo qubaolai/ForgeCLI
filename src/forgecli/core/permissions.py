@@ -160,7 +160,7 @@ class PermissionBehavior(Enum):
 
 
 class PermissionRuleSource(Enum):
-    """规则从哪来 (ADR-0055 决策 2)."""
+    """规则从哪来."""
 
     # ~/.forge/config.json 的 permissions 段, 跨项目.
     USER_SETTINGS = "user_settings"

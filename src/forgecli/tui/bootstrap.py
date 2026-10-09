@@ -54,7 +54,7 @@ def run(*, allow_full_access: bool = False) -> int:
     # 先过 Full Access 的门再解析项目: 拒绝要发生在任何项目锁拿到之前, 而确认问句要
     # 在进入会话之前问完 —— 会话一开始输入框就接管了终端.
     try:
-        full_access = resolve_full_access(console, requested=allow_full_access)
+        full_access = resolve_full_access(console, allow_full_access=allow_full_access)
     except FullAccessRefused as exc:
         console.print(f"[red]{exc.message}[/]")
         return ExitCode.FULL_ACCESS_REFUSED

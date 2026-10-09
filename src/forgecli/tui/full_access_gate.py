@@ -35,13 +35,7 @@ _log = get_log(__name__)
 # 确认前给人看的那几行. 说的是这一档 (bypass_permissions, ADR-0055 决策 1) 的语义,
 # 不是泛泛的"危险": deny 规则, 内容级 ask 规则与安全检查照拦, 变的只是其余的还问不问.
 _WARNING = (
-    "Bypass Permissions: 除显式规则与安全检查外不再问你.",
-    "  - 任何命令, 任何文件的读写都直接执行, 包括工作目录之外的.",
-    "  - 仍然拦的: deny 规则, ask 规则, .git / .forge / shell 配置文件的编辑, "
-    "内置的凭证目录保护.",
-    "  - 围栏 (sandbox) 开着时子进程仍在围栏内; 围栏与这一档是两件事.",
-    "  - 提示注入让模型想做的事, 这一档不会替你拦.",
-    "确认一次即可, 记录写在 Forge home 的 full-access-consent.json, 以后不再问.",
+    "Bypass Permissions: 除显式规则与安全检查外不再询问."
 )
 
 
@@ -54,13 +48,13 @@ class FullAccessRefused(Exception):
         self.message = message
 
 
-def resolve_full_access(console: Console, *, requested: bool) -> bool:
+def resolve_full_access(console: Console, *, allow_full_access: bool) -> bool:
     """本进程能否把 Full Access 放进可选预设.
 
     没带参数直接回 False, 一个字都不打 —— 绝大多数启动走的是这条. 带了参数就过两道门,
     哪一道没过都抛 FullAccessRefused.
     """
-    if not requested:
+    if not allow_full_access:
         return False
     if startup_config().disable_full_access:
         _log.warning("forge.full_access_refused", reason="disabled_by_config")

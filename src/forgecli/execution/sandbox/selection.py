@@ -1,4 +1,4 @@
-"""按平台挑一个 Provider, 并用行为自测确认它真的围得住 (ADR-0030 决策 3).
+"""按平台挑一个 Provider, 并用行为自测确认它真的围得住.
 
 **不回退到更弱 Provider**: 候选按平台唯一确定, 自测不过就如实降级为 UNCONFINED, 而不是
 换一个能跑起来的接着试. 静默降级是沙箱最经典的事故形态.
@@ -14,16 +14,16 @@ from forgecli.execution.sandbox.provider import SandboxProvider, SelfTestReport
 from forgecli.execution.sandbox.seatbelt import SeatbeltProvider
 from forgecli.execution.sandbox.wsl2 import Wsl2Provider
 
-__all__ = ["select_provider"]
+__all__ = ["select_sandbox_provider"]
 
 
-def select_provider(
+def select_sandbox_provider(
     system: str | None = None,
 ) -> tuple[SandboxProvider, SelfTestReport]:
     """返回 (选定的 Provider, 它的自测报告).
 
     报告里的 `confined` 决定 `IsolationLevel`. 调用方必须用报告而不是 Provider 的名字
-    去判断有没有围栏 —— 一个装了 bwrap 但 userns 被关掉的机器上, 名字是对的, 围栏是
+    去判断有没有沙箱 —— 一个装了 bwrap 但 userns 被关掉的机器上, 名字是对的, 沙箱是
     不存在的.
     """
     name = (system or platform.system()).casefold()
@@ -33,7 +33,7 @@ def select_provider(
     elif name == "linux":
         candidate = BubblewrapProvider()
     elif name == "windows":
-        # 原生 Windows 没有可用的围栏原语, 经 WSL2 借 bubblewrap (ADR-0030 决策 5).
+        # 原生 Windows 没有可用的沙箱, 经 WSL2 借 bubblewrap .
         # WSL2 没装就是 UNCONFINED —— 不退化成"用静态分析补偿".
         candidate = Wsl2Provider()
     else:

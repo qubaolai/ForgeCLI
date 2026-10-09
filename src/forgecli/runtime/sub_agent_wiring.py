@@ -1,4 +1,4 @@
-"""Bind child resources to the dispatching session and selected models."""
+"""将子资源绑定到调度会话和所选模型上."""
 
 from pathlib import Path
 

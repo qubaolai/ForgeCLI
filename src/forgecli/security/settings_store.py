@@ -120,13 +120,13 @@ def write_permissions(path: Path, section: PermissionsSection) -> None:
     write_document(path, document)
 
 
-def read_sandbox(path: Path) -> SandboxSettings | None:
+def read_sandbox(path: Path) -> SandboxSettings:
     """文件里的 sandbox 段. 没有这一段返回 None
     (用缺省)."""
     raw = _document(path).get("sandbox")
-    if not isinstance(raw, Mapping):
-        return None
     defaults = SandboxSettings()
+    if not isinstance(raw, Mapping):
+        return defaults
     filesystem = raw.get("filesystem")
     if not isinstance(filesystem, Mapping):
         filesystem = {}

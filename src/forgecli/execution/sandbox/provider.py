@@ -1,4 +1,4 @@
-"""SandboxProvider: 把一条 argv 包进平台围栏 (ADR-0030 决策 1 / 3).
+"""SandboxProvider: 把一条 argv 包进平台围栏.
 
 Provider 只做一件事: 接受原始 argv 与一份 `FencePolicy`, 返回被围栏包住的 argv.
 它**不认识任何命令** —— 包 `ls` 和包 `rm -rf /` 走的是同一段代码, 差别由内核在系统
@@ -63,7 +63,7 @@ class SelfTestReport:
 
 
 class SandboxProvider(ABC):
-    """一个平台围栏实现."""
+    """平台沙箱实现. 这里定义抽象类 分不同系统进行实现"""
 
     @property
     @abstractmethod
@@ -76,11 +76,11 @@ class SandboxProvider(ABC):
 
     @abstractmethod
     def wrap(self, argv: tuple[str, ...], policy: FencePolicy) -> tuple[str, ...]:
-        """把 argv 包进围栏. 包不了就抛 OSError, 由调用方 fail closed."""
+        """把 argv 包进沙箱. 包不了就抛 OSError, 由调用方 fail closed."""
 
     @abstractmethod
     def environment_for(self, policy: FencePolicy) -> Mapping[str, str]:
-        """围栏内子进程要覆盖的环境变量: 临时目录, 代理地址. 围栏没有网络出口就没有
+        """沙箱内子进程要覆盖的环境变量: 临时目录, 代理地址. 沙箱没有网络出口就没有
         代理变量."""
 
     @abstractmethod

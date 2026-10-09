@@ -185,7 +185,7 @@ class BlockingHumanPromptBroker(HumanPromptService):
             self._questions_this_turn = 0
 
     def cancel_turn(self, note: str) -> None:
-        """闩上这一轮再放开队列. 顺序不能反 (ADR-0048 决策 3).
+        """闩上这一轮再放开队列. 顺序不能反.
 
         先放开再闩的话, 两句之间入队的那条提示既没被放开也没被拦住 —— 它会一直等到
         进程退出, 而"停止"早就返回成功了.

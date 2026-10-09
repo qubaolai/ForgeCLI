@@ -1,25 +1,5 @@
-"""macOS 围栏: sandbox-exec + Seatbelt profile (ADR-0030 决策 2).
+"""macOS 沙箱: sandbox-exec + Seatbelt profile .
 
-profile 的形态是**实测定下来的**, 不是照抄别处的写法 (ADR-0030 实测记录第二节):
-
-    (deny default) + 逐项 allow          -> 子进程 SIGABRT, 连 /bin/sh 都起不来
-    (allow default) + (deny file-read*)
-      + 系统目录 allowlist                -> 仍然 SIGABRT, python3 也起不来
-    (allow default) + 定向 deny           -> 全部按预期工作
-
-所以写边界是 allowlist (`deny file-write*` 再逐项放行), 读边界只能是 denylist.
-后者意味着受保护路径要逐条列举, **漏一条就是凭证暴露** —— 这条风险在 macOS 上没有解,
-Linux 的 bubblewrap 靠 mount namespace 不受此限.
-
-两条边界各叠一层反向规则 (与 sandbox-runtime 同): 可写区里再 deny 掉 `.git/hooks` 这类
-路径, denied 读区里再 allow 回具体路径. Seatbelt 是**后写的规则赢**, 所以顺序是
-deny-all, allow, deny (写) 与 deny, allow (读).
-
-网络: `(deny network*)` 之后只放一条到本机代理端口的 outbound (`network_proxy.py` 在那头
-按域名裁决); unix socket 与本机端口按设置放开. `allowedDomains` 含 `*` 时不写 deny.
-
-路径一律先 `realpath`: macOS 上 `/tmp` 是 `/private/tmp` 的符号链接, 而 Seatbelt 比对
-的是解析后的真实路径. 拿没解析的路径去写 profile, 规则会静默不匹配 —— 那比报错糟得多.
 """
 
 from __future__ import annotations
@@ -48,7 +28,7 @@ _DEVICE_WRITES = ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty")
 
 
 def _quote(path: str) -> str:
-    """Seatbelt profile 用的是 TinyScheme 字面量, 转义规则与它一致."""
+    """安全转义函数, mac沙箱 用的是 TinyScheme 字面量."""
     escaped = path.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
 
@@ -71,11 +51,11 @@ class SeatbeltProvider(SandboxProvider):
         return "seatbelt"
 
     def available(self) -> bool:
+        # 存在性检查
         if not Path(_SANDBOX_EXEC).exists():
             return False
-        # 存在不等于能用: 某些受限环境下 sandbox-exec 自己就会被拒. 实跑一次最便宜的
-        # 全放行 profile 确认它真的能起进程.
         try:
+            # 宽沙箱策略 执行探针
             completed = subprocess.run(  # noqa: S603 - argv 固定, 无 shell
                 [_SANDBOX_EXEC, "-p", "(version 1)(allow default)", "/usr/bin/true"],
                 capture_output=True,
@@ -87,14 +67,15 @@ class SeatbeltProvider(SandboxProvider):
         return completed.returncode == 0
 
     def profile_for(self, policy: FencePolicy) -> str:
-        lines = ["(version 1)", "(allow default)", "(deny file-write*)"]
+        # 通过沙箱围栏策略 生成沙箱配置文件
+        lines = ["(version 1)", "(allow default)", "(deny file-write*)"] # 默认允许一切, 写操作禁止, 读、网络都允许
         writable = [_real(root) for root in policy.all_writable if root]
         allow_write = [f"(subpath {_quote(root)})" for root in writable]
         allow_write += [f"(literal {_quote(dev)})" for dev in _DEVICE_WRITES]
         # /dev/fd 下的重定向目标是按需创建的, 只能按 subpath 放行.
         allow_write.append('(subpath "/dev/fd")')
         lines.append(f"(allow file-write* {' '.join(allow_write)})")
-        # 可写区里再挖掉的: 放在 allow 之后, 后写的赢.
+        # 可写区里再挖掉的策略禁止写的路径, .sb文件语法 按顺序求值, 后面覆盖前面
         denied_write = [_real(path) for path in policy.denied_write_paths if path]
         if denied_write:
             lines.append(f"(deny file-write* {_subpaths(denied_write)})")
@@ -153,13 +134,13 @@ class SeatbeltProvider(SandboxProvider):
 
     def wrap(self, argv: tuple[str, ...], policy: FencePolicy) -> tuple[str, ...]:
         if not argv:
-            raise OSError("argv 为空, 无法包进围栏")
+            raise OSError("argv 为空, 无法包进沙箱")
         # 用 -p 传字面 profile 而不是写临时文件: 少一个需要清理的文件, 也少一个别人
         # 能在 exec 之前改掉它的窗口.
         return (_SANDBOX_EXEC, "-p", self.profile_for(policy), *argv)
 
     def self_test(self) -> SelfTestReport:
-        """真的去做三次被禁止的操作 (ADR-0030 决策 3)."""
+        """真的去做三次被禁止的操作"""
         if not self.available():
             return SelfTestReport(provider=self.name, failures=("sandbox-exec 不可用",))
         root = Path(tempfile.mkdtemp(prefix="forge-fence-selftest-"))
@@ -195,10 +176,10 @@ class SeatbeltProvider(SandboxProvider):
         if reached:
             failures.append("网络连接没有被拒绝")
 
-        # 反向确认: 围栏内的写必须成功. 少了这一步, 一个"什么都拦"的坏 profile 会被
-        # 当成完美围栏.
+        # 反向确认: 沙箱内的写必须成功. 少了这一步, 一个"什么都拦"的坏 profile 会被
+        # 当成完美沙箱.
         if not self._shell_succeeds(policy, f"echo ok > {workspace / 'probe.txt'}"):
-            failures.append("围栏内写入被误拒, profile 不可用")
+            failures.append("沙箱内写入被误拒, profile 不可用")
 
         return SelfTestReport(
             provider=self.name,
