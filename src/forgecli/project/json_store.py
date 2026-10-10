@@ -111,6 +111,6 @@ class JsonProjectConfigStore:
         document["trusted"] = project.trusted
         document["primary_workspace_root"] = project.primary_workspace_root
         document["workspace_roots"] = list(project.workspace_roots)
-        document["create_at"] = project.created_at
-        document["update_at"] = project.updated_at
+        document["created_at"] = project.created_at
+        document["updated_at"] = project.updated_at
         write_document(path, document)

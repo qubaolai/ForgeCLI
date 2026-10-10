@@ -1,4 +1,4 @@
-"""Tool 协议 (ADR-0054 决策 1).
+"""Tool 协议.
 
 一个工具要回答的全部问题都在这里, 缺省值与 `buildTool()` 的 `TOOL_DEFAULTS` 同:
 并发不安全, 非只读, 非破坏性, `check_permissions` 缺省 allow —— 安全来自每个真实
